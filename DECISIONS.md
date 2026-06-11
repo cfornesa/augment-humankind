@@ -69,6 +69,13 @@ options regardless of session context. -->
 - Expanded `README.md` with the v1 direction, services, routes, and durable-route note.
 - Corrected `env.example` to reflect that v1 has no required environment variables.
 
+## 2026-06-11 — Deployment Correction
+
+### Corrections Applied
+- Updated the Hostinger FTP workflow to deploy `public/` as the local directory into `/public_html/`.
+- Kept production URLs at `/`, `/services`, `/notes`, and `/contact` rather than redirecting visitors into `/public`.
+- Noted in `README.md` that deployments should upload `public/` contents to the hosting document root.
+
 ## REVIEW REQUIRED — Read before starting next session
 <!-- Agent writes this block. Human must confirm or override each item before new code is written. -->
 - None currently.

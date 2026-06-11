@@ -19,6 +19,7 @@ jobs:
           server: ${{ secrets.FTP_SERVER }}
           username: ${{ secrets.FTP_USERNAME }}
           password: ${{ secrets.FTP_PASSWORD }}
+          local-dir: public/
           server-dir: /public_html/
           exclude: |
             **/.git*
@@ -27,7 +28,7 @@ jobs:
             **/.agents/**
             **/.gemini/**
             .env
-            public/debug_auth.php
+            debug_auth.php
 
       - name: Wait before retry 1
         if: steps.ftp_deploy_1.outcome == 'failure'
@@ -42,6 +43,7 @@ jobs:
           server: ${{ secrets.FTP_SERVER }}
           username: ${{ secrets.FTP_USERNAME }}
           password: ${{ secrets.FTP_PASSWORD }}
+          local-dir: public/
           server-dir: /public_html/
           exclude: |
             **/.git*
@@ -50,7 +52,7 @@ jobs:
             **/.agents/**
             **/.gemini/**
             .env
-            public/debug_auth.php
+            debug_auth.php
 
       - name: Wait before retry 2
         if: steps.ftp_deploy_1.outcome == 'failure' && steps.ftp_deploy_2.outcome == 'failure'
@@ -64,6 +66,7 @@ jobs:
           server: ${{ secrets.FTP_SERVER }}
           username: ${{ secrets.FTP_USERNAME }}
           password: ${{ secrets.FTP_PASSWORD }}
+          local-dir: public/
           server-dir: /public_html/
           exclude: |
             **/.git*
@@ -72,4 +75,4 @@ jobs:
             **/.agents/**
             **/.gemini/**
             .env
-            public/debug_auth.php
+            debug_auth.php

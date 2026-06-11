@@ -43,3 +43,4 @@ Then open:
 - No external services or vendor dependencies are used.
 - `/contact` uses an email link for v1; a real backend contact form is a future decision.
 - Public routes are treated as durable. If they move later, add permanent redirects.
+- Deployments should upload the contents of `public/` into the hosting document root, not the repository root.
