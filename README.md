@@ -24,6 +24,18 @@ their capabilities without overclaiming what a one-person practice can deliver.
 - `/notes` — lightweight field notes landing page
 - `/contact` — email-based inquiry page
 
+## Deployed File Layout
+
+The production document root should stay small:
+
+- `index.php`
+- `.htaccess`
+- `assets/styles.css`
+- `assets/friendly-guide.png`
+
+The FTP deploy action may also create `.ftp-deploy-sync-state-public.json` in
+the document root. That file is deploy metadata, not part of the app.
+
 ## Run Locally
 
 ```sh

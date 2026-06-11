@@ -76,6 +76,7 @@ options regardless of session context. -->
 - Kept production URLs at `/`, `/services`, `/notes`, and `/contact` rather than redirecting visitors into `/public`.
 - Noted in `README.md` that deployments should upload `public/` contents to the hosting document root.
 - Switched the FTP deploy action to `.ftp-deploy-sync-state-public.json` so it does not reuse the stale sync state from the earlier repository-root upload.
+- Documented the intentionally small production file layout and denied direct web access to hidden dotfiles through `.htaccess`.
 
 ## REVIEW REQUIRED — Read before starting next session
 <!-- Agent writes this block. Human must confirm or override each item before new code is written. -->
