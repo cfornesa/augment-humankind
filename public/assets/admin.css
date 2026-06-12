@@ -162,6 +162,8 @@
 
 .login-title {
     margin: 0 0 0.75rem;
+    max-width: none;
+    overflow-wrap: normal;
 }
 
 .login-copy {
