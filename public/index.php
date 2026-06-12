@@ -34,7 +34,7 @@ if (PHP_SAPI === 'cli-server') {
 $path = rtrim($path, '/') ?: '/';
 
 loadEnvFile(__DIR__ . '/.env');
-
+loadEnvFile(dirname(__DIR__) . '/.env');
 
 if ($path === '/portfolio' || str_starts_with($path, '/portfolio/')
     || $path === '/admin' || str_starts_with($path, '/admin/')
@@ -89,7 +89,7 @@ $contactErrors = [];
 $contactSuccess = false;
 
 loadEnvFile(__DIR__ . '/.env');
-
+loadEnvFile(dirname(__DIR__) . '/.env');
 
 $pageMeta = [
     'home' => [
