@@ -5,7 +5,7 @@ declare(strict_types=1);
 class Page
 {
     private const RESERVED_SLUGS = [
-        'admin', 'portfolio', 'contact', 'media', 'image',
+        'admin', 'portfolio', 'contact', 'media', 'image', 'home',
     ];
 
     public static function all(): array

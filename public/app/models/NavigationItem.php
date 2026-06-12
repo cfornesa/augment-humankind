@@ -750,7 +750,7 @@ class NavigationItem
 
     private static function systemSlugs(): array
     {
-        $slugs = [];
+        $slugs = ['home'];
         foreach (self::SYSTEM_ITEMS as $item) {
             $path = trim((string) $item['url'], '/');
             if ($path !== '') {
