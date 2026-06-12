@@ -14,7 +14,7 @@ class NavigationItem
 
     private const SYSTEM_ITEMS = [
         'mission' => [
-            'label' => 'Mission',
+            'label' => 'Home',
             'url' => '/',
             'is_visible' => 1,
             'sort_order' => 0,
@@ -479,7 +479,7 @@ class NavigationItem
             [
                 'id' => 0,
                 'source_type' => self::SOURCE_SYSTEM,
-                'label' => 'Mission',
+                'label' => 'Home',
                 'url' => '/',
                 'target' => null,
                 'active_key' => 'mission',

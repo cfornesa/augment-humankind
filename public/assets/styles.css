@@ -105,6 +105,14 @@ main > section {
     color: var(--ink);
     box-shadow: 5px 5px 0 var(--line);
     font-size: 0.9rem;
+    overflow: hidden;
+}
+
+.brand-mark img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    padding: 0.2rem;
 }
 
 .brand-text {

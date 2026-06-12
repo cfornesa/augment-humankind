@@ -5,7 +5,7 @@ declare(strict_types=1);
 function ah_fallback_navigation_items(): array
 {
     return [
-        ['label' => 'Mission', 'url' => '/', 'target' => null],
+        ['label' => 'Home', 'url' => '/', 'target' => null],
         ['label' => 'Services', 'url' => '/services', 'target' => null],
         ['label' => 'Field Notes', 'url' => '/notes', 'target' => null],
         ['label' => 'Contact', 'url' => '/contact', 'target' => null],

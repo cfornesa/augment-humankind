@@ -46,7 +46,7 @@ if ($path === '/portfolio' || str_starts_with($path, '/portfolio/')
 $page = $routes[$path] ?? null;
 
 $managedSlug = null;
-if ($page === 'services' || $page === 'notes') {
+if ($page === 'home' || $page === 'services' || $page === 'notes') {
     $managedSlug = $page;
 } elseif ($page === null && preg_match('#^/([a-z0-9-]+)$#', $path, $slugMatch)) {
     $managedSlug = $slugMatch[1];
@@ -505,7 +505,7 @@ if ($page === 'contact') {
 
     <header class="site-header" aria-label="Site header">
         <a class="brand" href="/" aria-label="Augment Humankind home">
-            <span class="brand-mark" aria-hidden="true">AH</span>
+            <img src="/assets/friendly-guide.png" alt="" class="brand-mark" aria-hidden="true">
             <span class="brand-text">Augment Humankind</span>
         </a>
         <nav class="site-nav" aria-label="Primary navigation">

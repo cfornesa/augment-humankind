@@ -36,7 +36,7 @@ $canonicalUrl = $canonicalUrl ?? null;
 
     <header class="site-header" aria-label="Site header">
         <a class="brand" href="/" aria-label="Augment Humankind home">
-            <span class="brand-mark" aria-hidden="true">AH</span>
+            <img src="/assets/friendly-guide.png" alt="" class="brand-mark" aria-hidden="true">
             <span class="brand-text">Augment Humankind</span>
         </a>
         <nav class="site-nav" aria-label="Primary navigation">
