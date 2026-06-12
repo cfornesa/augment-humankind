@@ -288,6 +288,22 @@ h3 {
     padding: clamp(2.5rem, 6vw, 5.5rem) 0;
 }
 
+.managed-section {
+    margin-block: 2rem;
+    padding: clamp(1.5rem, 4vw, 3rem);
+    border: 3px solid var(--line);
+    background: var(--white);
+    box-shadow: 6px 6px 0 var(--line);
+}
+
+.managed-section h2 {
+    margin-top: 0;
+}
+
+.managed-section-body :last-child {
+    margin-bottom: 0;
+}
+
 .section-heading {
     display: grid;
     grid-template-columns: 0.45fr 1fr;

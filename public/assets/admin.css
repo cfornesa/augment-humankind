@@ -1,0 +1,449 @@
+/* Admin chrome — extends the Pareto tokens from styles.css */
+
+.admin-body {
+    min-height: 100vh;
+}
+
+.admin-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 1rem;
+    width: min(calc(100% - 2rem), var(--max));
+    margin-inline: auto;
+    padding: 1.1rem 0;
+    border-bottom: 3px solid var(--line);
+}
+
+.admin-brand {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.admin-kicker {
+    color: var(--ink-soft);
+    font-size: 0.78rem;
+    font-weight: 950;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.admin-site-link {
+    font-weight: 950;
+    font-size: 1.4rem;
+    text-decoration: none;
+}
+
+.admin-nav {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+}
+
+.admin-nav a {
+    padding: 0.5rem 0.9rem;
+    border: 3px solid var(--line);
+    background: var(--white);
+    box-shadow: 4px 4px 0 var(--line);
+    font-weight: 900;
+    text-decoration: none;
+    transition: transform 160ms ease, box-shadow 160ms ease;
+}
+
+.admin-nav a:hover,
+.admin-nav a.active {
+    background: var(--yellow);
+    box-shadow: 2px 2px 0 var(--line);
+    transform: translate(2px, 2px);
+}
+
+.admin-nav .admin-logout {
+    background: var(--orange);
+}
+
+.admin-main {
+    width: min(calc(100% - 2rem), var(--max));
+    margin-inline: auto;
+    padding: clamp(2rem, 5vw, 4rem) 0;
+}
+
+.admin-section {
+    display: grid;
+    gap: 2rem;
+}
+
+.dashboard-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+    gap: 1rem;
+}
+
+.stat-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 1.25rem;
+    border: 3px solid var(--line);
+    background: var(--white);
+    box-shadow: 6px 6px 0 var(--line);
+}
+
+.stat-num {
+    font-size: clamp(2.5rem, 5vw, 3.5rem);
+    font-weight: 950;
+    line-height: 1;
+}
+
+.stat-label {
+    color: var(--ink-soft);
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    font-size: 0.85rem;
+}
+
+.dashboard-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+}
+
+.admin-btn {
+    display: inline-flex;
+    align-items: center;
+    min-height: 3rem;
+    padding: 0.75rem 1.25rem;
+    border: 3px solid var(--line);
+    background: var(--green);
+    color: var(--ink);
+    box-shadow: 5px 5px 0 var(--line);
+    font-weight: 950;
+    text-decoration: none;
+    transition: transform 160ms ease, box-shadow 160ms ease;
+}
+
+.admin-btn:hover {
+    box-shadow: 2px 2px 0 var(--line);
+    transform: translate(3px, 3px);
+}
+
+.admin-btn-ghost {
+    background: var(--white);
+}
+
+/* Login */
+
+.admin-login-body {
+    display: grid;
+    place-items: center;
+    min-height: 100vh;
+}
+
+.login-wrap {
+    width: min(calc(100% - 2rem), 28rem);
+    padding: clamp(1.5rem, 4vw, 2.5rem);
+    border: 4px solid var(--line);
+    background: var(--white);
+    box-shadow: var(--shadow);
+    text-align: center;
+}
+
+.login-kicker {
+    margin: 0 0 0.5rem;
+    color: var(--ink-soft);
+    font-size: 0.78rem;
+    font-weight: 950;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.login-title {
+    margin: 0 0 0.75rem;
+}
+
+.login-copy {
+    margin: 0 0 1.5rem;
+}
+
+.login-error {
+    margin: 0 0 1rem;
+    padding: 0.85rem 1rem;
+    border: 3px solid var(--line);
+    background: #fff1cd;
+    font-weight: 800;
+    text-align: left;
+}
+
+.login-provider-list {
+    display: grid;
+    gap: 0.75rem;
+}
+
+.login-provider-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 3rem;
+    padding: 0.75rem 1rem;
+    border: 3px solid var(--line);
+    background: var(--orange);
+    color: var(--ink);
+    box-shadow: 5px 5px 0 var(--line);
+    font-weight: 950;
+    text-decoration: none;
+    transition: transform 160ms ease, box-shadow 160ms ease;
+}
+
+.login-provider-btn:hover {
+    box-shadow: 2px 2px 0 var(--line);
+    transform: translate(3px, 3px);
+}
+
+.login-provider-btn-alt {
+    background: var(--cyan);
+}
+
+@media (max-width: 640px) {
+    .admin-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+}
+
+/* Pages CMS */
+
+.admin-section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 1rem;
+}
+
+.admin-subheading {
+    font-size: 1.2rem;
+    font-weight: 950;
+    margin: 0;
+}
+
+.admin-empty,
+.admin-hint {
+    color: var(--ink-soft);
+    font-weight: 700;
+    font-style: italic;
+}
+
+.admin-notice,
+.admin-error {
+    margin: 0;
+    padding: 0.85rem 1rem;
+    border: 3px solid var(--line);
+    font-weight: 800;
+}
+
+.admin-notice {
+    background: #e9f7f2;
+}
+
+.admin-error {
+    background: #fff1cd;
+}
+
+.admin-btn-sm {
+    min-height: 0;
+    padding: 0.4rem 0.8rem;
+    font-size: 0.78rem;
+    box-shadow: 3px 3px 0 var(--line);
+}
+
+.admin-btn-sm:hover {
+    box-shadow: 1px 1px 0 var(--line);
+}
+
+.admin-del-btn,
+button.admin-del-btn {
+    appearance: none;
+    background: transparent;
+    border: none;
+    color: var(--ink);
+    text-decoration: underline;
+    font-weight: 800;
+    font: inherit;
+    cursor: pointer;
+    padding: 0;
+}
+
+.admin-del-btn:hover,
+button.admin-del-btn:hover {
+    color: var(--orange);
+}
+
+/* Tables */
+
+.admin-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.admin-table th {
+    text-align: left;
+    font-size: 0.78rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    padding: 0.6rem;
+    border-bottom: 3px solid var(--line);
+}
+
+.admin-table td {
+    padding: 0.7rem 0.6rem;
+    border-bottom: 1px solid var(--line);
+    vertical-align: middle;
+}
+
+.admin-table a {
+    font-weight: 800;
+}
+
+.admin-actions {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+.admin-actions form {
+    margin: 0;
+}
+
+/* Drag and drop */
+
+.drag-handle {
+    cursor: grab;
+    opacity: 0.5;
+    width: 1.4rem;
+    text-align: center;
+    user-select: none;
+}
+
+.drag-handle:hover {
+    opacity: 1;
+}
+
+tr.drag-active {
+    opacity: 0.4;
+}
+
+tr.drag-over td {
+    border-top: 2px solid var(--orange);
+}
+
+.reorder-status {
+    display: block;
+    font-weight: 800;
+    color: var(--ink-soft);
+    min-height: 1.2em;
+}
+
+/* Admin forms */
+
+.admin-form,
+.admin-form-inline {
+    display: flex;
+    margin: 0;
+}
+
+.admin-form {
+    flex-direction: column;
+    gap: 1.2rem;
+    max-width: 720px;
+}
+
+.admin-form-inline {
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.8rem;
+}
+
+.form-row {
+    display: grid;
+    gap: 0.4rem;
+}
+
+.form-row label {
+    font-weight: 950;
+}
+
+.form-hint {
+    font-weight: 700;
+    font-style: italic;
+    color: var(--ink-soft);
+    text-transform: none;
+}
+
+.admin-form input[type="text"],
+.admin-form input[type="number"],
+.admin-form input[type="url"],
+.admin-form input[type="email"],
+.admin-form select,
+.admin-form textarea {
+    width: 100%;
+    min-height: 3rem;
+    border: 3px solid var(--line);
+    background: var(--paper);
+    color: var(--ink);
+    font: inherit;
+    font-weight: 700;
+    padding: 0.75rem;
+}
+
+.admin-form textarea {
+    min-height: 8rem;
+    resize: vertical;
+}
+
+.admin-form input:focus,
+.admin-form select:focus,
+.admin-form textarea:focus {
+    outline: none;
+    border-color: var(--orange);
+}
+
+.form-fieldset {
+    border: 3px solid var(--line);
+    padding: 1rem 1.2rem 1.2rem;
+}
+
+.form-fieldset legend {
+    font-weight: 950;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-size: 0.85rem;
+    padding: 0 0.5rem;
+}
+
+.toggle-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.2rem;
+    align-items: flex-start;
+}
+
+.toggle-opt {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-weight: 800;
+    cursor: pointer;
+}
+
+.form-actions {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    flex-wrap: wrap;
+}

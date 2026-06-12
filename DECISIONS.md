@@ -153,6 +153,81 @@ options regardless of session context. -->
 - `/contact` remains the durable public URL.
 - Submissions are emailed only; no database or file-based submission storage was added.
 
+## 2026-06-12 — Phase 2 — Pages CMS + Tiptap
+
+### Stack Confirmed
+- Added a no-framework `app/` MVC layer (front-controller router → controller →
+  PDO model → view), dispatched from `public/index.php` for `/admin/*`,
+  `/portfolio/*`, and `/media|image/[id]` paths (Phase 1 groundwork), now
+  exercised by the Pages CMS.
+
+### Schema and Data Decisions
+- `pages` and `page_sections` tables (from `schema.sql`, applied in Phase 1)
+  now hold live content: `/services` and `/notes` were seeded from the prior
+  static `public/index.php` markup via `seed_phase2_pages.sql`, each as a
+  single heading-less section rendered raw by `app/views/managed_page.php`.
+- `/services` and `/notes` are DB-first with a static-markup fallback
+  (`Page::safeFindPublishedBySlug()` catches `Throwable`) — Rule 5 holds even
+  if the DB is unreachable.
+- New pages created via `/admin/pages` are reachable through a catch-all
+  `/{slug}` route in `public/index.php` (falls through to 404 if no
+  published page matches).
+
+### Files Created
+- `app/helpers/slugify.php`, `app/helpers/seo.php`
+- `app/models/Page.php`, `app/models/PageSection.php`
+- `app/controllers/PageController.php`, `app/controllers/Admin/PagesController.php`
+- `app/views/partials/{header,footer}.php`, `app/views/managed_page.php`
+- `app/views/admin/pages/{index,form,section-form,trash}.php`
+- `public/assets/css/tiptap.css` — Tiptap toolbar/editor/media-picker CSS
+  reskinned from the original "Celestial Archive" theme to AH's "Pareto"
+  tokens (no new fonts; system font stack throughout).
+- `public/assets/js/tiptap-editor.js` — full port (9 `@tiptap/*` extensions,
+  custom `FontSize`/`IframeNode`/`LinkWithTitle`/image-edit NodeView, media
+  picker). Media picker's Select/Upload/Import actions call
+  `/admin/media/*` endpoints that don't exist yet — deferred to Phase 3, fails
+  gracefully in the meantime.
+- `public/assets/js/main.js` — minimal port: drag-reorder for
+  `tbody[data-reorder-url]` and `page-name` → `page-slug` autofill.
+- `app/views/admin/layout.php` — added the esm.sh importmap, `tiptap.css`
+  link, media-picker `<dialog>` markup, and `main.js`/`tiptap-editor.js`
+  script tags.
+
+### Vendor Dependencies Added
+- Tiptap via `esm.sh` CDN (`@tiptap/*@2`, 9 packages) — documented in
+  `docs/dependencies.md`. Falls back to a plain `<textarea>` if esm.sh is
+  unreachable; no public-facing page depends on it.
+
+### Verification Outcome
+- `/`, `/services`, `/notes`, `/contact` all return 200; `/services` and
+  `/notes` render via the DB-backed managed-page path with content identical
+  to the prior static version (plus added SEO meta tags).
+- Logged into `/admin/pages` (test session), created a new page
+  ("Phase 2 Test Page", slug `phase2-test`), confirmed the Tiptap-backed
+  section editor renders (importmap/tiptap.css/media-picker all present),
+  added a section, confirmed `/phase2-test` rendered it with `.managed-section`
+  markup, then deleted the test page (404 confirmed afterward).
+- `php -l` clean on all new/changed PHP files.
+
+### Regression Found and Fixed
+- `scripts/verify-contact-config.php` set `REQUEST_URI = '/notes'` to load
+  `configValue()`/`smtpConfiguration()` (defined later in `public/index.php`)
+  without rendering output, relying on `/notes` falling through to end-of-file.
+  Phase 2's DB-backed `/notes` route now calls `exit` early (via
+  `PageController::show()`), which flushed the `/notes` HTML to stdout and
+  skipped the actual config checks (silently "passing" with no real check).
+  **Fix:** changed the harness's `REQUEST_URI` to `/contact`, which is
+  untouched by the managed-page routing and falls through normally.
+  Re-ran: `php scripts/verify-contact-config.php` → "Contact form
+  configuration shape is valid." (exit 0).
+
+### Unresolved Checkpoints Entering Phase 3
+- [ ] `/admin/media/{library,upload,import}` endpoints needed before the
+  Tiptap media picker and `page-og-image` "Choose from Library" button are
+  functional (currently inert with graceful errors).
+- [ ] Decide fate of the `portfolio/` reference folder (deferred per the
+  approved plan, after Phase 3 verification).
+
 ## REVIEW REQUIRED — Read before starting next session
 <!-- Agent writes this block. Human must confirm or override each item before new code is written. -->
 - None currently.

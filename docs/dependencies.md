@@ -48,3 +48,87 @@
 - **Not used by the contact form:** IMAP settings such as
   `imap.hostinger.com` are only for reading mail in an email client. The
   contact form only sends outbound messages through SMTP.
+
+## MySQL Database (Portfolio + Admin CMS)
+
+- **Purpose:** Stores the Portfolio gallery (artworks, categories, exhibits,
+  media library) and the admin-managed Pages/Navigation CMS (including the
+  `/services` and `/notes` content).
+- **Data sent off-domain:** None — the database is queried directly via PDO.
+- **External dependency:** A MySQL-compatible database instance. Development
+  is configured to point at the same instance/provider used in production
+  (via `DB_HOST`/`DB_NAME`/`DB_USER`/`DB_PASS`) so schema and data stay aligned.
+- **What breaks if unavailable or changed:** `/admin/*` and `/portfolio/*`
+  become unavailable. `/services` and `/notes` fall back to their built-in
+  static content (see `public/index.php`), and `/`, `/contact` are unaffected.
+- **Self-hosting alternative:** N/A — this is already self-hosted (Hostinger
+  MySQL or equivalent). No third-party SaaS is introduced.
+- **Required config:** `DB_HOST`, `DB_NAME`, `DB_USER`, `DB_PASS`
+- **Schema:** `schema.sql` at the repository root is the source of truth.
+
+## GitHub OAuth (Admin Login)
+
+- **Purpose:** Authenticates admin users for `/admin/*` via "Continue with
+  GitHub".
+- **Data sent off-domain:** The browser is redirected to GitHub for sign-in;
+  the server exchanges the returned code with GitHub for an access token and
+  fetches the user's GitHub id/login/email via the GitHub API.
+- **External endpoints:** `https://github.com/login/oauth/authorize`,
+  `https://github.com/login/oauth/access_token`,
+  `https://api.github.com/user`, `https://api.github.com/user/emails`
+- **What breaks if unavailable or changed:** Admins cannot sign in via GitHub
+  (Google OAuth remains available as the other configured provider). No
+  public-facing feature depends on this.
+- **Self-hosting alternative:** A self-hosted password/credential login form.
+  Avoids depending on GitHub but requires storing and protecting admin
+  credentials directly.
+- **Required config:** `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`,
+  `ADMIN_GITHUB_USERNAMES` (comma-separated allowlist of GitHub usernames
+  permitted to bootstrap an admin identity)
+- **Callback URL to register:** `https://augmenthumankind.com/admin/auth/github/callback`
+
+## Google OAuth (Admin Login)
+
+- **Purpose:** Authenticates admin users for `/admin/*` via "Continue with
+  Google".
+- **Data sent off-domain:** The browser is redirected to Google for sign-in;
+  the server exchanges the returned code with Google for an access token and
+  fetches the user's Google subject id/email/name via the OpenID Connect
+  userinfo endpoint.
+- **External endpoints:** `https://accounts.google.com/o/oauth2/v2/auth`,
+  `https://oauth2.googleapis.com/token`,
+  `https://openidconnect.googleapis.com/v1/userinfo`
+- **What breaks if unavailable or changed:** Admins cannot sign in via Google
+  (GitHub OAuth remains available as the other configured provider). No
+  public-facing feature depends on this.
+- **Self-hosting alternative:** A self-hosted password/credential login form.
+  Avoids depending on Google but requires storing and protecting admin
+  credentials directly.
+- **Required config:** `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`,
+  `ADMIN_GOOGLE_EMAILS` (comma-separated allowlist of Google account emails
+  permitted to bootstrap an admin identity)
+- **Callback URL to register:** `https://augmenthumankind.com/admin/auth/google/callback`
+
+## Tiptap (Rich Text Editor, via esm.sh CDN)
+
+- **Purpose:** Provides the rich-text editing toolbar (headings, formatting,
+  colors, links, images, iframe embeds, HTML source view) used by the page
+  section editor at `/admin/pages/*/sections/*`.
+- **Data sent off-domain:** None at runtime for editor content — page content
+  is saved to the local database via the admin form. The editor's JavaScript
+  modules themselves (`@tiptap/core`, `@tiptap/starter-kit`, and the
+  `@tiptap/extension-*` packages) are fetched from `esm.sh` by the admin's
+  browser when an admin page loads.
+- **External endpoint:** `https://esm.sh/@tiptap/*@2` (import-mapped in
+  `app/views/admin/layout.php`)
+- **What breaks if unavailable or changed:** If esm.sh is unreachable or
+  changes these package exports, the section-content textarea on
+  `/admin/pages/*/sections/*` falls back to a plain `<textarea>` (raw HTML)
+  instead of the rich-text toolbar — content can still be edited and saved as
+  HTML. No public-facing page is affected.
+- **Self-hosting alternative:** Bundle the same `@tiptap/*` packages locally
+  (e.g. via npm + a build step) and serve them from `/assets/js/` instead of
+  the CDN. Avoids the esm.sh dependency at the cost of adding a JS build
+  pipeline to this otherwise no-build PHP project.
+- **Required config:** None — the importmap in `app/views/admin/layout.php`
+  is static.

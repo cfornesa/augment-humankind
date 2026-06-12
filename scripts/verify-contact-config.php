@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 ob_start();
-$_SERVER['REQUEST_URI'] = '/notes';
+$_SERVER['REQUEST_URI'] = '/contact';
 $_SERVER['REQUEST_METHOD'] = 'GET';
 require dirname(__DIR__) . '/public/index.php';
 ob_end_clean();
