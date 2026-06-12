@@ -153,12 +153,8 @@ $services = [
     ],
 ];
 
-$navigation = [
-    '/' => 'Mission',
-    '/services' => 'Services',
-    '/notes' => 'Field Notes',
-    '/contact' => 'Contact', 
-];
+require_once __DIR__ . '/../app/helpers/navigation.php';
+$navigationItems = ah_public_navigation_items();
 
 function e(string $value): string
 {
@@ -513,8 +509,13 @@ if ($page === 'contact') {
             <span class="brand-text">Augment Humankind</span>
         </a>
         <nav class="site-nav" aria-label="Primary navigation">
-            <?php foreach ($navigation as $href => $label): ?>
-                <a href="<?= e($href) ?>"<?= isActive($href, $path) ?>><?= e($label) ?></a>
+            <?php foreach ($navigationItems as $item): ?>
+                <?php
+                    $href = (string) ($item['url'] ?? '#');
+                    $label = (string) ($item['label'] ?? $href);
+                    $target = (string) ($item['target'] ?? '');
+                ?>
+                <a href="<?= e($href) ?>"<?= isActive($href, $path) ?><?= $target === '_blank' ? ' target="_blank" rel="noopener"' : '' ?>><?= e($label) ?></a>
             <?php endforeach; ?>
         </nav>
     </header>

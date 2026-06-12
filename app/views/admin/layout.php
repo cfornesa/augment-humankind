@@ -5,6 +5,12 @@ $adminIdentity = admin_identity();
 $adminNavItems = [
     '/admin' => 'Dashboard',
     '/admin/pages' => 'Pages',
+    '/admin/artworks' => 'Works',
+    '/admin/categories' => 'Categories',
+    '/admin/exhibits' => 'Exhibits',
+    '/admin/media' => 'Media',
+    '/admin/trash' => 'Trash',
+    '/admin/navigation' => 'Navigation',
 ];
 ?>
 <!doctype html>
@@ -78,10 +84,10 @@ $adminNavItems = [
         <!-- Upload panel -->
         <div class="media-picker-panel" id="mp-panel-upload" role="tabpanel" hidden>
             <div class="media-picker-dropzone" id="mp-dropzone" tabindex="0" role="button"
-                 aria-label="Click or drag to select an image file">
+                 aria-label="Click or drag to select a media file">
                 <p class="mp-dropzone-label">Drag a file here or click to choose one</p>
                 <input type="file" class="media-picker-file-input" accept="image/*,video/mp4,video/webm,video/quicktime">
-                <p class="media-picker-hint" id="mp-upload-hint">JPEG &middot; PNG &middot; GIF &middot; WebP &middot; AVIF &middot; max 8 MB</p>
+                <p class="media-picker-hint" id="mp-upload-hint">JPEG &middot; PNG &middot; GIF &middot; WebP &middot; AVIF &middot; MP4 &middot; WebM &middot; MOV &middot; max 64 MB</p>
             </div>
             <!-- File preview shown after selection -->
             <div class="mp-file-info" id="mp-file-info" hidden>
@@ -107,7 +113,7 @@ $adminNavItems = [
                        placeholder="https://example.com/image.jpg" autocomplete="off">
                 <button type="button" class="admin-btn media-picker-import-btn">Import</button>
             </div>
-            <p class="media-picker-hint">The image is downloaded and stored in your media library. Max 8 MB.</p>
+            <p class="media-picker-hint">The asset is downloaded and stored in your media library. Max 64 MB.</p>
             <p class="media-picker-status" id="mp-import-status"></p>
         </div>
 

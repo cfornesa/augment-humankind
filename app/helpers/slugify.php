@@ -46,3 +46,21 @@ function unique_category_slug(string $name, int $excludeId = 0): string
     }
     return $slug;
 }
+
+function unique_exhibit_slug(string $name, int $excludeId = 0): string
+{
+    $base = slugify($name);
+    $slug = $base;
+    $i = 2;
+    while (true) {
+        $stmt = db()->prepare(
+            'SELECT id FROM exhibits WHERE slug = ? AND id != ?'
+        );
+        $stmt->execute([$slug, $excludeId]);
+        if (!$stmt->fetch()) {
+            break;
+        }
+        $slug = $base . '-' . $i++;
+    }
+    return $slug;
+}

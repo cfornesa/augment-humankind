@@ -898,8 +898,8 @@ function initMediaPicker() {
       return {
         accept: 'video/mp4,video/webm,video/quicktime',
         types: ['video/mp4', 'video/webm', 'video/quicktime'],
-        limit: 25 * 1024 * 1024,
-        hint: 'MP4 · WebM · QuickTime · max 25 MB',
+        limit: 64 * 1024 * 1024,
+        hint: 'MP4 · WebM · QuickTime · max 64 MB',
         empty: 'No videos yet. Use Upload to add one.',
       }
     }
@@ -908,8 +908,8 @@ function initMediaPicker() {
       return {
         accept: 'image/*,video/mp4,video/webm,video/quicktime',
         types: ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/avif', 'video/mp4', 'video/webm', 'video/quicktime'],
-        limit: 25 * 1024 * 1024,
-        hint: 'Images max 8 MB · videos max 25 MB',
+        limit: 64 * 1024 * 1024,
+        hint: 'Images max 8 MB · videos max 64 MB',
         empty: 'No media yet. Use Upload or Import to add some.',
       }
     }

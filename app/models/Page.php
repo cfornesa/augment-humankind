@@ -15,6 +15,16 @@ class Page
         )->fetchAll();
     }
 
+    public static function navItems(): array
+    {
+        return db()->query(
+            'SELECT id, title, slug, nav_label, status, show_in_nav, sort_order
+             FROM pages
+             WHERE deleted_at IS NULL AND status = "published" AND show_in_nav = 1
+             ORDER BY sort_order ASC, id ASC'
+        )->fetchAll();
+    }
+
     public static function find(int $id): array|false
     {
         $stmt = db()->prepare('SELECT * FROM pages WHERE id = ?');

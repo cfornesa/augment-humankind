@@ -52,8 +52,7 @@
 ## MySQL Database (Portfolio + Admin CMS)
 
 - **Purpose:** Stores the Portfolio gallery (artworks, categories, exhibits,
-  media library) and the admin-managed Pages/Navigation CMS (including the
-  `/services` and `/notes` content).
+  media library) and the admin-managed Pages/Navigation CMS.
 - **Data sent off-domain:** None — the database is queried directly via PDO.
 - **External dependency:** A MySQL-compatible database instance. Development
   is configured to point at the same instance/provider used in production
@@ -65,6 +64,12 @@
   MySQL or equivalent). No third-party SaaS is introduced.
 - **Required config:** `DB_HOST`, `DB_NAME`, `DB_USER`, `DB_PASS`
 - **Schema:** `schema.sql` at the repository root is the source of truth.
+- **Media storage:** Uploaded/imported admin media is stored in `media_files`
+  blobs and served publicly through `/media/[id]` and `/image/[id]`.
+- **Upload limits:** `.htaccess` requests `upload_max_filesize=64M`,
+  `post_max_size=72M`, `max_execution_time=120`, and `max_input_time=120`.
+  If Hostinger rejects `php_value` directives, configure those values in the
+  Hostinger PHP settings panel instead.
 
 ## GitHub OAuth (Admin Login)
 

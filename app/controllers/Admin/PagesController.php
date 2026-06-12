@@ -26,6 +26,7 @@ class PagesController
         try {
             $data = self::resolvePageData(null);
             $pageId = Page::create($data);
+            NavigationItem::syncPageItem($data + ['id' => $pageId], !empty($data['show_in_nav']));
             header('Location: /admin/pages/' . $pageId . '/edit');
         } catch (Throwable $e) {
             $page = null;
@@ -61,6 +62,7 @@ class PagesController
         try {
             $data = self::resolvePageData((int) $id);
             Page::update((int) $id, $data);
+            NavigationItem::syncPageItem($data + ['id' => (int) $id]);
             header('Location: /admin/pages/' . (int) $id . '/edit?saved=1');
         } catch (Throwable $e) {
             $page = array_merge($page, $_POST);

@@ -674,3 +674,479 @@ h3 {
         transform: none;
     }
 }
+
+/* ============================================================
+   Portfolio
+   ============================================================ */
+
+.gallery-page,
+.collection-page,
+.collection-detail-page,
+.work-page {
+    padding: clamp(2rem, 5vw, 4rem) 0 clamp(3rem, 7vw, 6rem);
+}
+
+.gallery-intro,
+.collection-header {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-bottom: clamp(2rem, 5vw, 3rem);
+}
+
+.gallery-intro h1,
+.collection-title,
+.collection-detail-title {
+    max-width: 16ch;
+}
+
+.gallery-empty {
+    padding: 1.5rem;
+    border: 3px dashed var(--line);
+    background: var(--white);
+    font-weight: 700;
+}
+
+.gallery-section {
+    margin-bottom: clamp(2.5rem, 6vw, 4rem);
+}
+
+.gallery-section-header {
+    display: flex;
+    align-items: baseline;
+    gap: 1.25rem;
+    margin-bottom: 1.5rem;
+}
+
+.gallery-section-header .category-name {
+    margin: 0;
+    font-size: clamp(1.6rem, 3vw, 2.5rem);
+}
+
+.section-rule {
+    flex: 1;
+    height: 4px;
+    background: var(--line);
+}
+
+.work-back {
+    display: inline-block;
+    font-weight: 950;
+    text-decoration: underline;
+    text-decoration-thickness: 0.18rem;
+    text-underline-offset: 0.24rem;
+}
+
+/* Cards shared by gallery exhibits, "see more" works, and collections */
+.artwork-card,
+.exhibit-card,
+.collection-card {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    overflow: hidden;
+    border: 3px solid var(--line);
+    background: var(--white);
+    box-shadow: 6px 6px 0 var(--line);
+    color: var(--ink);
+    text-decoration: none;
+    transition: transform 160ms ease, box-shadow 160ms ease;
+}
+
+.artwork-card:hover,
+.exhibit-card:hover,
+.collection-card:hover {
+    box-shadow: 3px 3px 0 var(--line);
+    transform: translate(3px, 3px);
+}
+
+.artwork-thumb-wrap,
+.collection-thumb-wrap {
+    aspect-ratio: 4 / 3;
+    overflow: hidden;
+    border-bottom: 3px solid var(--line);
+    background: var(--paper-deep);
+}
+
+.artwork-thumb-wrap img,
+.collection-thumb-wrap img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.collection-thumb-placeholder {
+    width: 100%;
+    height: 100%;
+    background: repeating-linear-gradient(45deg, var(--paper-deep) 0 12px, var(--paper) 12px 24px);
+}
+
+.artwork-meta,
+.collection-card-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    padding: 0.9rem 1rem;
+}
+
+.artwork-title,
+.collection-card-name {
+    font-weight: 950;
+    font-size: 1.05rem;
+}
+
+.artwork-year {
+    color: var(--ink-soft);
+    font-weight: 800;
+    font-size: 0.9rem;
+}
+
+.collection-card-desc {
+    color: var(--ink-soft);
+    font-size: 0.9rem;
+}
+
+/* Card grids */
+.artwork-grid {
+    display: grid;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    gap: 1.5rem;
+}
+
+.artwork-card.size-large  { grid-column: span 6; }
+.artwork-card.size-medium { grid-column: span 4; }
+.artwork-card.size-wide   { grid-column: span 8; }
+.artwork-card.size-small  { grid-column: span 3; }
+
+.exhibits-grid,
+.collection-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1.5rem;
+}
+
+.js-enhanced .gallery-work-overflow {
+    display: none;
+}
+
+.see-more-btn {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    min-height: 3rem;
+    margin-top: 1.5rem;
+    padding: 0.75rem 1.5rem;
+    border: 3px solid var(--line);
+    background: var(--white);
+    box-shadow: 5px 5px 0 var(--line);
+    font-weight: 950;
+    cursor: pointer;
+    transition: transform 160ms ease, box-shadow 160ms ease;
+}
+
+.js-enhanced .see-more-btn {
+    display: inline-flex;
+}
+
+.see-more-btn:hover {
+    box-shadow: 2px 2px 0 var(--line);
+    transform: translate(3px, 3px);
+}
+
+/* Collection / exhibit detail header */
+.collection-detail-header {
+    display: grid;
+    grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+    gap: clamp(1.5rem, 4vw, 3rem);
+    align-items: center;
+    margin-bottom: clamp(2rem, 5vw, 3rem);
+}
+
+.collection-detail-thumb {
+    overflow: hidden;
+    border: 3px solid var(--line);
+    box-shadow: 6px 6px 0 var(--line);
+}
+
+.collection-detail-thumb img {
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    object-fit: cover;
+}
+
+.collection-detail-title {
+    margin-bottom: 1rem;
+}
+
+.collection-detail-desc :last-child,
+.work-description :last-child,
+.work-placard-notes :last-child {
+    margin-bottom: 0;
+}
+
+.collection-detail-desc iframe,
+.work-description iframe {
+    max-width: 100%;
+}
+
+/* Work detail */
+.work-page .work-back {
+    margin-bottom: 1.5rem;
+}
+
+.work-detail {
+    display: grid;
+    gap: clamp(2rem, 4vw, 3rem);
+}
+
+.work-header {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.work-title {
+    max-width: none;
+}
+
+.work-meta-line {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    color: var(--ink-soft);
+    font-weight: 800;
+}
+
+.work-cat-sep {
+    opacity: 0.5;
+}
+
+.work-category {
+    text-decoration: underline;
+    text-decoration-thickness: 0.14rem;
+    text-underline-offset: 0.2rem;
+}
+
+.work-piece-wrap {
+    border: 4px solid var(--line);
+    background: var(--white);
+    box-shadow: var(--shadow);
+}
+
+.work-piece-fallback {
+    padding: clamp(2rem, 5vw, 4rem);
+    text-align: center;
+}
+
+.work-piece-fallback-title {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-size: 1.2rem;
+}
+
+.work-image,
+.work-video {
+    display: block;
+    width: 100%;
+    max-height: 75vh;
+    object-fit: contain;
+    background: var(--paper-deep);
+}
+
+.work-carousel {
+    display: grid;
+    gap: 0.75rem;
+    padding: clamp(1rem, 3vw, 1.5rem);
+}
+
+.work-carousel-stage {
+    position: relative;
+    min-height: 16rem;
+    border: 3px solid var(--line);
+    background: var(--paper-deep);
+}
+
+.work-carousel-slide {
+    display: none;
+}
+
+.work-carousel-slide.is-active {
+    display: block;
+}
+
+.work-embed {
+    position: relative;
+    aspect-ratio: 16 / 9;
+}
+
+.work-embed iframe,
+.work-embed > * {
+    width: 100%;
+    height: 100%;
+    border: 0;
+}
+
+.work-slide-placeholder {
+    display: grid;
+    min-height: 16rem;
+    place-items: center;
+    color: var(--ink-soft);
+    font-weight: 800;
+}
+
+.work-carousel-title {
+    font-weight: 950;
+    font-size: 1.1rem;
+}
+
+.work-carousel-title:empty,
+.work-carousel-caption:empty {
+    display: none;
+}
+
+.work-carousel-caption {
+    color: var(--ink-soft);
+}
+
+.work-carousel-nav {
+    position: absolute;
+    top: 50%;
+    z-index: 2;
+    display: grid;
+    width: 3rem;
+    height: 3rem;
+    place-items: center;
+    border: 3px solid var(--line);
+    background: var(--white);
+    box-shadow: 4px 4px 0 var(--line);
+    transform: translateY(-50%);
+    font-size: 1.25rem;
+    font-weight: 950;
+    cursor: pointer;
+    transition: transform 160ms ease, box-shadow 160ms ease;
+}
+
+.work-carousel-prev { left: clamp(0.5rem, 2vw, 1.5rem); }
+.work-carousel-next { right: clamp(0.5rem, 2vw, 1.5rem); }
+
+.work-carousel-nav:hover {
+    box-shadow: 2px 2px 0 var(--line);
+    transform: translate(2px, calc(-50% + 2px));
+}
+
+.work-carousel-nav:disabled {
+    cursor: not-allowed;
+    opacity: 0.35;
+}
+
+.work-carousel-dots {
+    display: flex;
+    justify-content: center;
+    gap: 0.5rem;
+}
+
+.work-carousel-dot {
+    width: 0.85rem;
+    height: 0.85rem;
+    padding: 0;
+    border: 2px solid var(--line);
+    background: var(--white);
+    cursor: pointer;
+}
+
+.work-carousel-dot.is-active {
+    background: var(--orange);
+}
+
+.work-info {
+    display: grid;
+    gap: clamp(1.5rem, 3vw, 2.5rem);
+}
+
+.work-placard {
+    padding: clamp(1.25rem, 3vw, 2rem);
+    border: 3px solid var(--line);
+    background: var(--white);
+    box-shadow: 6px 6px 0 var(--line);
+}
+
+.work-placard-fields {
+    display: grid;
+    gap: 0.6rem;
+    margin: 0;
+}
+
+.work-placard-row {
+    display: grid;
+    grid-template-columns: 9rem 1fr;
+    gap: 1rem;
+}
+
+.work-placard-row dt {
+    margin: 0;
+    color: var(--ink-soft);
+    font-size: 0.8rem;
+    font-weight: 950;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+
+.work-placard-row dd {
+    margin: 0;
+    font-weight: 700;
+}
+
+.work-placard-fields + .work-placard-notes {
+    margin-top: 1.25rem;
+    padding-top: 1.25rem;
+    border-top: 3px solid var(--line);
+}
+
+@media (max-width: 860px) {
+    .artwork-card.size-large  { grid-column: span 8; }
+    .artwork-card.size-medium { grid-column: span 6; }
+    .artwork-card.size-wide   { grid-column: span 12; }
+    .artwork-card.size-small  { grid-column: span 6; }
+
+    .exhibits-grid,
+    .collection-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .collection-detail-header {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 520px) {
+    .artwork-grid .artwork-card {
+        grid-column: 1 / -1;
+    }
+
+    .exhibits-grid,
+    .collection-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .work-placard-row {
+        grid-template-columns: 1fr;
+        gap: 0.2rem;
+    }
+
+    .work-carousel-nav {
+        width: 2.5rem;
+        height: 2.5rem;
+        font-size: 1rem;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .artwork-card,
+    .exhibit-card,
+    .collection-card,
+    .see-more-btn,
+    .work-carousel-nav {
+        transition: none;
+        transform: none;
+    }
+}

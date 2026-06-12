@@ -222,12 +222,133 @@ options regardless of session context. -->
   configuration shape is valid." (exit 0).
 
 ### Unresolved Checkpoints Entering Phase 3
-- [ ] `/admin/media/{library,upload,import}` endpoints needed before the
-  Tiptap media picker and `page-og-image` "Choose from Library" button are
-  functional (currently inert with graceful errors).
-- [ ] Decide fate of the `portfolio/` reference folder (deferred per the
-  approved plan, after Phase 3 verification).
+- Superseded by the later "Phase 3 Admin CMS + Phase 4 Navigation/Polish"
+  entry: media picker endpoints are implemented and the old top-level
+  `portfolio/` reference folder has been removed.
 
-## REVIEW REQUIRED — Read before starting next session
-<!-- Agent writes this block. Human must confirm or override each item before new code is written. -->
-- None currently.
+## 2026-06-12 — Phase 3 (public side complete) — Portfolio Gallery
+
+### Stack Confirmed
+- Public-facing Portfolio Gallery is live: `/portfolio`, `/portfolio/categories`,
+  `/portfolio/category/[slug]`, `/portfolio/exhibit/[slug]`, `/portfolio/work/[slug]`,
+  plus blob-serving `/media/[id]` and `/image/[id]`.
+- Admin CMS for portfolio content (artworks/categories/exhibits/media) is **not
+  built yet** — see Unresolved Checkpoints below. Until then, content can only be
+  added directly via SQL.
+
+### Schema and Data Decisions
+- No new tables. `Category`, `Artwork` (trimmed — no `piece_type`/`piece_value`/
+  `category_id`), `ArtworkMediaItem`, `Exhibit`, `MediaFile` map to tables already
+  defined in `schema.sql` (Phase 1).
+
+### Files Created
+- `app/models/{Category,Artwork,ArtworkMediaItem,Exhibit,MediaFile}.php`
+- `app/helpers/upload.php` — `upload_media()`/`upload_media_auto()`/MIME allowlists
+  for image + video blobs.
+- `app/controllers/MediaServeController.php` — streams blobs from `media_files`
+  for `/media/[id]` (any kind) and `/image/[id]` (images, legacy-style URL).
+- `app/controllers/PortfolioController.php` — public `gallery`/`categories`/
+  `category`/`exhibit`/`work` actions.
+- `app/views/portfolio/{gallery,categories,category,exhibit,work}.php` — restyled
+  to AH's "Pareto" tokens (cards/collections/work carousel).
+- `app/views/404.php` — shared 404 view for unmatched `/portfolio/*` and
+  `/media|image/[id]` paths.
+
+### Files Modified
+- `app/helpers/slugify.php` (+18) — added `unique_category_slug()` and
+  `unique_exhibit_slug()` (artwork's `unique_slug()` already existed).
+- `app/router.php` (+23/-2) — wired public routes for `MediaServeController`
+  and `PortfolioController` into `$publicRoutes`.
+- `app/views/partials/header.php` (+1) — added `/portfolio` to the site nav.
+- `public/assets/js/main.js` (+147) — gallery "See More" overflow toggle and
+  the work-detail artwork carousel (prev/next, dot nav, keyboard + touch
+  support, lazy iframe/video loading).
+- `public/assets/styles.css` (+476) — gallery/card/collection/work-carousel
+  component styles, built on existing `--paper`/`--ink`/`--line`/hard-shadow
+  tokens; no new fonts.
+
+### Vendor Dependencies Added
+- None.
+
+### Verification Outcome
+- `/portfolio` and `/portfolio/categories` render without errors against an
+  empty database (no categories/artworks/exhibits yet) — confirms the
+  zero-content state is handled gracefully ahead of admin CRUD existing.
+- `php -l` clean on all new/changed PHP files.
+- Admin-side creation/edit flows and `/portfolio/category/[slug]`,
+  `/portfolio/exhibit/[slug]`, `/portfolio/work/[slug]` with real content were
+  verified later in the "Phase 3 Admin CMS + Phase 4 Navigation/Polish" entry.
+
+### Unresolved Checkpoints — Phase 3 Remaining (Admin CMS)
+- Superseded by the later "Phase 3 Admin CMS + Phase 4 Navigation/Polish"
+  entry: admin controllers, views, routes, media endpoints, JavaScript/CSS,
+  upload limits, and authenticated CRUD/trash verification are complete.
+
+### Looking Ahead — Phase 4 (Navigation + Polish), Unresolved
+- Superseded by the later "Phase 3 Admin CMS + Phase 4 Navigation/Polish"
+  entry: navigation registry/admin, documentation updates, responsive admin
+  CSS pass, and reference folder removal are complete.
+
+## 2026-06-12 — Phase 3 Admin CMS + Phase 4 Navigation/Polish
+
+### Decision Resolution
+- The previously open admin URL checkpoint is resolved: the user approved the
+  flat structure, and the implementation uses `/admin/artworks`,
+  `/admin/categories`, `/admin/exhibits`, `/admin/media`, `/admin/trash`, and
+  `/admin/navigation`.
+
+### Admin CMS Implemented
+- Added protected CRUD controllers/routes/views for works, categories, exhibits,
+  media library, media trash, shared trash, and navigation.
+- Added JSON media picker endpoints:
+  `/admin/media/library`, `/admin/media/upload`, `/admin/media/import`.
+- Added inline create endpoints:
+  `/admin/categories/create-inline`, `/admin/exhibits/create-inline`.
+- Ported the reference admin artwork media builder and taxonomy multiselect,
+  while dropping fields that do not exist in the Augment Humankind schema:
+  `piece_type`, `piece_value`, `category_id`, and
+  `legacyPieceFromMediaItems`.
+- Kept public media serving at `/media/[id]` and `/image/[id]`.
+
+### Navigation Implemented
+- Added `NavigationItem` and `Admin/NavigationController`.
+- Public header navigation now reads from `navigation_items` and falls back to
+  Mission, Services, Field Notes, Contact, and Portfolio if DB-backed navigation
+  is unavailable.
+- System route entries win over managed-page nav entries for durable URLs such
+  as `/services` and `/notes`, preventing duplicate header links while still
+  allowing those pages to provide content.
+
+### Upload Limits
+- Added shared-hosting upload directives to `public/.htaccess`:
+  `upload_max_filesize=64M`, `post_max_size=72M`,
+  `max_execution_time=120`, and `max_input_time=120`.
+- If Hostinger rejects `php_value` directives, remove those lines and configure
+  the same values in Hostinger's PHP settings panel.
+
+### Documentation Updated
+- Updated `README.md`, `docs/api.md`, `docs/dependencies.md`, and
+  `MEMORY.md` to reflect the admin CMS, media endpoints, navigation registry,
+  public portfolio routes, and upload limits.
+
+### Verification
+- `find app public scripts -name '*.php' -exec php -l {} \;` passed.
+- `php scripts/verify-contact-config.php` passed.
+- Local server verification on `127.0.0.1:8080` confirmed public routes return
+  `200` for `/`, `/services`, `/notes`, `/contact`, `/portfolio`, and
+  `/portfolio/categories`.
+- Unauthenticated admin route checks return `302` to `/admin/login`, including
+  `/admin/artworks`, `/admin/categories`, `/admin/exhibits`, `/admin/media`,
+  `/admin/trash`, and `/admin/navigation`.
+- Public header check confirmed Mission, Services, Field Notes, Contact, and
+  Portfolio render once after duplicate system/page nav cleanup.
+- Authenticated admin verification used a temporary local admin identity/session
+  that was deleted after testing.
+- Verified category and exhibit inline creation, image media upload, work
+  creation with real media/category/exhibit content, public category/exhibit/work
+  detail rendering, `/media/[id]` image streaming, reorder endpoints, and
+  soft-delete/restore/purge flows for artwork, category, exhibit, and media.
+- Removed the old top-level `portfolio/` reference folder after verification.
+- Actual video upload could not be exercised because no local video fixture was
+  present and `ffmpeg` is not installed; code/config now allow 64 MB video
+  uploads for MP4, WebM, and QuickTime.

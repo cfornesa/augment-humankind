@@ -23,6 +23,22 @@ their capabilities without overclaiming what a one-person practice can deliver.
 - `/services` — three focused service offers
 - `/notes` — lightweight field notes landing page
 - `/contact` — reCAPTCHA-protected inquiry form
+- `/portfolio` — public work gallery
+- `/portfolio/categories` — public category index
+- `/portfolio/category/[slug]` — public category detail
+- `/portfolio/exhibit/[slug]` — public exhibit detail
+- `/portfolio/work/[slug]` — public work detail
+- `/media/[id]` and `/image/[id]` — public blob-serving routes for stored media
+
+Admin routes are flat and protected by OAuth login:
+
+- `/admin/pages`
+- `/admin/artworks`
+- `/admin/categories`
+- `/admin/exhibits`
+- `/admin/media`
+- `/admin/trash`
+- `/admin/navigation`
 
 ## Deployed File Layout
 
@@ -30,8 +46,7 @@ The production document root should include:
 
 - `index.php`
 - `.htaccess`
-- `assets/styles.css`
-- `assets/friendly-guide.png`
+- `assets/`
 - `vendor/` Composer dependencies, including PHPMailer
 
 The FTP deploy action may also create `.ftp-deploy-sync-state-public.json` in
@@ -76,6 +91,36 @@ The contact form only sends outbound email through SMTP. IMAP settings such as
 `imap.hostinger.com` are for email apps that need to read the mailbox and are
 not used by this site.
 
+## Database Configuration
+
+Portfolio, media library, managed pages, OAuth identities, and navigation are
+stored in MySQL. `schema.sql` is the source of truth for the tables.
+
+Required values:
+
+- `DB_HOST`
+- `DB_NAME`
+- `DB_USER`
+- `DB_PASS`
+
+The public mission and contact routes still have safe static behavior if the
+database is unavailable. Managed pages, `/portfolio/*`, and `/admin/*` require
+the database.
+
+## Media Uploads
+
+The admin media picker accepts images and videos and stores them in
+`media_files` as blobs. `public/.htaccess` sets these shared-hosting upload
+limits:
+
+- `upload_max_filesize=64M`
+- `post_max_size=72M`
+- `max_execution_time=120`
+- `max_input_time=120`
+
+If Hostinger returns a 500 after deployment, remove those `php_value` lines from
+`.htaccess` and set the same limits in Hostinger's PHP settings instead.
+
 ### Production Verification
 
 After deployment and `.env` setup:
@@ -114,10 +159,12 @@ Then open:
 - `http://127.0.0.1:8080/services`
 - `http://127.0.0.1:8080/notes`
 - `http://127.0.0.1:8080/contact`
+- `http://127.0.0.1:8080/portfolio`
+- `http://127.0.0.1:8080/admin`
 
 ## Notes
 
-- No database is required.
+- MySQL is required for admin CMS, navigation registry, and portfolio content.
 - Form submissions are emailed only; they are not stored by the app.
 - Public routes are treated as durable. If they move later, add permanent redirects.
 - Deployments should upload the contents of `public/` into the hosting document root, not the repository root.
