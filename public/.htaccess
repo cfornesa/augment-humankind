@@ -3,9 +3,11 @@
 </FilesMatch>
 
 Options -Indexes
+DirectoryIndex index.php
 
 RewriteEngine On
 RewriteRule ^vendor/ - [F,L]
+RewriteRule ^$ index.php [L]
 RewriteCond %{REQUEST_FILENAME} !-f
 RewriteCond %{REQUEST_FILENAME} !-d
 RewriteRule ^ index.php [L]

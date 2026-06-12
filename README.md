@@ -37,6 +37,12 @@ The production document root should include:
 The FTP deploy action may also create `.ftp-deploy-sync-state-public.json` in
 the document root. That file is deploy metadata, not part of the app.
 
+If an old Hostinger Website Builder site still appears at `/`, confirm the
+domain is assigned to the PHP hosting document root (`public_html`) rather than
+Website Builder, then purge any Hostinger/cache/CDN layer. The app's
+`.htaccess` sets `DirectoryIndex index.php`, so the PHP mission homepage should
+serve from the root once the domain points at `public_html`.
+
 ## Contact Form Configuration
 
 The `/contact` form uses Google reCAPTCHA v3 and Hostinger SMTP. Create a
