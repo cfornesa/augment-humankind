@@ -1,0 +1,11 @@
+<IfModule mod_authz_core.c>
+    Require all denied
+</IfModule>
+<IfModule !mod_authz_core.c>
+    Order deny,allow
+    Deny from all
+</IfModule>
+
+# Defense in depth: return 403 for any direct request
+RewriteEngine On
+RewriteRule .* - [F,L]

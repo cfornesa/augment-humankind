@@ -12,6 +12,7 @@ php_value max_input_time 120
 
 RewriteEngine On
 RewriteRule ^vendor/ - [F,L]
+RewriteRule ^app/ - [F,L]
 RewriteRule ^$ index.php [L]
 RewriteCond %{REQUEST_FILENAME} !-f
 RewriteCond %{REQUEST_FILENAME} !-d

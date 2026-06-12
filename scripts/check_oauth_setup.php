@@ -8,7 +8,7 @@ $_SERVER['REQUEST_METHOD'] = 'GET';
 require dirname(__DIR__) . '/public/index.php';
 ob_end_clean();
 
-require dirname(__DIR__) . '/app/helpers/oauth.php';
+require dirname(__DIR__) . '/public/app/helpers/oauth.php';
 
 $keys = [
     'GITHUB_CLIENT_ID',

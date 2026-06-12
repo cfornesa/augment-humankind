@@ -352,3 +352,45 @@ options regardless of session context. -->
 - Actual video upload could not be exercised because no local video fixture was
   present and `ffmpeg` is not installed; code/config now allow 64 MB video
   uploads for MP4, WebM, and QuickTime.
+
+## 2026-06-12 — Deployment Fix — Move app/ into public/
+
+### Problem
+- The GitHub Actions workflow deployed only `public/` to Hostinger's
+  `public_html/`. `public/index.php` required `../app/` at runtime for
+  portfolio, admin, and managed-page routes. Since `app/` was never uploaded,
+  those routes failed silently or rendered empty/404.
+
+### Structural Change
+- Moved `app/` into `public/app/` in the repository. This makes the deployed
+  tree self-contained without changing the FTP workflow.
+- Updated all `__DIR__ . '/../app/...'` paths in `public/index.php` to
+  `__DIR__ . '/app/...'`.
+- Removed the `dirname(__DIR__) . '/.env'` fallback in `public/index.php`
+  because `app/` is now inside `public/` and there is no sibling `.env` to load.
+- Added `public/app/.htaccess` with Apache 2.4 (`Require all denied`) and
+  Apache 2.2 (`Order deny,allow` / `Deny from all`) compatibility to block all
+  direct web access to `app/` files.
+- Added `RewriteRule ^app/ - [F,L]` to `public/.htaccess` as defense-in-depth.
+- Updated `scripts/check_oauth_setup.php` to load from `public/app/helpers/`
+  instead of `app/helpers/`.
+- Updated `README.md` Deployed File Layout to list `app/`.
+
+### Files That Did NOT Need Changes
+- `app/` internal files — all `__DIR__` and `dirname(__DIR__)` references are
+  self-contained and resolve identically regardless of parent directory.
+- `composer.json` — `vendor-dir` is already `public/vendor`.
+- `scripts/verify-contact-config.php` — it requires `public/index.php`, which is
+  unchanged in location.
+- `docs/api.md` and `docs/dependencies.md` — these reference `app/` paths by
+  description only and remain accurate.
+
+### Verification
+- `php -l` clean on all modified PHP files.
+- `php -S 127.0.0.1:8080 -t public public/index.php` confirmed public routes
+  return 200 for `/`, `/services`, `/notes`, `/contact`, `/portfolio`, and
+  `/portfolio/categories`.
+- Direct request to `http://127.0.0.1:8080/app/bootstrap.php` returned 403.
+
+### Unresolved Checkpoints
+- None.

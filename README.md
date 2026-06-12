@@ -47,7 +47,8 @@ The production document root should include:
 - `index.php`
 - `.htaccess`
 - `assets/`
-- `vendor/` Composer dependencies, including PHPMailer
+- `app/` — MVC layer (controllers, models, views, helpers)
+- `vendor/` — Composer dependencies, including PHPMailer
 
 The FTP deploy action may also create `.ftp-deploy-sync-state-public.json` in
 the document root. That file is deploy metadata, not part of the app.
