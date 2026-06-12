@@ -394,3 +394,44 @@ options regardless of session context. -->
 
 ### Unresolved Checkpoints
 - None.
+
+## 2026-06-12 — Homepage Branding, Navigation, and CMS Integration
+
+### Changes Made
+- Replaced the "AH" text brand mark with the friendly-guide.png robot logo in
+  the header brand across all pages (public/index.php and partials/header.php).
+- Updated .brand-mark CSS to use overflow:hidden and object-fit:contain for
+  the logo image.
+- Changed navigation label from "Mission" to "Home" in the fallback navigation
+  and the NavigationItem SYSTEM_ITEMS definition.
+- Added 'home' to the managed page check in public/index.php so the CMS can
+  manage the homepage content.
+- Created seed_homepage.sql to insert 4 homepage sections into the pages CMS:
+  1. Hero section with robot illustration
+  2. Mission band
+  3. Service preview with 3 cards
+  4. Proof grid with operating method
+- Created scripts/migrate-home-nav-label.sql to update existing database
+  navigation_items rows from 'Mission' to 'Home'.
+
+### Files Modified
+- public/index.php
+- public/app/views/partials/header.php
+- public/app/helpers/navigation.php
+- public/app/models/NavigationItem.php
+- public/assets/styles.css
+
+### Files Created
+- seed_homepage.sql
+- scripts/migrate-home-nav-label.sql
+
+### Post-Deploy Steps
+- Run seed_homepage.sql on the production database to create the CMS page.
+- Run scripts/migrate-home-nav-label.sql to update existing nav labels.
+- The homepage will then be editable via /admin/pages.
+
+### Verification
+- php -l clean on all modified PHP files.
+- Local server test confirmed brand-mark is now an img tag with friendly-guide.png.
+- Navigation fallback updated to 'Home'.
+- Homepage loads with static fallback when CMS page is not present.
