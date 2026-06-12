@@ -430,8 +430,17 @@ options regardless of session context. -->
 - Run scripts/migrate-home-nav-label.sql to update existing nav labels.
 - The homepage will then be editable via /admin/pages.
 
+### Fixes Applied During Implementation
+- The 'home' CMS page caused a duplicate 'Home' link in the navigation because
+  systemSlugs() did not include 'home' (the URL '/' trims to empty). Fixed by
+  explicitly adding 'home' to systemSlugs() and to Page::RESERVED_SLUGS.
+- The local mysql CLI (v9.6) cannot connect to Hostinger's MySQL because it
+  lacks the mysql_native_password plugin. Created scripts/run-sql.php to apply
+  SQL files via PDO instead.
+
 ### Verification
 - php -l clean on all modified PHP files.
 - Local server test confirmed brand-mark is now an img tag with friendly-guide.png.
 - Navigation fallback updated to 'Home'.
 - Homepage loads with static fallback when CMS page is not present.
+- No duplicate 'Home' link after systemSlugs() fix.
