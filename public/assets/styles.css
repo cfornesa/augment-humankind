@@ -61,7 +61,7 @@ img {
 }
 
 :focus-visible {
-    outline: 4px solid var(--orange);
+    outline: 4px solid var(--line);
     outline-offset: 4px;
 }
 
@@ -431,6 +431,118 @@ h3 {
     max-width: 50rem;
 }
 
+.contact-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.25fr) minmax(18rem, 0.75fr);
+    gap: clamp(1.5rem, 4vw, 4rem);
+    align-items: start;
+    padding: clamp(2rem, 5vw, 4rem) 0 clamp(3rem, 7vw, 6rem);
+}
+
+.contact-form-panel {
+    min-width: 0;
+}
+
+.contact-heading {
+    margin-bottom: 1.5rem;
+}
+
+.contact-heading h2 {
+    font-size: clamp(2rem, 4vw, 4rem);
+}
+
+.contact-form {
+    display: grid;
+    gap: 1.1rem;
+    padding: clamp(1.25rem, 3vw, 2rem);
+    border: 3px solid var(--line);
+    background: var(--white);
+    box-shadow: 6px 6px 0 var(--line);
+}
+
+.field-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+}
+
+.field {
+    display: grid;
+    gap: 0.4rem;
+}
+
+.field label {
+    font-weight: 950;
+}
+
+.field label span,
+.privacy-note {
+    color: var(--ink-soft);
+    font-size: 0.9rem;
+    font-weight: 700;
+}
+
+.field input,
+.field select,
+.field textarea {
+    width: 100%;
+    min-height: 3rem;
+    border: 3px solid var(--line);
+    background: var(--paper);
+    color: var(--ink);
+    font: inherit;
+    font-weight: 700;
+    padding: 0.75rem;
+}
+
+.field textarea {
+    min-height: 12rem;
+    resize: vertical;
+}
+
+.field-honeypot {
+    position: absolute;
+    left: -100vw;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+}
+
+.form-status {
+    margin-bottom: 1rem;
+    padding: 1rem;
+    border: 3px solid var(--line);
+    background: var(--white);
+    box-shadow: 5px 5px 0 var(--line);
+}
+
+.form-status h3 {
+    margin-bottom: 0.5rem;
+}
+
+.form-status p,
+.form-status ul {
+    margin: 0;
+}
+
+.form-status ul {
+    padding-left: 1.2rem;
+}
+
+.form-status-success {
+    background: #e9f7f2;
+}
+
+.form-status-error {
+    background: #fff1cd;
+}
+
+.contact-form .button:disabled {
+    cursor: not-allowed;
+    opacity: 0.65;
+    transform: none;
+}
+
 .site-footer {
     display: flex;
     justify-content: space-between;
@@ -455,6 +567,7 @@ h3 {
     .section-heading,
     .proof-grid,
     .service-detail,
+    .contact-layout,
     .site-footer {
         grid-template-columns: 1fr;
     }
@@ -487,6 +600,10 @@ h3 {
     }
 
     .deliverable-list {
+        grid-template-columns: 1fr;
+    }
+
+    .field-grid {
         grid-template-columns: 1fr;
     }
 }
@@ -530,5 +647,14 @@ h3 {
 
     .guide-panel {
         box-shadow: 6px 6px 0 var(--line);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .button,
+    .button:hover,
+    .guide-panel {
+        transition: none;
+        transform: none;
     }
 }

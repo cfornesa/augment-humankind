@@ -6,4 +6,4 @@ or rejection. -->
 
 2026-06-11 DECISION The v1 brand direction is Fieldguide for nontechnical teams, with the friendly robot used as a primary mascot signal.
 
-2026-06-11 DECISION The backend contact form is deferred; v1 contact uses an email link only.
+2026-06-12 DECISION The `/contact` page uses a reCAPTCHA v3-protected PHP form with PHPMailer over Hostinger SMTP and no database or submission storage.

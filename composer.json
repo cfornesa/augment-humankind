@@ -1,0 +1,13 @@
+{
+  "name": "fornesus/augment-humankind",
+  "description": "No-framework PHP site for Augment Humankind.",
+  "type": "project",
+  "license": "MIT",
+  "require": {
+    "phpmailer/phpmailer": "^7.0"
+  },
+  "config": {
+    "vendor-dir": "public/vendor",
+    "optimize-autoloader": true
+  }
+}

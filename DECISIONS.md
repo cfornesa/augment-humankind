@@ -30,7 +30,7 @@ options regardless of session context. -->
 ### Stack Confirmed
 - Built as a no-framework PHP site with clean public routes.
 - Public URL structure confirmed before implementation: `/`, `/services`, `/notes`, `/contact`.
-- `/contact` uses an email link in v1; a real backend intake form is deferred.
+- Superseded on 2026-06-12: `/contact` initially used an email link in v1, then moved to a reCAPTCHA-protected backend intake form.
 
 ### Schema and Data Decisions
 - No database, persistence layer, or schema was added.
@@ -50,11 +50,11 @@ options regardless of session context. -->
 - None.
 
 ### Gaps and Deferred Items
-- Backend contact form remains deferred pending decisions on storage, spam protection, privacy handling, and email delivery.
+- Superseded on 2026-06-12: backend contact form decisions were made, with no submission storage, reCAPTCHA v3 spam protection, brief privacy copy, and Hostinger SMTP delivery.
 - `DESIGN.md` still has no confirmed references or Derived Identity; the v1 visual direction was based on the approved session plan.
 
 ### Unresolved Checkpoints Entering Phase 2
-- [ ] Decide whether to build the backend contact form.
+- [x] Decide whether to build the backend contact form.
 - [ ] Decide whether to populate `DESIGN.md` with confirmed references before future visual expansion.
 
 ## 2026-06-11 — Documentation Maintenance
@@ -77,6 +77,81 @@ options regardless of session context. -->
 - Noted in `README.md` that deployments should upload `public/` contents to the hosting document root.
 - Switched the FTP deploy action to `.ftp-deploy-sync-state-public.json` so it does not reuse the stale sync state from the earlier repository-root upload.
 - Documented the intentionally small production file layout and denied direct web access to hidden dotfiles through `.htaccess`.
+
+## 2026-06-11 — WCAG 2.1 AA Pareto Pass
+
+### Audit Outcome
+- Full accessibility audit of `public/index.php` and `public/assets/styles.css` found the site already compliant on semantic landmarks, heading order, skip link, alt text, link text, `lang` attribute, and `aria-*` usage.
+- An initial automated pass flagged `--ink-soft` text and `--ink`-on-`--yellow` card backgrounds as contrast failures. Manual recalculation via the WCAG relative-luminance formula showed both pass comfortably (~6.2–6.6:1 and ~9.1:1 respectively, against the 4.5:1 requirement). **These were false positives — no palette/brand changes were made.**
+
+### Fixes Applied (public/assets/styles.css)
+- `:focus-visible` outline color changed from `--orange` (~1.9–2.0:1 against `--paper`/`--white`, failing WCAG 1.4.11's 3:1 non-text contrast requirement) to `--line` (~8.8–9.5:1). Sitewide effect on every focusable element.
+- Added a `prefers-reduced-motion: reduce` media query disabling `.button` hover transform/transition and the `.guide-panel` rotation (WCAG 2.3.3).
+
+### Unresolved Checkpoints
+- [ ] Consider adding an automated accessibility check (axe-core or Lighthouse CI) to the deploy workflow as a regression guard — would require the New Vendor Dependency question before adding.
+- [x] When the deferred backend contact form is built, ensure all inputs have `<label for>` associations and validation errors use `aria-live`/`aria-describedby`, per the `testing` skill pre-merge checklist.
+
+## 2026-06-11 — reCAPTCHA Contact Form
+
+### Components Built
+- Replaced the `/contact` mailto CTA with a low-friction inquiry form that posts back to `/contact`.
+- Added CSRF protection, a honeypot field, reCAPTCHA v3 verification, and inline success/error states.
+- Added PHPMailer SMTP delivery through Composer, with dependencies installed into `public/vendor` for Hostinger FTP deployment.
+
+### Schema and Data Decisions
+- No database, persistence layer, or file-based submission storage was added.
+- Contact submissions are emailed only through the configured SMTP provider.
+- `/contact` remains the only public contact URL; no thank-you route was added.
+
+### Vendor Dependencies Added
+- Google reCAPTCHA v3 — protects contact form submissions; documented in `docs/dependencies.md`.
+- PHPMailer `v7.1.1` — sends SMTP email; documented in `docs/dependencies.md`.
+- Hostinger SMTP — transports inquiry emails; documented in `docs/dependencies.md`.
+
+### Environment Variables Required
+- `RECAPTCHA_SITE_KEY`
+- `RECAPTCHA_SECRET_KEY`
+- `RECAPTCHA_MIN_SCORE`
+- `SMTP_HOST`
+- `SMTP_PORT`
+- `SMTP_ENCRYPTION`
+- `SMTP_USERNAME`
+- `SMTP_PASSWORD`
+- `SMTP_FROM_EMAIL`
+- `SMTP_FROM_NAME`
+- `CONTACT_TO_EMAIL`
+
+### Gaps and Deferred Items
+- Resolved on 2026-06-12: reCAPTCHA keys and Hostinger SMTP credentials were configured locally, the config verifier passed, and an end-to-end browser submission returned the inline success panel.
+
+## 2026-06-12 — Hostinger SMTP Configuration Guardrails
+
+### Corrections Applied
+- Clarified that IMAP settings are for reading mail in an email client and are not used by the contact form.
+- Set `env.example` to the Hostinger outbound server default `SMTP_HOST=smtp.hostinger.com`.
+- Added runtime validation that the contact form uses Hostinger SMTP settings: `smtp.hostinger.com`, an email-address SMTP username, a matching verified `SMTP_FROM_EMAIL`, a valid `CONTACT_TO_EMAIL`, and compatible port/encryption pairs.
+
+### SMTP Defaults
+- `SMTP_PORT=465` with `SMTP_ENCRYPTION=smtps`.
+- Alternative supported pair: `SMTP_PORT=587` with `SMTP_ENCRYPTION=starttls`.
+
+### Verification Utility
+- Added `scripts/verify-contact-config.php` to validate required reCAPTCHA and Hostinger SMTP configuration shape without sending email or printing secret values.
+
+## 2026-06-12 — Contact Form End-to-End Verification
+
+### Verification Outcome
+- `php scripts/verify-contact-config.php` passed with the configured local `.env` values.
+- The configured `/contact` form rendered with the Google reCAPTCHA v3 script and enabled submit button.
+- A real browser submission against `http://127.0.0.1:8083/contact` returned the inline success panel: `Message sent.`
+- The test delivery produced an email from `Augment Humankind <contact@augmenthumankind.com>` to the configured receiving inbox.
+- A separate human-submitted test inquiry was also received, confirming the form works for the intended collaboration/hiring inquiry flow.
+
+### Current Status
+- The contact form is no longer deferred.
+- `/contact` remains the durable public URL.
+- Submissions are emailed only; no database or file-based submission storage was added.
 
 ## REVIEW REQUIRED — Read before starting next session
 <!-- Agent writes this block. Human must confirm or override each item before new code is written. -->

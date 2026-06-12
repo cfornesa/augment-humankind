@@ -1,6 +1,15 @@
 <?php
 declare(strict_types=1);
 
+use PHPMailer\PHPMailer\Exception as MailerException;
+use PHPMailer\PHPMailer\PHPMailer;
+
+if (session_status() !== PHP_SESSION_ACTIVE) {
+    session_start();
+}
+
+require_once __DIR__ . '/vendor/autoload.php';
+
 $routes = [
     '/' => 'home',
     '/services' => 'services',
@@ -11,6 +20,11 @@ $routes = [
 $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
 
 if (PHP_SAPI === 'cli-server') {
+    if (str_starts_with($path, '/vendor/') || str_starts_with(basename($path), '.')) {
+        http_response_code(403);
+        exit;
+    }
+
     $assetPath = __DIR__ . $path;
     if (is_file($assetPath)) {
         return false;
@@ -27,6 +41,25 @@ if ($page === null) {
 
 $siteName = 'Augment Humankind';
 $contactEmail = 'contact@augmenthumankind.com';
+$inquiryTypes = [
+    'collaboration' => 'Collaboration',
+    'hiring' => 'Hiring',
+    'project_help' => 'Project help',
+    'strategy_help' => 'Strategy help',
+    'other' => 'Other',
+];
+$contactValues = [
+    'name' => '',
+    'email' => '',
+    'organization' => '',
+    'inquiry_type' => '',
+    'message' => '',
+];
+$contactErrors = [];
+$contactSuccess = false;
+
+loadEnvFile(__DIR__ . '/.env');
+loadEnvFile(dirname(__DIR__) . '/.env');
 
 $pageMeta = [
     'home' => [
@@ -111,6 +144,323 @@ function bodyClass(string $page): string
 {
     return 'page-' . preg_replace('/[^a-z0-9-]/', '', $page);
 }
+
+function loadEnvFile(string $path): void
+{
+    if (!is_readable($path)) {
+        return;
+    }
+
+    $lines = file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+    if ($lines === false) {
+        return;
+    }
+
+    foreach ($lines as $line) {
+        $line = trim($line);
+        if ($line === '' || str_starts_with($line, '#') || !str_contains($line, '=')) {
+            continue;
+        }
+
+        [$name, $value] = explode('=', $line, 2);
+        $name = trim($name);
+        $value = trim($value);
+        if ($name === '') {
+            continue;
+        }
+
+        $existingValue = $_ENV[$name] ?? getenv($name);
+        if (is_string($existingValue) && $existingValue !== '') {
+            continue;
+        }
+
+        if (
+            (str_starts_with($value, '"') && str_ends_with($value, '"')) ||
+            (str_starts_with($value, "'") && str_ends_with($value, "'"))
+        ) {
+            $value = substr($value, 1, -1);
+        }
+
+        $_ENV[$name] = $value;
+        putenv($name . '=' . $value);
+    }
+}
+
+function configValue(string $key, string $default = ''): string
+{
+    $value = $_ENV[$key] ?? getenv($key);
+    return is_string($value) && $value !== '' ? $value : $default;
+}
+
+function csrfToken(): string
+{
+    if (empty($_SESSION['csrf_token']) || !is_string($_SESSION['csrf_token'])) {
+        $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+    }
+
+    return $_SESSION['csrf_token'];
+}
+
+function postedValue(string $key): string
+{
+    $value = $_POST[$key] ?? '';
+    return is_string($value) ? trim($value) : '';
+}
+
+function currentHostname(): string
+{
+    $host = $_SERVER['HTTP_HOST'] ?? '';
+    $host = strtolower((string) $host);
+    return explode(':', $host)[0] ?? '';
+}
+
+function verifyRecaptcha(string $token, array &$errors): bool
+{
+    $secret = configValue('RECAPTCHA_SECRET_KEY');
+    $minimumScore = (float) configValue('RECAPTCHA_MIN_SCORE', '0.5');
+    if ($secret === '') {
+        $errors[] = 'The contact form is missing reCAPTCHA configuration.';
+        return false;
+    }
+
+    if ($token === '') {
+        $errors[] = 'Please retry the form verification before submitting.';
+        return false;
+    }
+
+    $requestBody = http_build_query([
+        'secret' => $secret,
+        'response' => $token,
+        'remoteip' => $_SERVER['REMOTE_ADDR'] ?? '',
+    ]);
+
+    $context = stream_context_create([
+        'http' => [
+            'method' => 'POST',
+            'header' => "Content-Type: application/x-www-form-urlencoded\r\n",
+            'content' => $requestBody,
+            'timeout' => 8,
+        ],
+    ]);
+
+    $rawResponse = @file_get_contents('https://www.google.com/recaptcha/api/siteverify', false, $context);
+    if ($rawResponse === false) {
+        $errors[] = 'The form verification service could not be reached. Please try again.';
+        return false;
+    }
+
+    $response = json_decode($rawResponse, true);
+    if (!is_array($response) || empty($response['success'])) {
+        $errors[] = 'The form verification failed. Please try again.';
+        return false;
+    }
+
+    if (($response['action'] ?? '') !== 'contact_submit') {
+        $errors[] = 'The form verification did not match this contact form.';
+        return false;
+    }
+
+    $hostname = strtolower((string) ($response['hostname'] ?? ''));
+    $currentHost = currentHostname();
+    if ($currentHost !== '' && $hostname !== '' && $hostname !== $currentHost) {
+        $errors[] = 'The form verification did not match this website.';
+        return false;
+    }
+
+    $score = isset($response['score']) ? (float) $response['score'] : 0.0;
+    if ($score < $minimumScore) {
+        $errors[] = 'The form verification score was too low. Please try again.';
+        return false;
+    }
+
+    return true;
+}
+
+function smtpConfiguration(array &$errors): array
+{
+    $requiredConfig = [
+        'SMTP_HOST',
+        'SMTP_PORT',
+        'SMTP_ENCRYPTION',
+        'SMTP_USERNAME',
+        'SMTP_PASSWORD',
+        'SMTP_FROM_EMAIL',
+        'SMTP_FROM_NAME',
+        'CONTACT_TO_EMAIL',
+    ];
+
+    $config = [];
+    foreach ($requiredConfig as $key) {
+        $config[$key] = configValue($key);
+        if ($config[$key] === '') {
+            $errors[] = 'The contact form email configuration is incomplete.';
+            return [];
+        }
+    }
+
+    $host = strtolower($config['SMTP_HOST']);
+    $encryption = strtolower($config['SMTP_ENCRYPTION']);
+    $port = (int) $config['SMTP_PORT'];
+
+    if ($host !== 'smtp.hostinger.com') {
+        $errors[] = 'The contact form email configuration is incomplete.';
+        return [];
+    }
+
+    if (!filter_var($config['SMTP_USERNAME'], FILTER_VALIDATE_EMAIL)) {
+        $errors[] = 'The contact form email configuration is incomplete.';
+        return [];
+    }
+
+    if (!filter_var($config['SMTP_FROM_EMAIL'], FILTER_VALIDATE_EMAIL)) {
+        $errors[] = 'The contact form email configuration is incomplete.';
+        return [];
+    }
+
+    if (strcasecmp($config['SMTP_USERNAME'], $config['SMTP_FROM_EMAIL']) !== 0) {
+        $errors[] = 'The contact form email configuration is incomplete.';
+        return [];
+    }
+
+    if (!filter_var($config['CONTACT_TO_EMAIL'], FILTER_VALIDATE_EMAIL)) {
+        $errors[] = 'The contact form email configuration is incomplete.';
+        return [];
+    }
+
+    if (!in_array($encryption, ['smtps', 'ssl', 'starttls', 'tls'], true)) {
+        $errors[] = 'The contact form email configuration is incomplete.';
+        return [];
+    }
+
+    if (($encryption === 'smtps' || $encryption === 'ssl') && $port !== 465) {
+        $errors[] = 'The contact form email configuration is incomplete.';
+        return [];
+    }
+
+    if (($encryption === 'starttls' || $encryption === 'tls') && $port !== 587) {
+        $errors[] = 'The contact form email configuration is incomplete.';
+        return [];
+    }
+
+    return $config;
+}
+
+function sendContactEmail(array $values, array $inquiryTypes, array &$errors): bool
+{
+    $config = smtpConfiguration($errors);
+    if ($config === []) {
+        return false;
+    }
+
+    $mail = new PHPMailer(true);
+
+    try {
+        $mail->isSMTP();
+        $mail->Host = $config['SMTP_HOST'];
+        $mail->Port = (int) $config['SMTP_PORT'];
+        $mail->SMTPAuth = true;
+        $mail->Username = $config['SMTP_USERNAME'];
+        $mail->Password = $config['SMTP_PASSWORD'];
+
+        $encryption = strtolower($config['SMTP_ENCRYPTION']);
+        if ($encryption === 'tls' || $encryption === 'starttls') {
+            $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
+        } elseif ($encryption === 'ssl' || $encryption === 'smtps') {
+            $mail->SMTPSecure = PHPMailer::ENCRYPTION_SMTPS;
+        }
+
+        $mail->CharSet = 'UTF-8';
+        $mail->setFrom($config['SMTP_FROM_EMAIL'], $config['SMTP_FROM_NAME']);
+        $mail->addAddress($config['CONTACT_TO_EMAIL']);
+        $mail->addReplyTo($values['email'], $values['name']);
+        $mail->Subject = 'Augment Humankind inquiry: ' . ($inquiryTypes[$values['inquiry_type']] ?? 'Other');
+        $mail->Body = implode("\n", [
+            'New Augment Humankind inquiry',
+            '',
+            'Received: ' . gmdate('Y-m-d H:i:s') . ' UTC',
+            'Name: ' . $values['name'],
+            'Email: ' . $values['email'],
+            'Organization: ' . ($values['organization'] !== '' ? $values['organization'] : 'Not provided'),
+            'Inquiry type: ' . ($inquiryTypes[$values['inquiry_type']] ?? 'Other'),
+            '',
+            'Message:',
+            $values['message'],
+        ]);
+
+        $mail->send();
+    } catch (MailerException) {
+        $errors[] = 'The message could not be sent right now. Please try again later.';
+        return false;
+    }
+
+    return true;
+}
+
+function validateContactForm(array &$values, array $inquiryTypes, array &$errors): void
+{
+    $values = [
+        'name' => postedValue('name'),
+        'email' => postedValue('email'),
+        'organization' => postedValue('organization'),
+        'inquiry_type' => postedValue('inquiry_type'),
+        'message' => postedValue('message'),
+    ];
+
+    if (postedValue('website') !== '') {
+        $errors[] = 'The form could not be submitted.';
+    }
+
+    if (!hash_equals($_SESSION['csrf_token'] ?? '', postedValue('csrf_token'))) {
+        $errors[] = 'The form session expired. Please try again.';
+    }
+
+    if (strlen($values['name']) < 2 || strlen($values['name']) > 120) {
+        $errors[] = 'Enter your name using 2 to 120 characters.';
+    }
+
+    if (!filter_var($values['email'], FILTER_VALIDATE_EMAIL) || strlen($values['email']) > 254) {
+        $errors[] = 'Enter a valid email address.';
+    }
+
+    if (strlen($values['organization']) > 160) {
+        $errors[] = 'Keep the organization field under 160 characters.';
+    }
+
+    if (!array_key_exists($values['inquiry_type'], $inquiryTypes)) {
+        $errors[] = 'Choose an inquiry type.';
+    }
+
+    if (strlen($values['message']) < 20 || strlen($values['message']) > 3000) {
+        $errors[] = 'Enter a message between 20 and 3000 characters.';
+    }
+}
+
+if ($page === 'contact') {
+    csrfToken();
+
+    if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
+        validateContactForm($contactValues, $inquiryTypes, $contactErrors);
+
+        if ($contactErrors === []) {
+            verifyRecaptcha(postedValue('g-recaptcha-response'), $contactErrors);
+        }
+
+        if ($contactErrors === []) {
+            $contactSuccess = sendContactEmail($contactValues, $inquiryTypes, $contactErrors);
+        }
+
+        if ($contactSuccess) {
+            $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+            $contactValues = [
+                'name' => '',
+                'email' => '',
+                'organization' => '',
+                'inquiry_type' => '',
+                'message' => '',
+            ];
+        }
+    }
+}
 ?>
 <!doctype html>
 <html lang="en">
@@ -120,6 +470,9 @@ function bodyClass(string $page): string
     <title><?= e($pageMeta[$page]['title']) ?></title>
     <meta name="description" content="<?= e($pageMeta[$page]['description']) ?>">
     <link rel="stylesheet" href="/assets/styles.css">
+    <?php if ($page === 'contact' && configValue('RECAPTCHA_SITE_KEY') !== ''): ?>
+        <script src="https://www.google.com/recaptcha/api.js?render=<?= e(configValue('RECAPTCHA_SITE_KEY')) ?>" defer></script>
+    <?php endif; ?>
 </head>
 <body class="<?= e(bodyClass($page)) ?>">
     <a class="skip-link" href="#main">Skip to content</a>
@@ -243,18 +596,96 @@ function bodyClass(string $page): string
             <section class="page-hero contact-hero" aria-labelledby="contact-title">
                 <p class="eyebrow">Contact</p>
                 <h1 id="contact-title">Start with the team, not the tool.</h1>
-                <p>A real intake form is a later feature. For now, send a focused email with the problem you are trying to solve and where your team feels stuck.</p>
-                <a class="button button-primary" href="mailto:<?= e($contactEmail) ?>?subject=Augment%20Humankind%20Inquiry">Email <?= e($contactEmail) ?></a>
+                <p>Send a focused note about the collaboration, project, or AI strategy question you want to explore.</p>
             </section>
 
-            <section class="contact-brief" aria-labelledby="brief-title">
-                <h2 id="brief-title">Helpful context to include</h2>
-                <ul class="method-list">
-                    <li>What your team does and who would use the workflow.</li>
-                    <li>The AI idea, task, or decision you want help clarifying.</li>
-                    <li>What would count as a useful first version.</li>
-                    <li>Any data, privacy, or approval constraints that matter.</li>
-                </ul>
+            <section class="contact-layout" aria-labelledby="contact-form-title">
+                <div class="contact-form-panel">
+                    <div class="section-heading contact-heading">
+                        <p class="eyebrow">Inquiry</p>
+                        <h2 id="contact-form-title">Tell me what you are trying to make possible.</h2>
+                    </div>
+
+                    <?php if ($contactSuccess): ?>
+                        <div id="form-success" class="form-status form-status-success" role="status" aria-live="polite">
+                            <h3>Message sent.</h3>
+                            <p>Thanks for reaching out. I will review your note and respond if the inquiry is a fit.</p>
+                        </div>
+                    <?php endif; ?>
+
+                    <?php if ($contactErrors !== []): ?>
+                        <div id="form-errors" class="form-status form-status-error" role="alert" aria-live="assertive">
+                            <h3>Check the form.</h3>
+                            <ul>
+                                <?php foreach (array_unique($contactErrors) as $error): ?>
+                                    <li><?= e($error) ?></li>
+                                <?php endforeach; ?>
+                            </ul>
+                        </div>
+                    <?php endif; ?>
+
+                    <?php if (configValue('RECAPTCHA_SITE_KEY') === ''): ?>
+                        <div id="form-config" class="form-status form-status-error" role="alert" aria-live="assertive">
+                            <h3>Configuration needed.</h3>
+                            <p>The contact form needs a reCAPTCHA site key before it can accept submissions.</p>
+                        </div>
+                    <?php endif; ?>
+
+                    <form class="contact-form" method="post" action="/contact" novalidate data-recaptcha-site-key="<?= e(configValue('RECAPTCHA_SITE_KEY')) ?>"<?= $contactErrors !== [] ? ' aria-describedby="form-errors privacy-note"' : ' aria-describedby="privacy-note"' ?>>
+                        <input type="hidden" name="csrf_token" value="<?= e(csrfToken()) ?>">
+                        <input type="hidden" name="g-recaptcha-response" value="">
+                        <div class="field field-honeypot" aria-hidden="true">
+                            <label for="website">Website</label>
+                            <input id="website" name="website" type="text" tabindex="-1" autocomplete="off">
+                        </div>
+
+                        <div class="field-grid">
+                            <div class="field">
+                                <label for="name">Name</label>
+                                <input id="name" name="name" type="text" autocomplete="name" required maxlength="120" value="<?= e($contactValues['name']) ?>">
+                            </div>
+                            <div class="field">
+                                <label for="email">Email</label>
+                                <input id="email" name="email" type="email" autocomplete="email" required maxlength="254" value="<?= e($contactValues['email']) ?>">
+                            </div>
+                        </div>
+
+                        <div class="field-grid">
+                            <div class="field">
+                                <label for="organization">Organization <span>optional</span></label>
+                                <input id="organization" name="organization" type="text" autocomplete="organization" maxlength="160" value="<?= e($contactValues['organization']) ?>">
+                            </div>
+                            <div class="field">
+                                <label for="inquiry_type">Inquiry type</label>
+                                <select id="inquiry_type" name="inquiry_type" required>
+                                    <option value="">Choose one</option>
+                                    <?php foreach ($inquiryTypes as $value => $label): ?>
+                                        <option value="<?= e($value) ?>"<?= $contactValues['inquiry_type'] === $value ? ' selected' : '' ?>><?= e($label) ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="field">
+                            <label for="message">Message</label>
+                            <textarea id="message" name="message" rows="8" required minlength="20" maxlength="3000"><?= e($contactValues['message']) ?></textarea>
+                        </div>
+
+                        <p id="privacy-note" class="privacy-note">This form is protected by reCAPTCHA and the Google <a href="https://policies.google.com/privacy">Privacy Policy</a> and <a href="https://policies.google.com/terms">Terms of Service</a> apply.</p>
+
+                        <button class="button button-primary" type="submit"<?= configValue('RECAPTCHA_SITE_KEY') === '' ? ' disabled' : '' ?>>Send inquiry</button>
+                    </form>
+                </div>
+
+                <aside class="contact-brief" aria-labelledby="brief-title">
+                    <h2 id="brief-title">Helpful context</h2>
+                    <ul class="method-list">
+                        <li>What your team does and who would use the workflow.</li>
+                        <li>The AI idea, task, or decision you want help clarifying.</li>
+                        <li>What would count as a useful first version.</li>
+                        <li>Any data, privacy, or approval constraints that matter.</li>
+                    </ul>
+                </aside>
             </section>
         <?php else: ?>
             <section class="page-hero" aria-labelledby="missing-title">
@@ -274,5 +705,31 @@ function bodyClass(string $page): string
             <a href="/contact">Contact</a>
         </nav>
     </footer>
+    <?php if ($page === 'contact' && configValue('RECAPTCHA_SITE_KEY') !== ''): ?>
+        <script>
+            window.addEventListener('DOMContentLoaded', function () {
+                var form = document.querySelector('.contact-form');
+                if (!form || !window.grecaptcha) {
+                    return;
+                }
+
+                form.addEventListener('submit', function (event) {
+                    var tokenInput = form.querySelector('input[name="g-recaptcha-response"]');
+                    var siteKey = form.getAttribute('data-recaptcha-site-key');
+                    if (!tokenInput || !siteKey || tokenInput.value) {
+                        return;
+                    }
+
+                    event.preventDefault();
+                    window.grecaptcha.ready(function () {
+                        window.grecaptcha.execute(siteKey, { action: 'contact_submit' }).then(function (token) {
+                            tokenInput.value = token;
+                            form.submit();
+                        });
+                    });
+                });
+            });
+        </script>
+    <?php endif; ?>
 </body>
 </html>
