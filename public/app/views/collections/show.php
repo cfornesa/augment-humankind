@@ -16,7 +16,7 @@ require dirname(__DIR__) . '/partials/header.php';
 </section>
 
 <section class="piece-stage" aria-label="Collection">
-    <a href="/immersive/collections/<?= e($collection['slug']) ?>" target="_blank" rel="noopener" class="piece-immersive-link">View in Immersive / VR Mode</a>
+    <a href="/immersive/collections/<?= e($collection['slug']) ?>?returnTo=<?= rawurlencode($_SERVER['REQUEST_URI'] ?? '') ?>" target="_blank" rel="noopener" class="piece-immersive-link">View in Immersive / VR Mode</a>
 </section>
 
 <section class="managed-section">

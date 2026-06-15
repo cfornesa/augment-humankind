@@ -38,7 +38,7 @@ loadEnvFile(dirname(__DIR__) . '/.env');
 
 if ($path === '/portfolio' || str_starts_with($path, '/portfolio/')
     || $path === '/pieces' || str_starts_with($path, '/pieces/')
-    || $path === '/exhibits' || str_starts_with($path, '/exhibits/')
+    || $path === '/collections' || str_starts_with($path, '/collections/')
     || str_starts_with($path, '/embed/')
     || str_starts_with($path, '/immersive/')
     || str_starts_with($path, '/api/')

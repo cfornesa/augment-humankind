@@ -20,7 +20,7 @@ $hasCode = $version && (!empty($version['html_code']) || !empty($version['css_co
         <div class="piece-canvas-container">
             <?= piece_render_iframe($piece, $version, 560) ?>
         </div>
-        <a href="/immersive/pieces/<?= (int) $piece['id'] ?>" target="_blank" rel="noopener" class="piece-immersive-link">View in Immersive / VR Mode</a>
+        <a href="/immersive/pieces/<?= (int) $piece['id'] ?>?returnTo=<?= rawurlencode($_SERVER['REQUEST_URI'] ?? '') ?>" target="_blank" rel="noopener" class="piece-immersive-link">View in Immersive / VR Mode</a>
     <?php else: ?>
         <div class="piece-placeholder">
             <p>This piece has no rendered version yet.</p>

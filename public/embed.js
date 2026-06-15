@@ -159,7 +159,7 @@
       const { engine, generatedCode, htmlCode, cssCode, title, id } = data;
       const version = this.getAttribute("version");
       const defaultContainerId = engine === "three" ? "container" : "canvas-container";
-      const immersiveHref = `/immersive/pieces/${id}${version ? `?version=${version}` : ""}`;
+      const immersiveHref = `/immersive/pieces/${id}${version ? `?version=${version}&returnTo=${encodeURIComponent(window.location.pathname + window.location.search)}` : `?returnTo=${encodeURIComponent(window.location.pathname + window.location.search)}`}`;
 
       this.shadowRoot.innerHTML = `
         <style>
@@ -511,7 +511,7 @@
 
       const title = this.getAttribute("title") || iframe.getAttribute("title") || "Immersive image";
       const safeTitle = escapeHtml(title);
-      const immersiveHref = `/immersive/images/${ref}`;
+      const immersiveHref = `/immersive/images/${ref}?returnTo=${encodeURIComponent(window.location.pathname + window.location.search)}`;
 
       this.shadowRoot.innerHTML = `
         <style>
@@ -617,7 +617,7 @@
 
       const title = this.getAttribute("title") || `Exhibit: ${slug}`;
       const safeTitle = escapeHtml(title);
-      const immersiveHref = `/immersive/collections/${slug}`;
+      const immersiveHref = `/immersive/collections/${slug}?returnTo=${encodeURIComponent(window.location.pathname + window.location.search)}`;
 
       this.shadowRoot.innerHTML = `
         <style>

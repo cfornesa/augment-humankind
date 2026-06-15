@@ -1402,3 +1402,17 @@ Skybox/environment filtering was not fully working because the skyboxes, ground 
 - **Empty Bounding Box Fallback**: If the bounding box is empty after filtering (meaning only background/decorations exist in the scene), we return early and keep the default camera position set by the sketch instead of zooming out.
 - **Consistency Verification**: Applied these changes identically to all 5 Three.js runtime locations. Verified that the consistency test suite `tests/three-runtime-consistency.php` and the platform deletion readiness HTTP suite pass cleanly.
 
+## 2026-06-15 — Three.js Camera Fit Zoom, VR Referrer Back-Routing, & /collections Route Fix
+
+### Context
+A Three.js zoom-out issue on initial load was overriding custom camera views defined by sketches and leaving default scenes zoomed too far out. Concurrently, the "Back" button inside immersive VR galleries routed to static index pages instead of returning visitors to their referring blog posts, and the `/collections` index route was bypassed in `public/index.php`, causing 404 errors.
+
+### Decisions & Actions
+- **Custom Camera Detection**: Hardened `autoFit()` and `autoFitCamera()` across all 5 Three.js runtime locations (`piece-render.php`, `form.php`, `generate-preview.php`, `embed.js`, `immersive-gallery.js`) to check `state.camera.position.lengthSq() > 0.01`. If a sketch explicitly positions the camera, the helper preserves the custom position/rotation, only updating OrbitControls' rotation target to the artwork center.
+- **Closer Default Auto-Fit**: Scaled down default auto-fit distances by a factor of 3.5 (multiplying by `0.63` in default rendering paths and dividing by `3.5` in the immersive view's `computeThreeAutoFitView()`) to display sketches with a closer, well-framed 3x-4x zoom.
+- **VR Back Button Referrer Routing**: Appended the `returnTo` parameter to all immersive/VR button hrefs inside upgraded embed components (`embed.js`) and public views (`pieces/show.php`, `collections/show.php`, `portfolio/gallery.php`), passing the url-encoded host path. The immersive back buttons correctly read this parameter to return the visitor directly to their originating post.
+- **Boot Routing Gate Restoration**: Updated `public/index.php` line 41 to bootstrap the application router for `/collections` and `/collections/` paths, resolving the 404/fallback issue.
+- **Batched Progressive See-More Grid**: Replaced the global "See More" script with a batched progressive grid disclosure in `public/assets/js/main.js` that reveals 3 hidden elements (one row) at a time across all four gallery sections (Exhibits, Collections, Platform Collections, Pieces) to prevent browser payload bottlenecks.
+- **Collection Thumbnail Fallback**: Added a `previewImage` static method to the `Collection` model to automatically resolve a collection's thumbnail from its first exhibit's preview image, using it as the gallery thumbnail in `portfolio/gallery.php`.
+
+

@@ -75,3 +75,8 @@ or rejection. -->
 2026-06-15 DECISION Fixed collection/image embed rendering in blog posts by changing template.appendChild to template.content.appendChild inside public/embed.js web components. Corrected Tiptap insert picker dialog and script in layout.php and tiptap-editor.js to reference Collections instead of Exhibits, using the correct grid selector and load state variables.
 
 2026-06-15 DECISION Hardened Three.js camera auto-fit bounding box calculations to ignore skyboxes (BackSide materials), particles (Points), large objects (dimensions >= 30), and large planes (dimensions >= 15). If no valid artwork bounding box is found, the camera defaults to the sketch's pre-configured position instead of zooming to infinity.
+
+2026-06-15 DECISION Hardened Three.js camera auto-fitting to preserve custom camera positions (lengthSq > 0.01) and zoomed in default auto-fit views 3.5x.
+2026-06-15 DECISION Appended returnTo query parameters to all VR gallery buttons in embed.js and public views, enabling the Back button to route to referring blog posts.
+2026-06-15 DECISION Enabled route dispatching for /collections paths in public/index.php gate, restoring platform collection detail rendering.
+2026-06-15 DECISION Implemented batched 3-item progressive see-more gallery disclosure on portfolio.php.

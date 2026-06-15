@@ -197,4 +197,19 @@ class Collection
         $stmt = db()->prepare('UPDATE collections SET deleted_at = NULL WHERE id = ?');
         $stmt->execute([$id]);
     }
+
+    public static function previewImage(array $collection): ?string
+    {
+        if (!empty($collection['thumbnail_value'])) {
+            return (string) $collection['thumbnail_value'];
+        }
+        $exhibits = self::exhibits((int) $collection['id']);
+        foreach ($exhibits as $exhibit) {
+            $img = Exhibit::previewImage($exhibit);
+            if ($img) {
+                return $img;
+            }
+        }
+        return null;
+    }
 }

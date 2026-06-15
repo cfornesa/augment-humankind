@@ -56,17 +56,27 @@ document.querySelectorAll('tbody[data-reorder-url]').forEach(tbody => {
     });
 });
 
-// Portfolio gallery: "See More" to reveal overflow works
+// Portfolio gallery: "See More" to reveal overflow works progressively (3 at a time)
 (function () {
-    const btn = document.getElementById('works-see-more');
-    if (!btn) return;
-    btn.addEventListener('click', () => {
-        document.querySelectorAll('.gallery-work-overflow').forEach(el => {
-            el.classList.remove('gallery-work-overflow');
+    function setupSeeMore(btnId, selector) {
+        const btn = document.getElementById(btnId);
+        if (!btn) return;
+        btn.addEventListener('click', () => {
+            const hidden = [...document.querySelectorAll(selector)];
+            const toShow = hidden.slice(0, 3);
+            toShow.forEach(el => {
+                el.classList.remove(selector.replace('.', ''));
+            });
+            if (hidden.length <= 3) {
+                btn.setAttribute('aria-expanded', 'true');
+                btn.remove();
+            }
         });
-        btn.setAttribute('aria-expanded', 'true');
-        btn.remove();
-    });
+    }
+    setupSeeMore('collections-see-more', '.collections-overflow');
+    setupSeeMore('works-see-more', '.gallery-work-overflow');
+    setupSeeMore('platform-collections-see-more', '.platform-collections-overflow');
+    setupSeeMore('pieces-see-more', '.pieces-overflow');
 })();
 
 // Portfolio work page: lazy-loaded artwork carousel

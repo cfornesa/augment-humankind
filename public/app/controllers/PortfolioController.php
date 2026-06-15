@@ -8,6 +8,12 @@ class PortfolioController
     {
         $collections = Collection::allWithAtLeastOneExhibit();
         $exhibits = Exhibit::allSorted();
+        $platformCollections = PlatformCollection::all();
+        foreach ($platformCollections as &$pCol) {
+            $pCol['thumbnail_url'] = PlatformCollection::firstThumbnail((int) $pCol['id']);
+        }
+        unset($pCol);
+        $pieces = PlatformArtPiece::all();
         require dirname(__DIR__) . '/views/portfolio/gallery.php';
     }
 

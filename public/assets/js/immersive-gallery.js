@@ -403,7 +403,7 @@ export function computeThreeAutoFitView(center, size, aspect, fovDegrees, compac
   const fitHeight = Math.max(size.y, size.z * 1.08, 1);
   const distanceForHeight = (fitHeight / 2) / Math.tan(verticalFov / 2);
   const distanceForWidth = (fitWidth / 2) / Math.tan(horizontalFov / 2);
-  const cameraZ = Math.max(distanceForHeight, distanceForWidth) * (compactViewport ? 1.46 : 1.34);
+  const cameraZ = (Math.max(distanceForHeight, distanceForWidth) * (compactViewport ? 1.46 : 1.34)) / 3.5;
   const targetY = center.y + (fitHeight * (compactViewport ? 0.08 : 0.12));
   const cameraY = targetY + (fitHeight * (compactViewport ? 0.02 : 0.04));
   return { camera: { x: center.x, y: cameraY, z: center.z + cameraZ }, target: { x: center.x, y: targetY, z: center.z } };
@@ -801,6 +801,14 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
     box.getCenter(center);
     const size = new THREE.Vector3();
     box.getSize(size);
+    if (state.camera.position.lengthSq() > 0.01) {
+      if (controls) {
+        controls.target.copy(center);
+        controls.update();
+        saveOrbitState();
+      }
+      return;
+    }
     const nextView = computeThreeAutoFitView(
       center, size, state.camera.aspect || 1, state.camera.fov || 45, isCompactImmersiveViewport(viewportWidth)
     );

@@ -308,9 +308,13 @@ async function bootThree() {
       if (box.isEmpty()) return;
       const center = new mod.Vector3(); box.getCenter(center);
       const size = new mod.Vector3();   box.getSize(size);
+      if (state.camera.position.lengthSq() > 0.01) {
+        if (controls) { controls.target.copy(center); controls.update(); }
+        return;
+      }
       const maxDim = Math.max(size.x, size.y, size.z) || 1;
       const fov = state.camera.fov * (Math.PI / 180);
-      const dist = Math.abs(maxDim / 2 / Math.tan(fov / 2)) * 2.2;
+      const dist = Math.abs(maxDim / 2 / Math.tan(fov / 2)) * 0.63;
       state.camera.position.set(center.x + dist, center.y + dist * 0.4, center.z + dist);
       state.camera.lookAt(center);
       state.camera.updateMatrixWorld(true);
