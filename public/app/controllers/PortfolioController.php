@@ -6,8 +6,8 @@ class PortfolioController
 {
     public static function gallery(): void
     {
-        $exhibits = Exhibit::allWithAtLeastOneArtwork();
-        $artworks = Artwork::allSorted();
+        $collections = Collection::allWithAtLeastOneExhibit();
+        $exhibits = Exhibit::allSorted();
         require dirname(__DIR__) . '/views/portfolio/gallery.php';
     }
 
@@ -25,8 +25,20 @@ class PortfolioController
             return;
         }
 
-        $artworks = Category::artworks((int) $category['id']);
+        $exhibits = Category::exhibits((int) $category['id']);
         require dirname(__DIR__) . '/views/portfolio/category.php';
+    }
+
+    public static function collection(string $slug): void
+    {
+        $collection = Collection::findBySlug($slug);
+        if (!$collection) {
+            require dirname(__DIR__) . '/views/404.php';
+            return;
+        }
+
+        $exhibits = Collection::exhibits((int) $collection['id']);
+        require dirname(__DIR__) . '/views/portfolio/collection.php';
     }
 
     public static function exhibit(string $slug): void
@@ -37,19 +49,7 @@ class PortfolioController
             return;
         }
 
-        $artworks = Exhibit::artworks((int) $exhibit['id']);
+        $mediaItems = $exhibit['media_items'] ?? Exhibit::resolvedMediaItems($exhibit);
         require dirname(__DIR__) . '/views/portfolio/exhibit.php';
-    }
-
-    public static function work(string $slug): void
-    {
-        $artwork = Artwork::findBySlug($slug);
-        if (!$artwork) {
-            require dirname(__DIR__) . '/views/404.php';
-            return;
-        }
-
-        $mediaItems = $artwork['media_items'] ?? Artwork::resolvedMediaItems($artwork);
-        require dirname(__DIR__) . '/views/portfolio/work.php';
     }
 }

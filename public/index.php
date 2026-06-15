@@ -37,8 +37,22 @@ loadEnvFile(__DIR__ . '/.env');
 loadEnvFile(dirname(__DIR__) . '/.env');
 
 if ($path === '/portfolio' || str_starts_with($path, '/portfolio/')
+    || $path === '/pieces' || str_starts_with($path, '/pieces/')
+    || $path === '/exhibits' || str_starts_with($path, '/exhibits/')
+    || str_starts_with($path, '/embed/')
+    || str_starts_with($path, '/immersive/')
+    || str_starts_with($path, '/api/')
+    || $path === '/blog' || str_starts_with($path, '/blog/')
+    || $path === '/search'
+    || $path === '/feeds'
+    || str_starts_with($path, '/posts/')
+    || str_starts_with($path, '/categories/')
+    || str_starts_with($path, '/p/')
+    || str_starts_with($path, '/feeds/')
+    || in_array($path, ['/feed.xml', '/atom', '/feed.json', '/jsonfeed', '/export.json', '/export/json'], true)
     || $path === '/admin' || str_starts_with($path, '/admin/')
-    || preg_match('#^/(media|image)/[0-9]+$#', $path)) {
+    || preg_match('#^/(media|image)/[0-9]+$#', $path)
+    || preg_match('#^/[a-z0-9-]+/feed\.(xml|json)$#', $path)) {
     require __DIR__ . '/app/bootstrap.php';
     require __DIR__ . '/app/router.php';
 }
@@ -733,6 +747,7 @@ if ($page === 'contact') {
         <nav aria-label="Footer navigation">
             <a href="/services">Services</a>
             <a href="/notes">Field Notes</a>
+            <a href="/blog">Blog</a>
             <a href="/contact">Contact</a>
         </nav>
     </footer>

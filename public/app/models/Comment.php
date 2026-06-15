@@ -1,0 +1,84 @@
+<?php
+
+declare(strict_types=1);
+
+class Comment
+{
+    public static function recent(int $limit = 100): array
+    {
+        if (!self::tableExists()) {
+            return [];
+        }
+
+        $stmt = db()->prepare(
+            'SELECT c.*, p.title AS post_title
+             FROM comments c
+             LEFT JOIN posts p ON p.id = c.post_id
+             WHERE c.deleted_at IS NULL
+             ORDER BY c.created_at DESC, c.id DESC
+             LIMIT ?'
+        );
+        $stmt->bindValue(1, $limit, PDO::PARAM_INT);
+        $stmt->execute();
+        return $stmt->fetchAll();
+    }
+
+    public static function trashed(): array
+    {
+        if (!self::tableExists()) {
+            return [];
+        }
+
+        return db()->query(
+            'SELECT c.*, p.title AS post_title
+             FROM comments c
+             LEFT JOIN posts p ON p.id = c.post_id
+             WHERE c.deleted_at IS NOT NULL
+             ORDER BY c.deleted_at DESC'
+        )->fetchAll();
+    }
+
+    public static function trashedCount(): int
+    {
+        if (!self::tableExists()) {
+            return 0;
+        }
+
+        return (int) db()->query('SELECT COUNT(*) FROM comments WHERE deleted_at IS NOT NULL')->fetchColumn();
+    }
+
+    public static function softDelete(int $id): void
+    {
+        $stmt = db()->prepare('UPDATE comments SET deleted_at = NOW() WHERE id = ?');
+        $stmt->execute([$id]);
+    }
+
+    public static function restore(int $id): void
+    {
+        $stmt = db()->prepare('UPDATE comments SET deleted_at = NULL WHERE id = ?');
+        $stmt->execute([$id]);
+    }
+
+    public static function hardDelete(int $id): void
+    {
+        $stmt = db()->prepare('DELETE FROM comments WHERE id = ?');
+        $stmt->execute([$id]);
+    }
+
+    private static function tableExists(): bool
+    {
+        static $exists = null;
+        if ($exists !== null) {
+            return $exists;
+        }
+        try {
+            $stmt = db()->prepare(
+                'SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? LIMIT 1'
+            );
+            $stmt->execute(['comments']);
+            return $exists = (bool) $stmt->fetchColumn();
+        } catch (Throwable) {
+            return $exists = false;
+        }
+    }
+}

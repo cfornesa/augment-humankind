@@ -1,12 +1,14 @@
 <?php
 $pageTitle = 'Recycle Bin — Augment Humankind Admin';
-$tab       = $tab ?? 'artworks';
+$tab       = $tab ?? 'exhibits';
 
 $tabs = [
-    'artworks'   => ['label' => 'Works',      'items' => $artworks],
-    'categories' => ['label' => 'Categories', 'items' => $categories],
     'exhibits'   => ['label' => 'Exhibits',   'items' => $exhibits],
+    'categories' => ['label' => 'Categories', 'items' => $categories],
+    'collections'=> ['label' => 'Collections', 'items' => $collections],
     'media'      => ['label' => 'Media',       'items' => $mediaFiles],
+    'posts'      => ['label' => 'Posts',       'items' => $posts],
+    'comments'   => ['label' => 'Comments',    'items' => $comments],
 ];
 
 ob_start();
@@ -27,14 +29,16 @@ ob_start();
     </nav>
 
     <?php
-    $current = $tabs[$tab] ?? $tabs['artworks'];
+    $current = $tabs[$tab] ?? $tabs['exhibits'];
     $items   = $current['items'];
     $type    = match ($tab) {
-        'artworks'   => 'artwork',
-        'categories' => 'category',
         'exhibits'   => 'exhibit',
+        'categories' => 'category',
+        'collections'=> 'collection',
         'media'      => 'media',
-        default      => 'artwork',
+        'posts'      => 'post',
+        'comments'   => 'comment',
+        default      => 'exhibit',
     };
     ?>
 
@@ -44,7 +48,12 @@ ob_start();
         <table class="admin-table">
             <thead>
                 <tr>
-                    <th><?= $tab === 'media' ? 'File' : ($tab === 'artworks' ? 'Title' : 'Name') ?></th>
+                    <th><?= match ($tab) {
+                        'media' => 'File',
+                        'exhibits', 'posts' => 'Title',
+                        'comments' => 'Comment',
+                        default => 'Name',
+                    } ?></th>
                     <th>Deleted</th>
                     <th></th>
                 </tr>
@@ -54,12 +63,25 @@ ob_start();
                     <tr>
                         <td>
                             <?php if ($tab === 'media'): ?>
-                                <span class="trash-media-path">ID <?= (int) $item['id'] ?></span>
-                                <span class="admin-hint"> <?= htmlspecialchars($item['mime_type'] ?? '') ?></span>
-                            <?php elseif ($tab === 'artworks'): ?>
+                                <?php if (($item['_type'] ?? 'media') === 'media_asset'): ?>
+                                    <span class="trash-media-path"><?= htmlspecialchars($item['label']) ?></span>
+                                    <span class="admin-hint"> (Migrated Asset)</span>
+                                <?php else: ?>
+                                    <span class="trash-media-path">ID <?= (int) $item['id'] ?></span>
+                                    <span class="admin-hint"> <?= htmlspecialchars($item['mime_type'] ?? '') ?></span>
+                                <?php endif; ?>
+                            <?php elseif ($tab === 'exhibits'): ?>
                                 <?= htmlspecialchars($item['title']) ?>
                                 <?php if ($item['year']): ?>
                                     <span class="admin-hint"> — <?= htmlspecialchars($item['year']) ?></span>
+                                <?php endif ?>
+                            <?php elseif ($tab === 'posts'): ?>
+                                <?= htmlspecialchars($item['title'] !== null && $item['title'] !== '' ? $item['title'] : '(untitled)') ?>
+                            <?php elseif ($tab === 'comments'): ?>
+                                <?php $excerpt = mb_strlen($item['content']) > 80 ? mb_substr($item['content'], 0, 80) . '…' : $item['content']; ?>
+                                <?= htmlspecialchars($excerpt) ?>
+                                <?php if ($item['post_title']): ?>
+                                    <span class="admin-hint"> — on <?= htmlspecialchars($item['post_title']) ?></span>
                                 <?php endif ?>
                             <?php else: ?>
                                 <?= htmlspecialchars($item['name']) ?>
@@ -70,13 +92,13 @@ ob_start();
                         </td>
                         <td class="admin-actions">
                             <form method="POST" action="/admin/trash/restore" style="display:inline">
-                                <input type="hidden" name="type" value="<?= $type ?>">
+                                <input type="hidden" name="type" value="<?= htmlspecialchars($item['_type'] ?? $type) ?>">
                                 <input type="hidden" name="id"   value="<?= (int) $item['id'] ?>">
                                 <button type="submit" class="admin-btn admin-btn-sm">Restore</button>
                             </form>
                             <form method="POST" action="/admin/trash/purge" style="display:inline"
                                   onsubmit="return confirm('Permanently delete this item? This cannot be undone.')">
-                                <input type="hidden" name="type" value="<?= $type ?>">
+                                <input type="hidden" name="type" value="<?= htmlspecialchars($item['_type'] ?? $type) ?>">
                                 <input type="hidden" name="id"   value="<?= (int) $item['id'] ?>">
                                 <button type="submit" class="admin-del-btn">Delete permanently</button>
                             </form>

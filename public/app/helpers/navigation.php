@@ -8,6 +8,7 @@ function ah_fallback_navigation_items(): array
         ['label' => 'Home', 'url' => '/', 'target' => null],
         ['label' => 'Services', 'url' => '/services', 'target' => null],
         ['label' => 'Field Notes', 'url' => '/notes', 'target' => null],
+        ['label' => 'Blog', 'url' => '/blog', 'target' => null],
         ['label' => 'Contact', 'url' => '/contact', 'target' => null],
         ['label' => 'Portfolio', 'url' => '/portfolio', 'target' => null],
     ];

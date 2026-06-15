@@ -5,9 +5,17 @@ $adminIdentity = admin_identity();
 $adminNavItems = [
     '/admin' => 'Dashboard',
     '/admin/pages' => 'Pages',
-    '/admin/artworks' => 'Works',
-    '/admin/categories' => 'Categories',
+    '/admin/posts' => 'Posts',
+    '/admin/comments' => 'Comments',
+    '/admin/feed-sources' => 'Feeds',
+    '/admin/site-identity' => 'Identity',
+    '/admin/user-profiles' => 'Users',
+    '/admin/platform-connections' => 'Connections',
     '/admin/exhibits' => 'Exhibits',
+    '/admin/pieces' => 'Pieces',
+    '/admin/categories' => 'Categories',
+    '/admin/collections' => 'Collections',
+    '/admin/platform-collections' => 'Platform Collections',
     '/admin/media' => 'Media',
     '/admin/trash' => 'Trash',
     '/admin/navigation' => 'Navigation',
@@ -127,6 +135,73 @@ $adminNavItems = [
         <div class="media-picker-footer">
             <button type="button" class="admin-btn admin-btn-ghost media-picker-cancel-btn">Cancel</button>
             <button type="button" class="admin-btn media-picker-select-btn" disabled>Select Asset</button>
+        </div>
+    </dialog>
+
+    <!-- Art Piece / Exhibit Picker Modal -->
+    <dialog id="piece-picker-modal" aria-labelledby="piece-picker-title">
+        <div class="media-picker-header">
+            <h2 id="piece-picker-title">Insert Art Piece or Exhibit</h2>
+            <button type="button" class="media-picker-close" aria-label="Close">&times;</button>
+        </div>
+
+        <nav class="media-picker-tabs" role="tablist">
+            <button class="media-picker-tab active" role="tab" data-tab="pieces"
+                    aria-selected="true" aria-controls="pp-panel-pieces">Pieces</button>
+            <button class="media-picker-tab" role="tab" data-tab="exhibits"
+                    aria-selected="false" aria-controls="pp-panel-exhibits">Exhibits</button>
+        </nav>
+
+        <div class="media-picker-panel" id="pp-panel-pieces" role="tabpanel">
+            <div class="media-picker-grid piece-picker-grid"></div>
+        </div>
+
+        <div class="media-picker-panel" id="pp-panel-exhibits" role="tabpanel" hidden>
+            <div class="media-picker-grid piece-picker-grid"></div>
+        </div>
+
+        <div class="media-picker-footer">
+            <button type="button" class="admin-btn admin-btn-ghost piece-picker-cancel-btn">Cancel</button>
+            <button type="button" class="admin-btn piece-picker-select-btn" disabled>Insert</button>
+        </div>
+    </dialog>
+
+    <!-- iFrame Embed Picker Modal -->
+    <dialog id="iframe-picker-modal" aria-labelledby="iframe-picker-title">
+        <div class="media-picker-header">
+            <h2 id="iframe-picker-title">Insert iFrame Embed</h2>
+            <button type="button" class="media-picker-close" aria-label="Close">&times;</button>
+        </div>
+
+        <div class="media-picker-panel">
+            <label for="iframe-picker-input" class="media-picker-field-label">iframe URL or full &lt;iframe&gt; HTML</label>
+            <textarea id="iframe-picker-input" class="media-picker-textarea"
+                      placeholder="https://example.com/embed or &lt;iframe src=&quot;...&quot;&gt;&lt;/iframe&gt;"></textarea>
+        </div>
+
+        <div class="media-picker-footer">
+            <button type="button" class="admin-btn admin-btn-ghost iframe-picker-cancel-btn">Cancel</button>
+            <button type="button" class="admin-btn iframe-picker-insert-btn">Insert</button>
+        </div>
+    </dialog>
+
+    <!-- AI Profile Picker Modal -->
+    <dialog id="ai-profile-picker-modal" aria-labelledby="ai-profile-picker-title">
+        <div class="media-picker-header">
+            <h2 id="ai-profile-picker-title">Improve with AI</h2>
+            <button type="button" class="media-picker-close" aria-label="Close">&times;</button>
+        </div>
+
+        <div class="media-picker-panel">
+            <label for="ai-profile-picker-select" class="media-picker-field-label">AI Profile / Vendor &amp; Model</label>
+            <select id="ai-profile-picker-select" class="media-picker-select">
+                <option value="">Loading&hellip;</option>
+            </select>
+        </div>
+
+        <div class="media-picker-footer">
+            <button type="button" class="admin-btn admin-btn-ghost ai-profile-picker-cancel-btn">Cancel</button>
+            <button type="button" class="admin-btn ai-profile-picker-select-btn" disabled>Use Profile</button>
         </div>
     </dialog>
 

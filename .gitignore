@@ -1,3 +1,4 @@
 .env
 public/.env
 public/.ftp-deploy-sync-state*.json
+platform/*

@@ -48,3 +48,31 @@ function seo_current_url(): string
     $path = parse_url($requestUri, PHP_URL_PATH) ?: '/';
     return seo_absolute_url($path) ?? seo_origin() . '/';
 }
+
+/**
+ * Site title/description for feed scopes, sourced from site_settings with
+ * fallback to the existing hardcoded blog defaults.
+ */
+function seo_site_meta(): array
+{
+    $settings = SiteSettings::current();
+    $title = trim((string) ($settings['site_title'] ?? ''));
+    $description = trim((string) ($settings['hero_subheading'] ?? ''));
+
+    return [
+        'title' => $title !== '' ? $title : 'Augment Humankind',
+        'description' => $description !== ''
+            ? $description
+            : 'Posts, notes, imported feed items, and updates from Augment Humankind.',
+    ];
+}
+
+function seo_author_name(): string
+{
+    $owner = PlatformUser::owner();
+    if ($owner && !empty($owner['name'])) {
+        return (string) $owner['name'];
+    }
+
+    return 'Augment Humankind';
+}

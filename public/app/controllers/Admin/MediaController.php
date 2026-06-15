@@ -7,7 +7,44 @@ class MediaAdminController
     public static function index(): void
     {
         admin_check();
-        $files = MediaFile::all();
+
+        $files = array_map(static function (array $file): array {
+            $id = (int) $file['id'];
+            $mime = (string) ($file['mime_type'] ?? '');
+            $isVideo = str_starts_with($mime, 'video/');
+            $isHtml = $mime === 'text/html' || str_starts_with($mime, 'iframe');
+
+            return $file + [
+                'source' => 'file',
+                'preview' => $isVideo ? '/media/' . $id : ($isHtml ? '/media/' . $id : '/image/' . $id),
+                'direct_url' => '/media/' . $id,
+                'label' => 'Asset #' . $id,
+            ];
+        }, MediaFile::all());
+
+        $assets = array_map(static function (array $asset): array {
+            $id = (int) $asset['id'];
+            $mime = (string) ($asset['mime_type'] ?? '');
+            $isVideo = str_starts_with($mime, 'video/');
+            $isHtml = $mime === 'text/html' || str_starts_with($mime, 'iframe');
+
+            return [
+                'id' => 'asset-' . $id,
+                'source' => 'asset',
+                'mime_type' => $mime,
+                'byte_size' => $asset['byte_size'] ?? 0,
+                'created_at' => $asset['uploaded_at'] ?? null,
+                'preview' => '/api/media-assets/' . $id,
+                'direct_url' => '/api/media-assets/' . $id,
+                'label' => !empty($asset['title']) ? $asset['title'] : 'Media Asset #' . $id,
+                'asset_id' => $id,
+                'title' => $asset['title'] ?? '',
+                'alt_text' => $asset['alt_text'] ?? '',
+            ];
+        }, MediaAsset::all());
+
+        $files = array_merge($files, $assets);
+
         require dirname(__DIR__, 2) . '/views/admin/media.php';
     }
 
@@ -18,16 +55,42 @@ class MediaAdminController
 
         $files = array_map(static function (array $file): array {
             $mime = (string) ($file['mime_type'] ?? '');
-            $kind = str_starts_with($mime, 'video/') ? 'video' : 'image';
+            if (str_starts_with($mime, 'video/')) {
+                $kind = 'video';
+            } elseif ($mime === 'text/html' || str_starts_with($mime, 'iframe')) {
+                $kind = 'iframe';
+            } else {
+                $kind = 'image';
+            }
 
             return $file + [
                 'kind' => $kind,
                 'url' => '/media/' . $file['id'],
-                'legacy_url' => $kind === 'image' ? '/image/' . $file['id'] : null,
+                'legacy_url' => $kind === 'image' ? '/image/' . $file['id'] : ($kind === 'iframe' ? '/media/' . $file['id'] : null),
             ];
         }, MediaFile::all());
 
-        echo json_encode($files);
+        $assets = array_map(static function (array $asset): array {
+            $mime = (string) ($asset['mime_type'] ?? '');
+            if (str_starts_with($mime, 'video/')) {
+                $kind = 'video';
+            } elseif ($mime === 'text/html' || str_starts_with($mime, 'iframe')) {
+                $kind = 'iframe';
+            } else {
+                $kind = 'image';
+            }
+            $url = '/api/media-assets/' . $asset['id'];
+
+            unset($asset['file_data']);
+            $asset['id'] = 'asset-' . $asset['id'];
+            $asset['kind'] = $kind;
+            $asset['url'] = $url;
+            $asset['legacy_url'] = $url;
+
+            return $asset;
+        }, MediaAsset::all());
+
+        echo json_encode(array_merge($files, $assets));
         exit;
     }
 
@@ -105,6 +168,36 @@ class MediaAdminController
     {
         admin_check();
         MediaFile::hardDelete((int) $id);
+        header('Location: /admin/media');
+        exit;
+    }
+
+    public static function assetUpdate(string $id): void
+    {
+        admin_check();
+        $title = trim((string) ($_POST['title'] ?? ''));
+        $altText = trim((string) ($_POST['alt_text'] ?? ''));
+        MediaAsset::updateMetadata(
+            (int) $id,
+            $title !== '' ? $title : null,
+            $altText !== '' ? $altText : null
+        );
+        header('Location: /admin/media');
+        exit;
+    }
+
+    public static function assetTrash(string $id): void
+    {
+        admin_check();
+        MediaAsset::softDelete((int) $id);
+        header('Location: /admin/media');
+        exit;
+    }
+
+    public static function assetDestroy(string $id): void
+    {
+        admin_check();
+        MediaAsset::hardDelete((int) $id);
         header('Location: /admin/media');
         exit;
     }

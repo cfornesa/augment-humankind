@@ -44,7 +44,7 @@ CREATE TABLE categories (
     deleted_at      TIMESTAMP NULL DEFAULT NULL
 );
 
-CREATE TABLE artworks (
+CREATE TABLE exhibits (
     id               INT AUTO_INCREMENT PRIMARY KEY,
     title            VARCHAR(255) NOT NULL,
     artist_name      VARCHAR(255) NULL,
@@ -61,9 +61,9 @@ CREATE TABLE artworks (
     deleted_at       TIMESTAMP NULL DEFAULT NULL
 );
 
-CREATE TABLE artwork_media_items (
+CREATE TABLE exhibit_media_items (
     id                   INT AUTO_INCREMENT PRIMARY KEY,
-    artwork_id           INT NOT NULL,
+    exhibit_id           INT NOT NULL,
     media_kind           ENUM('image', 'video', 'iframe') NOT NULL,
     media_file_id        INT NULL,
     iframe_html          MEDIUMTEXT NULL,
@@ -74,10 +74,10 @@ CREATE TABLE artwork_media_items (
     sort_order           INT NOT NULL DEFAULT 0,
     created_at           TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at           TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    FOREIGN KEY (artwork_id) REFERENCES artworks(id) ON DELETE CASCADE
+    FOREIGN KEY (exhibit_id) REFERENCES exhibits(id) ON DELETE CASCADE
 );
 
-CREATE TABLE exhibits (
+CREATE TABLE collections (
     id              INT AUTO_INCREMENT PRIMARY KEY,
     name            VARCHAR(255) NOT NULL,
     slug            VARCHAR(255) NOT NULL UNIQUE,
@@ -89,21 +89,21 @@ CREATE TABLE exhibits (
     deleted_at      TIMESTAMP NULL DEFAULT NULL
 );
 
-CREATE TABLE artwork_categories (
-    artwork_id  INT NOT NULL,
+CREATE TABLE exhibit_categories (
+    exhibit_id  INT NOT NULL,
     category_id INT NOT NULL,
-    PRIMARY KEY (artwork_id, category_id),
-    FOREIGN KEY (artwork_id)  REFERENCES artworks(id)   ON DELETE CASCADE,
+    PRIMARY KEY (exhibit_id, category_id),
+    FOREIGN KEY (exhibit_id)  REFERENCES exhibits(id)   ON DELETE CASCADE,
     FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE
 );
 
-CREATE TABLE exhibit_artworks (
-    exhibit_id  INT NOT NULL,
-    artwork_id  INT NOT NULL,
-    sort_order  INT DEFAULT 0,
-    PRIMARY KEY (exhibit_id, artwork_id),
-    FOREIGN KEY (exhibit_id) REFERENCES exhibits(id)  ON DELETE CASCADE,
-    FOREIGN KEY (artwork_id) REFERENCES artworks(id)  ON DELETE CASCADE
+CREATE TABLE collection_exhibits (
+    collection_id INT NOT NULL,
+    exhibit_id    INT NOT NULL,
+    sort_order    INT DEFAULT 0,
+    PRIMARY KEY (collection_id, exhibit_id),
+    FOREIGN KEY (collection_id) REFERENCES collections(id) ON DELETE CASCADE,
+    FOREIGN KEY (exhibit_id)    REFERENCES exhibits(id)    ON DELETE CASCADE
 );
 
 CREATE TABLE pages (

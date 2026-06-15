@@ -83,6 +83,10 @@ class AuthController
                 throw new RuntimeException('Identity could not be loaded after login.');
             }
 
+            if (class_exists('PlatformUser')) {
+                PlatformUser::upsertOwnerFromAdminProfile($provider, $profile);
+            }
+
             admin_login_identity($identity);
             header('Location: /admin');
             exit;
@@ -110,12 +114,110 @@ class AuthController
     {
         admin_check();
 
-        $artworkCount  = (int) db()->query('SELECT COUNT(*) FROM artworks WHERE deleted_at IS NULL')->fetchColumn();
-        $categoryCount = (int) db()->query('SELECT COUNT(*) FROM categories WHERE deleted_at IS NULL')->fetchColumn();
-        $exhibitCount  = (int) db()->query('SELECT COUNT(*) FROM exhibits WHERE deleted_at IS NULL')->fetchColumn();
-        $pageCount     = (int) db()->query('SELECT COUNT(*) FROM pages WHERE deleted_at IS NULL')->fetchColumn();
+        $exhibitCount  = self::countRows('exhibits', activeOnly: true);
+        $categoryCount = self::countRows('categories', activeOnly: true);
+        $collectionCount = self::countRows('collections', activeOnly: true);
+        $pageCount     = self::countRows('pages', activeOnly: true);
+
+        $publishedPosts = self::countRows('posts', ["status = 'published'"], activeOnly: true);
+        $scheduledPosts = self::countRows('posts', ["status = 'scheduled'"], activeOnly: true);
+        $draftPosts     = self::countRows('posts', ["status = 'draft'"], activeOnly: true);
+        $commentCount   = self::countRows('comments', activeOnly: true);
+        $reactionCount  = self::countRows('reactions', activeOnly: true);
+        $connectionCount = self::countRows('platform_connections');
+        $syndicationCount = self::countRows('post_syndications');
+        $pieceCount     = self::countRows('art_pieces', activeOnly: true);
+        $mediaCount     = self::countRows('media_files', activeOnly: true);
+        $assetCount     = self::countRows('media_assets', activeOnly: true);
+        $feedSourceCount = self::countRows('feed_sources', activeOnly: true);
+        $pendingFeeds   = self::countRows('feed_import_items', ["status = 'pending'"]);
+
+        $trashCount = array_sum(array_map(
+            static fn (string $table): int => self::countDeletedRows($table),
+            [
+                'exhibits',
+                'categories',
+                'collections',
+                'pages',
+                'posts',
+                'media_files',
+                'media_assets',
+                'art_pieces',
+                'comments',
+                'feed_sources',
+            ]
+        ));
 
         require dirname(__DIR__, 2) . '/views/admin/dashboard.php';
+    }
+
+    private static function countRows(string $table, array $where = [], bool $activeOnly = false): int
+    {
+        if (!self::tableExists($table)) {
+            return 0;
+        }
+        if ($activeOnly && self::columnExists($table, 'deleted_at')) {
+            $where[] = 'deleted_at IS NULL';
+        }
+
+        $sql = 'SELECT COUNT(*) FROM `' . str_replace('`', '``', $table) . '`';
+        if ($where !== []) {
+            $sql .= ' WHERE ' . implode(' AND ', $where);
+        }
+
+        try {
+            return (int) db()->query($sql)->fetchColumn();
+        } catch (Throwable) {
+            return 0;
+        }
+    }
+
+    private static function countDeletedRows(string $table): int
+    {
+        if (!self::tableExists($table) || !self::columnExists($table, 'deleted_at')) {
+            return 0;
+        }
+
+        return self::countRows($table, ['deleted_at IS NOT NULL']);
+    }
+
+    private static function tableExists(string $table): bool
+    {
+        static $cache = [];
+        if (array_key_exists($table, $cache)) {
+            return $cache[$table];
+        }
+
+        try {
+            $stmt = db()->prepare(
+                'SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? LIMIT 1'
+            );
+            $stmt->execute([$table]);
+            return $cache[$table] = (bool) $stmt->fetchColumn();
+        } catch (Throwable) {
+            return $cache[$table] = false;
+        }
+    }
+
+    private static function columnExists(string $table, string $column): bool
+    {
+        static $cache = [];
+        $key = $table . '.' . $column;
+        if (array_key_exists($key, $cache)) {
+            return $cache[$key];
+        }
+
+        try {
+            $stmt = db()->prepare(
+                'SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+                 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?
+                 LIMIT 1'
+            );
+            $stmt->execute([$table, $column]);
+            return $cache[$key] = (bool) $stmt->fetchColumn();
+        } catch (Throwable) {
+            return $cache[$key] = false;
+        }
     }
 
     private static function requestedProvider(): string

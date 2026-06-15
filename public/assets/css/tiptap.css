@@ -188,7 +188,8 @@
 /* ─── Media Picker Modal ───────────────────────────────────────────────────── */
 
 /* IMPORTANT: no display: property here — let the browser hide closed <dialog> natively */
-dialog#media-picker-modal {
+dialog#media-picker-modal,
+dialog#piece-picker-modal {
     /* Explicit centering: works even when a parent has transform or overflow */
     position: fixed;
     inset: 0;
@@ -204,12 +205,14 @@ dialog#media-picker-modal {
 }
 
 /* Only flex when open */
-dialog#media-picker-modal[open] {
+dialog#media-picker-modal[open],
+dialog#piece-picker-modal[open] {
     display: flex;
     flex-direction: column;
 }
 
-dialog#media-picker-modal::backdrop {
+dialog#media-picker-modal::backdrop,
+dialog#piece-picker-modal::backdrop {
     background: rgba(21, 55, 74, 0.55);
 }
 
@@ -318,6 +321,53 @@ dialog#media-picker-modal::backdrop {
     color: var(--ink-soft);
 }
 
+/* ─── Art Piece Picker grid ─────────────────────────────────────────────────── */
+
+.piece-picker-grid {
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+}
+
+.piece-picker-item {
+    aspect-ratio: auto;
+    display: flex;
+    flex-direction: column;
+    border: 2px solid transparent;
+    overflow: hidden;
+    cursor: pointer;
+    transition: border-color 0.15s;
+    background: var(--paper);
+}
+.piece-picker-item:hover { border-color: var(--line); }
+.piece-picker-item.selected { border-color: var(--orange); }
+
+.piece-picker-thumb {
+    aspect-ratio: 4 / 3;
+    overflow: hidden;
+    background: var(--paper-deep);
+}
+.piece-picker-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.piece-picker-label {
+    padding: 0.4rem 0.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+}
+.piece-picker-title {
+    font-size: 0.78rem;
+    color: var(--ink);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.piece-picker-engine {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.62rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+}
+
 /* Upload panel */
 .media-picker-dropzone {
     border: 2px dashed var(--line);
@@ -419,6 +469,34 @@ dialog#media-picker-modal::backdrop {
     padding: 0.5rem 0.7rem;
 }
 .media-picker-url-input:focus { outline: none; border-color: var(--orange); }
+
+/* Generic field label + textarea/select (iframe + AI-profile pickers) */
+.media-picker-field-label {
+    display: block;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.68rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    margin-bottom: 0.4rem;
+}
+.media-picker-textarea,
+.media-picker-select {
+    width: 100%;
+    background: var(--white);
+    border: 2px solid var(--line);
+    color: var(--ink);
+    font: inherit;
+    font-size: 0.82rem;
+    padding: 0.5rem 0.7rem;
+}
+.media-picker-textarea:focus,
+.media-picker-select:focus { outline: none; border-color: var(--orange); }
+.media-picker-textarea {
+    min-height: 120px;
+    resize: vertical;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
 
 /* ─── Footer ───────────────────────────────────────────────────────────────── */
 

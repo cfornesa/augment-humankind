@@ -30,5 +30,6 @@ require __DIR__ . '/partials/header.php';
             <?php endif; ?>
         <?php endforeach; ?>
     <?php endif; ?>
+<script src="/embed.js" defer></script>
 <?php
 require __DIR__ . '/partials/footer.php';

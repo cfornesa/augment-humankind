@@ -29,25 +29,33 @@ ob_start();
                         <button
                              type="button"
                              class="media-card"
-                             data-id="<?= (int) $f['id'] ?>"
+                             data-id="<?= htmlspecialchars((string) $f['id']) ?>"
+                             data-source="<?= htmlspecialchars($f['source']) ?>"
+                             data-preview="<?= htmlspecialchars($f['preview']) ?>"
+                             data-direct-url="<?= htmlspecialchars($f['direct_url']) ?>"
                              data-mime="<?= htmlspecialchars($f['mime_type'] ?? '') ?>"
-                             data-date="<?= date('Y-m-d', strtotime($f['created_at'])) ?>"
+                             data-date="<?= !empty($f['created_at']) ? date('Y-m-d', strtotime($f['created_at'])) : '' ?>"
                              data-size="<?= (int) ($f['byte_size'] ?? 0) ?>"
-                             aria-label="Select asset <?= (int) $f['id'] ?>, <?= htmlspecialchars($f['mime_type'] ?? 'unknown type') ?>">
+                             data-asset-id="<?= isset($f['asset_id']) ? (int) $f['asset_id'] : '' ?>"
+                             data-title="<?= htmlspecialchars($f['title'] ?? '') ?>"
+                             data-alt-text="<?= htmlspecialchars($f['alt_text'] ?? '') ?>"
+                             aria-label="Select <?= htmlspecialchars($f['label']) ?>, <?= htmlspecialchars($f['mime_type'] ?? 'unknown type') ?>">
                             <span class="media-card-thumb">
                                 <?php if (str_starts_with((string) ($f['mime_type'] ?? ''), 'video/')): ?>
-                                    <video src="/media/<?= (int) $f['id'] ?>" muted preload="metadata"></video>
+                                    <video src="<?= htmlspecialchars($f['preview']) ?>" muted preload="metadata"></video>
+                                <?php elseif (($f['mime_type'] ?? '') === 'text/html' || str_starts_with((string) ($f['mime_type'] ?? ''), 'iframe')): ?>
+                                    <div class="media-thumb-iframe" style="display:flex;align-items:center;justify-content:center;height:100%;background:var(--paper);color:var(--orange);font-weight:bold;font-size:1.2rem;">&lt;/&gt; Embed</div>
                                 <?php else: ?>
-                                    <img src="/image/<?= (int) $f['id'] ?>"
+                                    <img src="<?= htmlspecialchars($f['preview']) ?>"
                                          alt=""
                                          loading="lazy"
                                          onerror="this.parentElement.classList.add('media-thumb-missing')">
                                 <?php endif ?>
                             </span>
                             <span class="media-card-meta">
-                                <span class="media-card-id">Asset #<?= (int) $f['id'] ?></span>
+                                <span class="media-card-id"><?= htmlspecialchars($f['label']) ?></span>
                                 <span class="media-card-type"><?= htmlspecialchars($f['mime_type'] ?? 'Unknown type') ?></span>
-                                <span class="media-card-date"><?= date('Y-m-d', strtotime($f['created_at'])) ?></span>
+                                <span class="media-card-date"><?= !empty($f['created_at']) ? date('Y-m-d', strtotime($f['created_at'])) : '—' ?></span>
                             </span>
                         </button>
                     <?php endforeach ?>
@@ -104,13 +112,37 @@ ob_start();
                     </div>
                 </div>
 
-                <div class="media-details-actions">
-                    <form method="POST" id="action-trash-form">
-                        <button type="submit" class="admin-btn">Move to Trash</button>
+                <div class="form-row media-details-code" id="ai-alt-row" style="display: none; flex-direction: column; gap: 0.5rem;">
+                    <label>AI Alt Text</label>
+                    <div class="media-code-input-wrap">
+                        <input type="number" id="ai-alt-profile" class="admin-input" placeholder="AI profile ID" style="flex: 1; min-width: 120px;">
+                        <button type="button" class="admin-btn" id="ai-alt-btn">Generate</button>
+                    </div>
+                    <p class="admin-hint" id="ai-alt-status" aria-live="polite"></p>
+                </div>
+
+                <div class="media-details-actions" style="display: flex; flex-direction: column; gap: 1rem; margin-top: 1rem;">
+                    <form id="action-asset-update-form" method="post" class="media-asset-meta-form is-hidden" style="display: flex; flex-direction: column; gap: 0.5rem; border: 1px solid var(--line); padding: 0.75rem; background: var(--paper);">
+                        <div class="field" style="display: flex; flex-direction: column; gap: 0.25rem;">
+                            <label for="asset-title-input" style="font-weight: bold; font-size: 0.85rem;">Title</label>
+                            <input type="text" id="asset-title-input" name="title" maxlength="255" class="admin-input" style="width: 100%; box-sizing: border-box; padding: 0.25rem;">
+                        </div>
+                        <div class="field" style="display: flex; flex-direction: column; gap: 0.25rem;">
+                            <label for="asset-alt-input" style="font-weight: bold; font-size: 0.85rem;">Alt Text</label>
+                            <input type="text" id="asset-alt-input" name="alt_text" maxlength="500" class="admin-input" style="width: 100%; box-sizing: border-box; padding: 0.25rem;">
+                        </div>
+                        <button type="submit" class="admin-btn admin-btn-sm" style="align-self: flex-start;">Save metadata</button>
                     </form>
-                    <form method="POST" id="action-destroy-form">
-                        <button type="submit" class="admin-btn-danger">Delete Now</button>
-                    </form>
+
+                    <div style="display: flex; gap: 0.5rem;">
+                        <form method="POST" id="action-trash-form" style="display: inline;">
+                            <button type="submit" class="admin-btn">Move to Trash</button>
+                        </form>
+                        <form method="POST" id="action-destroy-form" style="display: inline;">
+                            <button type="submit" class="admin-btn-danger">Delete Now</button>
+                        </form>
+                    </div>
+                    <p class="admin-hint is-hidden" id="media-readonly-note">Migrated asset — managed from Site Identity, read-only here.</p>
                 </div>
             </div>
 
@@ -131,6 +163,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const inputHtml = document.getElementById('input-html');
     const trashForm = document.getElementById('action-trash-form');
     const destroyForm = document.getElementById('action-destroy-form');
+    const readonlyNote = document.getElementById('media-readonly-note');
+    const assetMetaForm = document.getElementById('action-asset-update-form');
+    const assetTitleInput = document.getElementById('asset-title-input');
+    const assetAltInput = document.getElementById('asset-alt-input');
     const placeholderText = document.getElementById('details-placeholder');
     const contentArea = document.getElementById('details-content-area');
     const copyStatus = document.getElementById('media-copy-status');
@@ -145,7 +181,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function setPreview(card, assetUrl) {
-        previewHost.querySelectorAll('video.dynamic-media-preview').forEach(node => node.remove());
+        previewHost.querySelectorAll('video.dynamic-media-preview, iframe.dynamic-media-preview').forEach(node => node.remove());
         previewImg.classList.add('is-hidden');
         previewImg.removeAttribute('src');
 
@@ -159,8 +195,19 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        previewImg.src = `/image/${card.dataset.id}`;
-        previewImg.alt = `Preview of asset ${card.dataset.id}`;
+        if ((card.dataset.mime || '') === 'text/html' || (card.dataset.mime || '').startsWith('iframe')) {
+            const iframe = document.createElement('iframe');
+            iframe.className = 'dynamic-media-preview';
+            iframe.src = assetUrl;
+            iframe.style.width = '100%';
+            iframe.style.height = '200px';
+            iframe.style.border = '0';
+            previewHost.appendChild(iframe);
+            return;
+        }
+
+        previewImg.src = card.dataset.preview;
+        previewImg.alt = `Preview of ${card.dataset.id}`;
         previewImg.classList.remove('is-hidden');
     }
 
@@ -171,7 +218,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const id = card.dataset.id;
         const mime = card.dataset.mime;
         const date = card.dataset.date;
-        const assetUrl = `/media/${id}`;
+        const source = card.dataset.source;
+        const assetUrl = card.dataset.directUrl;
         setPreview(card, assetUrl);
 
         metaId.textContent = id;
@@ -180,12 +228,44 @@ document.addEventListener('DOMContentLoaded', () => {
         metaSize.textContent = formatBytes(card.dataset.size);
 
         inputUrl.value = window.location.origin + assetUrl;
-        inputHtml.value = mime.startsWith('video/')
-            ? `<video src="${assetUrl}" controls preload="metadata"></video>`
-            : `<img src="/image/${id}" alt="">`;
+        if (mime.startsWith('video/')) {
+            inputHtml.value = `<video src="${assetUrl}" controls preload="metadata"></video>`;
+        } else if (mime === 'text/html' || mime.startsWith('iframe')) {
+            inputHtml.value = `<iframe src="${assetUrl}" width="100%" height="480" frameborder="0" allowfullscreen></iframe>`;
+        } else {
+            inputHtml.value = `<img src="${card.dataset.preview}" alt="">`;
+        }
 
-        trashForm.action = `/admin/media/${id}/trash`;
-        destroyForm.action = `/admin/media/${id}/destroy`;
+        if (source === 'asset') {
+            var assetId = card.dataset.assetId;
+            assetMetaForm.classList.remove('is-hidden');
+            assetMetaForm.action = `/admin/media/asset/${assetId}/update`;
+            assetTitleInput.value = card.dataset.title || '';
+            assetAltInput.value = card.dataset.altText || '';
+            if (readonlyNote) readonlyNote.classList.add('is-hidden');
+            trashForm.classList.remove('is-hidden');
+            destroyForm.classList.remove('is-hidden');
+            trashForm.action = `/admin/media/asset/${assetId}/trash`;
+            destroyForm.action = `/admin/media/asset/${assetId}/destroy`;
+            destroyForm.dataset.confirmExtra = ' This asset may be referenced by site settings, posts, or art pieces — broken links won\'t be auto-fixed.';
+        } else {
+            assetMetaForm.classList.add('is-hidden');
+            if (readonlyNote) readonlyNote.classList.add('is-hidden');
+            trashForm.classList.remove('is-hidden');
+            destroyForm.classList.remove('is-hidden');
+            trashForm.action = `/admin/media/${id}/trash`;
+            destroyForm.action = `/admin/media/${id}/destroy`;
+            destroyForm.dataset.confirmExtra = '';
+        }
+
+        // Show AI alt text row for images
+        if (aiAltRow) {
+            if (mime.startsWith('image/')) {
+                aiAltRow.style.display = 'flex';
+            } else {
+                aiAltRow.style.display = 'none';
+            }
+        }
 
         placeholderText.classList.add('is-hidden');
         contentArea.classList.remove('is-hidden');
@@ -210,10 +290,55 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     destroyForm.addEventListener('submit', (e) => {
-        if (!confirm('Permanently delete this asset? This cannot be undone.')) {
+        var msg = 'Permanently delete this asset? This cannot be undone.' + (destroyForm.dataset.confirmExtra || '');
+        if (!confirm(msg)) {
             e.preventDefault();
         }
     });
+
+    // AI Alt Text generation
+    const aiAltRow = document.getElementById('ai-alt-row');
+    const aiAltProfile = document.getElementById('ai-alt-profile');
+    const aiAltBtn = document.getElementById('ai-alt-btn');
+    const aiAltStatus = document.getElementById('ai-alt-status');
+
+    if (aiAltBtn) {
+        aiAltBtn.addEventListener('click', async () => {
+            const profileId = aiAltProfile.value;
+            if (!profileId) {
+                aiAltStatus.textContent = 'Please select an AI profile.';
+                return;
+            }
+            const activeCard = document.querySelector('.media-card.active');
+            if (!activeCard) {
+                aiAltStatus.textContent = 'Select an image first.';
+                return;
+            }
+            const assetUrl = activeCard.dataset.directUrl;
+            aiAltBtn.disabled = true;
+            aiAltStatus.textContent = 'Generating alt text...';
+            try {
+                const fd = new FormData();
+                fd.append('profile_id', profileId);
+                fd.append('image_url', assetUrl);
+                const res = await fetch('/admin/ai/describe-image', { method: 'POST', body: fd });
+                const data = await res.json();
+                if (data.result) {
+                    assetAltInput.value = data.result;
+                    aiAltStatus.textContent = 'Alt text generated. Click "Save metadata" to store it.';
+                } else {
+                    aiAltStatus.textContent = 'Error: ' + (data.error || 'Unknown error');
+                }
+            } catch (e) {
+                aiAltStatus.textContent = 'Error: ' + e.message;
+            } finally {
+                aiAltBtn.disabled = false;
+            }
+        });
+    }
+
+    // AI alt text row is now toggled inside selectCard
+
 
     document.querySelectorAll('.media-copy-btn').forEach(btn => {
         btn.addEventListener('click', () => {

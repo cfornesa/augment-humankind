@@ -7,32 +7,32 @@ class Category
     public static function all(): array
     {
         return db()->query(
-            'SELECT * FROM categories WHERE deleted_at IS NULL ORDER BY sort_order ASC, id ASC'
+            'SELECT * FROM categories WHERE deleted_at IS NULL' . self::portfolioScopeSql() . ' ORDER BY sort_order ASC, id ASC'
         )->fetchAll();
     }
 
     public static function find(int $id): array|false
     {
-        $stmt = db()->prepare('SELECT * FROM categories WHERE id = ? AND deleted_at IS NULL');
+        $stmt = db()->prepare('SELECT * FROM categories WHERE id = ? AND deleted_at IS NULL' . self::portfolioScopeSql());
         $stmt->execute([$id]);
         return $stmt->fetch();
     }
 
     public static function findBySlug(string $slug): array|false
     {
-        $stmt = db()->prepare('SELECT * FROM categories WHERE slug = ? AND deleted_at IS NULL');
+        $stmt = db()->prepare('SELECT * FROM categories WHERE slug = ? AND deleted_at IS NULL' . self::portfolioScopeSql());
         $stmt->execute([$slug]);
         return $stmt->fetch();
     }
 
-    public static function artworks(int $id): array
+    public static function exhibits(int $id): array
     {
         $stmt = db()->prepare(
-            'SELECT a.*
-             FROM artwork_categories ac
-             JOIN artworks a ON a.id = ac.artwork_id AND a.deleted_at IS NULL
-             WHERE ac.category_id = ?
-             ORDER BY a.sort_order ASC, a.id ASC'
+            'SELECT e.*
+             FROM exhibit_categories ec
+             JOIN exhibits e ON e.id = ec.exhibit_id AND e.deleted_at IS NULL
+             WHERE ec.category_id = ?
+             ORDER BY e.sort_order ASC, e.id ASC'
         );
         $stmt->execute([$id]);
         return $stmt->fetchAll();
@@ -41,14 +41,14 @@ class Category
     public static function trashed(): array
     {
         return db()->query(
-            'SELECT * FROM categories WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC'
+            'SELECT * FROM categories WHERE deleted_at IS NOT NULL' . self::portfolioScopeSql() . ' ORDER BY deleted_at DESC'
         )->fetchAll();
     }
 
     public static function trashedCount(): int
     {
         return (int) db()->query(
-            'SELECT COUNT(*) FROM categories WHERE deleted_at IS NOT NULL'
+            'SELECT COUNT(*) FROM categories WHERE deleted_at IS NOT NULL' . self::portfolioScopeSql()
         )->fetchColumn();
     }
 
@@ -60,11 +60,19 @@ class Category
         ?string $thumbValue   = null,
         ?string $description  = null
     ): int {
-        $stmt = db()->prepare(
-            'INSERT INTO categories (name, slug, sort_order, thumbnail_type, thumbnail_value, description)
-             VALUES (?, ?, ?, ?, ?, ?)'
-        );
-        $stmt->execute([$name, $slug, $sortOrder, $thumbType, $thumbValue, $description]);
+        if (self::hasCategoryScope()) {
+            $stmt = db()->prepare(
+                'INSERT INTO categories (name, slug, sort_order, thumbnail_type, thumbnail_value, description, category_scope)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)'
+            );
+            $stmt->execute([$name, $slug, $sortOrder, $thumbType, $thumbValue, $description, 'portfolio']);
+        } else {
+            $stmt = db()->prepare(
+                'INSERT INTO categories (name, slug, sort_order, thumbnail_type, thumbnail_value, description)
+                 VALUES (?, ?, ?, ?, ?, ?)'
+            );
+            $stmt->execute([$name, $slug, $sortOrder, $thumbType, $thumbValue, $description]);
+        }
         return (int) db()->lastInsertId();
     }
 
@@ -88,7 +96,7 @@ class Category
 
     public static function reorder(array $ids): void
     {
-        $stmt = db()->prepare('UPDATE categories SET sort_order = ? WHERE id = ? AND deleted_at IS NULL');
+        $stmt = db()->prepare('UPDATE categories SET sort_order = ? WHERE id = ? AND deleted_at IS NULL' . self::portfolioScopeSql());
         foreach (array_values($ids) as $index => $id) {
             $stmt->execute([$index, $id]);
         }
@@ -110,5 +118,27 @@ class Category
     {
         $stmt = db()->prepare('UPDATE categories SET deleted_at = NULL WHERE id = ?');
         $stmt->execute([$id]);
+    }
+
+    private static function portfolioScopeSql(): string
+    {
+        return self::hasCategoryScope() ? " AND category_scope = 'portfolio'" : '';
+    }
+
+    private static function hasCategoryScope(): bool
+    {
+        static $hasColumn = null;
+        if ($hasColumn !== null) {
+            return $hasColumn;
+        }
+
+        try {
+            $stmt = db()->query("SHOW COLUMNS FROM categories LIKE 'category_scope'");
+            $hasColumn = (bool) $stmt->fetch();
+        } catch (Throwable) {
+            $hasColumn = false;
+        }
+
+        return $hasColumn;
     }
 }

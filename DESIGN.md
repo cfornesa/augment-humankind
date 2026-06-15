@@ -154,6 +154,7 @@
 
 2026-06-11 · DIRECTION · Chose a mascot-forward Fieldguide direction over a more conventional consulting-site posture.
     [Context: selected Fieldguide positioning, journal-ready routes, and mascot energy for `Friendly Guide.png` during the Augment Humankind v1 site plan.]
+2026-06-15 · DIRECTION · Chose Overlay transition model for immersive views, allowing instant, smooth fullscreen toggle without reloading pages or resetting WebGL rendering contexts.
 
 ---
 

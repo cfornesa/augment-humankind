@@ -4,7 +4,8 @@
   "type": "project",
   "license": "MIT",
   "require": {
-    "phpmailer/phpmailer": "^7.0"
+    "phpmailer/phpmailer": "^7.0",
+    "guzzlehttp/guzzle": "^7.0"
   },
   "config": {
     "vendor-dir": "public/vendor",

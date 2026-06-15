@@ -5,7 +5,7 @@ declare(strict_types=1);
 $pageTitle = ($category['name'] ?: 'Category') . ' | Augment Humankind Portfolio';
 $pageDescription = seo_excerpt($category['description'] ?? null, 170)
     ?: 'Works collected under the ' . ($category['name'] ?: 'selected') . ' category.';
-$ogImage = $category['thumbnail_value'] ?: ($artworks[0]['thumbnail_value'] ?? null);
+$ogImage = $category['thumbnail_value'] ?: ($exhibits[0]['thumbnail_value'] ?? null);
 $canonicalUrl = seo_absolute_url('/portfolio/category/' . $category['slug']);
 $bodyClass = bodyClass('portfolio-category');
 
@@ -34,11 +34,11 @@ require __DIR__ . '/../partials/header.php';
             </div>
         </div>
 
-        <?php if (empty($artworks)): ?>
-            <p class="gallery-empty">No works in this category yet.</p>
+        <?php if (empty($exhibits)): ?>
+            <p class="gallery-empty">No exhibits in this category yet.</p>
         <?php else: ?>
-            <div class="artwork-grid collection-artworks" aria-label="Works in this category">
-                <?php foreach ($artworks as $i => $work): ?>
+            <div class="artwork-grid collection-artworks" aria-label="Exhibits in this category">
+                <?php foreach ($exhibits as $i => $ex): ?>
                     <?php
                     $sizeClass = match ($i % 7) {
                         0       => 'size-large',
@@ -49,14 +49,14 @@ require __DIR__ . '/../partials/header.php';
                         default => 'size-medium',
                     };
                     ?>
-                    <a href="/portfolio/work/<?= e($work['slug']) ?>"
-                       aria-label="View work <?= e($work['title'] . ($work['year'] ? ', ' . $work['year'] : '')) ?>"
+                    <a href="/portfolio/exhibit/<?= e($ex['slug']) ?>"
+                       aria-label="View exhibit <?= e($ex['title'] . ($ex['year'] ? ', ' . $ex['year'] : '')) ?>"
                        class="artwork-card <?= $sizeClass ?>">
                         <div class="artwork-thumb-wrap">
-                            <?php if ($work['thumbnail_value']): ?>
+                            <?php if ($ex['thumbnail_value']): ?>
                                 <img
-                                    src="<?= e($work['thumbnail_value']) ?>"
-                                    alt="<?= e($work['title']) ?>"
+                                    src="<?= e($ex['thumbnail_value']) ?>"
+                                    alt="<?= e($ex['title']) ?>"
                                     loading="<?= $i < 2 ? 'eager' : 'lazy' ?>"
                                     decoding="async"
                                 >
@@ -65,9 +65,9 @@ require __DIR__ . '/../partials/header.php';
                             <?php endif ?>
                         </div>
                         <div class="artwork-meta">
-                            <span class="artwork-title"><?= e($work['title']) ?></span>
-                            <?php if ($work['year']): ?>
-                                <span class="artwork-year"><?= e($work['year']) ?></span>
+                            <span class="artwork-title"><?= e($ex['title']) ?></span>
+                            <?php if ($ex['year']): ?>
+                                <span class="artwork-year"><?= e($ex['year']) ?></span>
                             <?php endif ?>
                         </div>
                     </a>

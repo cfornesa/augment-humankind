@@ -5,6 +5,7 @@
         <nav aria-label="Footer navigation">
             <a href="/services">Services</a>
             <a href="/notes">Field Notes</a>
+            <a href="/blog">Blog</a>
             <a href="/contact">Contact</a>
         </nav>
     </footer>

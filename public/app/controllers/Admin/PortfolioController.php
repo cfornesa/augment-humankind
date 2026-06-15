@@ -4,101 +4,101 @@ declare(strict_types=1);
 
 class PortfolioAdminController
 {
-    public static function artworksIndex(): void
+    public static function exhibitsIndex(): void
     {
         admin_check();
-        $artworks = Artwork::all();
+        $exhibits = Exhibit::all();
         $categories = Category::all();
-        require dirname(__DIR__, 2) . '/views/admin/artworks/index.php';
+        require dirname(__DIR__, 2) . '/views/admin/exhibits/index.php';
     }
 
-    public static function artworkCreate(): void
+    public static function exhibitCreate(): void
     {
         admin_check();
         $categories = Category::all();
-        $allExhibits = Exhibit::all();
+        $allCollections = Collection::all();
         $assignedCategoryIds = [];
-        $assignedExhibitIds = [];
-        $artwork = ['media_items' => []];
+        $assignedCollectionIds = [];
+        $exhibit = ['media_items' => []];
         $error = null;
-        require dirname(__DIR__, 2) . '/views/admin/artworks/form.php';
+        require dirname(__DIR__, 2) . '/views/admin/exhibits/form.php';
     }
 
-    public static function artworkStore(): void
+    public static function exhibitStore(): void
     {
         admin_check();
 
         try {
-            $data = self::resolveArtworkData(null);
-            $artworkId = Artwork::create($data);
-            ArtworkMediaItem::syncForArtwork($artworkId, $data['media_items']);
-            Artwork::syncCategories($artworkId, $data['category_ids']);
-            Exhibit::syncForArtwork($artworkId, $data['exhibit_ids']);
-            header('Location: /admin/artworks');
+            $data = self::resolveExhibitData(null);
+            $exhibitId = Exhibit::create($data);
+            ExhibitMediaItem::syncForExhibit($exhibitId, $data['media_items']);
+            Exhibit::syncCategories($exhibitId, $data['category_ids']);
+            Collection::syncForExhibit($exhibitId, $data['collection_ids']);
+            header('Location: /admin/exhibits');
         } catch (Throwable $e) {
             $categories = Category::all();
-            $allExhibits = Exhibit::all();
-            $artwork = self::draftArtworkFromPost(null);
-            $assignedCategoryIds = $artwork['category_ids'];
-            $assignedExhibitIds = $artwork['exhibit_ids'];
+            $allCollections = Collection::all();
+            $exhibit = self::draftExhibitFromPost(null);
+            $assignedCategoryIds = $exhibit['category_ids'];
+            $assignedCollectionIds = $exhibit['collection_ids'];
             $error = $e->getMessage();
-            require dirname(__DIR__, 2) . '/views/admin/artworks/form.php';
+            require dirname(__DIR__, 2) . '/views/admin/exhibits/form.php';
         }
         exit;
     }
 
-    public static function artworkEdit(string $id): void
+    public static function exhibitEdit(string $id): void
     {
         admin_check();
-        $artwork = Artwork::find((int) $id);
-        if (!$artwork) {
-            header('Location: /admin/artworks');
+        $exhibit = Exhibit::find((int) $id);
+        if (!$exhibit) {
+            header('Location: /admin/exhibits');
             exit;
         }
         $categories = Category::all();
-        $allExhibits = Exhibit::all();
-        $assignedCategoryIds = Artwork::categoryIds((int) $id);
-        $assignedExhibitIds = Exhibit::exhibitIdsForArtwork((int) $id);
+        $allCollections = Collection::all();
+        $assignedCategoryIds = Exhibit::categoryIds((int) $id);
+        $assignedCollectionIds = Collection::collectionIdsForExhibit((int) $id);
         $error = null;
-        require dirname(__DIR__, 2) . '/views/admin/artworks/form.php';
+        require dirname(__DIR__, 2) . '/views/admin/exhibits/form.php';
     }
 
-    public static function artworkUpdate(string $id): void
+    public static function exhibitUpdate(string $id): void
     {
         admin_check();
 
         try {
-            $data = self::resolveArtworkData((int) $id);
-            Artwork::update((int) $id, $data);
-            ArtworkMediaItem::syncForArtwork((int) $id, $data['media_items']);
-            Artwork::syncCategories((int) $id, $data['category_ids']);
-            Exhibit::syncForArtwork((int) $id, $data['exhibit_ids']);
-            header('Location: /admin/artworks');
+            $data = self::resolveExhibitData((int) $id);
+            Exhibit::update((int) $id, $data);
+            ExhibitMediaItem::syncForExhibit((int) $id, $data['media_items']);
+            Exhibit::syncCategories((int) $id, $data['category_ids']);
+            Collection::syncForExhibit((int) $id, $data['collection_ids']);
+            header('Location: /admin/exhibits');
         } catch (Throwable $e) {
-            $artwork = self::draftArtworkFromPost((int) $id);
+            $exhibit = self::draftExhibitFromPost((int) $id);
             $categories = Category::all();
-            $allExhibits = Exhibit::all();
-            $assignedCategoryIds = $artwork['category_ids'];
-            $assignedExhibitIds = $artwork['exhibit_ids'];
+            $allCollections = Collection::all();
+            $assignedCategoryIds = $exhibit['category_ids'];
+            $assignedCollectionIds = $exhibit['collection_ids'];
             $error = $e->getMessage();
-            require dirname(__DIR__, 2) . '/views/admin/artworks/form.php';
+            require dirname(__DIR__, 2) . '/views/admin/exhibits/form.php';
         }
         exit;
     }
 
-    public static function artworkDelete(string $id): void
+    public static function exhibitDelete(string $id): void
     {
         admin_check();
-        Artwork::softDelete((int) $id);
-        header('Location: /admin/artworks');
+        Exhibit::softDelete((int) $id);
+        header('Location: /admin/exhibits');
         exit;
     }
 
-    public static function artworkReorder(): void
+    public static function exhibitReorder(): void
     {
         admin_check();
         $ids = array_filter(array_map('intval', explode(',', $_POST['ids'] ?? '')));
-        Artwork::reorder($ids);
+        Exhibit::reorder($ids);
         header('Content-Type: application/json');
         echo '{"ok":true}';
         exit;
@@ -241,60 +241,60 @@ class PortfolioAdminController
         exit;
     }
 
-    public static function exhibitsIndex(): void
+    public static function collectionsIndex(): void
     {
         admin_check();
-        $exhibits = Exhibit::allWithArtworkCount();
-        require dirname(__DIR__, 2) . '/views/admin/exhibits/index.php';
+        $collections = Collection::allWithExhibitCount();
+        require dirname(__DIR__, 2) . '/views/admin/collections/index.php';
     }
 
-    public static function exhibitCreate(): void
+    public static function collectionCreate(): void
     {
         admin_check();
-        $exhibit = null;
-        $allArtworks = Artwork::all();
+        $collection = null;
+        $allExhibits = Exhibit::all();
         $assigned = [];
         $error = null;
-        require dirname(__DIR__, 2) . '/views/admin/exhibits/form.php';
+        require dirname(__DIR__, 2) . '/views/admin/collections/form.php';
     }
 
-    public static function exhibitStore(): void
+    public static function collectionStore(): void
     {
         admin_check();
         $name = trim($_POST['name'] ?? '');
         if ($name === '') {
-            $exhibit = null;
-            $allArtworks = Artwork::all();
+            $collection = null;
+            $allExhibits = Exhibit::all();
             $assigned = [];
             $error = 'Name is required.';
-            require dirname(__DIR__, 2) . '/views/admin/exhibits/form.php';
+            require dirname(__DIR__, 2) . '/views/admin/collections/form.php';
             return;
         }
 
         try {
             [$thumbType, $thumbValue] = self::resolveThumbnail(null);
-            $id = Exhibit::create([
+            $id = Collection::create([
                 'name' => $name,
-                'slug' => self::resolvedExhibitSlug($name, null),
+                'slug' => self::resolvedCollectionSlug($name, null),
                 'description' => trim($_POST['description'] ?? ''),
                 'thumbnail_type' => $thumbType,
                 'thumbnail_value' => $thumbValue,
                 'sort_order' => 0,
             ]);
-            Exhibit::syncArtworks($id, array_map('intval', $_POST['artwork_ids'] ?? []));
-            header('Location: /admin/exhibits');
+            Collection::syncExhibits($id, array_map('intval', $_POST['exhibit_ids'] ?? []));
+            header('Location: /admin/collections');
         } catch (Throwable $e) {
-            $exhibit = null;
-            $allArtworks = Artwork::all();
+            $collection = null;
+            $allExhibits = Exhibit::all();
             $assigned = [];
             $error = $e->getMessage();
-            require dirname(__DIR__, 2) . '/views/admin/exhibits/form.php';
+            require dirname(__DIR__, 2) . '/views/admin/collections/form.php';
             return;
         }
         exit;
     }
 
-    public static function exhibitCreateInline(): void
+    public static function collectionCreateInline(): void
     {
         admin_check();
         header('Content-Type: application/json');
@@ -307,8 +307,8 @@ class PortfolioAdminController
         }
 
         try {
-            $slug = unique_exhibit_slug($name);
-            $id = Exhibit::create([
+            $slug = unique_exhibit_slug($name); // keeps exhibit slug helper in slugify helper
+            $id = Collection::create([
                 'name' => $name,
                 'slug' => $slug,
                 'description' => '',
@@ -324,101 +324,101 @@ class PortfolioAdminController
         exit;
     }
 
-    public static function exhibitEdit(string $id): void
+    public static function collectionEdit(string $id): void
     {
         admin_check();
-        $exhibit = Exhibit::find((int) $id);
-        if (!$exhibit) {
-            header('Location: /admin/exhibits');
+        $collection = Collection::find((int) $id);
+        if (!$collection) {
+            header('Location: /admin/collections');
             exit;
         }
-        $allArtworks = Artwork::all();
-        $assigned = Exhibit::artworkIds((int) $id);
+        $allExhibits = Exhibit::all();
+        $assigned = Collection::exhibitIds((int) $id);
         $error = null;
-        require dirname(__DIR__, 2) . '/views/admin/exhibits/form.php';
+        require dirname(__DIR__, 2) . '/views/admin/collections/form.php';
     }
 
-    public static function exhibitUpdate(string $id): void
+    public static function collectionUpdate(string $id): void
     {
         admin_check();
-        $existing = Exhibit::find((int) $id);
+        $existing = Collection::find((int) $id);
         if (!$existing) {
-            header('Location: /admin/exhibits');
+            header('Location: /admin/collections');
             exit;
         }
 
         $name = trim($_POST['name'] ?? '');
         if ($name === '') {
-            $exhibit = $existing;
-            $allArtworks = Artwork::all();
-            $assigned = Exhibit::artworkIds((int) $id);
+            $collection = $existing;
+            $allExhibits = Exhibit::all();
+            $assigned = Collection::exhibitIds((int) $id);
             $error = 'Name is required.';
-            require dirname(__DIR__, 2) . '/views/admin/exhibits/form.php';
+            require dirname(__DIR__, 2) . '/views/admin/collections/form.php';
             return;
         }
 
         try {
             [$thumbType, $thumbValue] = self::resolveThumbnail($existing);
-            Exhibit::update((int) $id, [
+            Collection::update((int) $id, [
                 'name' => $name,
-                'slug' => self::resolvedExhibitSlug($name, (int) $id),
+                'slug' => self::resolvedCollectionSlug($name, (int) $id),
                 'description' => trim($_POST['description'] ?? ''),
                 'thumbnail_type' => $thumbType,
                 'thumbnail_value' => $thumbValue,
                 'sort_order' => (int) ($existing['sort_order'] ?? 0),
             ]);
-            Exhibit::syncArtworks((int) $id, array_map('intval', $_POST['artwork_ids'] ?? []));
-            header('Location: /admin/exhibits');
+            Collection::syncExhibits((int) $id, array_map('intval', $_POST['exhibit_ids'] ?? []));
+            header('Location: /admin/collections');
         } catch (Throwable $e) {
-            $exhibit = $existing;
-            $allArtworks = Artwork::all();
-            $assigned = Exhibit::artworkIds((int) $id);
+            $collection = $existing;
+            $allExhibits = Exhibit::all();
+            $assigned = Collection::exhibitIds((int) $id);
             $error = $e->getMessage();
-            require dirname(__DIR__, 2) . '/views/admin/exhibits/form.php';
+            require dirname(__DIR__, 2) . '/views/admin/collections/form.php';
             return;
         }
         exit;
     }
 
-    public static function exhibitDelete(string $id): void
+    public static function collectionDelete(string $id): void
     {
         admin_check();
-        Exhibit::softDelete((int) $id);
-        header('Location: /admin/exhibits');
+        Collection::softDelete((int) $id);
+        header('Location: /admin/collections');
         exit;
     }
 
-    public static function exhibitReorder(): void
+    public static function collectionReorder(): void
     {
         admin_check();
         $ids = array_filter(array_map('intval', explode(',', $_POST['ids'] ?? '')));
-        Exhibit::reorder($ids);
+        Collection::reorder($ids);
         header('Content-Type: application/json');
         echo '{"ok":true}';
         exit;
     }
 
-    private static function resolveArtworkData(?int $existingId): array
+    private static function resolveExhibitData(?int $existingId): array
     {
-        $existing = $existingId ? Artwork::find($existingId) : null;
+        $existing = $existingId ? Exhibit::find($existingId) : null;
         $title = trim($_POST['title'] ?? '');
         if ($title === '') {
             throw new InvalidArgumentException('Title is required.');
         }
 
-        $mediaItems = self::resolveArtworkMediaItems();
+        $mediaItems = self::resolveExhibitMediaItems();
         if ($mediaItems === [] && $existing) {
-            $mediaItems = Artwork::resolvedMediaItems($existing);
+            $mediaItems = Exhibit::resolvedMediaItems($existing);
         }
         if ($mediaItems === []) {
-            throw new InvalidArgumentException('Add at least one artwork slide.');
+            throw new InvalidArgumentException('Add at least one exhibit slide.');
         }
 
         [$thumbType, $thumbValue] = self::resolveThumbnail($existing);
 
         return [
             'title' => $title,
-            'slug' => self::resolvedArtworkSlug($title, $existingId),
+            'slug' => self::resolvedExhibitSlug($title, $existingId),
             'year' => trim($_POST['year'] ?? ''),
             'artist_name' => trim($_POST['artist_name'] ?? ''),
             'medium' => trim($_POST['medium'] ?? ''),
@@ -430,11 +430,11 @@ class PortfolioAdminController
             'sort_order' => (int) ($_POST['sort_order'] ?? 0),
             'media_items' => $mediaItems,
             'category_ids' => array_map('intval', $_POST['category_ids'] ?? []),
-            'exhibit_ids' => array_map('intval', $_POST['exhibit_ids'] ?? []),
+            'collection_ids' => array_map('intval', $_POST['collection_ids'] ?? []),
         ];
     }
 
-    private static function resolveArtworkMediaItems(): array
+    private static function resolveExhibitMediaItems(): array
     {
         $kinds = $_POST['media_kind'] ?? [];
         $mediaIds = $_POST['media_file_id'] ?? [];
@@ -451,7 +451,7 @@ class PortfolioAdminController
                 continue;
             }
             if (!in_array($kind, ['image', 'video', 'iframe'], true)) {
-                throw new InvalidArgumentException('Invalid artwork slide type.');
+                throw new InvalidArgumentException('Invalid exhibit slide type.');
             }
 
             $mediaFileId = (int) ($mediaIds[$index] ?? 0);
@@ -462,7 +462,7 @@ class PortfolioAdminController
             $iframe = trim((string) ($iframeHtml[$index] ?? ''));
 
             if ($kind === 'iframe') {
-                if ($iframe === '' || stripos($iframe, '<iframe') === false || Artwork::extractIframeSourcePublic($iframe) === null) {
+                if ($iframe === '' || stripos($iframe, '<iframe') === false || Exhibit::extractIframeSourcePublic($iframe) === null) {
                     throw new InvalidArgumentException('Iframe slides require valid iframe HTML with a usable src.');
                 }
                 $items[] = [
@@ -501,9 +501,9 @@ class PortfolioAdminController
         return $items;
     }
 
-    private static function draftArtworkFromPost(?int $existingId): array
+    private static function draftExhibitFromPost(?int $existingId): array
     {
-        $existing = $existingId ? Artwork::find($existingId) : null;
+        $existing = $existingId ? Exhibit::find($existingId) : null;
 
         return [
             'id' => $existingId,
@@ -513,8 +513,8 @@ class PortfolioAdminController
             'artist_name' => trim((string) ($_POST['artist_name'] ?? ($existing['artist_name'] ?? ''))),
             'medium' => trim((string) ($_POST['medium'] ?? ($existing['medium'] ?? ''))),
             'dimensions' => trim((string) ($_POST['dimensions'] ?? ($existing['dimensions'] ?? ''))),
-            'category_ids' => array_map('intval', $_POST['category_ids'] ?? ($existing ? Artwork::categoryIds((int) $existing['id']) : [])),
-            'exhibit_ids' => array_map('intval', $_POST['exhibit_ids'] ?? ($existing ? Exhibit::exhibitIdsForArtwork((int) $existing['id']) : [])),
+            'category_ids' => array_map('intval', $_POST['category_ids'] ?? ($existing ? Exhibit::categoryIds((int) $existing['id']) : [])),
+            'collection_ids' => array_map('intval', $_POST['collection_ids'] ?? ($existing ? Collection::collectionIdsForExhibit((int) $existing['id']) : [])),
             'description' => trim((string) ($_POST['description'] ?? ($existing['description'] ?? ''))),
             'placard_notes' => trim((string) ($_POST['placard_notes'] ?? ($existing['placard_notes'] ?? ''))),
             'sort_order' => (int) ($_POST['sort_order'] ?? ($existing['sort_order'] ?? 0)),
@@ -527,7 +527,7 @@ class PortfolioAdminController
     {
         $kinds = $_POST['media_kind'] ?? [];
         if ($kinds === []) {
-            return $existing ? Artwork::resolvedMediaItems($existing) : [];
+            return $existing ? Exhibit::resolvedMediaItems($existing) : [];
         }
 
         $items = [];
@@ -539,7 +539,7 @@ class PortfolioAdminController
 
             $mediaFileId = (int) (($_POST['media_file_id'] ?? [])[$index] ?? 0);
             $posterMediaFileId = (int) (($_POST['poster_media_file_id'] ?? [])[$index] ?? 0);
-            $items[] = ArtworkMediaItem::normalizeForDisplay([
+            $items[] = ExhibitMediaItem::normalizeForDisplay([
                 'media_kind' => $kind,
                 'media_file_id' => $mediaFileId > 0 ? $mediaFileId : null,
                 'iframe_html' => trim((string) (($_POST['iframe_html'] ?? [])[$index] ?? '')),
@@ -570,7 +570,7 @@ class PortfolioAdminController
         return ['link', $value];
     }
 
-    private static function resolvedArtworkSlug(string $title, ?int $existingId): string
+    private static function resolvedExhibitSlug(string $title, ?int $existingId): string
     {
         $postedSlug = trim($_POST['slug'] ?? '');
         return $postedSlug !== ''
@@ -586,7 +586,7 @@ class PortfolioAdminController
             : unique_category_slug($name, $existingId ?? 0);
     }
 
-    private static function resolvedExhibitSlug(string $name, ?int $existingId): string
+    private static function resolvedCollectionSlug(string $name, ?int $existingId): string
     {
         $postedSlug = trim($_POST['slug'] ?? '');
         return $postedSlug !== ''

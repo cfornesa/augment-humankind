@@ -720,6 +720,44 @@ function initTiptap(textarea) {
   ;[boldBtn, italBtn, underBtn, strikeBtn].forEach(b => bar.appendChild(b))
   bar.appendChild(sep())
 
+  // AI Improve Text
+  const improveBtn = icon('✨'); improveBtn.title = 'Improve selected text with AI'
+  improveBtn.addEventListener('click', () => {
+    const selection = editor.state.selection
+    const from = selection.from
+    const to = selection.to
+    if (from === to) {
+      alert('Select some text first to improve it.')
+      return
+    }
+    const selectedText = editor.state.doc.textBetween(from, to, ' ')
+    window.openAiProfilePicker(async profileId => {
+      if (!profileId) return
+      improveBtn.disabled = true
+      improveBtn.textContent = '...'
+      try {
+        const fd = new FormData()
+        fd.append('profile_id', profileId)
+        fd.append('content', selectedText)
+        fd.append('mode', 'html')
+        const res = await fetch('/admin/ai/process', { method: 'POST', body: fd })
+        const data = await res.json()
+        if (data.result) {
+          editor.chain().focus().insertContentAt({ from, to }, data.result).run()
+        } else {
+          alert('AI improvement failed: ' + (data.error || 'Unknown error'))
+        }
+      } catch (e) {
+        alert('Error: ' + e.message)
+      } finally {
+        improveBtn.disabled = false
+        improveBtn.innerHTML = '✨'
+      }
+    })
+  })
+  bar.appendChild(improveBtn)
+  bar.appendChild(sep())
+
   // Text color + Highlight
   const colorWrap = document.createElement('label'); colorWrap.className = 'tt-color-wrap'; colorWrap.title = 'Text color'; colorWrap.innerHTML = '<span>A</span>'
   const colorIn = document.createElement('input'); colorIn.type = 'color'; colorIn.className = 'tt-color'; colorIn.value = '#f5a23b'
@@ -754,20 +792,36 @@ function initTiptap(textarea) {
   })
   bar.appendChild(imgBtn)
 
+  // Art piece / exhibit embed from library
+  const pieceBtn = icon('▦'); pieceBtn.title = 'Insert art piece or exhibit'
+  pieceBtn.addEventListener('click', () => {
+    window.openPiecePicker(result => {
+      const attrs = result.type === 'collection'
+        ? { src: `/immersive/collections/${result.slug}`, title: `Collection: ${result.title}` }
+        : { src: `/embed/pieces/${result.id}`, title: result.title }
+      editor.chain().focus().setIframe(buildIframeAttrs({
+        ...attrs,
+        style: 'width:100%;aspect-ratio:16/9;border:0;',
+      })).run()
+    })
+  })
+  bar.appendChild(pieceBtn)
+
   // iFrame
   const iframeBtn = icon('⬛'); iframeBtn.title = 'Insert iframe embed'
   iframeBtn.addEventListener('click', () => {
-    const raw = window.prompt('Paste an iframe URL or full iframe HTML:')
-    if (!raw) return
+    window.openIframePicker(raw => {
+      if (!raw) return
 
-    const normalized = normalizeIframeInput(raw)
-    if (normalized.ok) {
-      hideIframeNotice()
-      editor.chain().focus().setIframe(normalized.attrs).run()
-      return
-    }
+      const normalized = normalizeIframeInput(raw)
+      if (normalized.ok) {
+        hideIframeNotice()
+        editor.chain().focus().setIframe(normalized.attrs).run()
+        return
+      }
 
-    showIframeNotice(normalized.message, raw)
+      showIframeNotice(normalized.message, raw)
+    })
   })
   bar.appendChild(iframeBtn); bar.appendChild(sep())
 
@@ -924,7 +978,7 @@ function initMediaPicker() {
   }
 
   function renderGridItem(f) {
-    const url = f.kind === 'image' ? (f.legacy_url || `/image/${f.id}`) : `/media/${f.id}`
+    const url = f.legacy_url || f.url || (f.kind === 'image' ? `/image/${f.id}` : `/media/${f.id}`)
     const item = document.createElement('div')
     item.className = 'media-picker-item'
     item.dataset.url = url
@@ -932,14 +986,29 @@ function initMediaPicker() {
     item.dataset.kind = f.kind
     item.dataset.mime = f.mime_type || ''
 
-    const media = f.kind === 'video'
-      ? document.createElement('video')
-      : document.createElement('img')
+    let media;
+    if (f.kind === 'video') {
+      media = document.createElement('video');
+      media.src = f.legacy_url || f.url || `/media/${f.id}`;
+      media.muted = true;
+      media.preload = 'metadata';
+    } else if (f.kind === 'iframe') {
+      media = document.createElement('div');
+      media.className = 'media-picker-iframe-thumb';
+      media.innerHTML = '&lt;/&gt; Embed';
+      media.style.display = 'flex';
+      media.style.alignItems = 'center';
+      media.style.justifyContent = 'center';
+      media.style.height = '100%';
+      media.style.background = 'var(--paper)';
+      media.style.color = 'var(--orange)';
+      media.style.fontWeight = 'bold';
+    } else {
+      media = document.createElement('img');
+      media.src = f.legacy_url || `/image/${f.id}`;
+    }
 
-    media.src = f.kind === 'video' ? `/media/${f.id}` : (f.legacy_url || `/image/${f.id}`)
     media.loading = 'lazy'
-    media.muted = true
-    media.preload = 'metadata'
     media.alt = `Media ${f.id}`
     item.appendChild(media)
 
@@ -968,14 +1037,14 @@ function initMediaPicker() {
       const files = await res.json()
       const filtered = files.filter(f => {
         if (currentMode === 'video') return f.kind === 'video'
-        if (currentMode === 'media') return f.kind === 'image' || f.kind === 'video'
+        if (currentMode === 'media') return f.kind === 'image' || f.kind === 'video' || f.kind === 'iframe'
         return f.kind === 'image'
       })
       if (!filtered.length) { grid.innerHTML = `<p class="media-picker-empty">${pickerModeConfig().empty}</p>`; return }
       filtered.forEach(f => {
         const item = renderGridItem(f)
         grid.appendChild(item)
-        const url = f.kind === 'image' ? (f.legacy_url || `/image/${f.id}`) : `/media/${f.id}`
+        const url = f.legacy_url || f.url || (f.kind === 'image' ? `/image/${f.id}` : `/media/${f.id}`)
         if (preselectUrl && url === preselectUrl) {
           item.classList.add('selected'); selectedUrl = url; selectedAsset = f; selectBtn.disabled = false
           if (altRow && !_libraryMode && currentTab === 'select' && f.kind === 'image') altRow.hidden = false
@@ -1098,6 +1167,220 @@ function initMediaPicker() {
   }
 }
 
+// ─── Art Piece / Exhibit Picker ────────────────────────────────────────────
+
+const PIECE_ENGINE_LABELS = { p5: 'P5.js', c2: 'C2.js', three: 'Three.js', svg: 'SVG' }
+
+let _piecePickerCallback = null
+
+function initPiecePicker() {
+  const dialog      = document.getElementById('piece-picker-modal')
+  if (!dialog) return
+
+  const tabs        = dialog.querySelectorAll('.media-picker-tab')
+  const panels      = dialog.querySelectorAll('.media-picker-panel')
+  const pieceGrid   = dialog.querySelector('#pp-panel-pieces .piece-picker-grid')
+  const exhibitGrid = dialog.querySelector('#pp-panel-exhibits .piece-picker-grid')
+  const closeBtn    = dialog.querySelector('.media-picker-close')
+  const cancelBtn   = dialog.querySelector('.piece-picker-cancel-btn')
+  const selectBtn   = dialog.querySelector('.piece-picker-select-btn')
+
+  let selected = null
+  let piecesLoaded = false
+  let exhibitsLoaded = false
+
+  function switchTab(tabName) {
+    tabs.forEach(t => { const a = t.dataset.tab === tabName; t.classList.toggle('active', a); t.setAttribute('aria-selected', a ? 'true' : 'false') })
+    panels.forEach(p => { p.hidden = p.id !== `pp-panel-${tabName}` })
+    selected = null; selectBtn.disabled = true
+    if (tabName === 'pieces' && !piecesLoaded) loadPieces()
+    if (tabName === 'collections' && !collectionsLoaded) loadCollections()
+  }
+
+  tabs.forEach(t => t.addEventListener('click', () => switchTab(t.dataset.tab)))
+
+  function renderItem(grid, { thumb, title, badge, onSelect }) {
+    const item = document.createElement('div')
+    item.className = 'piece-picker-item'
+
+    const thumbEl = document.createElement('div')
+    thumbEl.className = 'piece-picker-thumb'
+    if (thumb) {
+      const img = document.createElement('img')
+      img.src = thumb; img.loading = 'lazy'; img.alt = ''
+      thumbEl.appendChild(img)
+    }
+    item.appendChild(thumbEl)
+
+    const label = document.createElement('div')
+    label.className = 'piece-picker-label'
+    const titleEl = document.createElement('span')
+    titleEl.className = 'piece-picker-title'
+    titleEl.textContent = title
+    const badgeEl = document.createElement('span')
+    badgeEl.className = 'piece-picker-engine'
+    badgeEl.textContent = badge
+    label.appendChild(titleEl); label.appendChild(badgeEl)
+    item.appendChild(label)
+
+    item.addEventListener('click', () => {
+      grid.querySelectorAll('.piece-picker-item').forEach(i => i.classList.remove('selected'))
+      item.classList.add('selected')
+      selected = onSelect()
+      selectBtn.disabled = false
+    })
+    item.addEventListener('dblclick', () => confirmSelection())
+    return item
+  }
+
+  async function loadPieces() {
+    pieceGrid.innerHTML = ''
+    try {
+      const res = await fetch('/admin/pieces/library')
+      const pieces = await res.json()
+      if (!pieces.length) { pieceGrid.innerHTML = '<p class="media-picker-empty">No art pieces yet.</p>'; piecesLoaded = true; return }
+      pieces.forEach(p => pieceGrid.appendChild(renderItem(pieceGrid, {
+        thumb: p.thumbnail_url,
+        title: p.title || 'Untitled Piece',
+        badge: PIECE_ENGINE_LABELS[p.engine] || String(p.engine || '').toUpperCase(),
+        onSelect: () => ({ type: 'piece', id: p.id, title: p.title || 'Untitled Piece' }),
+      })))
+      piecesLoaded = true
+    } catch { pieceGrid.innerHTML = '<p class="media-picker-empty">Failed to load art pieces.</p>' }
+  }
+
+  async function loadCollections() {
+    collectionGrid.innerHTML = ''
+    try {
+      const res = await fetch('/admin/platform-collections/library')
+      const collections = await res.json()
+      if (!collections.length) { collectionGrid.innerHTML = '<p class="media-picker-empty">No collections yet.</p>'; collectionsLoaded = true; return }
+      collections.forEach(col => collectionGrid.appendChild(renderItem(collectionGrid, {
+        thumb: col.thumbnail_url,
+        title: col.name || 'Untitled Collection',
+        badge: `${col.item_count} item${col.item_count === 1 ? '' : 's'}`,
+        onSelect: () => ({ type: 'collection', slug: col.slug, title: col.name || 'Untitled Collection' }),
+      })))
+      collectionsLoaded = true
+    } catch { collectionGrid.innerHTML = '<p class="media-picker-empty">Failed to load collections.</p>' }
+  }
+
+  function confirmSelection() {
+    if (!selected || !_piecePickerCallback) return
+    _piecePickerCallback(selected)
+    _piecePickerCallback = null; dialog.close()
+  }
+
+  selectBtn.addEventListener('click', confirmSelection)
+  closeBtn?.addEventListener('click',  () => dialog.close())
+  cancelBtn?.addEventListener('click', () => dialog.close())
+  dialog.addEventListener('click', e => { if (e.target === dialog) dialog.close() })
+  dialog.addEventListener('close', () => { _piecePickerCallback = null })
+
+  window.openPiecePicker = (callback) => {
+    _piecePickerCallback = callback
+    switchTab('pieces')
+    dialog.showModal()
+  }
+}
+
+// ─── iFrame Embed Picker ──────────────────────────────────────────────────────
+
+let _iframePickerCallback = null
+
+function initIframePicker() {
+  const dialog    = document.getElementById('iframe-picker-modal')
+  if (!dialog) return
+
+  const input     = document.getElementById('iframe-picker-input')
+  const closeBtn  = dialog.querySelector('.media-picker-close')
+  const cancelBtn = dialog.querySelector('.iframe-picker-cancel-btn')
+  const insertBtn = dialog.querySelector('.iframe-picker-insert-btn')
+
+  function confirmSelection() {
+    if (!_iframePickerCallback) return
+    const callback = _iframePickerCallback
+    _iframePickerCallback = null
+    const value = input.value
+    dialog.close()
+    callback(value)
+  }
+
+  insertBtn.addEventListener('click', confirmSelection)
+  closeBtn?.addEventListener('click',  () => dialog.close())
+  cancelBtn?.addEventListener('click', () => dialog.close())
+  dialog.addEventListener('click', e => { if (e.target === dialog) dialog.close() })
+  dialog.addEventListener('close', () => { _iframePickerCallback = null })
+
+  window.openIframePicker = (callback) => {
+    _iframePickerCallback = callback
+    input.value = ''
+    dialog.showModal()
+    input.focus()
+  }
+}
+
+// ─── AI Profile Picker ──────────────────────────────────────────────────────
+
+let _aiProfilePickerCallback = null
+let _aiProfilesLoaded = false
+
+function initAiProfilePicker() {
+  const dialog    = document.getElementById('ai-profile-picker-modal')
+  if (!dialog) return
+
+  const select    = document.getElementById('ai-profile-picker-select')
+  const closeBtn  = dialog.querySelector('.media-picker-close')
+  const cancelBtn = dialog.querySelector('.ai-profile-picker-cancel-btn')
+  const selectBtn = dialog.querySelector('.ai-profile-picker-select-btn')
+
+  async function loadProfiles() {
+    select.innerHTML = '<option value="">Loading…</option>'
+    selectBtn.disabled = true
+    try {
+      const res = await fetch('/admin/ai/profiles')
+      const profiles = await res.json()
+      if (!profiles.length) {
+        select.innerHTML = '<option value="">No AI profiles configured</option>'
+        _aiProfilesLoaded = true
+        return
+      }
+      select.innerHTML = ''
+      profiles.forEach(p => {
+        const o = document.createElement('option')
+        o.value = String(p.id)
+        o.textContent = `${p.profile_name} — ${p.vendor}/${p.model} (${p.user_name})`
+        select.appendChild(o)
+      })
+      selectBtn.disabled = false
+      _aiProfilesLoaded = true
+    } catch {
+      select.innerHTML = '<option value="">Failed to load AI profiles</option>'
+    }
+  }
+
+  function confirmSelection() {
+    if (!_aiProfilePickerCallback || !select.value) return
+    const callback = _aiProfilePickerCallback
+    _aiProfilePickerCallback = null
+    const profileId = select.value
+    dialog.close()
+    callback(profileId)
+  }
+
+  selectBtn.addEventListener('click', confirmSelection)
+  closeBtn?.addEventListener('click',  () => dialog.close())
+  cancelBtn?.addEventListener('click', () => dialog.close())
+  dialog.addEventListener('click', e => { if (e.target === dialog) dialog.close() })
+  dialog.addEventListener('close', () => { _aiProfilePickerCallback = null })
+
+  window.openAiProfilePicker = (callback) => {
+    _aiProfilePickerCallback = callback
+    if (!_aiProfilesLoaded) loadProfiles()
+    dialog.showModal()
+  }
+}
+
 // ─── Standalone image field pickers + clear buttons ──────────────────────────
 
 function initStandalonePickers() {
@@ -1144,5 +1427,8 @@ function initStandalonePickers() {
 document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('textarea[data-tiptap]').forEach(initTiptap)
   initMediaPicker()
+  initPiecePicker()
+  initIframePicker()
+  initAiProfilePicker()
   initStandalonePickers()
 })

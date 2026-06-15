@@ -156,3 +156,62 @@ function oauth_debug_detail(Throwable $error): string
 
     return preg_replace('/\s+/', ' ', $message) ?: 'OAuth request failed.';
 }
+
+// ─── Platform OAuth helpers ─────────────────────────────────────────────────
+
+function platform_oauth_provider_config(string $provider): array
+{
+    $provider = strtolower($provider);
+
+    return match ($provider) {
+        'wordpress-com' => [
+            'client_id' => oauth_env('WORDPRESS_COM_CLIENT_ID'),
+            'client_secret' => oauth_env('WORDPRESS_COM_CLIENT_SECRET'),
+            'auth_url' => 'https://public-api.wordpress.com/oauth2/authorize',
+            'token_url' => 'https://public-api.wordpress.com/oauth2/token',
+            'scope' => 'global',
+        ],
+        'blogger' => [
+            'client_id' => oauth_env('BLOGGER_GOOGLE_CLIENT_ID'),
+            'client_secret' => oauth_env('BLOGGER_GOOGLE_CLIENT_SECRET'),
+            'auth_url' => 'https://accounts.google.com/o/oauth2/v2/auth',
+            'token_url' => 'https://oauth2.googleapis.com/token',
+            'scope' => 'https://www.googleapis.com/auth/blogger',
+        ],
+        'linkedin' => [
+            'client_id' => oauth_env('LINKEDIN_CLIENT_ID'),
+            'client_secret' => oauth_env('LINKEDIN_CLIENT_SECRET'),
+            'auth_url' => 'https://www.linkedin.com/oauth/v2/authorization',
+            'token_url' => 'https://www.linkedin.com/oauth/v2/accessToken',
+            'scope' => 'w_member_social',
+        ],
+        'facebook' => [
+            'client_id' => oauth_env('FACEBOOK_CLIENT_ID'),
+            'client_secret' => oauth_env('FACEBOOK_CLIENT_SECRET'),
+            'auth_url' => 'https://www.facebook.com/v18.0/dialog/oauth',
+            'token_url' => 'https://graph.facebook.com/v18.0/oauth/access_token',
+            'scope' => 'pages_manage_posts',
+        ],
+        'instagram' => [
+            'client_id' => oauth_env('INSTAGRAM_CLIENT_ID') ?: oauth_env('FACEBOOK_CLIENT_ID'),
+            'client_secret' => oauth_env('INSTAGRAM_CLIENT_SECRET') ?: oauth_env('FACEBOOK_CLIENT_SECRET'),
+            'auth_url' => 'https://www.facebook.com/v18.0/dialog/oauth',
+            'token_url' => 'https://graph.facebook.com/v18.0/oauth/access_token',
+            'scope' => 'instagram_basic,instagram_content_publish',
+        ],
+        default => throw new InvalidArgumentException('Unsupported platform OAuth provider.'),
+    };
+}
+
+function platform_oauth_redirect_uri(string $provider): string
+{
+    $https = !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off';
+    $scheme = $https ? 'https' : 'http';
+    $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+    return $scheme . '://' . $host . '/admin/platform-connections/auth/' . strtolower($provider) . '/callback';
+}
+
+function platform_oauth_supported_providers(): array
+{
+    return ['wordpress-com', 'blogger', 'linkedin', 'facebook', 'instagram'];
+}

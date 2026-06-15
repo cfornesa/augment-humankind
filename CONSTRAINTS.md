@@ -14,3 +14,7 @@
      not that this file is optional. The agent must create this
      file at project root the first time any constraint is stated,
      even if AGENTS.md is read-only. -->
+
+CONSTRAINT: The platform database is live and must not be modified by this migration. Agents may read/export existing platform data for migration, but must not add, edit, delete, migrate in place, run schema changes against, or otherwise mutate the platform database.
+SCOPE: Platform database access, migration scripts, reconciliation tooling, testing, and deployment procedure.
+SET: 2026-06-14

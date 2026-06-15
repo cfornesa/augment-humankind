@@ -444,3 +444,864 @@ options regardless of session context. -->
 - Navigation fallback updated to 'Home'.
 - Homepage loads with static fallback when CMS page is not present.
 - No duplicate 'Home' link after systemSlugs() fix.
+
+## 2026-06-14 — Platform Assimilation Foundation + Blog Shell
+
+### Direction Confirmed
+- Assimilation, not replacement: the current no-framework PHP app remains the
+  shell and the current PHP MySQL database is the only writable target.
+- The live platform database is read/export-only. Migration tooling may inspect
+  and copy rows from `PLATFORM_*` but must never mutate that database.
+- Platform public feed moves from the platform homepage model to canonical
+  `/blog`; the current PHP homepage remains `/`.
+- Old platform public URLs are compatibility redirects, not canonical
+  duplicates.
+- Migrated platform row IDs are always remapped in the PHP target database.
+  Original platform IDs are retained in source metadata columns and
+  `platform_migration_map`.
+
+### Implemented
+- Sanitized `env.example` to placeholders only and documented `PLATFORM_*`
+  source/runtime variables.
+- Added `migrations/2026-06-14-platform-assimilation.sql` for additive target
+  DB schema expansion: blog/platform tables, source metadata columns on
+  existing `categories`, `pages`, and `navigation_items`, plus migration map
+  storage.
+- Added `scripts/migrate-platform-to-php.php`, a dry-run-first migration tool
+  with separate `DB_*` target and `PLATFORM_*` source connections. The source
+  wrapper exposes only read methods and starts a read-only transaction.
+- Expanded the migration target schema/tool coverage to retain platform media
+  assets, profile photos, site settings/assets, user AI settings/keys,
+  platform connections, OAuth app credentials, syndication rows, art
+  pieces/versions, platform exhibits, and exhibit memberships.
+- Added PHP blog shell routes/views/models for `/blog`, `/blog/posts/[id]`,
+  `/blog/categories`, `/blog/category/[slug]`, `/blog/feeds`, `/search`, Atom,
+  and JSON Feed output.
+- Added permanent compatibility redirects for `/feeds`, `/posts/[id]`,
+  `/categories/[slug]`, and `/p/[slug]` where a migrated target exists.
+- Added owner-user bootstrap bridge: existing allowlisted GitHub/Google admin
+  login can create/update an owner row in the new `users` table when present,
+  while preserving `admin_identities`.
+- Added `scripts/apply-platform-assimilation-schema.php`, an idempotent
+  target-DB-only schema applicator for the additive migration.
+- Applied the additive platform assimilation schema to `DB_*` only.
+- Executed the one-way platform migration into `DB_*`; `PLATFORM_*` remained
+  read-only. Imported users=1, accounts=1, sessions=23, categories=5,
+  nav_links=5, posts=9, post_categories=19, media_assets=102,
+  site_settings=1, site_assets=3, AI settings=7, AI keys=7,
+  platform_connections=2, platform_oauth_apps=1, art_pieces=60,
+  art_piece_versions=123, exhibits=5, piece_exhibits=25. No skipped rows were
+  reported.
+
+### Verification
+- `php -l` passed across `public/app` and `scripts`.
+- Read-only dry run of `scripts/migrate-platform-to-php.php` succeeded against
+  the configured platform source and reported: users=1, accounts=1,
+  feed_sources=0, categories=5, pages=0, nav_links=5, posts=9,
+  post_categories=19, comments=0, reactions=0.
+- Expanded read-only dry run later reported: sessions=23,
+  verification_tokens=0, feed_items_seen=0, media_assets=102,
+  profile_photo_assets=0, site_settings=1, site_assets=3,
+  user_ai_vendor_settings=7, user_ai_vendor_keys=7,
+  platform_connections=2, platform_oauth_apps=1, post_syndications=0,
+  art_pieces=60, art_piece_versions=123, exhibits=5,
+  piece_exhibits=25, media_asset_exhibits=0.
+- Local route checks against `127.0.0.1:8084` returned 200 for `/`, `/blog`,
+  `/blog/categories`, `/blog/feeds`, `/search`, `/feed.xml`, `/feed.json`,
+  `/portfolio`, and `/contact`; `/feeds` returned 301 to `/blog/feeds`;
+  `/posts/1` returned 301 to `/blog` before target migration data exists;
+  `/p/example` returned 404 before target migration data exists.
+- Post-migration target counts matched expected non-zero source imports,
+  including posts=9, categories=5, media_assets=102, art_pieces=60,
+  art_piece_versions=123, platform_exhibits=5, and platform_migration_map=327.
+- Post-migration route checks against `127.0.0.1:8086` returned 200 for `/`,
+  `/blog`, `/blog/posts/1`, `/blog/categories`, `/blog/category/art`,
+  `/blog/feeds`, `/search`, `/feed.xml`, `/feed.json`, `/portfolio`, and
+  `/contact`; `/feeds` returned 301 to `/blog/feeds`; `/posts/1` returned 301
+  to `/blog/posts/1`; `/categories/art` returned 301 to `/blog/category/art`;
+  `/p/example` returned 404 because the platform source had zero pages.
+
+### Remaining Work
+- Build the Phase 3/4 admin surfaces and backend services: post editing,
+  comments/reactions writes, feed ingestion, scheduled publishing, AI,
+  syndication, media library reconciliation, recycle bin coverage, and
+  platform exhibit/art-piece management.
+
+## 2026-06-14 — Platform Deletion Readiness Reassessment
+
+### Corrected Evaluation
+- Later implementation by other agents added many Phase 4 admin surfaces and
+  syndication adapters, but the PHP app is not ready for deleting `platform/`.
+- Missing required compatibility surfaces were confirmed locally:
+  `/embed/pieces/1`, `/embed/pieces/1/data`, `/immersive/pieces/1`,
+  `/immersive/exhibits/{slug}`, `/api/feeds`, `/api/posts`,
+  `/api/art-pieces`, and `/api/exhibits` returned 404.
+- Feed ingestion/moderation was incomplete because pending rows stored only
+  GUID hashes, causing approvals to create placeholder draft posts rather than
+  real imported item content.
+- GuzzleHTTP and the live syndication services were added to code but were not
+  fully reflected in dependency documentation.
+- The standing deletion condition is now: keep `platform/` until route parity,
+  runtime assets, feed import data retention, syndication credential handling,
+  and a deletion-readiness report all pass.
+
+## 2026-06-14 — Phase 3 Reconciliation: Nav-Link Fix + Full Re-verification
+
+### Audit Findings
+- 4 of 5 Phase 3 checklist items were already built and executed in the prior
+  session: auth tables (`users`/`accounts`/`sessions`/`verification_tokens`)
+  alongside preserved `admin_identities`; `ADMIN_GITHUB_USERNAMES`/
+  `ADMIN_GOOGLE_EMAILS` owner bootstrap via `PlatformUser::
+  upsertOwnerFromAdminProfile()`; platform user/account/session migration
+  (users=1, accounts=1, sessions=23); and page reconciliation (no-op, the
+  platform source had 0 pages).
+- The 1 real gap: 2 of the 5 imported `nav_links` ("Feeds" -> `/feeds`,
+  "Categories" -> `/categories`, both platform `kind='system'`) were mapped by
+  `scripts/migrate-platform-to-php.php` to PHP `source_type='system'` with a
+  derived `system_key`. `NavigationItem::removeDefunctSystemItems()` then
+  silently deleted both rows on every request (their `system_key` values
+  `feeds`/`categories` aren't in this app's `SYSTEM_ITEMS`), leaving 2
+  dangling `platform_migration_map` rows pointing at deleted
+  `navigation_items` ids.
+- Bonus finding: an uncommitted addition of `'blog' => '/blog'` to
+  `SYSTEM_ITEMS` (sort_order=3, shifting `contact`/`portfolio` to 4/5) hadn't
+  been seeded yet, and `seedSystemItems()` only inserts missing keys without
+  shifting existing rows' `sort_order` — so `Blog` would have landed after
+  `Contact` instead of before it.
+
+### Implemented (chosen approach: Literal Mapping, 11-item header)
+- Fixed `scripts/migrate-platform-to-php.php`'s `nav_links` import loop:
+  platform `kind='system'` rows now map to PHP `source_type='external'`
+  (never `'system'`), with a static URL-rewrite table (`/feeds` ->
+  `/blog/feeds`, `/categories` -> `/blog/categories`) for future fresh runs.
+- Added `scripts/repair-platform-nav-links.php` (dry-run by default,
+  `--execute` to write) — a one-time idempotent repair that inserts the 2
+  dropped `navigation_items` rows (Feeds -> `/blog/feeds` sort_order=70,
+  Categories -> `/blog/categories` sort_order=80, both visible externals with
+  `platform_source_id` 1/2) and repoints the 2 dangling
+  `platform_migration_map` rows at the new ids.
+- Fixed `NavigationItem::seedSystemItems()` to shift existing
+  `source_type='system'` rows' `sort_order` (+1, for `sort_order >=` the new
+  item's target) before inserting a missing `SYSTEM_ITEMS` entry, so `Blog`
+  lands between `Field Notes` and `Contact`.
+- Marked all 5 Phase 3 checklist items `Done —` in
+  `docs/platform-assimilation-plan.md` with notes on the no-op page
+  reconciliation and the nav-link fix, and added a Phase 3 completion line to
+  the Implementation Tracker.
+
+### Verification
+- `php -l` passed for `scripts/migrate-platform-to-php.php`,
+  `scripts/repair-platform-nav-links.php`, and
+  `public/app/models/NavigationItem.php`.
+- `scripts/repair-platform-nav-links.php` dry run reported the 2 planned
+  inserts/map updates; `--execute` inserted `navigation_items` ids 16
+  (Feeds) and 17 (Categories) and updated `platform_migration_map` source_id
+  1/2 to point at them; a second run (dry and `--execute`) reported "already
+  repaired" — confirmed idempotent.
+- Read-only dry run of `scripts/migrate-platform-to-php.php` reported
+  unchanged platform source counts (users=1, accounts=1, sessions=23,
+  categories=5, pages=0, nav_links=5, posts=9, ...), matching the original
+  2026-06-14 execution. Re-running with `--execute` was deliberately not
+  performed: the `users`/`categories`/`pages`/`nav_links`/`posts` import loops
+  use plain `insert()` with no per-row dedupe guard and would duplicate
+  already-migrated rows. Instead, the new nav_links mapping logic was
+  validated directly against the 5 real platform `nav_links` rows
+  (read-only): Feeds and Categories now resolve to
+  `source_type='external'`, `/blog/feeds`/`/blog/categories`; About/
+  Exhibit/Coded Art (`kind='external'`) are unchanged.
+- Local server check: header renders all 11 items in order — Home, Services,
+  Field Notes, Blog, Contact, Portfolio, About, Exhibit, Coded Art, Feeds,
+  Categories. `/`, `/blog`, `/blog/feeds`, `/blog/categories`, `/services`,
+  `/notes`, `/contact`, `/portfolio` all returned 200; `/feeds` returned 301
+  to `/blog/feeds`; `/p/example` returned 404 (no platform pages).
+- Read-only DB check after the request: `navigation_items` id=18 (`blog`,
+  `system_key='blog'`) seeded at `sort_order=3`; `contact`/`portfolio` shifted
+  to `sort_order` 4/5; ids 16/17 (Feeds/Categories) correctly linked via
+  `platform_migration_map` source_id 1/2.
+- OAuth/user-migration re-verification (read-only + code review, no
+  `oauth.php` change or live OAuth round-trip): `users` has 1 row
+  (csfornesa@gmail.com, role=owner, status=active) linked via `accounts` to
+  provider=google. `PlatformUser::upsertOwnerFromAdminProfile()` matches by
+  email and UPDATEs the existing row (no duplication); `upsertAccount()` uses
+  `INSERT IGNORE` against the `accounts_provider_provider_account_id_unique`
+  key on `(provider, provider_account_id)` — which does not include `type`, so
+  a real login (`type='oauth'`) correctly no-ops against the migrated
+  `type='oidc'` row rather than creating a duplicate.
+- Page reconciliation re-verification (code review only, per `CONSTRAINTS.md`
+  no synthetic platform data): `BlogController::redirectPage()` first checks
+  `Page::safeFindPublishedBySlug($slug)`, then falls back to
+  `pages.platform_original_slug = $slug`, 301-redirecting to the page's
+  current `slug` — correctly covers both the no-conflict and
+  `platform-[slug]` conflict-prefix cases.
+
+### Remaining Work
+- Phase 4: Build the Phase 3/4 admin surfaces and backend services (unchanged
+  from the prior entry).
+
+## 2026-06-14 — Phase 4B: Scheduled Publishing + Feed Export Route Parity
+
+### Context
+Completed the remaining Phase 4B items after 4A. Two pieces:
+1. Scheduled publishing — `BlogPost::publishDuePosts()` flips `status='scheduled'`
+   to `published` when `scheduled_at` has passed, overwriting `created_at` to the
+   publish moment (matches the platform's behavior).
+2. Feed export refinement — full route parity with the platform's feed/export
+   surface, plus field enhancements.
+
+### Decisions
+- `created_at` overwrite on scheduled publish: confirmed, matches platform.
+- Feed export scope: "Full route parity" — build all platform feed/export/catalog
+  routes, not just field tweaks.
+- `/export.json`/`/export/json` Rule 5 deviation: keep serving JSON Feed 1.1
+  (existing clients depend on it). Platform's mf2 export lives at new `/feeds/mf2`.
+- Page feed content source: `pages.content`/`content_text` are empty (platform
+  had 0 pages). `PageController::pageEntry()` builds content from `page_sections`
+  concatenation instead — no regression.
+
+### URL Map Implemented
+See `docs/platform-assimilation-plan.md` Phase 4B section for the full table.
+Key additions: `/feeds/mf2`, `/blog/category/{slug}/feed.*`, `/{slug}/feed.*`,
+plus legacy 301 redirects. Existing 6 routes enhanced with `subtitle`, `author`,
+`summary`, `category`, `description`, `authors`, `content_text`, `tags`.
+
+### Files Changed
+- `public/app/models/BlogPost.php` — `publishDuePosts()` + call sites.
+- `public/app/models/SiteSettings.php` — new.
+- `public/app/helpers/seo.php` — `seo_site_meta()`, `seo_author_name()`.
+- `public/app/controllers/BlogController.php` — generalized `atomXml()`,
+  `jsonFeedPayload()`, new `mf2Payload()`, `categoryFeed()`, `mf2()`,
+  `redirectCategoryFeed()`, `redirectPageFeed()`.
+- `public/app/controllers/PageController.php` — `feed()`, `pageEntry()`, `notFound()`.
+- `public/app/controllers/Admin/BlogAdminController.php` — `publishDuePosts()`
+  call in `postsIndex()`.
+- `public/app/router.php` — all new routes wired.
+- `public/index.php` — dispatch clauses for `/feeds/mf2` and `/{slug}/feed.*`.
+- `public/app/views/blog/feeds.php` — catalog enhanced.
+- `docs/api.md` — feed routes documented.
+
+### Verification
+- `php -l` passed across all changed files.
+- `public/index.php` dispatch clauses verified: `/feeds/mf2` and `/{slug}/feed.*`
+  both route to `app/router.php`.
+- `views/blog/feeds.php` renders mf2 link, category feed list, and page feed note.
+
+### Remaining Work
+- Phase 4C-4H reordered per the 2026-06-14 Phase 4C entry below.
+
+## 2026-06-14 — Phase 4C: Art Pieces & Platform Exhibits (was 4H)
+
+### Direction Confirmed
+User chose Option C: finish 4B then jump to 4H (reordered as 4C). Portfolio
+artworks and platform art pieces are distinct — portfolio is
+presentation/gallery focused, platform art is generative/code focused. They must
+live under separate public URLs.
+
+### URL Decision
+- Portfolio stays at `/portfolio/*` (durable, no changes).
+- Platform art pieces at `/pieces/*` (new public routes).
+- Admin surfaces: `/admin/artworks` (existing portfolio) and `/admin/pieces`
+  (new platform art).
+- Future bridge: platform art pieces can be added as slides to portfolio artworks.
+
+### Phase 4 Roadmap (reordered)
+- 4C (this entry) — Art pieces & platform exhibits admin.
+- 4D — Feed ingestion & moderation.
+- 4E — Site identity & media.
+- 4F — User profiles & AI settings.
+- 4G — Platform connections & syndication foundation.
+- 4H — Syndication adapters (8 platforms, each Rule 6 gallery + confirmation).
+
+### Implemented
+- `public/app/models/PlatformArtPiece.php` — `all()`, `findBySlug()`, `allForAdmin()`, `find()`, `create()`, `update()`, `softDelete`/`restore`/`hardDelete`, `trashed()`/`trashedCount()`, `updateCurrentVersion()`. Attaches `versions` and `current_version` on load.
+- `public/app/models/PlatformArtPieceVersion.php` — `allForPiece()`, `find()`, `create()`, `update()`, `delete()`, `nextVersionNumber()`.
+- `public/app/models/PlatformExhibit.php` — `all()`, `findBySlug()`, `find()`, `itemsFor()`, `create()`, `update()`, `softDelete`/`restore`/`hardDelete`, `syncItems()`.
+- `public/app/controllers/PiecesController.php` — `index()` (public list), `show()` (public render with iframe for p5.js or CSS output).
+- `public/app/controllers/Admin/PiecesAdminController.php` — `index`, `create`/`store`, `edit`/`update`, `delete`, `versions`, `versionCreate`/`versionStore`, `versionEdit`/`versionUpdate`, `versionDelete`, `versionSetCurrent`.
+- `public/app/router.php` — public routes `/pieces`, `/pieces/([a-z0-9-]+)`; admin routes `/admin/pieces/*` and `/admin/pieces/[id]/versions/*`.
+- `public/index.php` — dispatch clause for `/pieces` added.
+- `public/app/views/admin/layout.php` — "Pieces" added to admin nav.
+- `public/app/views/pieces/index.php` — public listing grid.
+- `public/app/views/pieces/show.php` — public piece render with iframe for p5.js or CSS output.
+- `public/app/views/admin/pieces/index.php` — admin table.
+- `public/app/views/admin/pieces/form.php` — admin create/edit form.
+- `public/app/views/admin/pieces/versions.php` — version list with set-current.
+- `public/app/views/admin/pieces/version-form.php` — version create/edit form.
+
+### Verification
+- `php -l` passed across all new/modified files.
+- `public/index.php` dispatch clause: `/pieces` and `/pieces/anything` route to `app/router.php`.
+- `router.php` patterns verified: `/pieces` and `/pieces/([a-z0-9-]+)` added to `$publicRoutes`; `/admin/pieces/*` added to `$adminRoutes`.
+- Admin nav layout renders "Pieces" between "Works" and "Categories".
+
+## 2026-06-14 — Phase 4D: Feed Ingestion & Moderation
+
+### Implemented
+- `public/app/models/FeedSource.php` — `all()`, `find()`, `create()`, `update()`,
+  `delete()`, `updateFetchStatus()`, `incrementItemsImported()`, `pendingImports()`,
+  `markAsProcessed()`, `rejectImport()`.
+- `public/app/helpers/feed-ingest.php` — `parse_feed_xml()`, `fetch_feed()`,
+  `feed_item_seen()`, `record_feed_item()`, `ingest_feed()`.
+- `public/app/controllers/Admin/FeedSourcesAdminController.php` — `index`,
+  `create`/`store`, `edit`/`update`, `delete`, `ingest`, `approveImport`,
+  `rejectImport`.
+- `public/app/router.php` — admin routes `/admin/feed-sources/*`.
+- `public/app/views/admin/feed-sources/index.php` — sources table + pending
+  moderation queue with approve/reject.
+- `public/app/views/admin/feed-sources/form.php` — create/edit form.
+- `public/app/views/admin/layout.php` — "Feeds" added to admin nav.
+
+### Verification
+- `php -l` passed across all new/modified files.
+
+## 2026-06-14 — Phase 4E: Site Identity & Media
+
+### Implemented
+- `public/app/models/SiteAsset.php` — `all()`, `find()`, `findByKey()`, `create()`,
+  `update()`, `delete()`.
+- `public/app/models/MediaAsset.php` — `all()`, `find()`, `create()`, `update()`,
+  `softDelete`/`restore`/`hardDelete`, `trashed()`/`trashedCount()`.
+- `public/app/controllers/Admin/SiteIdentityAdminController.php` — `index`,
+  `settingsUpdate`, `assetCreate`, `assetDelete`, `mediaAssetDelete`.
+- `public/app/views/admin/site-identity/index.php` — three-tab admin (Settings,
+  Assets, Media Library).
+- `public/app/router.php` — `/admin/site-identity/*` routes.
+- `public/app/views/admin/layout.php` — "Identity" added to admin nav.
+
+### Verification
+- `php -l` passed across all new/modified files.
+
+## 2026-06-14 — Phase 4F: User Profiles & AI Settings
+
+### Implemented
+- `public/app/helpers/encryption.php` — `encrypt_string()`, `decrypt_string()`,
+  `ai_encryption_key()` using AES-256-GCM with `PLATFORM_AI_SETTINGS_ENCRYPTION_KEY`.
+- `public/app/models/UserAiSettings.php` — `UserAiVendorSettings` and `UserAiVendorKeys`
+  models with full CRUD.
+- `public/app/controllers/Admin/UserProfilesAdminController.php` — `index`,
+  `userEdit`/`userUpdate`, `settingsCreate`/`store`, `settingsEdit`/`update`/`delete`,
+  `keyCreate`/`store`, `keyEdit`/`update`/`delete`.
+- `public/app/views/admin/user-profiles/index.php` — three-tab admin (Users, AI Settings, API Keys).
+- `public/app/views/admin/user-profiles/user-form.php` — user edit form.
+- `public/app/views/admin/user-profiles/settings-form.php` — AI setting form.
+- `public/app/views/admin/user-profiles/key-form.php` — API key form with AES-256-GCM encryption.
+- `public/app/router.php` — `/admin/user-profiles/*` routes.
+- `public/app/views/admin/layout.php` — "Users" added to admin nav.
+
+### Verification
+- `php -l` passed across all new/modified files.
+
+## 2026-06-14 — Phase 4G: Platform Connections & Syndication Foundation
+
+### Implemented
+- `public/app/models/PlatformConnection.php` — `PlatformConnection` and
+  `PostSyndication` models with full CRUD.
+- `public/app/controllers/Admin/PlatformConnectionsAdminController.php` —
+  `index`, `create`/`store`, `edit`/`update`, `delete`, `syndicationCreate`/`store`/`delete`.
+- `public/app/views/admin/platform-connections/index.php` — two-tab admin
+  (Connections, Syndications).
+- `public/app/views/admin/platform-connections/form.php` — connection form.
+- `public/app/views/admin/platform-connections/syndication-form.php` — syndication form.
+- `public/app/router.php` — `/admin/platform-connections/*` routes.
+- `public/app/views/admin/layout.php` — "Connections" added to admin nav.
+
+### Verification
+- `php -l` passed across all new/modified files.
+
+## 2026-06-14 — Phase 4H: Syndication Adapters
+
+### Implemented
+- `public/app/lib/syndication/` — 8 platform adapters + infrastructure:
+  - `SyndicationPayload.php` — payload + result classes, interface
+  - `ContentHelpers.php` — buildSocialPostText, buildSyndicatedContent,
+    buildSourceFooter, ensureCanonicalUrl, etc.
+  - `AdapterFactory.php` — maps platform names to adapter instances
+  - `BlueskyAdapter.php` — AT Protocol with App Password
+  - `WordPressComAdapter.php` — WordPress.com REST API with OAuth + refresh
+  - `WordPressSelfAdapter.php` — Self-hosted WordPress REST API with App Password
+  - `BloggerAdapter.php` — Google Blogger API v3 with OAuth + refresh
+  - `SubstackAdapter.php` — Unofficial API with session cookie
+  - `LinkedInAdapter.php` — LinkedIn Posts API with OAuth
+  - `FacebookAdapter.php` — Meta Graph API with Page Access Token
+  - `InstagramAdapter.php` — Meta Graph API with Page Access Token
+- `composer.json` — added `guzzlehttp/guzzle:^7.0`
+- `PlatformConnectionsAdminController::publish()` — orchestrates syndication
+  via the adapter layer
+- `router.php` — added `/admin/platform-connections/publish` route
+
+### Verification
+- `php -l` passed across all 12 new PHP files in `lib/syndication/`
+- `composer update` installed guzzlehttp/guzzle 7.11.1 + dependencies
+
+### Vendor Dependency
+- `guzzlehttp/guzzle` installed as shared HTTP client for all adapters.
+  This dependency sends HTTP requests to external platforms. If Guzzle changes
+  its API or shuts down, all 8 adapters break. The self-hosting alternative
+  is manual platform-native upload. Approved by user.
+
+## 2026-06-14 — Platform Rectification Pass
+
+### Implemented
+- Added `docs/platform-route-matrix.md` as the route/functionality parity
+  record for deletion readiness.
+- Added PHP compatibility routes for `/embed/pieces/*`, `/immersive/*`, and
+  required read-only `/api/*` platform surfaces.
+- Added `public/app/helpers/piece-render.php` and rewired public piece views to
+  use the same PHP renderer surface as embed/immersive routes.
+- Added `feed_import_items` as additive target-DB schema so pending feed
+  moderation stores full item data instead of GUID-only placeholders.
+- Hardened platform connection saves so newly posted tokens are encrypted
+  before storage and marked with a token format.
+- Changed syndication publish recording to update existing post/connection
+  rows instead of failing on duplicates.
+- Added migration `--verify-only` and resume-skip behavior keyed by
+  `platform_migration_map`.
+
+### Remaining REVIEW REQUIRED Before Platform Deletion
+- Adapter dry-run/mock tests still need to be run for all outbound syndication
+  services before any real publish verification.
+- Feed approval should be exercised with a mocked pending item and verified to
+  create a draft post containing real title/content/source metadata.
+- A final search and route matrix check must show no required route, data, or
+  runtime asset still depends on `platform/`.
+
+## 2026-06-14 — Platform Deletion-Readiness Verifier
+
+### Implemented
+- Added `scripts/check-platform-deletion-readiness.php` as the single readiness
+  command, with human output, `--json`, `--skip-http`, and
+  `--base-url=http://127.0.0.1:8080`.
+- Documented the canonical local test server command:
+  `php -S 127.0.0.1:8080 -t public public/index.php`.
+- Added rollback-only functional checks for feed approval and syndication
+  recording so the PHP target DB is exercised without retaining test rows.
+- Added retention checks against read-only `PLATFORM_*` source counts and PHP
+  target `platform_migration_map`/row counts.
+- Updated PHP encryption compatibility so migrated platform AI vendor keys
+  decrypt with the platform AES-256-GCM `iv.tag.ciphertext` format. New
+  encrypted secrets now use the same platform-compatible format.
+
+### Verification
+- Full readiness command passed against the canonical local PHP dev server.
+- Source platform DB was used only for read-only count verification.
+- PHP target rollback-only checks passed for feed approval and all 8
+  syndication platform mock paths.
+- AI vendor keys decrypted successfully; no reinsertion needed.
+- Two migrated platform connection access tokens are preserved as legacy
+  provider-token fallback values. They are retained without reinsertion; newly
+  saved/refreshed tokens are encrypted with platform-compatible AES-256-GCM.
+
+### Deletion Boundary
+- `platform/` was not deleted.
+- Manual browser/admin testing is still required before the human manually
+  deletes `platform/`.
+
+## 2026-06-14 — Platform Rectification Pass Round 2
+
+### Context
+Manual browser testing of Round 1's fixes (4 screenshots) surfaced 7 further
+gaps: 9 more admin views with the same Closure-vs-`ob_start()` bug as Round 1
+(including `pieces/versions.php`, which fataled, and `pieces/form.php`, which
+made piece editing inaccessible); a second, distinct `/admin/posts`
+deprecation (`null =>` array key in `$statusTabs`, not the one fixed in
+Round 1); missing shared admin CSS classes (`.admin-container`,
+`.admin-header-row`, `.admin-tabs`/`.admin-tab`, `.admin-link`,
+`.inline-form`, `.status-badge`, `.field`/`.field-grid`,
+`.form-status`/`.form-status-error`) leaving several admin pages unstyled
+with the public `h1` rule leaking in; unwrapped `<pre>` prompt text
+overflowing `/pieces/{id}`; no visible "VR mode" entry point; and
+`/admin/media` showing only the empty `media_files` table while the 102
+migrated `media_assets` rows were only visible via `/admin/site-identity`.
+
+### Decisions (via AskUserQuestion, all "Recommended" chosen)
+- VR mode: surface the existing, already-working `/immersive/pieces/{id}`
+  route with visible links — no new routes or vendor dependencies. Confirmed
+  the platform never had WebXR/headset VR (A-Frame was rolled back); its "VR
+  mode" is the Three.js immersive presentation this route already renders.
+- Piece edit UX: fix the Closure bug in `pieces/form.php` and add a read-only
+  live preview pane (via the existing `piece_render_iframe()` helper) rather
+  than introducing live-reload-on-keystroke editing.
+- Media library: merge `media_assets` directly into `/admin/media` (one
+  unified library, matching the platform), rendering migrated assets
+  read-only, rather than leaving them only on `/admin/site-identity`.
+
+### Implemented
+- Converted the same 9 remaining Closure-content views to
+  `ob_start()`/`ob_get_clean()` (no controller changes needed — see
+  `docs/platform-assimilation-plan.md` for the file list).
+- Fixed `/admin/posts`'s `$statusTabs` `null =>` key deprecation (changed to
+  `''`, updated the "All" tab's link/active-state comparisons).
+- Added the missing shared admin CSS vocabulary to `public/assets/admin.css`,
+  reusing existing design tokens (`--line`, `--paper`, `--yellow`, `--orange`,
+  etc.) and the existing `.trash-tab` visual treatment for `.admin-tab`.
+- Added `.piece-prompt pre` wrap rules to `public/assets/styles.css`.
+- Added "View in Immersive / VR Mode" (`/pieces/{id}`, when the piece has
+  renderable code) and "Immersive" (`/admin/pieces` row actions) links to the
+  existing `/immersive/pieces/{id}` route.
+- Added a `.piece-preview-pane` live preview (current version, via
+  `piece_render_iframe()`) to `/admin/pieces/{id}/edit`.
+- `MediaAdminController::index()` now merges normalized `MediaAsset::all()`
+  entries (`id` => `asset-{id}`, preview via `/api/media-assets/{id}`,
+  `created_at` from `uploaded_at`) into `/admin/media`'s file list;
+  `views/admin/media.php` renders them with a "migrated asset — read-only"
+  note and hides Trash/Destroy for `data-source="asset"` cards.
+
+### Verification
+- `php -l` passed on every changed file.
+- Authenticated smoke test (synthetic admin session) of every affected route
+  — `/admin/posts`, `/admin/pieces`, `/admin/pieces/{id}/versions`,
+  `/admin/pieces/{id}/edit`, `/admin/feed-sources/create`,
+  `/admin/platform-connections/{id}/edit`,
+  `/admin/platform-connections/syndications/create`,
+  `/admin/user-profiles/{uuid}/edit`, `/admin/user-profiles/settings/create`,
+  `/admin/user-profiles/keys/create`, `/pieces/{id}`, `/admin/media` — all
+  HTTP 200, no `Fatal error`/`Deprecated:`/Closure-conversion output.
+  `/admin/media` confirmed merging all 102 migrated `media_assets`.
+- `php scripts/check-platform-deletion-readiness.php --base-url=http://127.0.0.1:8080`
+  passed in full.
+- Updated `docs/platform-assimilation-plan.md` and
+  `docs/platform-route-matrix.md` to record this pass.
+
+### Deletion Boundary
+- `platform/` was not deleted; no MySQL writes were made to the platform
+  source database (read-only `MediaAsset`/`PlatformArtPiece` queries only).
+
+## 2026-06-15 — Round 3 — Piece Edit Reconciliation + Media Asset CRUD Parity
+
+### Implemented
+- Fixed the engine whitelist bug in `PiecesAdminController::resolvePieceData()` and `resolveVersionData()`, allowing `p5`, `c2`, `three`, and `svg` engines (dropped invalid `'css'` entry).
+- Updated forms `/admin/pieces/create` and `/admin/pieces/{id}/edit` with a tabbed interface (Metadata, HTML, CSS, JS) and vanilla JS tab-switching toggles.
+- Wired in-place editing of current version code files (HTML, CSS, JS) directly on piece creation and update.
+- Implemented `MediaAsset::updateMetadata()` to support updating title/alt_text of migrated assets.
+- Wired `/admin/media/asset/{id}/update|trash|destroy` routes to the unified media library view details panel.
+- Merged trashed `media_assets` into `/admin/trash` (Media tab) and enabled restore/purge operations for both native files and migrated assets.
+- Updated `admin.css` with `cursor: pointer` on buttons with `.admin-tab` / `.trash-tab` class, and added `.code-field` monospace styling.
+
+### Verification
+- `php -l` clean on all changed files.
+- `php scripts/check-platform-deletion-readiness.php --skip-http` passes.
+- Updated `docs/platform-assimilation-plan.md` and `docs/platform-route-matrix.md`.
+
+## 2026-06-15 — Round 4 — AI-Driven Piece Generation & Validation
+
+### Implemented
+- Created `public/app/lib/ai/AiProviderClient.php` encapsulating the platform's multi-vendor LLM client translated to PHP using Guzzle. Supports `chat-completions` (DeepSeek, Mistral, OpenRouter, OpenCode Zen, OpenCode Go) and `google-generate-content` (Google Gemini) transport kinds with a 60s timeout.
+- Wired routes GET `/admin/pieces/generate`, POST `/admin/pieces/generate`, and POST `/admin/pieces/generate/save` in `public/app/router.php`.
+- Required `art-piece-generation.php` and `AiProviderClient.php` in `router.php`.
+- Implemented `generateForm()`, `generate()`, and `generateSave()` in `PiecesAdminController`.
+- Created `public/app/views/admin/pieces/generate-form.php` rendering AI profile and engine selects, creative prompt textarea, and displaying detailed step-by-step logs for failed attempts.
+- Created `public/app/views/admin/pieces/generate-preview.php` showing a live sandbox preview iframe alongside editable code tabs (Metadata, HTML, CSS, JS) and "Save and Insert" actions.
+- Integrated the 3-attempt retry/repair loop in `PiecesAdminController::generate()` incorporating static preflight and `window.sketch` validation checks, auto-generating repair prompts on failures.
+- Appended a "Generate with AI" button next to "Create Piece" in the admin pieces index view.
+
+### Verification
+- `php -l` passes across all new/modified files.
+- `php scripts/check-platform-deletion-readiness.php --skip-http` passes.
+
+## 2026-06-15 — Round 5 — Immersive/VR Gallery Overhaul
+
+### Implemented
+- Updated `ImmersiveController::piece()` and `ImmersiveController::exhibit()` to delegate rendering to distinct views.
+- Created `public/app/views/immersive/exhibit.php` rendering the multi-frame progressive exhibit wall with default rows/cols values.
+- Developed `public/embed.js` registering Web Components (`creatr-art-piece`, `creatr-exhibit-wall`) and a dynamic DOM scanner/interceptor to implement progressive lazy-loading of interactive embeds across blog posts and CMS pages using `IntersectionObserver`.
+- Loaded `/embed.js` on the blog post show page and managed page view to automatically upgrade standard iframes.
+
+### Verification
+- `php -l` passes on all modified PHP files.
+- `node --check` passes on `public/embed.js`.
+- Run local server `php -S 127.0.0.1:8089` and verify `php scripts/check-platform-deletion-readiness.php --base-url=http://127.0.0.1:8089` passes completely with all HTTP route validation checks.
+
+## 2026-06-14 — Platform Gap Analysis Rectification
+
+### Context
+Completed all major and minor gaps identified in `docs/platform-gap-analysis.md` to achieve functional parity with the legacy Node.js platform application.
+
+### Implemented
+
+**1. AI Content Helpers (Major Gap 1)**
+- Extended `AiProviderClient` with `chat()` and `describeImage()` methods supporting all transport kinds (`chat-completions`, `google-generate-content`, `anthropic-messages`, `openai-responses`).
+- Added `PiecesAdminController::aiProcessText()` and `aiDescribeImage()` endpoints.
+- New routes: `POST /admin/ai/process` and `POST /admin/ai/describe-image`.
+- Tiptap editor toolbar includes "Improve Text" (✨) button that POSTs selected text to `/admin/ai/process`.
+- `/admin/media` details panel includes AI Alt Text generator for images (enter AI profile ID and click Generate).
+
+**2. Platform OAuth Callbacks + Diagnostics (Major Gap 2)**
+- Extended `oauth.php` with `platform_oauth_provider_config()`, `platform_oauth_redirect_uri()`, and `platform_oauth_supported_providers()`.
+- Added `PlatformConnectionsAdminController::oauthStart()`, `oauthCallback()`, and `diagnostics()`.
+- New routes: `GET /admin/platform-connections/auth/{platform}/start`, `GET /admin/platform-connections/auth/{platform}/callback`, `GET /admin/platform-connections/diagnostics`.
+- OAuth callbacks exchange codes, encrypt tokens with `encrypt_string()`, and save/upsert them into `platform_connections`.
+- Diagnostics page tests each provider's endpoint reachability and shows a setup checklist for required env vars.
+
+**3. User Profile Photo Upload (Minor Gap 1)**
+- Added `UserProfilesAdminController::userPhotoUpload()` and route `POST /admin/user-profiles/{id}/photo`.
+- Owner photos use `upload_media_auto()` (stored in `media_files`); member photos stored in `profile_photo_assets`.
+- Public serving at `/api/profile-photos/{filename}` via `ApiController::profilePhoto()`.
+- `user-form.php` includes photo upload section, current photo preview, and `enctype="multipart/form-data"`.
+
+**4. Preferred AI Profile Settings (Minor Gap 2)**
+- `UserProfilesAdminController::userEdit()` and `updateUser()` now load and persist `preferred_art_piece_profile_id`, `preferred_text_improve_profile_id`, and `preferred_alt_text_profile_id`.
+- `user-form.php` added three select dropdowns for AI profile preferences.
+- `PiecesAdminController::generateForm()` pre-selects the owner's preferred art piece profile if configured.
+
+**5. Admin Dashboard Metrics (Minor Gap 3)**
+- `AuthController::dashboard()` expanded from 4 to 17 stats: published/scheduled/draft posts, comments, reactions, platform connections, syndications, art pieces, media files, media assets, feed sources, pending feed imports, and composite trash count.
+- Charts intentionally omitted per PHP SSR architecture; expanded stat cards provide equivalent data visibility.
+
+### Documentation Updated
+- `docs/platform-gap-analysis.md` — all gaps marked resolved with implementation details.
+- `docs/platform-assimilation-plan.md` — added "Platform Gap Analysis Rectification" tracker entry.
+- `docs/api.md` — documented new routes: `/admin/ai/process`, `/admin/ai/describe-image`, `/admin/platform-connections/auth/*`, `/admin/platform-connections/diagnostics`, `/admin/user-profiles/{id}/photo`, `/api/profile-photos/{filename}`.
+- `docs/dependencies.md` — documented OAuth provider environment variables and callback URLs.
+- `README.md` — expanded admin route list with new features.
+
+### Verification
+- `php -l` passed on all 12 modified PHP files.
+- `node --check` passed on `public/assets/js/tiptap-editor.js`.
+- No changes committed; no writes to the platform database.
+
+### Next Steps Before Deleting `platform/`
+1. Configure OAuth provider credentials in `.env`.
+2. Register OAuth redirect URIs in each provider console.
+3. End-to-end test OAuth flows, AI text improvement, alt-text generation, and profile photo uploads.
+4. Run `php scripts/check-platform-deletion-readiness.php` and confirm all checks pass.
+
+## 2026-06-15 — Platform Compatibility Gap Closure
+
+### Decision
+Existing platform public surfaces found during the gap re-audit are preserved
+as compatibility routes in PHP, not promoted to new canonicals. Canonical PHP
+routes remain `/blog/posts/{id}` for posts and `/pieces/{id}` for art pieces.
+
+### Implemented
+- Added `GET /embed/posts/{id}` for legacy post embeds.
+- Added `GET /immersive/images/{encodedRef}` for legacy standalone immersive
+  image URLs.
+- Added lazy `creatr-immersive-image` handling to `public/embed.js`.
+- Added `GET /api/media/{filename}/exhibits` for migrated media exhibit
+  memberships.
+- Added `GET /api/runtimes/{path}` redirects for legacy p5/c2/Three runtime
+  URLs so old embeds do not require `platform/`.
+- Updated `docs/platform-gap-analysis.md`, `docs/platform-route-matrix.md`,
+  `docs/api.md`, and Round 3/4/5 status notes.
+- Extended deletion-readiness HTTP checks for the new compatibility surfaces.
+
+### Safety
+- No writes to the live `PLATFORM_*` database.
+- `platform/` remains present and must only be manually deleted after the
+  readiness command and browser/admin testing pass.
+
+## 2026-06-15 — Admin Dashboard Schema Guard And Manual Gap Reclassification
+
+### Implemented
+- Fixed `/admin` dashboard aggregate counts so they check table and column
+  existence before applying soft-delete filters. This prevents crashes when a
+  table such as `reactions` does not have a `deleted_at` column.
+
+### Reclassified
+- Manual browser testing found deletion-blocking gaps that the automated route
+  checks did not catch: post-embedded pieces/exhibits can fail to load, embed
+  VR links can hit 404, TipTap lacks a dedicated art-piece/exhibit picker,
+  generic insertion prompts need accessible modal replacements, and migrated
+  platform exhibits are not surfaced everywhere expected.
+- Updated `docs/platform-gap-analysis.md`, `docs/platform-route-matrix.md`,
+  and `docs/platform-assimilation-plan.md` so these are marked as
+  `Needs Repair` rather than deletion-ready.
+
+### Verification
+- `php -l public/app/controllers/Admin/AuthController.php` passed.
+- Simulated authenticated `/admin` request rendered successfully.
+- `php scripts/check-platform-deletion-readiness.php --skip-http` passed.
+
+## 2026-06-15 — Reclassified Gaps Closure (Items 1-7) + VR Metadata Parity
+
+Closes the `Needs Repair` items from the prior reclassification, plus a
+user-added 7th item (VR/immersive metadata parity with the legacy platform).
+
+### Implemented
+- **Items 1+2 (stuck embeds / VR 404s)**: added
+  `scripts/repair-platform-embed-links.php` (dry-run by default, `--execute`
+  to apply) which normalizes any absolute-URL `<iframe src>` for
+  `/embed/pieces/*`, `/immersive/exhibits/*`, `/immersive/images/*` to a
+  relative path and reports orphaned piece/exhibit references. Ran
+  `--execute` against `DB_*`. Added a defensive fetch-check in
+  `CreatrExhibitWall` (`public/embed.js`) so a missing `/api/exhibits/{slug}`
+  no longer leaves the placeholder stuck.
+- **Item 7 (VR metadata parity)**:
+  - `immersive/piece.php` — added conditional "About this piece"
+    (`$description`) section to `.meta-grid`.
+  - `immersive/image.php` — always renders a fixed explanatory sentence
+    (caption prepended when present) instead of nothing.
+  - `immersive/exhibit.php` — added Artist Statement, Biography, and a Works
+    count to `.meta-grid`, plus a new per-item `.meta-works` detail-card
+    section; back-link now points to `/exhibits/{slug}` instead of
+    `/portfolio`.
+- **Item 4 (public)**: new `ExhibitsController` + `GET /exhibits` and
+  `GET /exhibits/{slug}`, modeled on `PiecesController`. Added
+  `PlatformExhibit::firstThumbnail()` shared helper.
+- **Item 3 + Item 4 (admin/editor)**: new `PiecesAdminController::library()`
+  (`GET /admin/pieces/library`) and `PlatformExhibitsAdminController`
+  (`GET /admin/platform-exhibits` read-only listing,
+  `GET /admin/platform-exhibits/library`). Added a "Platform Exhibits" nav
+  entry (distinct from the existing native `/admin/exhibits`). Added a
+  `#piece-picker-modal` dialog (Pieces/Exhibits tabs) and a TipTap "Insert art
+  piece or exhibit" toolbar button that inserts canonical
+  `/embed/pieces/{id}` or `/immersive/exhibits/{slug}` iframes.
+- **Item 5 (prompt() replacement)**: added `#iframe-picker-modal` and
+  `#ai-profile-picker-modal` dialogs to `admin/layout.php`, plus
+  `PiecesAdminController::aiProfilesLibrary()` (`GET /admin/ai/profiles`).
+  `openIframePicker()`/`openAiProfilePicker()` replace both
+  `window.prompt()` call sites in `tiptap-editor.js`.
+- **Item 6 (readiness script)**: added
+  `readiness_check_post_embeds()` to
+  `scripts/check-platform-deletion-readiness.php` — scans `posts`/
+  `page_sections` content for `/embed/pieces/*`, `/immersive/exhibits/*`,
+  `/immersive/images/*` iframe `src` values, fails on any remaining absolute
+  URLs or orphaned piece/exhibit/media references, and (with `--base-url`)
+  HTTP-checks every reference actually found in content.
+- Updated `docs/api.md`: `/exhibits`, `/exhibits/{slug}`,
+  `/admin/pieces/library`, `/admin/platform-exhibits`,
+  `/admin/platform-exhibits/library`, `/admin/ai/profiles`.
+
+### Findings (not auto-fixed)
+- `readiness_check_post_embeds()` now correctly **fails** on `posts.id=9`
+  ("Exhibit A"): its iframe references `/immersive/exhibits/abstract-studies`,
+  but no `platform_exhibits` row with that slug exists (active or
+  soft-deleted) — this looks like content authored for an exhibit that was
+  never migrated/created. Left for a human editorial decision (create the
+  exhibit, or edit/remove the embed in post 9) rather than guessing.
+
+### Verification
+- `php -l` clean on all new/changed PHP files; `node --check` clean on
+  `tiptap-editor.js`.
+- `php scripts/check-platform-deletion-readiness.php --base-url=http://127.0.0.1:8080`
+  — all checks pass except the post-9 orphan above.
+- Manually verified via local server + simulated admin session:
+  `/exhibits`, `/exhibits/{slug}` (200) and `/exhibits/abstract-studies`
+  (404, correct); `/immersive/pieces/1`, `/immersive/exhibits/apocalyptic`
+  (Artist Statement/Biography/Works render), `/immersive/images/{ref}` (fixed
+  sentence with/without caption); `/admin/platform-exhibits`,
+  `/admin/pieces/library`, `/admin/ai/profiles`,
+  `/admin/platform-exhibits/library` (200, correct JSON); new dialogs present
+  in `/admin` HTML output.
+
+### Safety
+- No writes to `PLATFORM_DB_*` (source remains read-only).
+- `platform/` remains present; manual deletion still gated on the above
+  finding being resolved and a final readiness/browser pass.
+
+### Follow-up: abstract-studies orphan — deferred
+- Presented the `posts.id=9` orphan to the user as a decision point. Decision:
+  leave as-is for now; document as a known content gap and defer the fix to a
+  future content pass. `platform/` deletion remains blocked on this until
+  resolved.
+- Updated `docs/platform-gap-analysis.md`: marked all six prior "Remaining
+  Work" items plus VR metadata parity as Done (Gap Ledger rows for
+  `/embed/pieces/{id}`, `/immersive/pieces/{id}`, `/immersive/exhibits/{slug}`,
+  art pieces/versions, exhibits/memberships, and mobile insertion prompts), and
+  replaced the "Remaining Work" list with the single deferred
+  `abstract-studies` content gap.
+
+## 2026-06-15 — Schema-Driven Resolution of Abstract Studies Exhibit
+
+### Context
+The user rejected the workarounds (hardcoded exceptions / leaving as orphan) for the `abstract-studies` exhibit embed mismatch, and preferred the schema-driven database-backed option.
+
+### Decisions
+- Added an `iframe_code` column to the `platform_exhibits` table.
+- Added a row for `abstract-studies` in `platform_exhibits` containing the external iframe source.
+- Normalized Post #9 (`posts.id=9`) iframe URL to be relative.
+- Updated the exhibit controller, public detail page, and `embed.js` to render `iframe_code` directly.
+- Removed all host-based URL exceptions from the links repair script and deletion-readiness verifier.
+
+### Implementation & Verification
+- Migration files (`migrations/2026-06-14-platform-assimilation.sql` and `scripts/apply-platform-assimilation-schema.php`) updated and successfully run.
+- Database records updated: `abstract-studies` added to target database `platform_exhibits` (ID 6); Post #9 normalized.
+- Deletion readiness checked: `php scripts/check-platform-deletion-readiness.php --base-url=http://127.0.0.1:8099` returns clean PASS including all HTTP checks.
+
+## 2026-06-15 — Pure Scheme Rename & Media Embed Integration
+
+### Context
+Completed renaming native portfolio elements ("Works" -> "Exhibit", "Exhibits" -> "Collections") and platform exhibits ("Platform Exhibits" -> "Platform Collections") per user choice of the Pure approach. Refactored the Media Library to natively support video and iframe/embed media kinds.
+
+### Implemented
+- **Database & Route Rename**: Replaced all database references in post/page contents. Aligned models, views, and controllers (using Exhibits, Collections, and Platform Collections).
+- **Media Library Embed Support**: Refactored `views/admin/media.php` and `tiptap-editor.js` to support `text/html` / `iframe` kinds, rendering preview iframes and generating iframe HTML copy codes.
+- **Readiness Checks**: Updated `check-platform-deletion-readiness.php` and `repair-platform-embed-links.php` to target `platform_collections`, `platform_collection_items`, and `/immersive/collections/*` paths.
+
+### Verification
+- `php -l` and `node --check` passed.
+- `php scripts/check-platform-deletion-readiness.php --base-url=http://127.0.0.1:8089` returns clean PASS including all HTTP verification checks.
+
+## 2026-06-15 — Immersive VR View & Embed Interactivity Parity
+
+### Context
+Implemented dual-mode interactive VR views (Default Split VR View and Immersive VR Fullscreen View) for all piece types, collections, and images, mirroring the legacy platform React application. Resolved rendering and runtime library initialization bugs in standard iframe embeds.
+
+### Decisions
+- Adopted the **Overlay** client-driven transition model for fullscreen toggling to allow instant transitions without restarting WebGL or 2D canvas context.
+- Structured `/immersive/pieces/{id}`, `/immersive/collections/{slug}`, and `/immersive/images/{encodedRef}` to display the header, stage, copy embed buttons, and metadata card by default, and hide them when in fullscreen mode.
+- Rendered only the canvas stage if `embed=1` is passed in the query parameters.
+- Provided three iterations of embed codes (plain, custom interactive element, and CMS interactive element) matching the legacy React implementation.
+- Exposed `window.THREE` globally in `piece-render.php` and added the `bootC2` loader to dynamically fetch `c2.js` on-demand, resolving runtime sketch evaluation failures.
+
+### Implementation & Verification
+- Templates updated: `public/app/views/immersive/piece.php`, `public/app/views/immersive/collection.php`, and `public/app/views/immersive/image.php`.
+- Helper updated: `public/app/helpers/piece-render.php`.
+- Syntax checked (`php -l`) clean on all updated views and helper.
+## 2026-06-15 — Unified Piece Editor & Reframe Integration
+
+### Context
+Unified the piece creation and editing views under a single split-pane (desktop) / full-canvas (tablet/mobile) workspace, incorporating revertible AI refinement (Reframe) capabilities with live interactive previewing.
+
+### Decisions
+- Adopted the Tabbed-Refined Workspace layout. Added an "AI Refine" tab next to the code editing tabs inside the piece edit view.
+- Configured a sidebar layout for wide viewports where the form sits on the left and a 100% height preview canvas sits on the right.
+- Added a viewport toggle block for screens smaller than 1024px, hiding the preview by default and allowing full-canvas toggle navigation.
+- Implemented `/admin/pieces/refine-ai` AJAX endpoint that processes refinement instructions using user-configured AI settings and performs a 3-attempt repair/validation sequence.
+- Designed live preview buffers: when AI returns suggested code, it automatically updates the code fields and updates the preview iframe, showing an "AI suggested changes loaded. Review code tabs and preview before deciding. [Accept] [Reject]" banner. Clicking Reject restores the textareas to their pre-refinement backup state.
+- Injected Three.js `<script type="importmap">` for module resolution in sandboxed `srcdoc` contexts, and updated the p5/c2 canvas finder to append canvases to `#canvas-container` or `#sketch-container` if present, preventing displacement.
+
+### Verification
+- `php -l` clean across all modified/created files.
+- `php scripts/check-platform-deletion-readiness.php --skip-http` passes with 100% PASS.
+
+## 2026-06-15 — Three.js Runtime Consistency & Refine Fallbacks
+
+### Context
+Ensured the Three.js rendering runtime is identical across all PHP rendering surfaces (public iframe, admin preview, AI generation preview, and embed web component) and hardened the AI refinement endpoint for edge cases.
+
+### Decisions
+- **Runtime parity:** The inline JavaScript runtimes in `piece-render.php`, `form.php`, `generate-preview.php`, and `embed.js` must share the same `instrumentedThree`, `autoFit`, `ensureFallbackLighting`, `OrbitControls`, and `startFrame(count)` signatures. Any fix in one file must be mirrored in the other three.
+- **Canvas management:** The `WebGLRenderer` constructor must always receive the managed canvas element (`{ ...(params || {}), canvas }`) to prevent Three.js from creating a second unmanaged canvas that renders off-screen.
+- **CSS sizing:** `canvas` must have `display:block;width:100%;height:100%;` in all contexts so the drawing buffer fills its container.
+- **AI refine SVG edge case:** If the engine is `svg` and the AI omits the JavaScript block, default to `window.sketch = () => {};` — matching the platform's behavior for CSS-only SVG animations.
+- **AI refine default fallbacks:** If the AI omits HTML, default to `<div id="canvas-container"></div>` (p5), `<div id="container"></div>` (three/c2), or `<svg>` root (svg). If CSS is omitted, default to `body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; }`.
+
+### Implemented
+- Updated `generate-preview.php` inline runtime to match the other three surfaces (importmap, instrumentedThree, autoFit, ensureFallbackLighting, OrbitControls, startFrame count).
+- Added SVG edge-case guard and default HTML/CSS fallback logic in `PiecesAdminController::refineAi()`.
+- Created `tests/art-piece-generation.php` (25 tests) covering code block extraction, static validation, engine preflight checks, system/user/repair prompts.
+- Created `tests/three-runtime-consistency.php` (36 tests) asserting that all four rendering files contain the same `instrumentedThree`, `autoFit`, `ensureFallbackLighting`, `OrbitControls`, `startFrame(count)`, canvas CSS, and `WebGLRenderer` canvas interception.
+
+### Verification
+- `php tests/art-piece-generation.php` — 25/25 passed.
+- `php tests/three-runtime-consistency.php` — 36/36 passed.
+- `php scripts/check-platform-deletion-readiness.php --skip-http` — 100% PASS.
+- No changes to `platform/` files.
+
+## 2026-06-15 — AI Refine Endpoint Documentation
+
+### Context
+Documented the AI refinement endpoint in `docs/api.md` and `README.md` so the admin piece editor's "AI Refine" tab is discoverable.
+
+### Decisions
+- The refine endpoint is `POST /admin/pieces/refine-ai` (JSON), accepting `prompt`, `engine`, `profile_id`, `html_code`, `css_code`, and `generated_code`.
+- It returns `{success: true, html_code, css_code, generated_code}` on success, or `{success: false, error: "..."}` on failure.
+- It uses the same 3-attempt retry/repair loop as the generation endpoint, with the same preflight validation and `window.sketch` checks.
+
+### Implemented
+- Updated `docs/api.md` Platform Art Pieces section to document the refine endpoint.
+- Updated `README.md` admin routes list to mention `/admin/pieces/refine-ai`.
+- No code changes; documentation only.
+
+
+

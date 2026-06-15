@@ -31,17 +31,23 @@ class NavigationItem
             'is_visible' => 1,
             'sort_order' => 2,
         ],
+        'blog' => [
+            'label' => 'Blog',
+            'url' => '/blog',
+            'is_visible' => 1,
+            'sort_order' => 3,
+        ],
         'contact' => [
             'label' => 'Contact',
             'url' => '/contact',
             'is_visible' => 1,
-            'sort_order' => 3,
+            'sort_order' => 4,
         ],
         'portfolio' => [
             'label' => 'Portfolio',
             'url' => '/portfolio',
             'is_visible' => 1,
-            'sort_order' => 4,
+            'sort_order' => 5,
         ],
     ];
 
@@ -344,6 +350,12 @@ class NavigationItem
             if ($select->fetchColumn() !== false) {
                 continue;
             }
+
+            $shift = db()->prepare(
+                'UPDATE navigation_items SET sort_order = sort_order + 1
+                 WHERE source_type = ? AND sort_order >= ?'
+            );
+            $shift->execute([self::SOURCE_SYSTEM, $config['sort_order']]);
 
             $insert->execute([
                 self::SOURCE_SYSTEM,

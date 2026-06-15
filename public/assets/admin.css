@@ -391,6 +391,7 @@ tr.drag-over td {
 .admin-form input[type="number"],
 .admin-form input[type="url"],
 .admin-form input[type="email"],
+.admin-form input[type="datetime-local"],
 .admin-form select,
 .admin-form textarea {
     width: 100%;
@@ -448,6 +449,116 @@ tr.drag-over td {
     gap: 1rem;
     align-items: center;
     flex-wrap: wrap;
+}
+
+/* Shared admin resource pages (pieces, feed sources, connections, users, etc.) */
+
+.admin-container {
+    display: grid;
+    gap: 2rem;
+}
+
+.admin-container h1,
+.admin-header-row h1 {
+    max-width: none;
+    font-size: clamp(1.6rem, 3vw, 2.2rem);
+    font-weight: 950;
+}
+
+.admin-header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 1rem;
+}
+
+.admin-link {
+    font-weight: 800;
+    text-decoration: underline;
+    color: var(--ink);
+}
+
+.admin-link.danger {
+    color: var(--orange);
+}
+
+.inline-form {
+    display: inline;
+    margin: 0;
+}
+
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.2rem 0.6rem;
+    border: 2px solid var(--line);
+    background: var(--white);
+    font-size: 0.78rem;
+    font-weight: 950;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.status-active {
+    background: var(--green);
+}
+
+.status-draft {
+    background: var(--paper);
+}
+
+.status-archived {
+    background: var(--orange);
+}
+
+.field {
+    display: grid;
+    gap: 0.4rem;
+}
+
+.field label {
+    font-weight: 950;
+}
+
+.field-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+    gap: 1rem;
+}
+
+.form-status {
+    padding: 0.9rem 1.1rem;
+    border: 3px solid var(--line);
+    background: var(--white);
+    font-weight: 800;
+}
+
+.form-status-error {
+    border-color: var(--orange);
+    color: var(--orange);
+}
+
+.piece-preview-pane {
+    display: grid;
+    gap: 0.75rem;
+    padding: 1.25rem;
+    border: 3px solid var(--line);
+    background: var(--white);
+    box-shadow: 6px 6px 0 var(--line);
+    max-width: 720px;
+}
+
+.piece-preview-pane h2 {
+    margin: 0;
+    font-size: 1.1rem;
+    font-weight: 950;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.piece-preview-pane iframe {
+    border: 3px solid var(--line);
 }
 
 /* Portfolio admin */
@@ -615,13 +726,15 @@ button.admin-btn-danger:hover {
     font-weight: 800;
 }
 
-.trash-tabs {
+.trash-tabs,
+.admin-tabs {
     display: flex;
     flex-wrap: wrap;
     gap: 0.5rem;
 }
 
-.trash-tab {
+.trash-tab,
+.admin-tab {
     display: inline-flex;
     align-items: center;
     gap: 0.45rem;
@@ -631,9 +744,21 @@ button.admin-btn-danger:hover {
     box-shadow: 3px 3px 0 var(--line);
     font-weight: 950;
     text-decoration: none;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: inherit;
 }
 
-.trash-tab.active {
+.code-field {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.85rem;
+    line-height: 1.4;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.trash-tab.active,
+.admin-tab.active {
     background: var(--yellow);
 }
 

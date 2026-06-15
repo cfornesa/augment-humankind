@@ -64,6 +64,97 @@ On success, the handler:
 
 No separate success URL is added.
 
+## Public Blog and Platform Compatibility Routes
+
+The assimilated platform feed is canonical at:
+
+- `GET /blog`
+- `GET /blog/posts/[id]`
+- `GET /blog/categories`
+- `GET /blog/category/[slug]`
+- `GET /blog/feeds`
+- `GET /search`
+
+`/blog` lists published posts from the PHP target database. Scheduled, draft,
+pending, and deleted posts are not public. `/blog/posts/[id]` renders one
+published post with its title, rich HTML/plain content, featured image, source
+attribution, categories, comments, and reaction count when available.
+
+The legacy platform URL surface is not canonical after assimilation. Public
+compatibility URLs issue permanent redirects when a mapped target exists:
+
+- `/posts/[id]` redirects to `/blog/posts/[target-id]`
+- `/categories/[slug]` redirects to `/blog/category/[target-slug]` for blog
+  categories
+- `/feeds` redirects to `/blog/feeds`
+- `/p/[slug]` redirects to the reconciled top-level CMS page
+
+Feed aliases remain public and must continue to work for existing clients:
+
+- `GET /feed.xml` — Atom 1.0, all published posts
+- `GET /atom` — alias for `/feed.xml`
+- `GET /feed.json` — JSON Feed 1.1, all published posts
+- `GET /jsonfeed` — alias for `/feed.json`
+- `GET /export.json` — JSON Feed 1.1 (Rule 5: format unchanged from pre-assimilation)
+- `GET /export/json` — alias for `/export.json`
+
+Enhanced fields added during assimilation:
+
+- Atom feeds now include `<subtitle>` (site description), feed-level `<author>`, `<link rel="self">` / `rel="alternate">`, per-entry `<summary>`, and `<category>` per post category.
+- JSON Feed 1.1 now includes `description`, feed-level `authors`, per-item `content_text`, and `tags` (category names).
+
+Additional feed routes:
+
+- `GET /feeds/mf2` — mf2-JSON export (`{"items": [...]}` h-entry array) for all published posts
+- `GET /blog/category/{slug}/feed.xml` — Atom 1.0, posts in category
+- `GET /blog/category/{slug}/feed.json` — JSON Feed 1.1, posts in category
+- `GET /{slug}/feed.xml` — Atom 1.0, single entry for published page
+- `GET /{slug}/feed.json` — JSON Feed 1.1, single entry for published page
+
+Legacy category/page feed redirects (301):
+
+- `/categories/{slug}/feed.xml`, `/categories/{slug}/atom`, `/categories/{slug}/feeds/atom` → `/blog/category/{slug}/feed.xml`
+- `/categories/{slug}/feed.json`, `/categories/{slug}/jsonfeed`, `/categories/{slug}/feeds/json` → `/blog/category/{slug}/feed.json`
+- `/p/{slug}/feed.xml`, `/p/{slug}/atom`, `/p/{slug}/feeds/atom` → `/{slug}/feed.xml`
+- `/p/{slug}/feed.json`, `/p/{slug}/jsonfeed`, `/p/{slug}/feeds/json` → `/{slug}/feed.json`
+
+The Atom and JSON Feed endpoints serialize published blog posts from the PHP
+target database. `publishDuePosts()` flips `status='scheduled'` to `published` when `scheduled_at` has passed, and overwrites `created_at` to the publish moment.
+
+## Platform Data Migration Contract
+
+The current PHP database is the only write target. It is configured through
+`DB_HOST`, `DB_NAME`, `DB_USER`, and `DB_PASS`.
+
+The live platform database is source-only. It is configured through
+`PLATFORM_DB_HOST`, `PLATFORM_DB_NAME`, `PLATFORM_DB_USER`,
+`PLATFORM_DB_PASS`, optional `PLATFORM_DB_PORT`, and optional
+`PLATFORM_DB_SSL`. Migration tooling may read/export platform rows but must
+not add, edit, delete, migrate in place, or alter schema in the platform
+database.
+
+Migrated platform row identities are remapped in the PHP target database. The
+original platform ids are retained in `platform_source_id` columns or migration
+mapping metadata so relationships can be rebuilt without forcing target ids.
+
+## Local Development And Deletion Readiness
+
+The canonical development server command for full local testing is:
+
+```sh
+php -S 127.0.0.1:8080 -t public public/index.php
+```
+
+Before manually deleting the legacy `platform/` application, run the deletion
+readiness verifier against the local server:
+
+```sh
+php scripts/check-platform-deletion-readiness.php --base-url=http://127.0.0.1:8080
+```
+
+The verifier may write only to the PHP target database inside transactions that
+rollback. It must never write to the live `PLATFORM_*` source database.
+
 ## Public Portfolio Routes
 
 These routes are durable public URLs:
@@ -79,6 +170,85 @@ These routes are durable public URLs:
 `/media/[id]` streams any active stored media blob. `/image/[id]` is an
 image-only public route for image assets. Missing, deleted, or mismatched media
 returns the shared 404 view.
+
+## Public Platform Art Routes
+
+Migrated platform generative art pieces live under their own namespace:
+
+- `GET /pieces`
+- `GET /pieces/[id]`
+- `GET /exhibits`
+- `GET /exhibits/[slug]`
+
+`/pieces` lists all active art pieces. `/pieces/[id]` renders an individual
+piece with its current version's generated code. Numeric IDs are canonical
+because the migrated platform `art_pieces` records do not include slugs.
+
+`/exhibits` lists migrated `platform_exhibits` rows (name, description, item
+count, and a thumbnail drawn from the first item). `/exhibits/[slug]` renders
+an individual exhibit's details and links to its `/immersive/exhibits/[slug]`
+VR presentation. Returns 404 for an unknown or soft-deleted slug.
+
+Compatibility embed and immersive routes return content rather than redirects:
+
+- `GET /embed/posts/[id]` — embeddable HTML for a published post, retained for
+  legacy platform embeds.
+- `GET /embed/pieces/[id]` — embeddable HTML for the current version.
+- `GET /embed/pieces/[id]?version=[version-id]` — embeddable HTML for a
+  specific version of that piece.
+- `GET /embed/pieces/[id]/data` — JSON for the current version.
+- `GET /embed/pieces/[id]/data?version=[version-id]` — JSON for a specific
+  version.
+- `GET /immersive/pieces/[id]` — full-page presentation for one piece.
+- `GET /immersive/exhibits/[slug]` — full-page presentation for one platform
+  exhibit and its migrated art/media items.
+- `GET /immersive/images/[encoded-ref]` — full-page presentation for a
+  base64url-encoded image reference, retained for legacy platform image
+  gallery embeds. Query parameters `title`, `alt`, and `caption` are optional
+  display metadata.
+
+## Platform Compatibility API Routes
+
+The following JSON/API routes are provided so old platform clients can continue
+to read migrated content without the Node platform app:
+
+- `GET /api/feeds`
+- `GET /api/feeds/atom`
+- `GET /api/feeds/json`
+- `GET /api/feeds/mf2`
+- `GET /api/posts`
+- `GET /api/posts/[id]`
+- `GET /api/categories`
+- `GET /api/categories/[slug]`
+- `GET /api/categories/[slug]/posts`
+- `GET /api/p/[slug]`
+- `GET /api/p/[slug]/feeds/atom`
+- `GET /api/p/[slug]/feeds/json`
+- `GET /api/art-pieces`
+- `GET /api/art-pieces/[id]`
+- `GET /api/art-pieces/[id]/versions`
+- `GET /api/exhibits`
+- `GET /api/exhibits/[slug]`
+- `GET /api/exhibits/[slug]/items`
+- `GET /api/media-assets/[id]`
+- `GET /api/media/[filename]`
+- `GET /api/media/[filename]/exhibits`
+- `GET /api/profile-photos/[filename]` — streams a `profile_photo_assets` binary blob by filename (public, unauthenticated)
+- `GET /api/runtimes/[runtime-path]` — compatibility redirect for legacy
+  platform embed/runtime URLs (`p5`, `c2`, and `three` runtime paths). The PHP
+  app does not require `platform/` runtime assets; this route redirects old
+  clients to the documented public CDN runtimes.
+
+These routes are read-only in the PHP app. Owner/admin mutations use the
+existing `/admin/*` surfaces.
+
+`/api/media/[filename]` looks up a migrated `media_assets` row by its
+`filename` column and streams `file_data` with the stored `Content-Type` and
+`Cache-Control: public, max-age=31536000, immutable`. It is a public,
+unauthenticated port of the platform's `GET /media/:fileName` route, kept so
+already-migrated content (post bodies, featured images, `site_settings`
+logo URLs) that embeds `/api/media/{uuid}.ext` links keeps working. Returns
+404 if no matching row exists or `file_data` is empty.
 
 ## Admin CMS Routes
 
@@ -133,9 +303,13 @@ Inline create endpoints return JSON:
 - `POST /admin/media/import`
 - `POST /admin/media/[id]/trash`
 - `POST /admin/media/[id]/destroy`
+- `POST /admin/media/asset/[id]/update`
+- `POST /admin/media/asset/[id]/trash`
+- `POST /admin/media/asset/[id]/destroy`
 
 `/admin/media/library` returns a JSON array for the existing Tiptap/media
-picker:
+picker. It includes native uploads (`media_files`) plus migrated platform
+media (`media_assets`):
 
 ```json
 [
@@ -145,12 +319,44 @@ picker:
     "url": "/media/123",
     "legacy_url": "/image/123",
     "kind": "image"
+  },
+  {
+    "id": "asset-45",
+    "mime_type": "image/png",
+    "url": "/api/media-assets/45",
+    "legacy_url": "/api/media-assets/45",
+    "kind": "image"
   }
 ]
 ```
 
+Migrated `media_assets` entries use a string id of the form `asset-{id}` to
+avoid colliding with native `media_files` numeric ids, and both `url` and
+`legacy_url` point at `/api/media-assets/{id}` (the existing migrated-media
+streaming route) so the picker resolves them without using `id` to build a
+`/media/{id}` or `/image/{id}` path.
+
 Upload/import success returns the same item fields at the top level. Media is
 stored in the database and is not written to repo files.
+
+`POST /admin/media/asset/[id]/update` processes metadata edits (title and alt text) for migrated media assets in the `media_assets` table. `POST /admin/media/asset/[id]/trash` soft-deletes a migrated asset, and `POST /admin/media/asset/[id]/destroy` purges it permanently.
+
+### Feed Sources
+
+- `GET /admin/feed-sources`
+- `GET /admin/feed-sources/create`
+- `POST /admin/feed-sources/create`
+- `GET /admin/feed-sources/[id]/edit`
+- `POST /admin/feed-sources/[id]/edit`
+- `POST /admin/feed-sources/[id]/delete`
+- `POST /admin/feed-sources/[id]/ingest`
+- `POST /admin/feed-sources/approve`
+- `POST /admin/feed-sources/reject`
+
+The feed sources admin lists RSS/Atom sources and a pending-import moderation
+queue. The `ingest` endpoint fetches the feed, parses items, and records unseen
+items as pending imports. The `approve` endpoint converts a pending item into a
+draft blog post. The `reject` endpoint marks it as rejected.
 
 ### Trash
 
@@ -159,7 +365,144 @@ stored in the database and is not written to repo files.
 - `POST /admin/trash/purge`
 - `POST /admin/trash/empty`
 
-Supported trash types are artworks, categories, exhibits, and media.
+Supported trash types are artworks, categories, exhibits, posts, comments, pieces, and media.
+
+### Site Identity
+
+- `GET /admin/site-identity`
+- `POST /admin/site-identity/settings`
+- `POST /admin/site-identity/assets`
+- `POST /admin/site-identity/assets/[id]/delete`
+- `POST /admin/site-identity/media/[id]/delete`
+
+The site identity admin is a three-tab surface: Settings (edit `site_settings`),
+Assets (upload `site_assets` by key), and Media Library (browse `media_assets`).
+
+### User Profiles
+
+- `GET /admin/user-profiles`
+- `GET /admin/user-profiles/[id]/edit`
+- `POST /admin/user-profiles/[id]/edit`
+- `POST /admin/user-profiles/[id]/photo` — upload a profile photo (owner uses `media_files`, member uses `profile_photo_assets`)
+- `GET /admin/user-profiles/settings/create`
+- `POST /admin/user-profiles/settings/create`
+- `GET /admin/user-profiles/settings/[id]/edit`
+- `POST /admin/user-profiles/settings/[id]/edit`
+- `POST /admin/user-profiles/settings/[id]/delete`
+- `GET /admin/user-profiles/keys/create`
+- `POST /admin/user-profiles/keys/create`
+- `GET /admin/user-profiles/keys/[id]/edit`
+- `POST /admin/user-profiles/keys/[id]/edit`
+- `POST /admin/user-profiles/keys/[id]/delete`
+
+The user profiles admin has three tabs: Users (edit profile and photo), AI Settings (vendor
+settings per user), and API Keys (AES-256-GCM encrypted vendor keys).
+
+The user edit form includes three preferred AI profile selects:
+- **Art Piece Generation** — `preferred_art_piece_profile_id`
+- **Text Improvement** — `preferred_text_improve_profile_id`
+- **Alt Text Generation** — `preferred_alt_text_profile_id`
+
+These preferences are automatically pre-selected in the AI generation form when available.
+
+### AI Content Helpers
+
+- `POST /admin/ai/process` — improves the provided text using the selected AI profile. Accepts `profile_id`, `content`, and `mode` (`html` or `text`). Returns JSON `{result: string}`.
+- `POST /admin/ai/describe-image` — generates alt text for an image using the selected AI profile. Accepts `profile_id` and `image_url`. Resolves the image from `/api/media/{filename}`, `/media/{id}`, or `/image/{id}`. Returns JSON `{result: string}`.
+- `GET /admin/ai/profiles` — returns a JSON array of enabled AI vendor profiles (`id`, `profile_name`, `vendor`, `model`, `user_name`) for the Tiptap "Improve with AI" profile picker.
+
+Both endpoints require an authenticated admin session. They use `AiProviderClient::chat()` and `AiProviderClient::describeImage()` respectively, supporting `chat-completions`, `google-generate-content`, `anthropic-messages`, and `openai-responses` transports.
+
+### Platform Connections
+
+- `GET /admin/platform-connections`
+- `GET /admin/platform-connections/create`
+- `POST /admin/platform-connections/create`
+- `GET /admin/platform-connections/[id]/edit`
+- `POST /admin/platform-connections/[id]/edit`
+- `POST /admin/platform-connections/[id]/delete`
+- `GET /admin/platform-connections/syndications/create`
+- `POST /admin/platform-connections/syndications/create`
+- `POST /admin/platform-connections/syndications/[id]/delete`
+- `POST /admin/platform-connections/publish`
+- `GET /admin/platform-connections/auth/[platform]/start` — redirects to the provider's OAuth consent screen
+- `GET /admin/platform-connections/auth/[platform]/callback` — exchanges the OAuth code for tokens and saves/upserts them into `platform_connections`
+- `GET /admin/platform-connections/diagnostics` — shows OAuth credential status, redirect URIs, and endpoint reachability for all supported providers
+
+The platform connections admin manages `platform_connections` (credentials for
+external platforms) and `post_syndications` (links between posts and platform
+connections). The `publish` endpoint syndicates a post to a platform via the
+adapter layer.
+
+OAuth providers supported: `wordpress-com`, `blogger`, `linkedin`, `facebook`, `instagram`.
+OAuth callbacks encrypt tokens with `encrypt_string()` and save them into `platform_connections`.
+The diagnostics page tests each provider's token endpoint with a dummy request and reports whether the endpoint is reachable.
+
+### Syndication Adapters
+
+All 8 platform adapters are implemented using GuzzleHTTP 7:
+
+- `BlueskyAdapter` — AT Protocol with App Password
+- `WordPressComAdapter` — WordPress.com REST API with OAuth
+- `WordPressSelfAdapter` — Self-hosted WordPress REST API with App Password
+- `BloggerAdapter` — Google Blogger API v3 with OAuth
+- `SubstackAdapter` — Unofficial API with session cookie
+- `LinkedInAdapter` — LinkedIn Posts API with OAuth
+- `FacebookAdapter` — Meta Graph API with Page Access Token
+- `InstagramAdapter` — Meta Graph API with Page Access Token
+
+`AdapterFactory::get($platform)` returns the appropriate adapter instance.
+`SyndicationPayload::fromPost($post, $canonicalUrl, $siteTitle)` normalizes post
+data. Content helpers (buildSocialPostText, buildSyndicatedContent,
+buildSourceFooter, etc.) are ported from the platform's `content.ts`.
+
+### Platform Art Pieces
+
+- `GET /admin/pieces`
+- `GET /admin/pieces/library`
+- `GET /admin/pieces/generate`
+- `POST /admin/pieces/generate`
+- `POST /admin/pieces/generate/save`
+- `GET /admin/pieces/create`
+- `POST /admin/pieces/create`
+- `GET /admin/pieces/[id]/edit`
+- `POST /admin/pieces/[id]/edit`
+- `POST /admin/pieces/[id]/delete`
+- `GET /admin/pieces/[id]/versions`
+- `GET /admin/pieces/[id]/versions/create`
+- `POST /admin/pieces/[id]/versions/create`
+- `GET /admin/pieces/[id]/versions/[vid]/edit`
+- `POST /admin/pieces/[id]/versions/[vid]/edit`
+- `POST /admin/pieces/[id]/versions/[vid]/set-current`
+
+Art piece create/update accepts title, prompt, engine, description, and
+thumbnail URL. Numeric IDs are canonical for public piece routes. Versions are
+managed separately; each version has prompt, structured spec, HTML/CSS/generated
+code, generation vendor, model, and validation status. The public renderer
+supports migrated p5, c2, Three.js, SVG, and generic HTML/code versions.
+
+`GET /admin/pieces/generate` renders the interface for AI piece generation, letting the admin select the engine, prompt, vendor settings, and model. `POST /admin/pieces/generate` triggers the generation process (running a 3-attempt validation and repair loop checking window.sketch constraints and output structure) and returns a preview sandbox. `POST /admin/pieces/generate/save` saves the generated metadata and code as a new piece with its initial version.
+
+`POST /admin/pieces/refine-ai` accepts a JSON body with `prompt`, `engine`, `profile_id`, `html_code`, `css_code`, and `generated_code`. It sends the current code blocks and the refinement instruction to the configured AI vendor, then runs the same 3-attempt validation and repair loop as generation. On success it returns `{success: true, html_code, css_code, generated_code}`; on failure it returns `{success: false, error: "..."}` with HTTP 500. The endpoint is used by the "AI Refine" tab in the piece editor to suggest changes that the admin can inspect, edit, accept, or reject.
+
+`POST /admin/pieces/[id]/versions/[vid]/set-current` sets the active version code for rendering.
+
+`GET /admin/pieces/library` returns a JSON array of active art pieces
+(`id`, `title`, `engine`, `thumbnail_url`, `status`) for the Tiptap "Insert art
+piece or exhibit" picker.
+
+### Platform Exhibits
+
+- `GET /admin/platform-exhibits`
+- `GET /admin/platform-exhibits/library`
+
+`/admin/platform-exhibits` is a read-only listing of migrated
+`platform_exhibits` rows (thumbnail, name, slug, item count, created date)
+with links to each exhibit's public `/exhibits/[slug]` and
+`/immersive/exhibits/[slug]` pages. These are distinct from the native
+"Artwork exhibits" managed under `/admin/exhibits`. `GET
+/admin/platform-exhibits/library` returns a JSON array (`slug`, `name`,
+`item_count`, `thumbnail_url`) for the Tiptap exhibit picker tab.
 
 ### Navigation
 

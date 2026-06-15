@@ -71,6 +71,41 @@
   If Hostinger rejects `php_value` directives, configure those values in the
   Hostinger PHP settings panel instead.
 
+## Platform Source MySQL Database (Read-Only Migration Source)
+
+- **Purpose:** Source database for one-way assimilation of the existing
+  platform data into the current PHP site's MySQL database.
+- **Data sent off-domain:** The migration script connects to the configured
+  platform database and reads rows for export/import into the PHP target
+  database.
+- **Write policy:** The platform database is live. Migration tooling must not
+  issue DDL or DML against it. Only `SELECT` reads are permitted.
+- **What breaks if unavailable or changed:** New platform data cannot be
+  migrated until the source connection is restored. The already-migrated PHP
+  site remains functional.
+- **Self-hosting alternative:** A SQL dump exported manually from the platform
+  database, imported through the same target-only migration path.
+- **Required source config:** `PLATFORM_DB_HOST`, `PLATFORM_DB_NAME`,
+  `PLATFORM_DB_USER`, `PLATFORM_DB_PASS`
+- **Optional source config:** `PLATFORM_DB_PORT`, `PLATFORM_DB_SSL`
+- **Target config:** The existing PHP database remains configured with
+  `DB_HOST`, `DB_NAME`, `DB_USER`, and `DB_PASS`.
+
+## Platform Assimilation Runtime Configuration
+
+- **Purpose:** Carries platform-derived runtime settings into the PHP app
+  without colliding with current PHP-site settings.
+- **Required where used:** `PLATFORM_AUTH_SECRET`,
+  `PLATFORM_AI_SETTINGS_ENCRYPTION_KEY`, `PLATFORM_ALLOWED_ORIGINS`,
+  `PLATFORM_PUBLIC_SITE_URL`, `PLATFORM_CRON_SECRET`,
+  `PLATFORM_GITHUB_ID`, `PLATFORM_GITHUB_SECRET`,
+  `PLATFORM_GOOGLE_CLIENT_ID`, and `PLATFORM_GOOGLE_CLIENT_SECRET`.
+- **What breaks if unavailable or changed:** The related assimilated feature
+  is disabled or cannot complete: owner/member auth, cron-protected feed
+  refresh, AI key decryption, or platform OAuth callback display.
+- **Self-hosting alternative:** These are app-owned environment variables; no
+  hosted service is introduced by the prefix change itself.
+
 ## GitHub OAuth (Admin Login)
 
 - **Purpose:** Authenticates admin users for `/admin/*` via "Continue with
@@ -137,3 +172,79 @@
   pipeline to this otherwise no-build PHP project.
 - **Required config:** None — the importmap in `app/views/admin/layout.php`
   is static.
+
+## GuzzleHTTP 7
+
+- **Purpose:** Shared HTTP client for PHP syndication adapters.
+- **Package:** `guzzlehttp/guzzle`
+- **Data sent off-domain:** None by itself. Adapter calls send post content,
+  media URLs, access tokens, and metadata to the selected syndication service.
+- **What breaks if unavailable or changed:** Syndication publishing and token
+  refresh actions fail until the package or adapter code is updated.
+- **Self-hosting alternative:** PHP stream/cURL wrappers per adapter. This is
+  possible but duplicates timeout, header, body, and error handling.
+- **Testing rule:** Adapter tests must use mocked HTTP clients or dry-run
+  payload checks. Verification must not perform real outbound publish calls
+  unless explicitly requested.
+
+## Syndication Services
+
+- **Purpose:** Optional owner-triggered distribution of PHP blog posts to
+  external services from `/admin/platform-connections`.
+- **Services:** Bluesky, WordPress.com, self-hosted WordPress, Blogger,
+  Substack, LinkedIn, Facebook, and Instagram.
+- **Data sent off-domain:** Post title, HTML/text content, canonical URL,
+  featured image URL, categories/hashtags, platform credentials or tokens,
+  and service-specific metadata.
+- **What breaks if unavailable or changed:** Publishing to the affected
+  service fails. Local posts, feeds, admin editing, and already-synced records
+  remain available.
+- **Self-hosting alternative:** Do not syndicate automatically; use exported
+  feeds or manual copy/paste into each service.
+- **Required config:** Service credentials are stored per connection in the
+  current PHP database and encrypted with
+  `PLATFORM_AI_SETTINGS_ENCRYPTION_KEY` semantics.
+- **Testing rule:** Use mocked service responses. Do not use live credentials
+  or perform real posts during route, migration, or deletion-readiness checks.
+
+## Platform OAuth Providers
+
+- **Purpose:** Interactive OAuth authentication for WordPress.com, Blogger, LinkedIn, Facebook, and Instagram connections.
+- **Data sent off-domain:** The browser is redirected to the provider's OAuth consent screen; the server exchanges the returned code for an access token and refresh token with the provider's token endpoint.
+- **What breaks if unavailable or changed:** OAuth-based credential acquisition fails. Manually entered credentials in the connection form remain available as a fallback.
+- **Self-hosting alternative:** Continue using the manual credential entry form in `/admin/platform-connections/create` and `/admin/platform-connections/[id]/edit`.
+- **Required config:**
+  - WordPress.com: `WORDPRESS_COM_CLIENT_ID`, `WORDPRESS_COM_CLIENT_SECRET`
+  - Blogger: `BLOGGER_GOOGLE_CLIENT_ID`, `BLOGGER_GOOGLE_CLIENT_SECRET`
+  - LinkedIn: `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`
+  - Facebook: `FACEBOOK_CLIENT_ID`, `FACEBOOK_CLIENT_SECRET`
+  - Instagram: `INSTAGRAM_CLIENT_ID`, `INSTAGRAM_CLIENT_SECRET` (falls back to Facebook credentials if not set)
+- **Callback URLs to register:** `https://augmenthumankind.com/admin/platform-connections/auth/{platform}/callback` where `{platform}` is one of `wordpress-com`, `blogger`, `linkedin`, `facebook`, `instagram`.
+
+## Piece Renderer CDN Runtimes
+
+- **Purpose:** PHP piece pages, standard embed routes, and the new immersive gallery/exhibit viewer views render generative sketches (P5, C2, Three.js, SVG) using client-side dynamic libraries loaded from CDNs.
+- **External endpoints:**
+  - P5.js: `https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js`
+  - C2.js: `https://cdn.jsdelivr.net/npm/c2.js@1.0.9/dist/c2.min.js`
+  - Three.js Core: `https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js`
+  - Three.js OrbitControls: `https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js`
+- **Data sent off-domain:** The browser requests the runtime script from the CDN. Piece content and database data are not sent by the PHP server.
+- **What breaks if unavailable or changed:** P5, C2, and Three.js-based piece pages, embeds, and immersive views fail to render until local runtime copies are served.
+- **Self-hosting alternative:** Store p5.js, c2.min.js, three.module.js, and OrbitControls.js under `public/assets/vendor/` and load them from the PHP site.
+
+## AI Piece Generation (Multi-Vendor)
+
+- **Purpose:** Allow generating and repairing art pieces using external LLM models (p5, c2, three, svg).
+- **External endpoints:**
+  - OpenRouter: `https://openrouter.ai/api/v1/chat/completions`
+  - DeepSeek: `https://api.deepseek.com/chat/completions`
+  - Mistral / Mistral Vibe: `https://api.mistral.ai/v1/chat/completions`
+  - Google Gemini: `https://generativelanguage.googleapis.com/v1beta/models`
+  - OpenCode Zen: `https://opencode.ai/zen/v1/*` (gateway for various provider endpoints)
+  - OpenCode Go: `https://opencode.ai/zen/go/v1/*` (gateway for various provider endpoints)
+- **Data sent off-domain:** User-provided creative prompts and system instructions (for the target engine) are sent to the selected vendor API along with the decrypted API key for authorization.
+- **What breaks if unavailable or changed:** AI piece generation and version repair via affected profiles will fail (already-saved pieces/versions are stored locally and are unaffected).
+- **Self-hosting alternative:** Configure a local proxy endpoint (e.g. Ollama) running self-hosted models as a custom vendor profile in the database.
+- **Required config:** API keys are stored in `user_ai_vendor_keys.encrypted_api_key`, encrypted/decrypted via AES-256-GCM using `PLATFORM_AI_SETTINGS_ENCRYPTION_KEY`. Vendor settings are configured in `user_ai_vendor_settings`.
+

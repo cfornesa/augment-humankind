@@ -6,7 +6,7 @@ ob_start();
     <span id="reorder-status" class="reorder-status" aria-live="polite"></span>
     <div class="admin-section-head">
         <h1 class="admin-heading">Exhibits</h1>
-        <a href="/admin/exhibits/create" class="admin-btn">+ New Exhibit</a>
+        <a href="/admin/exhibits/create" class="admin-btn">+ Add Exhibit</a>
     </div>
 
     <?php if (empty($exhibits)): ?>
@@ -16,17 +16,27 @@ ob_start();
             <thead>
                 <tr>
                     <th></th>
-                    <th>Name</th>
-                    <th>Works</th>
+                    <th>Title</th>
+                    <th>Year</th>
+                    <th>Category</th>
+                    <th>Collection</th>
+                    <th>Slides</th>
                     <th></th>
                 </tr>
             </thead>
-            <tbody id="exhibits-sortable" data-reorder-url="/admin/exhibits/reorder">
+            <tbody id="artworks-sortable" data-reorder-url="/admin/exhibits/reorder">
                 <?php foreach ($exhibits as $ex): ?>
                     <tr data-id="<?= $ex['id'] ?>">
                         <td class="drag-handle" title="Drag to reorder">&#8597;</td>
-                        <td><?= htmlspecialchars($ex['name']) ?></td>
-                        <td><?= (int) $ex['artwork_count'] ?></td>
+                        <td>
+                            <a href="/portfolio/exhibit/<?= htmlspecialchars($ex['slug']) ?>" target="_blank">
+                                <?= htmlspecialchars($ex['title']) ?>
+                            </a>
+                        </td>
+                        <td><?= htmlspecialchars($ex['year'] ?? '') ?></td>
+                        <td><?= htmlspecialchars(implode(', ', array_column($ex['categories'] ?? [], 'name')) ?: '—') ?></td>
+                        <td><?= htmlspecialchars(implode(', ', array_column($ex['collections'] ?? [], 'name')) ?: '—') ?></td>
+                        <td><?= count($ex['media_items'] ?? Exhibit::resolvedMediaItems($ex)) ?></td>
                         <td class="admin-actions">
                             <a href="/admin/exhibits/<?= $ex['id'] ?>/edit">Edit</a>
                             <form method="POST" action="/admin/exhibits/<?= $ex['id'] ?>/delete"

@@ -29,16 +29,38 @@ their capabilities without overclaiming what a one-person practice can deliver.
 - `/portfolio/exhibit/[slug]` — public exhibit detail
 - `/portfolio/work/[slug]` — public work detail
 - `/media/[id]` and `/image/[id]` — public blob-serving routes for stored media
+- `/blog` — canonical public blog feed
+- `/blog/posts/[id]` — public blog post detail page
+- `/blog/categories` and `/blog/category/[slug]` — public blog category index and detail pages
+- `/blog/feeds` — catalog page of RSS, Atom, JSON, and mf2 feeds
+- `/search` — public blog post search
+- `/pieces` — public gallery listing of generative art pieces
+- `/pieces/[id]` — public render page of a generative art piece
+- `/embed/pieces/[id]` — public embeddable HTML of a generative art piece
+- `/embed/pieces/[id]/data` — public JSON feed of art piece parameters and source code
+- `/immersive/pieces/[id]` — public 3D full-immersion stage or gallery room framing
+- `/immersive/exhibits/[slug]` — public progressive rendering exhibit wall
+- `/feeds/mf2` — mf2 JSON format feed export
 
 Admin routes are flat and protected by OAuth login:
 
-- `/admin/pages`
-- `/admin/artworks`
-- `/admin/categories`
-- `/admin/exhibits`
-- `/admin/media`
-- `/admin/trash`
-- `/admin/navigation`
+- `/admin` — admin dashboard with expanded metrics (works, categories, posts, comments, media, syndications, trash, etc.)
+- `/admin/pages` — CMS managed pages
+- `/admin/posts` — blog posts CRUD (draft, published, scheduled)
+- `/admin/comments` — comment and reaction moderation
+- `/admin/artworks` — portfolio artworks CRUD
+- `/admin/categories` — portfolio categories CRUD
+- `/admin/exhibits` — portfolio exhibits CRUD
+- `/admin/media` — media library uploads and migrated media assets (with AI alt-text generation for images)
+- `/admin/feed-sources` — RSS/Atom feed ingestion sources and approval queue
+- `/admin/site-identity` — site settings and assets management
+- `/admin/user-profiles` — admin users, AI vendor configurations, API keys, and profile photo uploads
+- `/admin/platform-connections` — syndication platforms (Bluesky, WordPress, Blogger, Substack, LinkedIn, Meta) with OAuth credential acquisition and a diagnostics page
+- `/admin/pieces` — platform generative art pieces and version history (with AI-driven generation at `/admin/pieces/generate` and AI refinement at `/admin/pieces/refine-ai`)
+- `/admin/ai/process` — AI text improvement endpoint (used by the Tiptap editor)
+- `/admin/ai/describe-image` — AI alt-text generation endpoint (used by the media library)
+- `/admin/trash` — trash bins for soft-deleted content
+- `/admin/navigation` — custom menu headers registry
 
 ## Deployed File Layout
 
@@ -150,6 +172,8 @@ php scripts/verify-contact-config.php
 
 ## Run Locally
 
+The canonical development server command is:
+
 ```sh
 php -S 127.0.0.1:8080 -t public public/index.php
 ```
@@ -162,6 +186,16 @@ Then open:
 - `http://127.0.0.1:8080/contact`
 - `http://127.0.0.1:8080/portfolio`
 - `http://127.0.0.1:8080/admin`
+
+Before manually deleting the legacy `platform/` application, keep this server
+running and run:
+
+```sh
+php scripts/check-platform-deletion-readiness.php --base-url=http://127.0.0.1:8080
+```
+
+The readiness command must pass, and manual route/admin testing should still be
+completed before deleting `platform/`.
 
 ## Notes
 

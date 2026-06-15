@@ -5,7 +5,10 @@ declare(strict_types=1);
 class Page
 {
     private const RESERVED_SLUGS = [
-        'admin', 'portfolio', 'contact', 'media', 'image', 'home',
+        'admin', 'api', 'atom', 'blog', 'categories', 'contact', 'embed',
+        'export', 'feed.json', 'feed.xml', 'feeds', 'home', 'image', 'jsonfeed',
+        'media', 'p', 'portfolio', 'posts', 'search', 'settings', 'sign-in',
+        'sign-up', 'users',
     ];
 
     public static function all(): array
