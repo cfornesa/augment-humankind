@@ -157,10 +157,25 @@ async function bootThree() {
       const box = new mod.Box3();
       state.scene.traverse((obj) => {
         if (obj.isHelper || obj.isLight || obj.isCamera) return;
-        if ((obj.isMesh || obj.isLine || obj.isPoints || obj.isSprite) && obj.geometry) {
+        if (obj.isPoints) return;
+        if (obj.material) {
+          const mat = obj.material;
+          if (mat.side === 1 || (Array.isArray(mat) && mat.some(m => m.side === 1))) return;
+        }
+        const name = (obj.name || '').toLowerCase();
+        if (name.includes('sky') || name.includes('background') || name.includes('env') || name.includes('floor') || name.includes('ground') || name.includes('grid') || name.includes('dome') || name.includes('space') || name.includes('star')) return;
+        if ((obj.isMesh || obj.isLine || obj.isSprite) && obj.geometry) {
           obj.geometry.computeBoundingBox?.();
-          if (obj.geometry.boundingBox)
-            box.union(obj.geometry.boundingBox.clone().applyMatrix4(obj.matrixWorld));
+          if (obj.geometry.boundingBox) {
+            const worldBox = obj.geometry.boundingBox.clone().applyMatrix4(obj.matrixWorld);
+            const worldSize = new mod.Vector3();
+            worldBox.getSize(worldSize);
+            if (worldSize.x >= 30 || worldSize.y >= 30 || worldSize.z >= 30) return;
+            if (obj.geometry.type === 'PlaneGeometry' || obj.geometry.type === 'PlaneBufferGeometry') {
+              if (worldSize.x >= 15 || worldSize.y >= 15 || worldSize.z >= 15) return;
+            }
+            box.union(worldBox);
+          }
         }
       });
       if (box.isEmpty()) return;

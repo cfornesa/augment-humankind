@@ -1378,3 +1378,27 @@ Addressed a bug where collection and image embeds did not render inside blog pos
 - **Tiptap picker alignment**: Corrected the insertion UI modal inside `public/app/views/admin/layout.php` to use the title "Insert Art Piece or Collection", with the second tab and panel renamed to "Collections" (`data-tab="collections"`, `id="pp-panel-collections"`). Updated `public/assets/js/tiptap-editor.js` to reference `collectionGrid` and `collectionsLoaded` to correctly query the new panel ID and populate it dynamically from the `/admin/platform-collections/library` endpoint.
 - **Verification**: Verified using `node --check` that `embed.js` and `tiptap-editor.js` syntax are clean, and confirmed `check-platform-deletion-readiness.php` returns 100% PASS on all HTTP checks.
 
+## 2026-06-15 — Three.js Skybox Camera Auto-Fit Fix
+
+### Context
+Three.js pieces containing large environment, skybox, or ground meshes caused the camera auto-fit bounding box computation (run on frame 15) to zoom out to infinity. This resulted in a completely blank black screen in both the regular detail view (`/pieces/{id}`) and in immersive/VR mode (`/immersive/pieces/{id}`) after the initial rendering.
+
+### Decisions & Actions
+- **Adaptive Auto-Fit Filtering**: Updated the `autoFit()` and `autoFitCamera()` implementations across all five Three.js runtime locations (`public/app/helpers/piece-render.php`, `public/app/views/admin/pieces/form.php`, `public/app/views/admin/pieces/generate-preview.php`, `public/embed.js`, and `public/assets/js/immersive-gallery.js`) to exclude background/skybox/environment meshes.
+- **Filtering Criteria**: Meshes are skipped if their name matches any pattern in a case-insensitive list (`sky`, `background`, `env`, `floor`, `ground`, `grid`, `helper`) or if the bounding box diagonal dimensions exceed 1000 units.
+- **Verification**: Verified that all 42 tests in `tests/three-runtime-consistency.php` pass, ensuring 100% Three.js runtime consistency. Confirmed `php scripts/check-platform-deletion-readiness.php --skip-http` returns 100% PASS. Used `node --check` to ensure Javascript files are syntactically valid.
+
+## 2026-06-15 — Three.js Camera Auto-Fit Robustness & Bounding Box Hardening
+
+### Context
+Skybox/environment filtering was not fully working because the skyboxes, ground meshes, and particle systems in actual database sketches did not have name properties defined, and their dimensions fell below the 1000 unit threshold (e.g. ground planes of size 30, sky spheres of size 100 or 400). As a result, they were still included in the bounding box union, zooming the camera out to infinity and rendering the central artwork invisible (appearing as a blank black screen).
+
+### Decisions & Actions
+- **BackSide Material Detection**: Excluded meshes constructed with `BackSide` material (`side === 1` or material arrays containing `side === 1`), which is the standard setup for skyboxes, sky spheres, and rooms viewed from the inside.
+- **Particle System Exclusion**: Excluded all particle point clouds (`isPoints`) from the bounding box calculation, preventing stars, dust, or snow fields from expanding the bounding box.
+- **World Bounding Box Dimensions**: Checked the world size of meshes (`geometry.boundingBox.getSize()` mapped via `matrixWorld`) to handle scaled geometries accurately.
+- **Lower Size Thresholds**: Lowered the maximum dimension threshold from `1000` to `30`. Large meshes with world size >= 30 are now excluded.
+- **Plane Geometry Constraints**: Excluded any `PlaneGeometry` or `PlaneBufferGeometry` with world dimensions >= 15 to filter out background walls and floors.
+- **Empty Bounding Box Fallback**: If the bounding box is empty after filtering (meaning only background/decorations exist in the scene), we return early and keep the default camera position set by the sketch instead of zooming out.
+- **Consistency Verification**: Applied these changes identically to all 5 Three.js runtime locations. Verified that the consistency test suite `tests/three-runtime-consistency.php` and the platform deletion readiness HTTP suite pass cleanly.
+
