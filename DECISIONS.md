@@ -1367,3 +1367,14 @@ Successfully resumed from compaction to complete verification of the unstaged ch
 - Executed `php tests/three-runtime-consistency.php` which confirmed all 42 checks pass, asserting full Three.js runtime consistency across all four rendering surfaces.
 - Tested platform deletion readiness using `php scripts/check-platform-deletion-readiness.php --base-url=http://127.0.0.1:8080` targeting the active local development server. Verified 100% PASS for all HTTP checks (including all rendering, embedding, and legacy platform compatibility routes).
 - Verified that Three.js pieces render correctly without empty black screens, OrbitControls interact seamlessly, and DOM sanitization prevents browser thread freezes.
+
+## 2026-06-15 — Post-Compaction Fixes: Collection Embed Rendering & Tiptap Picker Mismatch
+
+### Context
+Addressed a bug where collection and image embeds did not render inside blog posts, and corrected a picker naming mismatch ("Exhibits" instead of "Collections") inside the Tiptap editor interface.
+
+### Decisions & Actions
+- **Embed template bug fix**: Identified and resolved a client-side JavaScript bug in `public/embed.js` where `template.appendChild(iframe.cloneNode(true))` placed the cloned iframe in the template element's child list instead of its `.content` document fragment, causing `template.content.firstElementChild` to return `null` and throw a TypeError. Replaced with `template.content.appendChild(...)` for both `CreatrImmersiveImage` and `CreatrExhibitWall` custom elements.
+- **Tiptap picker alignment**: Corrected the insertion UI modal inside `public/app/views/admin/layout.php` to use the title "Insert Art Piece or Collection", with the second tab and panel renamed to "Collections" (`data-tab="collections"`, `id="pp-panel-collections"`). Updated `public/assets/js/tiptap-editor.js` to reference `collectionGrid` and `collectionsLoaded` to correctly query the new panel ID and populate it dynamically from the `/admin/platform-collections/library` endpoint.
+- **Verification**: Verified using `node --check` that `embed.js` and `tiptap-editor.js` syntax are clean, and confirmed `check-platform-deletion-readiness.php` returns 100% PASS on all HTTP checks.
+

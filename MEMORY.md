@@ -71,3 +71,5 @@ or rejection. -->
 2026-06-15 NOTE Two test suites created in `tests/`: `art-piece-generation.php` (25 tests for code extraction, validation, prompts) and `three-runtime-consistency.php` (36 tests for runtime parity across all rendering files). Run with `php tests/art-piece-generation.php` and `php tests/three-runtime-consistency.php`.
 
 2026-06-15 DECISION Resolved browser timeouts/freezes in immersive/default VR modes by correcting DOM traversal sanitization to remove traversed child nodes. Restored Three.js and Full Canvas rendering by binding the global THREE instance and overriding WebGLRenderer render/setSize methods to capture scene and camera references across all four rendering paths.
+
+2026-06-15 DECISION Fixed collection/image embed rendering in blog posts by changing template.appendChild to template.content.appendChild inside public/embed.js web components. Corrected Tiptap insert picker dialog and script in layout.php and tiptap-editor.js to reference Collections instead of Exhibits, using the correct grid selector and load state variables.

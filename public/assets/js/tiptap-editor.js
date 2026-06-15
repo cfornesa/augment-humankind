@@ -792,8 +792,8 @@ function initTiptap(textarea) {
   })
   bar.appendChild(imgBtn)
 
-  // Art piece / exhibit embed from library
-  const pieceBtn = icon('▦'); pieceBtn.title = 'Insert art piece or exhibit'
+  // Art piece / collection embed from library
+  const pieceBtn = icon('▦'); pieceBtn.title = 'Insert art piece or collection'
   pieceBtn.addEventListener('click', () => {
     window.openPiecePicker(result => {
       const attrs = result.type === 'collection'
@@ -1180,14 +1180,14 @@ function initPiecePicker() {
   const tabs        = dialog.querySelectorAll('.media-picker-tab')
   const panels      = dialog.querySelectorAll('.media-picker-panel')
   const pieceGrid   = dialog.querySelector('#pp-panel-pieces .piece-picker-grid')
-  const exhibitGrid = dialog.querySelector('#pp-panel-exhibits .piece-picker-grid')
+  const collectionGrid = dialog.querySelector('#pp-panel-collections .piece-picker-grid')
   const closeBtn    = dialog.querySelector('.media-picker-close')
   const cancelBtn   = dialog.querySelector('.piece-picker-cancel-btn')
   const selectBtn   = dialog.querySelector('.piece-picker-select-btn')
 
   let selected = null
   let piecesLoaded = false
-  let exhibitsLoaded = false
+  let collectionsLoaded = false
 
   function switchTab(tabName) {
     tabs.forEach(t => { const a = t.dataset.tab === tabName; t.classList.toggle('active', a); t.setAttribute('aria-selected', a ? 'true' : 'false') })

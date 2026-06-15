@@ -491,7 +491,7 @@
       if (!ref) return;
 
       const template = document.createElement("template");
-      template.appendChild(iframe.cloneNode(true));
+      template.content.appendChild(iframe.cloneNode(true));
       iframe.remove();
 
       const title = this.getAttribute("title") || iframe.getAttribute("title") || "Immersive image";
@@ -597,7 +597,7 @@
 
       // Move iframe to a template element to prevent loading
       const template = document.createElement("template");
-      template.appendChild(iframe.cloneNode(true));
+      template.content.appendChild(iframe.cloneNode(true));
       iframe.remove();
 
       const title = this.getAttribute("title") || `Exhibit: ${slug}`;

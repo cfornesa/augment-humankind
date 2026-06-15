@@ -140,25 +140,25 @@ $adminNavItems = [
         </div>
     </dialog>
 
-    <!-- Art Piece / Exhibit Picker Modal -->
+    <!-- Art Piece / Collection Picker Modal -->
     <dialog id="piece-picker-modal" aria-labelledby="piece-picker-title">
         <div class="media-picker-header">
-            <h2 id="piece-picker-title">Insert Art Piece or Exhibit</h2>
+            <h2 id="piece-picker-title">Insert Art Piece or Collection</h2>
             <button type="button" class="media-picker-close" aria-label="Close">&times;</button>
         </div>
 
         <nav class="media-picker-tabs" role="tablist">
             <button class="media-picker-tab active" role="tab" data-tab="pieces"
                     aria-selected="true" aria-controls="pp-panel-pieces">Pieces</button>
-            <button class="media-picker-tab" role="tab" data-tab="exhibits"
-                    aria-selected="false" aria-controls="pp-panel-exhibits">Exhibits</button>
+            <button class="media-picker-tab" role="tab" data-tab="collections"
+                    aria-selected="false" aria-controls="pp-panel-collections">Collections</button>
         </nav>
 
         <div class="media-picker-panel" id="pp-panel-pieces" role="tabpanel">
             <div class="media-picker-grid piece-picker-grid"></div>
         </div>
 
-        <div class="media-picker-panel" id="pp-panel-exhibits" role="tabpanel" hidden>
+        <div class="media-picker-panel" id="pp-panel-collections" role="tabpanel" hidden>
             <div class="media-picker-grid piece-picker-grid"></div>
         </div>
 
