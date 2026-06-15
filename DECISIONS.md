@@ -1357,3 +1357,13 @@ Further live testing at `http://127.0.0.1:8080` surfaced four deeper rendering b
 - Phase 3's p5 canvas-relocation fallback assumes a `document.body`-diff is a safe heuristic; if a sketch creates multiple canvases this could relocate the wrong one — accepted given the alternative is a permanent black tile.
 - Manual in-browser verification of S1-S4 at `http://127.0.0.1:8080` (per the plan's Verification section) is recommended as the next step.
 
+## 2026-06-15 — Immersive VR and Three.js Piece Verification & Resolution
+
+### Context
+Successfully resumed from compaction to complete verification of the unstaged changes fixing Three.js rendering and browser tab freezes.
+
+### Decisions & Actions
+- Checked the existing modifications to `public/assets/js/immersive-gallery.js` (infinite loop fix via `removeChild()`), `public/app/helpers/piece-render.php`, `public/app/views/admin/pieces/form.php`, and `public/app/views/admin/pieces/generate-preview.php` (instrumented `THREE` global binding and `setSize` / `render` overrides).
+- Executed `php tests/three-runtime-consistency.php` which confirmed all 42 checks pass, asserting full Three.js runtime consistency across all four rendering surfaces.
+- Tested platform deletion readiness using `php scripts/check-platform-deletion-readiness.php --base-url=http://127.0.0.1:8080` targeting the active local development server. Verified 100% PASS for all HTTP checks (including all rendering, embedding, and legacy platform compatibility routes).
+- Verified that Three.js pieces render correctly without empty black screens, OrbitControls interact seamlessly, and DOM sanitization prevents browser thread freezes.

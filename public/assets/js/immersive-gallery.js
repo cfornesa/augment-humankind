@@ -454,7 +454,9 @@ export function sanitizeArtPieceHtml(htmlCode, fallbackHtml) {
       const tag = node.tagName.toUpperCase();
       if (tag !== 'DIV' && tag !== 'CANVAS') {
         const frag = document.createDocumentFragment();
-        while (node.firstChild) frag.appendChild(walk(node.firstChild));
+        while (node.firstChild) {
+          frag.appendChild(walk(node.removeChild(node.firstChild)));
+        }
         return frag;
       }
       const cloned = document.createElement(tag.toLowerCase());
@@ -465,7 +467,7 @@ export function sanitizeArtPieceHtml(htmlCode, fallbackHtml) {
         }
       }
       while (node.firstChild) {
-        cloned.appendChild(walk(node.firstChild));
+        cloned.appendChild(walk(node.removeChild(node.firstChild)));
       }
       return cloned;
     }
@@ -474,7 +476,7 @@ export function sanitizeArtPieceHtml(htmlCode, fallbackHtml) {
 
   const frag = document.createDocumentFragment();
   while (temp.firstChild) {
-    frag.appendChild(walk(temp.firstChild));
+    frag.appendChild(walk(temp.removeChild(temp.firstChild)));
   }
   const wrapper = document.createElement('div');
   wrapper.appendChild(frag);
@@ -752,6 +754,14 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
       super({ ...input, canvas });
       state.renderer = this;
       this.setPixelRatio?.(Math.min(window.devicePixelRatio, 2));
+      const _origSetSize = this.setSize.bind(this);
+      this.setSize = (w, h) => _origSetSize(w, h, false);
+      const _origRender = this.render.bind(this);
+      this.render = (sc, cam) => {
+        if (sc) state.scene = sc;
+        if (cam) state.camera = cam;
+        return _origRender(sc, cam);
+      };
     }
   };
 
@@ -1697,6 +1707,7 @@ export function mountExhibitWall(stageEl, items, rows, cols) {
             return () => cancelAnimationFrame(rafId);
           };
 
+          if (!window.THREE) window.THREE = THREE;
           const cleanup = sketchFactory({
             THREE: THREE, // Hand global THREE for inline three pieces on exhibit walls
             c2: window.c2,

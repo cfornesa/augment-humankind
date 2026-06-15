@@ -267,6 +267,14 @@ async function bootThree() {
       constructor(params) {
         super({ ...(params || {}), canvas });
         state.renderer = this;
+        const _origSetSize = this.setSize.bind(this);
+        this.setSize = (w, h) => _origSetSize(w, h, false);
+        const _origRender = this.render.bind(this);
+        this.render = (sc, cam) => {
+          if (sc) state.scene = sc;
+          if (cam) state.camera = cam;
+          return _origRender(sc, cam);
+        };
       }
     };
     const width = canvas.width || window.innerWidth || 1280;
@@ -329,6 +337,7 @@ async function bootThree() {
       rafIds.push(id);
       return () => { rafIds.forEach((rafId) => cancelAnimationFrame(rafId)); rafIds = []; };
     }
+    window.THREE = instrumentedThree;
     window.sketch({ THREE: instrumentedThree, canvas, startFrame, width, height, size: { width, height }, OrbitControls });
     ensureFallbackLighting();
     autoFit();
