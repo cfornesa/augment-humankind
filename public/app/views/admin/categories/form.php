@@ -2,6 +2,7 @@
 $isEdit    = $category !== null;
 $category  = $category ?? [];
 $pageTitle = ($isEdit ? 'Edit Category' : 'New Category') . ' — Augment Humankind Admin';
+$needsEditor = true;
 ob_start();
 ?>
 <div class="admin-section">

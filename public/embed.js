@@ -592,7 +592,7 @@
 
       // Extract details
       const src = iframe.getAttribute("src") || "";
-      const slug = this.getAttribute("slug") || src.match(/\/immersive\/exhibits\/([^/?#]+)/)?.[1];
+      const slug = this.getAttribute("slug") || src.match(/\/immersive\/(?:exhibits|collections)\/([^/?#]+)/)?.[1];
       if (!slug) return;
 
       // Move iframe to a template element to prevent loading
@@ -602,7 +602,7 @@
 
       const title = this.getAttribute("title") || `Exhibit: ${slug}`;
       const safeTitle = escapeHtml(title);
-      const immersiveHref = `/immersive/exhibits/${slug}`;
+      const immersiveHref = `/immersive/collections/${slug}`;
 
       this.shadowRoot.innerHTML = `
         <style>
@@ -693,13 +693,13 @@
         entries.forEach(entry => {
           if (entry.isIntersecting) {
             this.observer.disconnect();
-            fetch(`${origin}/api/exhibits/${encodeURIComponent(slug)}`, { headers: { Accept: "application/json" } })
+            fetch(`${origin}/api/collections/${encodeURIComponent(slug)}`, { headers: { Accept: "application/json" } })
               .then(res => {
                 if (!res.ok) throw new Error("exhibit not found");
                 return res.json();
               })
               .then(data => {
-                const exhibit = data.exhibit;
+                const exhibit = data.collection;
                 if (exhibit && exhibit.iframe_code) {
                   mountDiv.innerHTML = exhibit.iframe_code;
                   this.isMounted = true;
@@ -764,8 +764,8 @@
       }
       
       // Check for exhibit embeds
-      else if (src.includes("/immersive/exhibits/")) {
-        const match = src.match(/\/immersive\/exhibits\/([^/?#]+)/);
+      else if (src.includes("/immersive/exhibits/") || src.includes("/immersive/collections/")) {
+        const match = src.match(/\/immersive\/(?:exhibits|collections)\/([^/?#]+)/);
         if (match) {
           const slug = match[1];
           const title = iframe.getAttribute("title") || `Exhibit: ${slug}`;

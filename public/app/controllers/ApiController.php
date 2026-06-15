@@ -91,6 +91,12 @@ class ApiController
         $collection ? self::json(['collection' => $collection]) : self::json(['error' => 'Not found'], 404);
     }
 
+    public static function redirectCollection(string $slug): void
+    {
+        header('Location: /api/collections/' . $slug, true, 301);
+        exit;
+    }
+
     public static function collectionItems(string $slug): void
     {
         $collection = PlatformCollection::findBySlug($slug);

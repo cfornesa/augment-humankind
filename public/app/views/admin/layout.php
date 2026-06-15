@@ -29,6 +29,7 @@ $adminNavItems = [
     <title><?= htmlspecialchars($pageTitle ?? 'Admin — Augment Humankind', ENT_QUOTES, 'UTF-8') ?></title>
     <link rel="stylesheet" href="/assets/styles.css">
     <link rel="stylesheet" href="/assets/admin.css">
+    <?php if ($needsEditor ?? false): ?>
     <link rel="stylesheet" href="/assets/css/tiptap.css">
     <script type="importmap">
     {
@@ -45,6 +46,7 @@ $adminNavItems = [
       }
     }
     </script>
+    <?php endif ?>
 </head>
 <body class="admin-body">
     <header class="admin-header">
@@ -205,7 +207,9 @@ $adminNavItems = [
         </div>
     </dialog>
 
-    <script src="/assets/js/main.js"></script>
+    <script src="/assets/js/main.js" defer></script>
+    <?php if ($needsEditor ?? false): ?>
     <script type="module" src="/assets/js/tiptap-editor.js"></script>
+    <?php endif ?>
 </body>
 </html>

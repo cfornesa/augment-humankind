@@ -1,5 +1,6 @@
 <?php
 $pageTitle = 'Media Library — Augment Humankind Admin';
+$needsEditor = true;
 ob_start();
 ?>
 <div class="admin-section media-library-page">

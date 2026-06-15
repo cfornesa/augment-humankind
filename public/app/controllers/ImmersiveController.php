@@ -73,6 +73,12 @@ iframe {
         exit;
     }
 
+    public static function redirectCollection(string $slug): void
+    {
+        header('Location: /immersive/collections/' . $slug, true, 301);
+        exit;
+    }
+
     public static function image(string $encodedRef): void
     {
         $imageSrc = self::decodeImageRef($encodedRef);

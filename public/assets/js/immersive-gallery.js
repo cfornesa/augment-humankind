@@ -712,6 +712,8 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
 
   let cleanup;
   let frameId = 0;
+  let consecutiveErrors = 0;
+  let controlFrame = 0;
   const stopFrameHandles = new Set();
   const state = { scene: null, camera: null, renderer: null, objects: [] };
 
@@ -720,7 +722,14 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
   instrumentedThree.Scene = class extends OriginalScene {
     constructor(...args) { super(...args); state.scene = this; }
     add(...objects) {
-      objects.forEach(obj => { if (obj?.geometry) state.objects.push(obj); });
+      objects.forEach(obj => {
+        if (obj?.geometry) {
+          state.objects.push(obj);
+          if (state.objects.length === 5000) {
+            console.warn("Three.js immersive piece has 5000+ tracked mesh objects — render performance may degrade.");
+          }
+        }
+      });
       return super.add(...objects);
     }
   };
@@ -954,96 +963,108 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
 
   function animateControls() {
     frameId = requestAnimationFrame(animateControls);
-    reassertThreeCanvasContainment();
-    if (controls && state.camera) {
-      if (!isOrbitActive) {
-        state.camera.position.copy(_orbitCamPos);
-        controls.target.copy(_orbitTarget);
-      }
-      controls.update();
-
-      if (threeAnimToTarget && threeAnimFromTarget) {
-        const t = Math.min((performance.now() - threeAnimStart) / 350, 1);
-        const eased = 1 - (1 - t) ** 3;
-        controls.target.lerpVectors(threeAnimFromTarget, threeAnimToTarget, eased);
-        state.camera.position.lerpVectors(threeAnimFromCam, threeAnimToCam, eased);
+    try {
+      controlFrame += 1;
+      reassertThreeCanvasContainment();
+      if (controls && state.camera) {
+        if (!isOrbitActive) {
+          state.camera.position.copy(_orbitCamPos);
+          controls.target.copy(_orbitTarget);
+        }
         controls.update();
-        if (t >= 1) {
-          controls.enabled = true;
-          threeAnimFromTarget = threeAnimToTarget = threeAnimFromCam = threeAnimToCam = null;
-          saveOrbitState();
-        }
-      }
-      keyNav?.update();
-      saveOrbitState();
-    }
 
-    if (state.renderer && state.scene && state.camera) {
-      if ("aspect" in state.camera) {
-        const width = stageEl.clientWidth || window.innerWidth;
-        const height = stageEl.clientHeight || window.innerHeight;
-        const aspect = width / Math.max(height, 1);
-        if (Math.abs(state.camera.aspect - aspect) > 0.001) {
-          state.camera.aspect = aspect;
-          state.camera.updateProjectionMatrix?.();
+        if (threeAnimToTarget && threeAnimFromTarget) {
+          const t = Math.min((performance.now() - threeAnimStart) / 350, 1);
+          const eased = 1 - (1 - t) ** 3;
+          controls.target.lerpVectors(threeAnimFromTarget, threeAnimToTarget, eased);
+          state.camera.position.lerpVectors(threeAnimFromCam, threeAnimToCam, eased);
+          controls.update();
+          if (t >= 1) {
+            controls.enabled = true;
+            threeAnimFromTarget = threeAnimToTarget = threeAnimFromCam = threeAnimToCam = null;
+            saveOrbitState();
+          }
         }
+        keyNav?.update();
+        saveOrbitState();
       }
 
-      state.renderer.autoClear = true;
-      state.renderer.localClippingEnabled = false;
-      if (state.renderer.shadowMap) state.renderer.shadowMap.enabled = false;
-
-      // Fallback light
-      let hasRealLight = false, hasFallback = false;
-      state.scene.traverse(obj => {
-        if (!obj.isLight) return;
-        if (obj.name?.startsWith("__viewer_fallback_")) hasFallback = true;
-        else hasRealLight = true;
-      });
-      if (hasRealLight) {
-        state.scene.children.filter(obj => obj.name?.startsWith("__viewer_fallback_")).forEach(obj => state.scene.remove(obj));
-      } else if (!hasFallback) {
-        const amb = new THREE.AmbientLight(0xffffff, 0.7);
-        amb.name = "__viewer_fallback_ambient__";
-        state.scene.add(amb);
-        const dir = new THREE.DirectionalLight(0xffffff, 0.8);
-        dir.position.set(5, 10, 7.5);
-        dir.name = "__viewer_fallback_dir__";
-        state.scene.add(dir);
-      }
-
-      state.scene.traverse(object => {
-        object.frustumCulled = false;
-        object.layers?.enableAll?.();
-        if ((object.isMesh || object.isLine || object.isPoints || object.isSprite) && object.visible === false) {
-          object.visible = true;
+      if (state.renderer && state.scene && state.camera) {
+        if ("aspect" in state.camera) {
+          const width = stageEl.clientWidth || window.innerWidth;
+          const height = stageEl.clientHeight || window.innerHeight;
+          const aspect = width / Math.max(height, 1);
+          if (Math.abs(state.camera.aspect - aspect) > 0.001) {
+            state.camera.aspect = aspect;
+            state.camera.updateProjectionMatrix?.();
+          }
         }
-        if (object.material) {
-          const mats = Array.isArray(object.material) ? object.material : [object.material];
-          mats.forEach(mat => {
-            if (!mat) return;
-            mat.clippingPlanes = null;
-            mat.clipIntersection = false;
-            mat.visible = true;
-            if (mat.opacity !== undefined && mat.opacity < 0.05) {
-              mat.opacity = 1; mat.transparent = false;
+
+        state.renderer.autoClear = true;
+        state.renderer.localClippingEnabled = false;
+        if (state.renderer.shadowMap) state.renderer.shadowMap.enabled = false;
+
+        // Fallback light
+        let hasRealLight = false, hasFallback = false;
+        state.scene.traverse(obj => {
+          if (!obj.isLight) return;
+          if (obj.name?.startsWith("__viewer_fallback_")) hasFallback = true;
+          else hasRealLight = true;
+        });
+        if (hasRealLight) {
+          state.scene.children.filter(obj => obj.name?.startsWith("__viewer_fallback_")).forEach(obj => state.scene.remove(obj));
+        } else if (!hasFallback) {
+          const amb = new THREE.AmbientLight(0xffffff, 0.7);
+          amb.name = "__viewer_fallback_ambient__";
+          state.scene.add(amb);
+          const dir = new THREE.DirectionalLight(0xffffff, 0.8);
+          dir.position.set(5, 10, 7.5);
+          dir.name = "__viewer_fallback_dir__";
+          state.scene.add(dir);
+        }
+
+        // Visibility/material normalization is expensive on large scenes — run
+        // every frame during initial settle-in, then throttle to every 30th frame.
+        if (controlFrame <= 60 || controlFrame % 30 === 0) {
+          state.scene.traverse(object => {
+            object.frustumCulled = false;
+            object.layers?.enableAll?.();
+            if ((object.isMesh || object.isLine || object.isPoints || object.isSprite) && object.visible === false) {
+              object.visible = true;
+            }
+            if (object.material) {
+              const mats = Array.isArray(object.material) ? object.material : [object.material];
+              mats.forEach(mat => {
+                if (!mat) return;
+                mat.clippingPlanes = null;
+                mat.clipIntersection = false;
+                mat.visible = true;
+                if (mat.opacity !== undefined && mat.opacity < 0.05) {
+                  mat.opacity = 1; mat.transparent = false;
+                }
+              });
             }
           });
         }
-      });
 
-      // Background sync
-      let bg = null;
-      for (let el of [canvas, mount, stageEl.querySelector("div"), stageEl, host.querySelector("#container"), host]) {
-        if (!el) continue;
-        let val = el.style.backgroundColor || el.style.background;
-        if (val && val.trim() !== "" && val.trim() !== "transparent" && val.trim() !== "rgba(0, 0, 0, 0)") { bg = val; break; }
-        let cmp = window.getComputedStyle(el).backgroundColor;
-        if (cmp && cmp.trim() !== "" && cmp.trim() !== "transparent" && cmp.trim() !== "rgba(0, 0, 0, 0)") { bg = cmp; break; }
+        // Background sync
+        let bg = null;
+        for (let el of [canvas, mount, stageEl.querySelector("div"), stageEl, host.querySelector("#container"), host]) {
+          if (!el) continue;
+          let val = el.style.backgroundColor || el.style.background;
+          if (val && val.trim() !== "" && val.trim() !== "transparent" && val.trim() !== "rgba(0, 0, 0, 0)") { bg = val; break; }
+          let cmp = window.getComputedStyle(el).backgroundColor;
+          if (cmp && cmp.trim() !== "" && cmp.trim() !== "transparent" && cmp.trim() !== "rgba(0, 0, 0, 0)") { bg = cmp; break; }
+        }
+        bg = bg ?? "#000000";
+        syncThreeRendererBackground(state.renderer, state.scene, bg);
+        state.renderer.render(state.scene, state.camera);
       }
-      bg = bg ?? "#000000";
-      syncThreeRendererBackground(state.renderer, state.scene, bg);
-      state.renderer.render(state.scene, state.camera);
+      consecutiveErrors = 0;
+    } catch (err) {
+      consecutiveErrors += 1;
+      if (consecutiveErrors === 1) onError(err);
+      if (consecutiveErrors >= 5) cancelAnimationFrame(frameId);
     }
   }
 
@@ -1063,7 +1084,7 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
     }
 
     reassertThreeCanvasContainment();
-    resize();
+    requestAnimationFrame(() => resize());
     controls = new OrbitControls(state.camera, canvas);
     controls.enableDamping = true;
     controls.enablePan = true;
@@ -1077,9 +1098,14 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
     controls.maxDistance = Math.max(40, initialTargetDist * 4);
     controls.update();
 
+    const navLimit = getThreeNavigationLimit();
     keyNav = createKeyboardNavigation(controls, {
       container: stageEl,
       speed: (act) => Math.max(0.05, act.target.distanceTo(act.object.position) * 0.03),
+      minX: -navLimit,
+      maxX: navLimit,
+      minZ: 0.5,
+      maxZ: navLimit,
     });
 
     _orbitCamPos.copy(state.camera.position);
@@ -1091,13 +1117,15 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
     controls.addEventListener("start", () => { isOrbitActive = true; });
     controls.addEventListener("end", () => { isOrbitActive = false; saveOrbitState(); });
 
-    animateControls();
+    frameId = requestAnimationFrame(animateControls);
 
     const resizeObserver = new ResizeObserver(() => resize());
     resizeObserver.observe(stageEl);
+    window.addEventListener("resize", resize);
 
     return () => {
       resizeObserver.disconnect();
+      window.removeEventListener("resize", resize);
       cancelAnimationFrame(frameId);
       controls.dispose();
       canvas.removeEventListener("pointerdown", onThreePointerDown);
@@ -1173,8 +1201,13 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
     fitMountedGalleryCamera(shell, stageEl);
   }
 
-  function pollForCanvas(root, onMissing) {
-    const candidate = root.querySelector("canvas");
+  function pollForCanvas(root, onMissing, preExisting) {
+    let candidate = p5Instance?.canvas instanceof HTMLCanvasElement ? p5Instance.canvas : null;
+    if (!candidate) candidate = root.querySelector("canvas") || host.querySelector("canvas");
+    if (!candidate && preExisting) {
+      candidate = Array.from(document.querySelectorAll("canvas")).find((c) => !preExisting.has(c)) || null;
+      if (candidate && candidate.parentElement !== root) root.appendChild(candidate);
+    }
     if (candidate instanceof HTMLCanvasElement) {
       if (candidate.width === 0 || candidate.height === 0) {
         candidate.width = runtimeSize.width;
@@ -1185,7 +1218,7 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
     }
     if (detectCanvasAttempts >= 80) { onError(onMissing); return; }
     detectCanvasAttempts += 1;
-    detectCanvasTimer = window.setTimeout(() => pollForCanvas(root, onMissing), 100);
+    detectCanvasTimer = window.setTimeout(() => pollForCanvas(root, onMissing, preExisting), 100);
   }
 
   async function bootRuntime() {
@@ -1193,8 +1226,9 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
       if (engine === "p5") {
         const sketchFactory = resolveSketchFactory(code);
         const mountNode = host.querySelector("#canvas-container") || host.querySelector("#sketch-container") || host;
+        const preExistingCanvases = new Set(document.querySelectorAll("canvas"));
         p5Instance = new window.p5(sketchFactory, mountNode);
-        pollForCanvas(mountNode, "This p5 piece did not produce a canvas for immersive mode.");
+        pollForCanvas(mountNode, "This p5 piece did not produce a canvas for immersive mode.", preExistingCanvases);
         return;
       }
 
@@ -1487,8 +1521,16 @@ export function mountExhibitWall(stageEl, items, rows, cols) {
     
     // Boot up newly live slots
     liveSlots.forEach(index => {
-      if (activeRuntimes.has(index)) return; // already active
-      
+      const existing = activeRuntimes.get(index);
+      if (existing) {
+        if (!existing.failed) return; // already active and healthy
+        // Previously-failed slot occupying this live budget slot — tear down and retry.
+        existing.stop?.();
+        existing.texture?.dispose();
+        existing.host?.remove();
+        activeRuntimes.delete(index);
+      }
+
       const item = items[index];
       const slot = shell.slots[index];
       
@@ -1517,21 +1559,33 @@ export function mountExhibitWall(stageEl, items, rows, cols) {
         if (item.engine === "p5") {
           const sketchFactory = resolveSketchFactory(item.generated_code);
           const mount = host.querySelector("#canvas-container") || host.querySelector("#sketch-container") || host;
+          const preExistingCanvases = new Set(document.querySelectorAll("canvas"));
           p5Instance = new window.p5(sketchFactory, mount);
-          
+
           let attempts = 0;
           const poll = () => {
-            const canv = mount.querySelector("canvas");
+            let canv = p5Instance?.canvas instanceof HTMLCanvasElement ? p5Instance.canvas : null;
+            if (!canv) canv = mount.querySelector("canvas") || host.querySelector("canvas");
+            if (!canv) {
+              canv = Array.from(document.querySelectorAll("canvas")).find((c) => !preExistingCanvases.has(c)) || null;
+              if (canv && canv.parentElement !== mount) mount.appendChild(canv);
+            }
             if (canv) {
               if (canv.width === 0) { canv.width = runtimeSize.width; canv.height = runtimeSize.height; }
               syncSlotCanvas(canv);
+              const runtime = activeRuntimes.get(index);
+              if (runtime) { runtime.sourceCanvas = canv; runtime.texture = texture; runtime.failed = false; }
             } else if (attempts < 50) {
               attempts++;
               setTimeout(poll, 100);
+            } else {
+              console.warn(`Progressive slot ${index} (${item.title || "untitled"}, p5) never produced a canvas.`);
+              const runtime = activeRuntimes.get(index);
+              if (runtime) runtime.failed = true;
             }
           };
           poll();
-          
+
           stop = () => {
             p5Instance?.remove?.();
           };
@@ -1559,7 +1613,9 @@ export function mountExhibitWall(stageEl, items, rows, cols) {
             window.svgRoot = svgEl;
             const sketchFactory = resolveSketchFactory(item.generated_code);
             if (typeof sketchFactory === "function") {
-              try { sketchFactory(); } catch (_) {}
+              try { sketchFactory(); } catch (sketchErr) {
+                console.warn(`Progressive slot ${index} (${item.title || "untitled"}, svg) sketch init failed:`, sketchErr);
+              }
             }
 
             let drawPending = false;
@@ -1620,11 +1676,21 @@ export function mountExhibitWall(stageEl, items, rows, cols) {
           syncSlotCanvas(managedCanvas);
 
           let rafId = 0;
+          let tickErrors = 0;
           const startFrame = (handler) => {
             let count = 0;
             function tick() {
               count++;
-              try { handler(count); } catch (_) {}
+              try {
+                handler(count);
+                tickErrors = 0;
+              } catch (err) {
+                tickErrors++;
+                if (tickErrors === 1) {
+                  console.warn(`Progressive slot ${index} (${item.title || "untitled"}, ${item.engine}) frame handler error:`, err);
+                }
+                if (tickErrors >= 5) return;
+              }
               rafId = requestAnimationFrame(tick);
             }
             rafId = requestAnimationFrame(tick);
@@ -1647,10 +1713,10 @@ export function mountExhibitWall(stageEl, items, rows, cols) {
           };
         }
       } catch (err) {
-        console.error("Failed to boot progressive slot " + index, err);
+        console.warn(`Progressive slot ${index} (${item.title || "untitled"}, ${item.engine}) failed to boot:`, err);
       }
 
-      activeRuntimes.set(index, { host, sourceCanvas, stop, texture, p5Instance, svgInterval });
+      activeRuntimes.set(index, { host, sourceCanvas, stop, texture, p5Instance, svgInterval, failed: !sourceCanvas && !stop });
     });
 
     // Tear down no-longer-live slots

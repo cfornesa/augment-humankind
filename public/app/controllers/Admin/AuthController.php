@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 class AuthController
 {
+    private static array $tableExistsCache = [];
+    private static array $columnExistsCache = [];
+    private static bool $schemaCachePrimed = false;
+
     public static function loginForm(): void
     {
         if (!empty($_SESSION['admin_identity_id'])) {
@@ -113,6 +117,7 @@ class AuthController
     public static function dashboard(): void
     {
         admin_check();
+        self::primeSchemaCache();
 
         $exhibitCount  = self::countRows('exhibits', activeOnly: true);
         $categoryCount = self::countRows('categories', activeOnly: true);
@@ -181,11 +186,43 @@ class AuthController
         return self::countRows($table, ['deleted_at IS NOT NULL']);
     }
 
+    private static function primeSchemaCache(): void
+    {
+        if (self::$schemaCachePrimed) {
+            return;
+        }
+        self::$schemaCachePrimed = true;
+
+        try {
+            $tables = db()->query(
+                'SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE()'
+            )->fetchAll(PDO::FETCH_COLUMN);
+        } catch (Throwable) {
+            return;
+        }
+
+        foreach ($tables as $table) {
+            self::$tableExistsCache[$table] = true;
+        }
+
+        try {
+            $deletedAtTables = db()->query(
+                "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND COLUMN_NAME = 'deleted_at'"
+            )->fetchAll(PDO::FETCH_COLUMN);
+        } catch (Throwable) {
+            return;
+        }
+
+        $deletedAtSet = array_flip($deletedAtTables);
+        foreach ($tables as $table) {
+            self::$columnExistsCache[$table . '.deleted_at'] = isset($deletedAtSet[$table]);
+        }
+    }
+
     private static function tableExists(string $table): bool
     {
-        static $cache = [];
-        if (array_key_exists($table, $cache)) {
-            return $cache[$table];
+        if (array_key_exists($table, self::$tableExistsCache)) {
+            return self::$tableExistsCache[$table];
         }
 
         try {
@@ -193,18 +230,17 @@ class AuthController
                 'SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? LIMIT 1'
             );
             $stmt->execute([$table]);
-            return $cache[$table] = (bool) $stmt->fetchColumn();
+            return self::$tableExistsCache[$table] = (bool) $stmt->fetchColumn();
         } catch (Throwable) {
-            return $cache[$table] = false;
+            return self::$tableExistsCache[$table] = false;
         }
     }
 
     private static function columnExists(string $table, string $column): bool
     {
-        static $cache = [];
         $key = $table . '.' . $column;
-        if (array_key_exists($key, $cache)) {
-            return $cache[$key];
+        if (array_key_exists($key, self::$columnExistsCache)) {
+            return self::$columnExistsCache[$key];
         }
 
         try {
@@ -214,9 +250,9 @@ class AuthController
                  LIMIT 1'
             );
             $stmt->execute([$table, $column]);
-            return $cache[$key] = (bool) $stmt->fetchColumn();
+            return self::$columnExistsCache[$key] = (bool) $stmt->fetchColumn();
         } catch (Throwable) {
-            return $cache[$key] = false;
+            return self::$columnExistsCache[$key] = false;
         }
     }
 

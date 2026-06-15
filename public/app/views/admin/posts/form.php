@@ -1,6 +1,7 @@
 <?php
 $isEdit    = ($post['id'] ?? null) !== null;
 $pageTitle = ($isEdit ? 'Edit Post' : 'New Post') . ' — Augment Humankind Admin';
+$needsEditor = true;
 
 $scheduledValue = '';
 if (!empty($post['scheduled_at'])) {

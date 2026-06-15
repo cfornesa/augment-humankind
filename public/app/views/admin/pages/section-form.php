@@ -2,6 +2,7 @@
 $isEdit = $section !== null;
 $section = $section ?? [];
 $pageTitle = ($isEdit ? 'Edit Section' : 'New Section') . ' — Augment Humankind Admin';
+$needsEditor = true;
 ob_start();
 ?>
 <div class="admin-section">

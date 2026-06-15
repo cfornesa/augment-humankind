@@ -109,6 +109,7 @@ $publicRoutes = [
     ['GET', '/immersive/pieces/([0-9]+)',            [ImmersiveController::class, 'piece']],
     ['GET', '/immersive/images/([A-Za-z0-9_-]+)',    [ImmersiveController::class, 'image']],
     ['GET', '/immersive/collections/([a-z0-9-]+)',    [ImmersiveController::class, 'collection']],
+    ['GET', '/immersive/exhibits/([a-z0-9-]+)',       [ImmersiveController::class, 'redirectCollection']],
 
     ['GET', '/api/feeds',                            [ApiController::class, 'feedsCatalog']],
     ['GET', '/api/feeds/atom',                       [BlogController::class, 'atom']],
@@ -128,6 +129,7 @@ $publicRoutes = [
     ['GET', '/api/collections',                      [ApiController::class, 'collections']],
     ['GET', '/api/collections/([a-z0-9-]+)',         [ApiController::class, 'collection']],
     ['GET', '/api/collections/([a-z0-9-]+)/items',   [ApiController::class, 'collectionItems']],
+    ['GET', '/api/exhibits/([a-z0-9-]+)',            [ApiController::class, 'redirectCollection']],
     ['GET',  '/api/media-assets/([0-9]+)',            [ApiController::class, 'mediaAsset']],
     ['GET', '/api/media/([^/]+)/collections',         [ApiController::class, 'mediaAssetCollections']],
     ['GET', '/api/media/([^/]+)',                    [ApiController::class, 'mediaAssetByFilename']],

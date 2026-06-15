@@ -2,6 +2,7 @@
 $isEdit    = !empty($exhibit['id']);
 $exhibit   = $exhibit ?? ['media_items' => []];
 $pageTitle = ($isEdit ? 'Edit Work' : 'Add Work') . ' — Augment Humankind Admin';
+$needsEditor = true;
 $mediaItems = $exhibit['media_items'] ?? [];
 ob_start();
 ?>

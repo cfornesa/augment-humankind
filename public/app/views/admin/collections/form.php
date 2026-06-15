@@ -2,6 +2,7 @@
 $isEdit    = $collection !== null;
 $collection = $collection ?? [];
 $pageTitle = ($isEdit ? 'Edit Collection' : 'New Collection') . ' — Augment Humankind Admin';
+$needsEditor = true;
 ob_start();
 ?>
 <div class="admin-section">

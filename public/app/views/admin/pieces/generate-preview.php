@@ -253,8 +253,9 @@ async function bootThree() {
     const canvas = findCanvas('scene');
     canvas.style.cssText = 'display:block;width:100%;height:100%;';
     sizeCanvas(canvas);
-    window.addEventListener('resize', () => sizeCanvas(canvas));
     const state = { scene: null, camera: null, renderer: null };
+    let controls = null;
+    let rafIds = [];
     const instrumentedThree = { ...mod };
     instrumentedThree.Scene = class extends mod.Scene {
       constructor() { super(); state.scene = this; }
@@ -290,6 +291,7 @@ async function bootThree() {
       state.camera.position.set(center.x + dist, center.y + dist * 0.4, center.z + dist);
       state.camera.lookAt(center);
       state.camera.updateMatrixWorld(true);
+      if (controls) { controls.target.copy(center); controls.update(); }
     }
     function ensureFallbackLighting() {
       if (!state.scene?.traverse) return;
@@ -314,9 +316,61 @@ async function bootThree() {
       dir.name = '__viewer_fallback_dir__';
       state.scene.add(dir);
     }
+    function startFrame(handler) {
+      let count = 0;
+      function tick() {
+        count++;
+        try { handler(count); } catch (error) { showPieceError(error); return; }
+        if (count === 15) autoFit();
+        const id = requestAnimationFrame(tick);
+        rafIds.push(id);
+      }
+      const id = requestAnimationFrame(tick);
+      rafIds.push(id);
+      return () => { rafIds.forEach((rafId) => cancelAnimationFrame(rafId)); rafIds = []; };
+    }
     window.sketch({ THREE: instrumentedThree, canvas, startFrame, width, height, size: { width, height }, OrbitControls });
     ensureFallbackLighting();
     autoFit();
+
+    if (state.camera && state.renderer) {
+      controls = new OrbitControls(state.camera, canvas);
+      controls.enableDamping = true;
+      controls.enablePan = true;
+      const camDir = new mod.Vector3();
+      state.camera.getWorldDirection(camDir);
+      const camLen = state.camera.position.length();
+      controls.target.copy(state.camera.position).addScaledVector(camDir, Math.max(camLen * 0.8, 3));
+      autoFit();
+      controls.update();
+
+      let consecutiveErrors = 0;
+      const animateControls = () => {
+        const id = requestAnimationFrame(animateControls);
+        rafIds.push(id);
+        try {
+          ensureFallbackLighting();
+          controls.update();
+          state.renderer.render(state.scene, state.camera);
+          consecutiveErrors = 0;
+        } catch (renderError) {
+          consecutiveErrors++;
+          if (consecutiveErrors === 1) showPieceError(renderError);
+          if (consecutiveErrors >= 5) cancelAnimationFrame(id);
+        }
+      };
+      animateControls();
+    }
+
+    window.addEventListener('resize', () => {
+      sizeCanvas(canvas);
+      if (state.renderer && state.camera) {
+        state.camera.aspect = canvas.width / canvas.height;
+        state.camera.updateProjectionMatrix();
+        state.renderer.setSize(canvas.width, canvas.height, false);
+      }
+    });
+
     window.parent.postMessage({ type: 'sketch-status', valid: true }, '*');
   } catch (error) {
     showPieceError(error);

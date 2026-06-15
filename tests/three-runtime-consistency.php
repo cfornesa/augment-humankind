@@ -189,6 +189,35 @@ test('WebGLRenderer uses managed canvas', function () use ($embedJs) {
     assert_contains($embedJs, 'super({ ...(params || {}), canvas })');
 });
 
+echo "\n=== Render loop wiring (bootThree) ===\n";
+
+test('piece-render.php bootThree creates OrbitControls bound to state.camera/canvas', function () use ($pieceRender) {
+    assert_contains($pieceRender, 'new OrbitControls(state.camera, canvas)');
+});
+
+test('piece-render.php bootThree has an animateControls render loop that calls renderer.render', function () use ($pieceRender) {
+    assert_contains($pieceRender, 'const animateControls = () => {');
+    assert_contains($pieceRender, 'state.renderer.render(state.scene, state.camera)');
+});
+
+test('form.php bootThree creates OrbitControls bound to state.camera/canvas', function () use ($formPhp) {
+    assert_contains($formPhp, 'new OrbitControls(state.camera, canvas)');
+});
+
+test('form.php bootThree has an animateControls render loop that calls renderer.render', function () use ($formPhp) {
+    assert_contains($formPhp, 'const animateControls = () => {');
+    assert_contains($formPhp, 'state.renderer.render(state.scene, state.camera)');
+});
+
+test('generate-preview.php bootThree creates OrbitControls bound to state.camera/canvas', function () use ($previewPhp) {
+    assert_contains($previewPhp, 'new OrbitControls(state.camera, canvas)');
+});
+
+test('generate-preview.php bootThree has an animateControls render loop that calls renderer.render', function () use ($previewPhp) {
+    assert_contains($previewPhp, 'const animateControls = () => {');
+    assert_contains($previewPhp, 'state.renderer.render(state.scene, state.camera)');
+});
+
 echo "\n=== Consistency check ===\n";
 
 test('All three runtimes have consistent fallback lighting names', function () use ($pieceRender, $formPhp, $previewPhp, $embedJs) {
