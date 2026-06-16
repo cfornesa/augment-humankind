@@ -6,6 +6,7 @@ $pageTitle = 'Platform Collections';
 ob_start();
 ?>
 <div class="admin-container">
+    <span id="reorder-status" class="reorder-status" aria-live="polite"></span>
     <div class="admin-header-row">
         <h1>Platform Collections</h1>
         <a href="/admin/platform-collections/create" class="admin-btn">+ New Collection</a>
@@ -19,6 +20,7 @@ ob_start();
         <table class="admin-table">
             <thead>
                 <tr>
+                    <th></th>
                     <th>Thumbnail</th>
                     <th>Name</th>
                     <th>Slug</th>
@@ -27,9 +29,10 @@ ob_start();
                     <th>Actions</th>
                 </tr>
             </thead>
-            <tbody>
+            <tbody data-reorder-url="/admin/platform-collections/reorder">
                 <?php foreach ($collections as $collection): ?>
-                    <tr>
+                    <tr data-id="<?= (int) $collection['id'] ?>">
+                        <td class="drag-handle" title="Drag to reorder">&#8597;</td>
                         <td>
                             <?php if (!empty($collection['thumbnail_url'])): ?>
                                 <img src="<?= e($collection['thumbnail_url']) ?>" alt="" style="width: 60px; height: 45px; object-fit: cover;">

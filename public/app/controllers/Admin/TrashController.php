@@ -9,7 +9,8 @@ class TrashController
         admin_check();
         $tab = $_GET['tab'] ?? 'exhibits';
         $exhibits = Exhibit::trashed();
-        $categories = Category::trashed();
+        $artMedia = Category::trashed();
+        $categories = BlogCategory::trashed();
         $collections = Collection::trashed();
         $mediaFiles = array_merge(
             array_map(static function (array $row): array {
@@ -38,7 +39,8 @@ class TrashController
 
         match ($type) {
             'exhibit' => Exhibit::restore($id),
-            'category' => Category::restore($id),
+            'art-medium' => Category::restore($id),
+            'category' => BlogCategory::restore($id),
             'collection' => Collection::restore($id),
             'media' => MediaFile::restore($id),
             'media_asset' => MediaAsset::restore($id),
@@ -59,7 +61,8 @@ class TrashController
 
         match ($type) {
             'exhibit' => Exhibit::hardDelete($id),
-            'category' => Category::hardDelete($id),
+            'art-medium' => Category::hardDelete($id),
+            'category' => BlogCategory::hardDelete($id),
             'collection' => Collection::hardDelete($id),
             'media' => MediaFile::hardDelete($id),
             'media_asset' => MediaAsset::hardDelete($id),
@@ -83,9 +86,14 @@ class TrashController
                     Exhibit::hardDelete((int) $exhibit['id']);
                 }
                 break;
+            case 'art-media':
+                foreach (Category::trashed() as $artMedium) {
+                    Category::hardDelete((int) $artMedium['id']);
+                }
+                break;
             case 'categories':
-                foreach (Category::trashed() as $category) {
-                    Category::hardDelete((int) $category['id']);
+                foreach (BlogCategory::trashed() as $category) {
+                    BlogCategory::hardDelete((int) $category['id']);
                 }
                 break;
             case 'collections':
@@ -121,6 +129,7 @@ class TrashController
     {
         return match ($type) {
             'exhibit' => 'exhibits',
+            'art-medium' => 'art-media',
             'category' => 'categories',
             'collection' => 'collections',
             'post' => 'posts',

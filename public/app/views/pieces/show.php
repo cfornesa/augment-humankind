@@ -10,6 +10,14 @@ $hasCode = $version && (!empty($version['html_code']) || !empty($version['css_co
 <section class="page-hero" aria-labelledby="piece-title">
     <p class="eyebrow">Art Piece</p>
     <h1 id="piece-title"><?= e($piece['title'] ?? 'Untitled') ?></h1>
+    <?php if (!empty($piece['categories'])): ?>
+        <p>
+            <?php foreach ($piece['categories'] as $index => $category): ?>
+                <?php if ($index > 0): ?> · <?php endif; ?>
+                <a href="/portfolio/art-media/<?= e($category['slug']) ?>"><?= e($category['name']) ?></a>
+            <?php endforeach; ?>
+        </p>
+    <?php endif; ?>
     <?php if (!empty($piece['description'])): ?>
         <p><?= e($piece['description']) ?></p>
     <?php endif; ?>

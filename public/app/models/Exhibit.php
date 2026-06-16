@@ -21,6 +21,28 @@ class Exhibit
         return self::allSorted();
     }
 
+    public static function paginateSorted(int $offset, int $limit): array
+    {
+        $stmt = db()->prepare(
+            'SELECT e.*
+             FROM exhibits e
+             WHERE e.deleted_at IS NULL
+             ORDER BY e.sort_order ASC, e.id ASC
+             LIMIT ?, ?'
+        );
+        $stmt->bindValue(1, max(0, $offset), PDO::PARAM_INT);
+        $stmt->bindValue(2, max(1, $limit), PDO::PARAM_INT);
+        $stmt->execute();
+        return self::attachCollections(self::attachCategories($stmt->fetchAll()));
+    }
+
+    public static function countVisible(): int
+    {
+        return (int) db()->query(
+            'SELECT COUNT(*) FROM exhibits WHERE deleted_at IS NULL'
+        )->fetchColumn();
+    }
+
     public static function find(int $id): array|false
     {
         $stmt = db()->prepare(

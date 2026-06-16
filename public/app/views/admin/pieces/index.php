@@ -6,6 +6,7 @@ $pageTitle = 'Pieces';
 ob_start();
 ?>
 <div class="admin-container">
+    <span id="reorder-status" class="reorder-status" aria-live="polite"></span>
     <div class="admin-header-row">
         <h1>Art Pieces</h1>
         <div style="display: flex; gap: 0.5rem;">
@@ -20,21 +21,31 @@ ob_start();
         <table class="admin-table">
             <thead>
                 <tr>
+                    <th></th>
                     <th>Title</th>
                     <th>ID</th>
                     <th>Engine</th>
+                    <th>Art Media</th>
                     <th>Status</th>
                     <th>Versions</th>
                     <th>Created</th>
                     <th>Actions</th>
                 </tr>
             </thead>
-            <tbody>
+            <tbody data-reorder-url="/admin/pieces/reorder">
                 <?php foreach ($pieces as $piece): ?>
-                    <tr>
+                    <tr data-id="<?= (int) $piece['id'] ?>">
+                        <td class="drag-handle" title="Drag to reorder">&#8597;</td>
                         <td><?= e($piece['title'] ?? 'Untitled') ?></td>
                         <td><code><?= (int) $piece['id'] ?></code></td>
                         <td><?= e(strtoupper($piece['engine'] ?? 'p5')) ?></td>
+                        <td>
+                            <?php if (empty($piece['categories'])): ?>
+                                <span class="admin-hint">None</span>
+                            <?php else: ?>
+                                <?= e(implode(', ', array_column($piece['categories'], 'name'))) ?>
+                            <?php endif; ?>
+                        </td>
                         <td>
                             <span class="status-badge status-<?= e($piece['status'] ?? 'active') ?>">
                                 <?= e($piece['status'] ?? 'active') ?>

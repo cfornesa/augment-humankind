@@ -46,7 +46,12 @@ $canonicalUrl = $canonicalUrl ?? null;
             <img src="/assets/friendly-guide.png" alt="" class="brand-mark" aria-hidden="true">
             <span class="brand-text">Augment Humankind</span>
         </a>
-        <nav class="site-nav" aria-label="Primary navigation">
+        <button class="menu-toggle" aria-label="Toggle navigation" aria-expanded="false" aria-controls="site-nav">
+            <span></span>
+            <span></span>
+            <span></span>
+        </button>
+        <nav class="site-nav" id="site-nav" aria-label="Primary navigation">
             <?php foreach ($navigationItems as $item): ?>
                 <?php
                     $href = (string) ($item['url'] ?? '#');

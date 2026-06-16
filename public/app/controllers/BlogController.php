@@ -73,6 +73,86 @@ class BlogController
         require dirname(__DIR__) . '/views/blog/search.php';
     }
 
+    public static function full(string $id): void
+    {
+        $post = ctype_digit($id) ? BlogPost::findPublished((int) $id) : false;
+        if (!$post) {
+            http_response_code(404);
+            header('Content-Type: application/json');
+            echo json_encode(['error' => 'Not found']);
+            exit;
+        }
+        header('Content-Type: application/json');
+        echo json_encode(['content' => (string) $post['content']]);
+        exit;
+    }
+
+    public static function commentsJson(string $id): void
+    {
+        if (!ctype_digit($id)) {
+            http_response_code(404);
+            header('Content-Type: application/json');
+            echo json_encode(['error' => 'Not found']);
+            exit;
+        }
+        $comments = BlogPost::commentsFor((int) $id);
+        $out = array_map(static fn (array $c): array => [
+            'author_name' => (string) $c['author_name'],
+            'content'     => (string) $c['content'],
+            'created_at'  => (string) $c['created_at'],
+        ], $comments);
+        header('Content-Type: application/json');
+        echo json_encode($out);
+        exit;
+    }
+
+    public static function commentSubmit(string $id): void
+    {
+        header('Content-Type: application/json');
+
+        if (!ctype_digit($id)) {
+            http_response_code(404);
+            echo json_encode(['error' => 'Not found']);
+            exit;
+        }
+
+        $hp = trim((string) ($_POST['hp_field'] ?? ''));
+        if ($hp !== '') {
+            echo json_encode(['ok' => true]);
+            exit;
+        }
+
+        $content = trim((string) ($_POST['content'] ?? ''));
+        if ($content === '' || mb_strlen($content) > 500) {
+            http_response_code(422);
+            echo json_encode(['error' => 'Comment must be 1–500 characters.']);
+            exit;
+        }
+
+        $authorName = mb_substr(trim((string) ($_POST['author_name'] ?? '')), 0, 80);
+        if ($authorName === '') {
+            $authorName = 'Anonymous';
+        }
+
+        $postId = (int) $id;
+        $authorId = 'anon-' . bin2hex(random_bytes(8));
+
+        try {
+            $stmt = db()->prepare(
+                'INSERT INTO comments (post_id, author_id, author_name, content, created_at)
+                 VALUES (?, ?, ?, ?, NOW(3))'
+            );
+            $stmt->execute([$postId, $authorId, $authorName, $content]);
+        } catch (Throwable) {
+            http_response_code(500);
+            echo json_encode(['error' => 'Could not save comment.']);
+            exit;
+        }
+
+        echo json_encode(['ok' => true, 'author_name' => $authorName, 'content' => $content]);
+        exit;
+    }
+
     public static function feeds(): void
     {
         $pageTitle = 'Feeds | Augment Humankind';

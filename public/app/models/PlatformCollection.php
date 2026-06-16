@@ -16,10 +16,42 @@ class PlatformCollection
              LEFT JOIN platform_collection_items pcii ON pcii.collection_id = pc.id
              WHERE pc.deleted_at IS NULL
              GROUP BY pc.id
-             ORDER BY pc.created_at DESC, pc.id DESC"
+             ORDER BY pc.sort_order ASC, pc.id ASC"
         )->fetchAll();
 
         return $rows;
+    }
+
+    public static function paginate(int $offset, int $limit): array
+    {
+        if (!self::tableExists()) {
+            return [];
+        }
+
+        $stmt = db()->prepare(
+            "SELECT pc.*, COUNT(pcii.item_id) AS item_count
+             FROM platform_collections pc
+             LEFT JOIN platform_collection_items pcii ON pcii.collection_id = pc.id
+             WHERE pc.deleted_at IS NULL
+             GROUP BY pc.id
+             ORDER BY pc.sort_order ASC, pc.id ASC
+             LIMIT ?, ?"
+        );
+        $stmt->bindValue(1, max(0, $offset), PDO::PARAM_INT);
+        $stmt->bindValue(2, max(1, $limit), PDO::PARAM_INT);
+        $stmt->execute();
+        return $stmt->fetchAll();
+    }
+
+    public static function countVisible(): int
+    {
+        if (!self::tableExists()) {
+            return 0;
+        }
+
+        return (int) db()->query(
+            'SELECT COUNT(*) FROM platform_collections WHERE deleted_at IS NULL'
+        )->fetchColumn();
     }
 
     public static function findBySlug(string $slug): array|false
@@ -104,8 +136,8 @@ class PlatformCollection
     {
         $stmt = db()->prepare(
             'INSERT INTO platform_collections
-                (slug, name, description, artist_statement, biography, `rows`, cols, iframe_code)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+                (slug, name, description, artist_statement, biography, `rows`, cols, iframe_code, sort_order)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
         );
         $stmt->execute([
             $data['slug'],
@@ -116,6 +148,7 @@ class PlatformCollection
             $data['rows'] ?? 1,
             $data['cols'] ?? 1,
             $data['iframe_code'] ?? null,
+            $data['sort_order'] ?? self::nextSortOrder(),
         ]);
         return (int) db()->lastInsertId();
     }
@@ -125,7 +158,7 @@ class PlatformCollection
         $stmt = db()->prepare(
             'UPDATE platform_collections SET
                 slug = ?, name = ?, description = ?, artist_statement = ?,
-                biography = ?, `rows` = ?, cols = ?, iframe_code = ?
+                biography = ?, `rows` = ?, cols = ?, iframe_code = ?, sort_order = ?
              WHERE id = ?'
         );
         $stmt->execute([
@@ -137,8 +170,17 @@ class PlatformCollection
             $data['rows'] ?? 1,
             $data['cols'] ?? 1,
             $data['iframe_code'] ?? null,
+            $data['sort_order'] ?? 0,
             $id,
         ]);
+    }
+
+    public static function reorder(array $ids): void
+    {
+        $stmt = db()->prepare('UPDATE platform_collections SET sort_order = ? WHERE id = ? AND deleted_at IS NULL');
+        foreach (array_values($ids) as $index => $id) {
+            $stmt->execute([$index, $id]);
+        }
     }
 
     public static function softDelete(int $id): void
@@ -245,5 +287,12 @@ class PlatformCollection
         } catch (Throwable) {
             return $exists = false;
         }
+    }
+
+    private static function nextSortOrder(): int
+    {
+        return (int) db()->query(
+            'SELECT COALESCE(MAX(sort_order), -1) + 1 FROM platform_collections'
+        )->fetchColumn();
     }
 }

@@ -160,12 +160,38 @@ rollback. It must never write to the live `PLATFORM_*` source database.
 These routes are durable public URLs:
 
 - `GET /portfolio`
-- `GET /portfolio/categories`
-- `GET /portfolio/category/[slug]`
+- `GET /portfolio/exhibit-collections`
+- `GET /portfolio/exhibits`
+- `GET /portfolio/platform-collections`
+- `GET /portfolio/pieces`
+- `GET /portfolio/art-media`
+- `GET /portfolio/art-media/[slug]`
+- `GET /portfolio/collection/[slug]`
 - `GET /portfolio/exhibit/[slug]`
-- `GET /portfolio/work/[slug]`
 - `GET /media/[id]`
 - `GET /image/[id]`
+
+`/portfolio` is a curated sampler that shows a small preview of each portfolio
+type and links into dedicated archive pages. Each sampler section and each
+archive page lazy-load additional cards as the person scrolls, but the durable
+public URLs are still the page routes above rather than separate API endpoints.
+
+`/portfolio/exhibit-collections` lists native exhibit collections that contain
+at least one exhibit. `/portfolio/exhibits` lists native exhibits.
+`/portfolio/platform-collections` lists migrated platform collections, and
+`/portfolio/pieces` lists migrated platform art pieces. `/portfolio/art-media`
+lists piece taxonomy entries, and `/portfolio/art-media/[slug]` renders the
+pieces assigned to one art-medium term.
+
+`/portfolio/collection/[slug]` renders a native collection detail page.
+`/portfolio/exhibit/[slug]` renders a native exhibit detail page. Missing,
+deleted, or unknown portfolio slugs return the shared 404 view.
+
+Compatibility redirects are permanent:
+
+- `GET /portfolio/collections` -> `/portfolio/exhibit-collections`
+- `GET /portfolio/categories` -> `/portfolio/art-media`
+- `GET /portfolio/category/[slug]` -> `/portfolio/art-media/[slug]`
 
 `/media/[id]` streams any active stored media blob. `/image/[id]` is an
 image-only public route for image assets. Missing, deleted, or mismatched media
@@ -255,45 +281,76 @@ logo URLs) that embeds `/api/media/{uuid}.ext` links keeps working. Returns
 All `/admin/*` routes require an authenticated admin session. Unauthenticated
 requests redirect to `/admin/login`.
 
-### Artworks
-
-- `GET /admin/artworks`
-- `GET /admin/artworks/create`
-- `POST /admin/artworks/create`
-- `GET /admin/artworks/[id]/edit`
-- `POST /admin/artworks/[id]/edit`
-- `POST /admin/artworks/[id]/delete`
-- `POST /admin/artworks/reorder`
-
-Artwork create/update accepts title, slug, year, description, placard fields,
-thumbnail URL, category ids, exhibit ids, and ordered media slide fields. Legacy
-reference fields `piece_type`, `piece_value`, `category_id`, and
-`legacyPieceFromMediaItems` are intentionally not part of this app contract.
-
-### Categories and Exhibits
+### Categories, Art Media, and Exhibits
 
 - `GET /admin/categories`
 - `GET /admin/categories/create`
 - `POST /admin/categories/create`
-- `POST /admin/categories/create-inline`
 - `GET /admin/categories/[id]/edit`
 - `POST /admin/categories/[id]/edit`
 - `POST /admin/categories/[id]/delete`
 - `POST /admin/categories/reorder`
+- `GET /admin/art-media`
+- `GET /admin/art-media/create`
+- `POST /admin/art-media/create`
+- `POST /admin/art-media/create-inline`
+- `GET /admin/art-media/[id]/edit`
+- `POST /admin/art-media/[id]/edit`
+- `POST /admin/art-media/[id]/delete`
+- `POST /admin/art-media/reorder`
+- `GET /admin/exhibit-collections`
+- `GET /admin/exhibit-collections/create`
+- `POST /admin/exhibit-collections/create`
+- `POST /admin/exhibit-collections/create-inline`
+- `GET /admin/exhibit-collections/[id]/edit`
+- `POST /admin/exhibit-collections/[id]/edit`
+- `POST /admin/exhibit-collections/[id]/delete`
+- `POST /admin/exhibit-collections/reorder`
 - `GET /admin/exhibits`
 - `GET /admin/exhibits/create`
 - `POST /admin/exhibits/create`
-- `POST /admin/exhibits/create-inline`
 - `GET /admin/exhibits/[id]/edit`
 - `POST /admin/exhibits/[id]/edit`
 - `POST /admin/exhibits/[id]/delete`
 - `POST /admin/exhibits/reorder`
+
+`/admin/categories` manages blog/post categories (`category_scope='blog'`).
+`/admin/art-media` manages portfolio piece taxonomy (`category_scope='portfolio'`)
+and is assigned to art pieces rather than exhibits. `/admin/exhibit-collections`
+is the renamed native collections surface for grouping exhibits.
 
 Inline create endpoints return JSON:
 
 ```json
 {"success":true,"id":123,"name":"Example","slug":"example"}
 ```
+
+### Pieces
+
+- `GET /admin/pieces`
+- `POST /admin/pieces/reorder`
+- `GET /admin/pieces/create`
+- `POST /admin/pieces/create`
+- `GET /admin/pieces/[id]/edit`
+- `POST /admin/pieces/[id]/edit`
+- `POST /admin/pieces/[id]/delete`
+- `GET /admin/pieces/library`
+- `GET /admin/pieces/generate`
+- `POST /admin/pieces/generate`
+- `POST /admin/pieces/generate/save`
+- `POST /admin/pieces/refine-ai`
+- `GET /admin/pieces/[id]/versions`
+- `GET /admin/pieces/[id]/versions/create`
+- `POST /admin/pieces/[id]/versions/create`
+- `GET /admin/pieces/[id]/versions/[version-id]/edit`
+- `POST /admin/pieces/[id]/versions/[version-id]/edit`
+- `POST /admin/pieces/[id]/versions/[version-id]/delete`
+- `POST /admin/pieces/[id]/versions/[version-id]/set-current`
+
+Piece create/update accepts title, prompt, engine, status, description,
+thumbnail URL, and `category_ids[]` for Art Media assignment. Current-version
+HTML/CSS/JS can be edited inline on the piece form, and `/admin/pieces/library`
+returns JSON for picker dialogs.
 
 ### Media Library
 

@@ -34,47 +34,24 @@ ob_start();
             <input type="text" name="year" value="<?= htmlspecialchars($exhibit['year'] ?? '') ?>" placeholder="2024">
         </div>
 
-        <div class="form-row custom-multiselect-row" id="categories-multiselect-row">
-            <label>Categories</label>
-            <div class="multiselect-control" data-name="category_ids" data-placeholder="Select categories...">
-                <div class="multiselect-input-wrapper">
-                    <div class="multiselect-tags"></div>
-                    <input type="text" class="multiselect-search" placeholder="Select categories..." autocomplete="off">
-                </div>
-                <div class="multiselect-dropdown">
-                    <?php foreach ($categories as $cat): ?>
-                        <div class="multiselect-option" data-id="<?= $cat['id'] ?>" data-name="<?= htmlspecialchars($cat['name']) ?>"
-                             <?= in_array((string) $cat['id'], array_map('strval', $assignedCategoryIds)) ? 'data-selected="true"' : '' ?>>
-                            <?= htmlspecialchars($cat['name']) ?>
-                        </div>
-                    <?php endforeach ?>
-                </div>
-                <div class="multiselect-hidden-inputs">
-                    <?php foreach ($assignedCategoryIds as $catId): ?>
-                        <input type="hidden" name="category_ids[]" value="<?= $catId ?>">
-                    <?php endforeach ?>
-                </div>
-            </div>
-        </div>
-
         <div class="form-row custom-multiselect-row" id="exhibits-multiselect-row">
-            <label>Exhibits</label>
-            <div class="multiselect-control" data-name="exhibit_ids" data-placeholder="Select exhibits...">
+            <label>Exhibit Collections</label>
+            <div class="multiselect-control" data-name="collection_ids" data-placeholder="Select exhibit collections...">
                 <div class="multiselect-input-wrapper">
                     <div class="multiselect-tags"></div>
-                    <input type="text" class="multiselect-search" placeholder="Select exhibits..." autocomplete="off">
+                    <input type="text" class="multiselect-search" placeholder="Select exhibit collections..." autocomplete="off">
                 </div>
                 <div class="multiselect-dropdown">
-                    <?php foreach ($allExhibits as $ex): ?>
-                        <div class="multiselect-option" data-id="<?= $ex['id'] ?>" data-name="<?= htmlspecialchars($ex['name']) ?>"
-                             <?= in_array((string) $ex['id'], array_map('strval', $assignedExhibitIds)) ? 'data-selected="true"' : '' ?>>
-                            <?= htmlspecialchars($ex['name']) ?>
+                    <?php foreach ($allCollections as $collection): ?>
+                        <div class="multiselect-option" data-id="<?= $collection['id'] ?>" data-name="<?= htmlspecialchars($collection['name']) ?>"
+                             <?= in_array((string) $collection['id'], array_map('strval', $assignedCollectionIds)) ? 'data-selected="true"' : '' ?>>
+                            <?= htmlspecialchars($collection['name']) ?>
                         </div>
                     <?php endforeach ?>
                 </div>
                 <div class="multiselect-hidden-inputs">
-                    <?php foreach ($assignedExhibitIds as $exId): ?>
-                        <input type="hidden" name="exhibit_ids[]" value="<?= $exId ?>">
+                    <?php foreach ($assignedCollectionIds as $collectionId): ?>
+                        <input type="hidden" name="collection_ids[]" value="<?= $collectionId ?>">
                     <?php endforeach ?>
                 </div>
             </div>

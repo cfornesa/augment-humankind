@@ -210,8 +210,7 @@
 
 @media (max-width: 640px) {
     .admin-header {
-        flex-direction: column;
-        align-items: flex-start;
+        flex-wrap: wrap;
     }
 }
 
@@ -1132,5 +1131,38 @@ dialog.inline-create-dialog::backdrop {
     .admin-table {
         display: block;
         overflow-x: auto;
+    }
+
+    .admin-header {
+        position: relative;
+    }
+
+    .menu-toggle {
+        display: flex;
+    }
+
+    .admin-nav {
+        display: none;
+    }
+
+    .admin-header.nav-open .admin-nav {
+        display: flex;
+        position: absolute;
+        top: 100%;
+        left: -1rem;
+        width: 100vw;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.5rem;
+        padding: 1rem;
+        background: var(--paper);
+        border-top: 3px solid var(--line);
+        border-bottom: 3px solid var(--line);
+        box-shadow: 0 4px 0 var(--line);
+        z-index: 100;
+    }
+
+    .admin-header.nav-open .admin-nav a {
+        width: 100%;
     }
 }

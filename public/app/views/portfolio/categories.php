@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-$pageTitle = 'Categories | Augment Humankind Portfolio';
-$pageDescription = 'Explore the categories that organize works within the Augment Humankind portfolio.';
+$pageTitle = 'Art Media | Augment Humankind Portfolio';
+$pageDescription = 'Explore the art media that organize pieces within the Augment Humankind portfolio.';
 $ogImage = $categories[0]['thumbnail_value'] ?? null;
-$canonicalUrl = seo_absolute_url('/portfolio/categories');
+$canonicalUrl = seo_absolute_url('/portfolio/art-media');
 $bodyClass = bodyClass('portfolio-categories');
 
 require __DIR__ . '/../partials/header.php';
@@ -13,15 +13,15 @@ require __DIR__ . '/../partials/header.php';
     <section class="collection-page">
         <div class="collection-header">
             <a href="/portfolio" class="work-back">&#8592; Back to gallery</a>
-            <h1 class="collection-title">Categories</h1>
+            <h1 class="collection-title">Art Media</h1>
         </div>
 
         <?php if (empty($categories)): ?>
-            <p class="gallery-empty">No categories have been created yet.</p>
+            <p class="gallery-empty">No art media have been created yet.</p>
         <?php else: ?>
-            <div class="collection-grid" aria-label="Category list">
+            <div class="collection-grid" aria-label="Art media list">
                 <?php foreach ($categories as $catIndex => $cat): ?>
-                    <a href="/portfolio/category/<?= e($cat['slug']) ?>" class="collection-card" aria-label="View category <?= e($cat['name']) ?>">
+                    <a href="/portfolio/art-media/<?= e($cat['slug']) ?>" class="collection-card" aria-label="View art medium <?= e($cat['name']) ?>">
                         <div class="collection-thumb-wrap">
                             <?php if ($cat['thumbnail_value']): ?>
                                 <img

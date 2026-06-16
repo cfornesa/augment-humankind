@@ -12,7 +12,7 @@ $bodyClass = bodyClass('portfolio-exhibit');
 require __DIR__ . '/../partials/header.php';
 ?>
     <section class="collection-detail-page">
-        <a href="/portfolio" class="work-back">&#8592; Return to the gallery</a>
+        <a href="/portfolio/exhibit-collections" class="work-back">&#8592; Return to exhibit collections</a>
 
         <div class="collection-detail-header" aria-labelledby="exhibit-title">
             <?php if ($collection['thumbnail_value']): ?>

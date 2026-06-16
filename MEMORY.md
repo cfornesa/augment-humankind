@@ -80,3 +80,4 @@ or rejection. -->
 2026-06-15 DECISION Appended returnTo query parameters to all VR gallery buttons in embed.js and public views, enabling the Back button to route to referring blog posts.
 2026-06-15 DECISION Enabled route dispatching for /collections paths in public/index.php gate, restoring platform collection detail rendering.
 2026-06-15 DECISION Implemented batched 3-item progressive see-more gallery disclosure on portfolio.php.
+2026-06-15 DECISION Portfolio taxonomy is now split three ways: `/admin/categories` manages blog post categories, `/admin/art-media` manages piece taxonomy (`category_scope='portfolio'`), and `/admin/exhibit-collections` is the renamed native collection surface. Public redirects keep `/portfolio/collections`, `/portfolio/categories`, and `/portfolio/category/{slug}` durable while canonical routes are `/portfolio/exhibit-collections` and `/portfolio/art-media`.

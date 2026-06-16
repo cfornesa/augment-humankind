@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 $pageTitle = ($exhibit['title'] ?: 'Exhibit') . ' | Augment Humankind Portfolio';
 $pageDescription = seo_excerpt($exhibit['description'] ?? null, 170)
-    ?: trim(($exhibit['year'] ? $exhibit['year'] . ' · ' : '') . ($exhibit['categories'][0]['name'] ?? 'Exhibit from the Augment Humankind portfolio'));
+    ?: trim(($exhibit['year'] ? $exhibit['year'] . ' · ' : '') . 'Exhibit from the Augment Humankind portfolio');
 $ogImage = Exhibit::previewImage($exhibit);
 $canonicalUrl = seo_absolute_url('/portfolio/exhibit/' . $exhibit['slug']);
 $bodyClass = bodyClass('portfolio-work');
@@ -15,7 +15,7 @@ $initialItem = $mediaItems[0] ?? null;
 require __DIR__ . '/../partials/header.php';
 ?>
     <section class="work-page">
-        <a href="/portfolio" class="work-back">&#8592; Return to the gallery</a>
+        <a href="/portfolio/exhibits" class="work-back">&#8592; Return to exhibits</a>
 
         <article class="work-detail" aria-labelledby="work-title">
             <div class="work-header">
@@ -23,15 +23,6 @@ require __DIR__ . '/../partials/header.php';
                 <div class="work-meta-line">
                     <?php if ($exhibit['year']): ?>
                         <span class="work-year"><?= e($exhibit['year']) ?></span>
-                    <?php endif ?>
-                    <?php if (!empty($exhibit['categories'])): ?>
-                        <span class="work-cat-sep">&middot;</span>
-                        <?php foreach ($exhibit['categories'] as $i => $cat): ?>
-                            <?php if ($i > 0): ?><span class="work-cat-sep">,</span><?php endif ?>
-                            <a href="/portfolio/category/<?= e($cat['slug']) ?>" class="work-category">
-                                <?= e($cat['name']) ?>
-                            </a>
-                        <?php endforeach ?>
                     <?php endif ?>
                 </div>
             </div>

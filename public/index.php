@@ -53,7 +53,7 @@ if ($path === '/portfolio' || str_starts_with($path, '/portfolio/')
     || $path === '/admin' || str_starts_with($path, '/admin/')
     || preg_match('#^/(media|image)/[0-9]+$#', $path)
     || preg_match('#^/[a-z0-9-]+/feed\.(xml|json)$#', $path)) {
-    require __DIR__ . '/app/bootstrap.php';
+    require_once __DIR__ . '/app/bootstrap.php';
     require __DIR__ . '/app/router.php';
 }
 
@@ -67,11 +67,11 @@ if ($page === 'home' || $page === 'services' || $page === 'notes') {
 }
 
 if ($managedSlug !== null) {
-    require __DIR__ . '/app/bootstrap.php';
-    require __DIR__ . '/app/helpers/seo.php';
-    require __DIR__ . '/app/models/Page.php';
-    require __DIR__ . '/app/models/PageSection.php';
-    require __DIR__ . '/app/controllers/PageController.php';
+    require_once __DIR__ . '/app/bootstrap.php';
+    require_once __DIR__ . '/app/helpers/seo.php';
+    require_once __DIR__ . '/app/models/Page.php';
+    require_once __DIR__ . '/app/models/PageSection.php';
+    require_once __DIR__ . '/app/controllers/PageController.php';
 
     if (PageController::show($managedSlug)) {
         exit;

@@ -1415,4 +1415,58 @@ A Three.js zoom-out issue on initial load was overriding custom camera views def
 - **Batched Progressive See-More Grid**: Replaced the global "See More" script with a batched progressive grid disclosure in `public/assets/js/main.js` that reveals 3 hidden elements (one row) at a time across all four gallery sections (Exhibits, Collections, Platform Collections, Pieces) to prevent browser payload bottlenecks.
 - **Collection Thumbnail Fallback**: Added a `previewImage` static method to the `Collection` model to automatically resolve a collection's thumbnail from its first exhibit's preview image, using it as the gallery thumbnail in `portfolio/gallery.php`.
 
+## 2026-06-15 — Portfolio Taxonomy Split, Route Renames, and Markdown Alignment
+
+### Context
+Implemented the portfolio taxonomy rectification requested in-session: native
+collections needed to become "Exhibit Collections", portfolio categories needed
+to become piece-oriented "Art Media", blog categories needed their own admin
+surface, and the portfolio/archive presentation needed to reflect those names
+without breaking old public links.
+
+### Decisions & Actions
+- **Canonical public routes**: Set `/portfolio/exhibit-collections` and
+  `/portfolio/art-media` as the canonical archive routes. Added permanent
+  redirects from `/portfolio/collections`, `/portfolio/categories`, and
+  `/portfolio/category/{slug}` to preserve durable public URLs.
+- **Admin route split**: Reassigned `/admin/categories` to blog/post category
+  management, moved the old portfolio taxonomy CRUD to `/admin/art-media`, and
+  renamed native `/admin/collections` behavior to the new canonical
+  `/admin/exhibit-collections` surface while retaining compatibility routes.
+- **Piece taxonomy migration**: Added `art_piece_categories` plus a dedicated
+  schema script (`scripts/apply-portfolio-taxonomy-schema.php`) so Art Media
+  can be assigned to pieces rather than exhibits. Updated piece admin forms,
+  piece detail rendering, and portfolio Art Media pages to read/write that
+  relationship. Removed exhibit-category assignment from the exhibit form and
+  exhibit detail surface.
+- **Portfolio presentation**: Ensured `/portfolio` always includes an Exhibit
+  Collections section, even when empty, and replaced the earlier single-page
+  "see more" disclosure with route-backed lazy listing containers that load
+  additional batches from the archive routes. The same listing mechanism now
+  covers Exhibit Collections, Exhibits, Platform Collections, Pieces, and Art
+  Media archives.
+- **Markdown updates**: Updated `README.md` and `docs/api.md` to reflect the
+  renamed routes, redirect guarantees, admin split, and Art Media semantics.
+  Added durable notes to `MEMORY.md`.
+
+### Verification
+- `php -l` passed on the touched controllers, models, views, and the new schema
+  script.
+- `php scripts/apply-portfolio-taxonomy-schema.php` created
+  `art_piece_categories`.
+- Local HTTP verification against `php -S 127.0.0.1:8094 -t public` confirmed:
+  - `200` for `/portfolio`, `/portfolio/exhibit-collections`, and
+    `/portfolio/art-media`
+  - `301` for `/portfolio/collections`, `/portfolio/categories`, and
+    `/portfolio/category/test-slug`
+  - `302` to `/admin/login` for unauthenticated `/admin/art-media`,
+    `/admin/categories`, and `/admin/exhibit-collections`
+  - `200` HTML batch payloads for
+    `/portfolio/exhibit-collections?partial=1&offset=3&limit=3` and
+    `/portfolio/art-media?partial=1&offset=3&limit=3`
+
+### Notes
+- Older historical entries that mention the previous "Collections"/"Categories"
+  naming remain as historical context; the canonical current naming is defined
+  by this entry and the updated docs.
 

@@ -8,16 +8,13 @@ class PortfolioAdminController
     {
         admin_check();
         $exhibits = Exhibit::all();
-        $categories = Category::all();
         require dirname(__DIR__, 2) . '/views/admin/exhibits/index.php';
     }
 
     public static function exhibitCreate(): void
     {
         admin_check();
-        $categories = Category::all();
         $allCollections = Collection::all();
-        $assignedCategoryIds = [];
         $assignedCollectionIds = [];
         $exhibit = ['media_items' => []];
         $error = null;
@@ -32,14 +29,11 @@ class PortfolioAdminController
             $data = self::resolveExhibitData(null);
             $exhibitId = Exhibit::create($data);
             ExhibitMediaItem::syncForExhibit($exhibitId, $data['media_items']);
-            Exhibit::syncCategories($exhibitId, $data['category_ids']);
             Collection::syncForExhibit($exhibitId, $data['collection_ids']);
             header('Location: /admin/exhibits');
         } catch (Throwable $e) {
-            $categories = Category::all();
             $allCollections = Collection::all();
             $exhibit = self::draftExhibitFromPost(null);
-            $assignedCategoryIds = $exhibit['category_ids'];
             $assignedCollectionIds = $exhibit['collection_ids'];
             $error = $e->getMessage();
             require dirname(__DIR__, 2) . '/views/admin/exhibits/form.php';
@@ -55,9 +49,7 @@ class PortfolioAdminController
             header('Location: /admin/exhibits');
             exit;
         }
-        $categories = Category::all();
         $allCollections = Collection::all();
-        $assignedCategoryIds = Exhibit::categoryIds((int) $id);
         $assignedCollectionIds = Collection::collectionIdsForExhibit((int) $id);
         $error = null;
         require dirname(__DIR__, 2) . '/views/admin/exhibits/form.php';
@@ -71,14 +63,11 @@ class PortfolioAdminController
             $data = self::resolveExhibitData((int) $id);
             Exhibit::update((int) $id, $data);
             ExhibitMediaItem::syncForExhibit((int) $id, $data['media_items']);
-            Exhibit::syncCategories((int) $id, $data['category_ids']);
             Collection::syncForExhibit((int) $id, $data['collection_ids']);
             header('Location: /admin/exhibits');
         } catch (Throwable $e) {
             $exhibit = self::draftExhibitFromPost((int) $id);
-            $categories = Category::all();
             $allCollections = Collection::all();
-            $assignedCategoryIds = $exhibit['category_ids'];
             $assignedCollectionIds = $exhibit['collection_ids'];
             $error = $e->getMessage();
             require dirname(__DIR__, 2) . '/views/admin/exhibits/form.php';
@@ -108,6 +97,12 @@ class PortfolioAdminController
     {
         admin_check();
         $categories = Category::all();
+        $taxonomyLabel = 'Art Medium';
+        $taxonomyPlural = 'Art Media';
+        $taxonomyIndexPath = '/admin/art-media';
+        $taxonomyCreatePath = '/admin/art-media/create';
+        $taxonomyReorderPath = '/admin/art-media/reorder';
+        $taxonomyDeleteMessage = 'Move this art medium to the recycle bin? Pieces will become unassigned.';
         require dirname(__DIR__, 2) . '/views/admin/categories/index.php';
     }
 
@@ -116,6 +111,12 @@ class PortfolioAdminController
         admin_check();
         $category = null;
         $error = null;
+        $taxonomyLabel = 'Art Medium';
+        $taxonomyPlural = 'Art Media';
+        $taxonomyIndexPath = '/admin/art-media';
+        $taxonomyCreatePath = '/admin/art-media/create';
+        $taxonomyEditBasePath = '/admin/art-media';
+        $showTaxonomyThumbnail = true;
         require dirname(__DIR__, 2) . '/views/admin/categories/form.php';
     }
 
@@ -126,6 +127,12 @@ class PortfolioAdminController
         if ($name === '') {
             $category = null;
             $error = 'Name is required.';
+            $taxonomyLabel = 'Art Medium';
+            $taxonomyPlural = 'Art Media';
+            $taxonomyIndexPath = '/admin/art-media';
+            $taxonomyCreatePath = '/admin/art-media/create';
+            $taxonomyEditBasePath = '/admin/art-media';
+            $showTaxonomyThumbnail = true;
             require dirname(__DIR__, 2) . '/views/admin/categories/form.php';
             return;
         }
@@ -140,10 +147,16 @@ class PortfolioAdminController
                 $thumbValue,
                 trim($_POST['description'] ?? '') ?: null
             );
-            header('Location: /admin/categories');
+            header('Location: /admin/art-media');
         } catch (Throwable $e) {
             $category = null;
             $error = $e->getMessage();
+            $taxonomyLabel = 'Art Medium';
+            $taxonomyPlural = 'Art Media';
+            $taxonomyIndexPath = '/admin/art-media';
+            $taxonomyCreatePath = '/admin/art-media/create';
+            $taxonomyEditBasePath = '/admin/art-media';
+            $showTaxonomyThumbnail = true;
             require dirname(__DIR__, 2) . '/views/admin/categories/form.php';
             return;
         }
@@ -178,10 +191,16 @@ class PortfolioAdminController
         admin_check();
         $category = Category::find((int) $id);
         if (!$category) {
-            header('Location: /admin/categories');
+            header('Location: /admin/art-media');
             exit;
         }
         $error = null;
+        $taxonomyLabel = 'Art Medium';
+        $taxonomyPlural = 'Art Media';
+        $taxonomyIndexPath = '/admin/art-media';
+        $taxonomyCreatePath = '/admin/art-media/create';
+        $taxonomyEditBasePath = '/admin/art-media';
+        $showTaxonomyThumbnail = true;
         require dirname(__DIR__, 2) . '/views/admin/categories/form.php';
     }
 
@@ -190,7 +209,7 @@ class PortfolioAdminController
         admin_check();
         $existing = Category::find((int) $id);
         if (!$existing) {
-            header('Location: /admin/categories');
+            header('Location: /admin/art-media');
             exit;
         }
 
@@ -198,6 +217,12 @@ class PortfolioAdminController
         if ($name === '') {
             $category = $existing;
             $error = 'Name is required.';
+            $taxonomyLabel = 'Art Medium';
+            $taxonomyPlural = 'Art Media';
+            $taxonomyIndexPath = '/admin/art-media';
+            $taxonomyCreatePath = '/admin/art-media/create';
+            $taxonomyEditBasePath = '/admin/art-media';
+            $showTaxonomyThumbnail = true;
             require dirname(__DIR__, 2) . '/views/admin/categories/form.php';
             return;
         }
@@ -213,10 +238,16 @@ class PortfolioAdminController
                 $thumbValue,
                 trim($_POST['description'] ?? '') ?: null
             );
-            header('Location: /admin/categories');
+            header('Location: /admin/art-media');
         } catch (Throwable $e) {
             $category = $existing;
             $error = $e->getMessage();
+            $taxonomyLabel = 'Art Medium';
+            $taxonomyPlural = 'Art Media';
+            $taxonomyIndexPath = '/admin/art-media';
+            $taxonomyCreatePath = '/admin/art-media/create';
+            $taxonomyEditBasePath = '/admin/art-media';
+            $showTaxonomyThumbnail = true;
             require dirname(__DIR__, 2) . '/views/admin/categories/form.php';
             return;
         }
@@ -227,7 +258,7 @@ class PortfolioAdminController
     {
         admin_check();
         Category::softDelete((int) $id);
-        header('Location: /admin/categories');
+        header('Location: /admin/art-media');
         exit;
     }
 
@@ -245,6 +276,12 @@ class PortfolioAdminController
     {
         admin_check();
         $collections = Collection::allWithExhibitCount();
+        $collectionLabel = 'Exhibit Collection';
+        $collectionPlural = 'Exhibit Collections';
+        $collectionIndexPath = '/admin/exhibit-collections';
+        $collectionCreatePath = '/admin/exhibit-collections/create';
+        $collectionReorderPath = '/admin/exhibit-collections/reorder';
+        $collectionDeleteMessage = 'Move this exhibit collection to the recycle bin?';
         require dirname(__DIR__, 2) . '/views/admin/collections/index.php';
     }
 
@@ -255,6 +292,11 @@ class PortfolioAdminController
         $allExhibits = Exhibit::all();
         $assigned = [];
         $error = null;
+        $collectionLabel = 'Exhibit Collection';
+        $collectionPlural = 'Exhibit Collections';
+        $collectionIndexPath = '/admin/exhibit-collections';
+        $collectionCreatePath = '/admin/exhibit-collections/create';
+        $collectionEditBasePath = '/admin/exhibit-collections';
         require dirname(__DIR__, 2) . '/views/admin/collections/form.php';
     }
 
@@ -267,6 +309,11 @@ class PortfolioAdminController
             $allExhibits = Exhibit::all();
             $assigned = [];
             $error = 'Name is required.';
+            $collectionLabel = 'Exhibit Collection';
+            $collectionPlural = 'Exhibit Collections';
+            $collectionIndexPath = '/admin/exhibit-collections';
+            $collectionCreatePath = '/admin/exhibit-collections/create';
+            $collectionEditBasePath = '/admin/exhibit-collections';
             require dirname(__DIR__, 2) . '/views/admin/collections/form.php';
             return;
         }
@@ -282,12 +329,17 @@ class PortfolioAdminController
                 'sort_order' => 0,
             ]);
             Collection::syncExhibits($id, array_map('intval', $_POST['exhibit_ids'] ?? []));
-            header('Location: /admin/collections');
+            header('Location: /admin/exhibit-collections');
         } catch (Throwable $e) {
             $collection = null;
             $allExhibits = Exhibit::all();
             $assigned = [];
             $error = $e->getMessage();
+            $collectionLabel = 'Exhibit Collection';
+            $collectionPlural = 'Exhibit Collections';
+            $collectionIndexPath = '/admin/exhibit-collections';
+            $collectionCreatePath = '/admin/exhibit-collections/create';
+            $collectionEditBasePath = '/admin/exhibit-collections';
             require dirname(__DIR__, 2) . '/views/admin/collections/form.php';
             return;
         }
@@ -329,12 +381,17 @@ class PortfolioAdminController
         admin_check();
         $collection = Collection::find((int) $id);
         if (!$collection) {
-            header('Location: /admin/collections');
+            header('Location: /admin/exhibit-collections');
             exit;
         }
         $allExhibits = Exhibit::all();
         $assigned = Collection::exhibitIds((int) $id);
         $error = null;
+        $collectionLabel = 'Exhibit Collection';
+        $collectionPlural = 'Exhibit Collections';
+        $collectionIndexPath = '/admin/exhibit-collections';
+        $collectionCreatePath = '/admin/exhibit-collections/create';
+        $collectionEditBasePath = '/admin/exhibit-collections';
         require dirname(__DIR__, 2) . '/views/admin/collections/form.php';
     }
 
@@ -343,7 +400,7 @@ class PortfolioAdminController
         admin_check();
         $existing = Collection::find((int) $id);
         if (!$existing) {
-            header('Location: /admin/collections');
+            header('Location: /admin/exhibit-collections');
             exit;
         }
 
@@ -353,6 +410,11 @@ class PortfolioAdminController
             $allExhibits = Exhibit::all();
             $assigned = Collection::exhibitIds((int) $id);
             $error = 'Name is required.';
+            $collectionLabel = 'Exhibit Collection';
+            $collectionPlural = 'Exhibit Collections';
+            $collectionIndexPath = '/admin/exhibit-collections';
+            $collectionCreatePath = '/admin/exhibit-collections/create';
+            $collectionEditBasePath = '/admin/exhibit-collections';
             require dirname(__DIR__, 2) . '/views/admin/collections/form.php';
             return;
         }
@@ -368,12 +430,17 @@ class PortfolioAdminController
                 'sort_order' => (int) ($existing['sort_order'] ?? 0),
             ]);
             Collection::syncExhibits((int) $id, array_map('intval', $_POST['exhibit_ids'] ?? []));
-            header('Location: /admin/collections');
+            header('Location: /admin/exhibit-collections');
         } catch (Throwable $e) {
             $collection = $existing;
             $allExhibits = Exhibit::all();
             $assigned = Collection::exhibitIds((int) $id);
             $error = $e->getMessage();
+            $collectionLabel = 'Exhibit Collection';
+            $collectionPlural = 'Exhibit Collections';
+            $collectionIndexPath = '/admin/exhibit-collections';
+            $collectionCreatePath = '/admin/exhibit-collections/create';
+            $collectionEditBasePath = '/admin/exhibit-collections';
             require dirname(__DIR__, 2) . '/views/admin/collections/form.php';
             return;
         }
@@ -384,7 +451,7 @@ class PortfolioAdminController
     {
         admin_check();
         Collection::softDelete((int) $id);
-        header('Location: /admin/collections');
+        header('Location: /admin/exhibit-collections');
         exit;
     }
 
@@ -429,7 +496,6 @@ class PortfolioAdminController
             'thumbnail_value' => $thumbValue,
             'sort_order' => (int) ($_POST['sort_order'] ?? 0),
             'media_items' => $mediaItems,
-            'category_ids' => array_map('intval', $_POST['category_ids'] ?? []),
             'collection_ids' => array_map('intval', $_POST['collection_ids'] ?? []),
         ];
     }
@@ -513,7 +579,6 @@ class PortfolioAdminController
             'artist_name' => trim((string) ($_POST['artist_name'] ?? ($existing['artist_name'] ?? ''))),
             'medium' => trim((string) ($_POST['medium'] ?? ($existing['medium'] ?? ''))),
             'dimensions' => trim((string) ($_POST['dimensions'] ?? ($existing['dimensions'] ?? ''))),
-            'category_ids' => array_map('intval', $_POST['category_ids'] ?? ($existing ? Exhibit::categoryIds((int) $existing['id']) : [])),
             'collection_ids' => array_map('intval', $_POST['collection_ids'] ?? ($existing ? Collection::collectionIdsForExhibit((int) $existing['id']) : [])),
             'description' => trim((string) ($_POST['description'] ?? ($existing['description'] ?? ''))),
             'placard_notes' => trim((string) ($_POST['placard_notes'] ?? ($existing['placard_notes'] ?? ''))),

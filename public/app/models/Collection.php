@@ -39,6 +39,41 @@ class Collection
         )->fetchAll();
     }
 
+    public static function paginateWithAtLeastOneExhibit(int $offset, int $limit): array
+    {
+        $stmt = db()->prepare(
+            'SELECT c.*
+             FROM collections c
+             WHERE c.deleted_at IS NULL
+               AND EXISTS (
+                   SELECT 1 FROM collection_exhibits ce
+                   JOIN exhibits e ON e.id = ce.exhibit_id AND e.deleted_at IS NULL
+                   WHERE ce.collection_id = c.id
+               )
+             ORDER BY c.sort_order ASC, c.id ASC
+             LIMIT ?, ?'
+        );
+        $stmt->bindValue(1, max(0, $offset), PDO::PARAM_INT);
+        $stmt->bindValue(2, max(1, $limit), PDO::PARAM_INT);
+        $stmt->execute();
+        return $stmt->fetchAll();
+    }
+
+    public static function countWithAtLeastOneExhibit(): int
+    {
+        $stmt = db()->query(
+            'SELECT COUNT(*)
+             FROM collections c
+             WHERE c.deleted_at IS NULL
+               AND EXISTS (
+                   SELECT 1 FROM collection_exhibits ce
+                   JOIN exhibits e ON e.id = ce.exhibit_id AND e.deleted_at IS NULL
+                   WHERE ce.collection_id = c.id
+               )'
+        );
+        return (int) $stmt->fetchColumn();
+    }
+
     public static function find(int $id): array|false
     {
         $stmt = db()->prepare('SELECT * FROM collections WHERE id = ? AND deleted_at IS NULL');

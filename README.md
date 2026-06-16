@@ -24,10 +24,17 @@ their capabilities without overclaiming what a one-person practice can deliver.
 - `/notes` — lightweight field notes landing page
 - `/contact` — reCAPTCHA-protected inquiry form
 - `/portfolio` — public work gallery
-- `/portfolio/categories` — public category index
-- `/portfolio/category/[slug]` — public category detail
+- `/portfolio/collections` — permanent redirect to `/portfolio/exhibit-collections`
+- `/portfolio/categories` — permanent redirect to `/portfolio/art-media`
+- `/portfolio/category/[slug]` — permanent redirect to `/portfolio/art-media/[slug]`
+- `/portfolio/exhibit-collections` — public exhibit collections archive
+- `/portfolio/art-media` — public art media index for pieces
+- `/portfolio/art-media/[slug]` — public art media detail
+- `/portfolio/exhibits` — public exhibits archive
+- `/portfolio/platform-collections` — public migrated platform collections archive
+- `/portfolio/pieces` — public migrated art pieces archive
 - `/portfolio/exhibit/[slug]` — public exhibit detail
-- `/portfolio/work/[slug]` — public work detail
+- `/portfolio/collection/[slug]` — public exhibit collection detail
 - `/media/[id]` and `/image/[id]` — public blob-serving routes for stored media
 - `/blog` — canonical public blog feed
 - `/blog/posts/[id]` — public blog post detail page
@@ -44,13 +51,14 @@ their capabilities without overclaiming what a one-person practice can deliver.
 
 Admin routes are flat and protected by OAuth login:
 
-- `/admin` — admin dashboard with expanded metrics (works, categories, posts, comments, media, syndications, trash, etc.)
+- `/admin` — admin dashboard with expanded metrics (exhibits, art media, exhibit collections, posts, comments, media, syndications, trash, etc.)
 - `/admin/pages` — CMS managed pages
 - `/admin/posts` — blog posts CRUD (draft, published, scheduled)
 - `/admin/comments` — comment and reaction moderation
-- `/admin/artworks` — portfolio artworks CRUD
-- `/admin/categories` — portfolio categories CRUD
+- `/admin/categories` — blog post categories CRUD
+- `/admin/art-media` — piece taxonomy CRUD
 - `/admin/exhibits` — portfolio exhibits CRUD
+- `/admin/exhibit-collections` — native exhibit collections CRUD
 - `/admin/media` — media library uploads and migrated media assets (with AI alt-text generation for images)
 - `/admin/feed-sources` — RSS/Atom feed ingestion sources and approval queue
 - `/admin/site-identity` — site settings and assets management
@@ -61,6 +69,13 @@ Admin routes are flat and protected by OAuth login:
 - `/admin/ai/describe-image` — AI alt-text generation endpoint (used by the media library)
 - `/admin/trash` — trash bins for soft-deleted content
 - `/admin/navigation` — custom menu headers registry
+
+## Portfolio Notes
+
+- `/portfolio` is a sampler page, not the full archive. Each visible section now loads a small initial batch and keeps fetching more cards as the visitor scrolls.
+- `Exhibit Collections` is the public/admin name for the native `collections` model that groups exhibits.
+- `Art Media` is the public/admin name for the portfolio taxonomy stored in `categories` with `category_scope='portfolio'`, and it now applies to pieces rather than exhibits.
+- `Categories` in the admin now refers only to blog/post categories stored in `categories` with `category_scope='blog'`.
 
 ## Deployed File Layout
 

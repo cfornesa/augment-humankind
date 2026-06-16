@@ -16,10 +16,42 @@ class PlatformArtPiece
              LEFT JOIN users u ON u.id = ap.owner_user_id
              WHERE ap.deleted_at IS NULL
                AND ap.status = 'active'
-             ORDER BY ap.created_at DESC, ap.id DESC"
+             ORDER BY ap.sort_order ASC, ap.id ASC"
         )->fetchAll();
 
-        return self::attachCurrentVersion($rows);
+        return self::attachCategories(self::attachCurrentVersion($rows));
+    }
+
+    public static function paginate(int $offset, int $limit): array
+    {
+        if (!self::tableExists()) {
+            return [];
+        }
+
+        $stmt = db()->prepare(
+            "SELECT ap.*, u.name AS owner_name
+             FROM art_pieces ap
+             LEFT JOIN users u ON u.id = ap.owner_user_id
+             WHERE ap.deleted_at IS NULL
+               AND ap.status = 'active'
+             ORDER BY ap.sort_order ASC, ap.id ASC
+             LIMIT ?, ?"
+        );
+        $stmt->bindValue(1, max(0, $offset), PDO::PARAM_INT);
+        $stmt->bindValue(2, max(1, $limit), PDO::PARAM_INT);
+        $stmt->execute();
+        return self::attachCategories(self::attachCurrentVersion($stmt->fetchAll()));
+    }
+
+    public static function countActive(): int
+    {
+        if (!self::tableExists()) {
+            return 0;
+        }
+
+        return (int) db()->query(
+            "SELECT COUNT(*) FROM art_pieces WHERE deleted_at IS NULL AND status = 'active'"
+        )->fetchColumn();
     }
 
     public static function findBySlug(string $id): array|false
@@ -42,7 +74,7 @@ class PlatformArtPiece
             return false;
         }
 
-        $rows = self::attachCurrentVersion([$row]);
+        $rows = self::attachCategories(self::attachCurrentVersion([$row]));
         return $rows[0] ?? false;
     }
 
@@ -57,10 +89,10 @@ class PlatformArtPiece
              FROM art_pieces ap
              LEFT JOIN users u ON u.id = ap.owner_user_id
              WHERE ap.deleted_at IS NULL
-             ORDER BY ap.created_at DESC, ap.id DESC"
+             ORDER BY ap.sort_order ASC, ap.id ASC"
         )->fetchAll();
 
-        return self::attachCurrentVersion($rows);
+        return self::attachCategories(self::attachCurrentVersion($rows));
     }
 
     public static function find(int $id): array|false
@@ -82,7 +114,7 @@ class PlatformArtPiece
             return false;
         }
 
-        $rows = self::attachCurrentVersion([$row]);
+        $rows = self::attachCategories(self::attachCurrentVersion([$row]));
         return $rows[0] ?? false;
     }
 
@@ -91,8 +123,8 @@ class PlatformArtPiece
         $stmt = db()->prepare(
             'INSERT INTO art_pieces
                 (owner_user_id, title, prompt, engine, status,
-                 thumbnail_url, description, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())'
+                 thumbnail_url, description, sort_order, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())'
         );
         $stmt->execute([
             $data['owner_user_id'] ?? null,
@@ -102,6 +134,7 @@ class PlatformArtPiece
             $data['status'] ?? 'active',
             $data['thumbnail_url'] ?? null,
             $data['description'] ?? null,
+            $data['sort_order'] ?? self::nextSortOrder(),
         ]);
         return (int) db()->lastInsertId();
     }
@@ -111,7 +144,7 @@ class PlatformArtPiece
         $stmt = db()->prepare(
             'UPDATE art_pieces SET
                 title = ?, prompt = ?, engine = ?, status = ?,
-                thumbnail_url = ?, description = ?, updated_at = NOW()
+                thumbnail_url = ?, description = ?, sort_order = ?, updated_at = NOW()
              WHERE id = ?'
         );
         $stmt->execute([
@@ -121,8 +154,17 @@ class PlatformArtPiece
             $data['status'] ?? 'active',
             $data['thumbnail_url'] ?? null,
             $data['description'] ?? null,
+            $data['sort_order'] ?? 0,
             $id,
         ]);
+    }
+
+    public static function reorder(array $ids): void
+    {
+        $stmt = db()->prepare('UPDATE art_pieces SET sort_order = ? WHERE id = ? AND deleted_at IS NULL');
+        foreach (array_values($ids) as $index => $id) {
+            $stmt->execute([$index, $id]);
+        }
     }
 
     public static function softDelete(int $id): void
@@ -157,7 +199,7 @@ class PlatformArtPiece
              ORDER BY ap.deleted_at DESC"
         )->fetchAll();
 
-        return self::attachCurrentVersion($rows);
+        return self::attachCategories(self::attachCurrentVersion($rows));
     }
 
     public static function trashedCount(): int
@@ -177,6 +219,43 @@ class PlatformArtPiece
             'UPDATE art_pieces SET current_version_id = ? WHERE id = ?'
         );
         $stmt->execute([$versionId, $pieceId]);
+    }
+
+    public static function categoryIds(int $pieceId): array
+    {
+        if (!self::relationTableExists('art_piece_categories')) {
+            return [];
+        }
+
+        $stmt = db()->prepare('SELECT category_id FROM art_piece_categories WHERE art_piece_id = ?');
+        $stmt->execute([$pieceId]);
+        return array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN));
+    }
+
+    public static function syncCategories(int $pieceId, array $categoryIds): void
+    {
+        if (!self::relationTableExists('art_piece_categories')) {
+            return;
+        }
+
+        $categoryIds = array_values(array_unique(array_filter(array_map('intval', $categoryIds))));
+        $pdo = db();
+        $del = $pdo->prepare('DELETE FROM art_piece_categories WHERE art_piece_id = ?');
+        $del->execute([$pieceId]);
+
+        if ($categoryIds === []) {
+            return;
+        }
+
+        $ins = $pdo->prepare('INSERT INTO art_piece_categories (art_piece_id, category_id) VALUES (?, ?)');
+        foreach ($categoryIds as $categoryId) {
+            $ins->execute([$pieceId, $categoryId]);
+        }
+    }
+
+    public static function attachCurrentVersionPublic(array $rows): array
+    {
+        return self::attachCategories(self::attachCurrentVersion($rows));
     }
 
     private static function attachCurrentVersion(array $rows): array
@@ -231,6 +310,48 @@ class PlatformArtPiece
         return $rows;
     }
 
+    private static function attachCategories(array $rows): array
+    {
+        if ($rows === [] || !self::relationTableExists('art_piece_categories')) {
+            return $rows;
+        }
+
+        $ids = array_map(static fn (array $row): int => (int) $row['id'], $rows);
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+
+        try {
+            $stmt = db()->prepare(
+                "SELECT apc.art_piece_id, c.id, c.name, c.slug
+                 FROM art_piece_categories apc
+                 JOIN categories c
+                   ON c.id = apc.category_id
+                  AND c.deleted_at IS NULL
+                  AND c.category_scope = 'portfolio'
+                 WHERE apc.art_piece_id IN ($placeholders)
+                 ORDER BY c.sort_order ASC, c.id ASC"
+            );
+            $stmt->execute($ids);
+        } catch (Throwable) {
+            return $rows;
+        }
+
+        $byPiece = [];
+        foreach ($stmt->fetchAll() as $category) {
+            $byPiece[(int) $category['art_piece_id']][] = [
+                'id' => (int) $category['id'],
+                'name' => $category['name'],
+                'slug' => $category['slug'],
+            ];
+        }
+
+        foreach ($rows as &$row) {
+            $row['categories'] = $byPiece[(int) $row['id']] ?? [];
+        }
+        unset($row);
+
+        return $rows;
+    }
+
     private static function tableExists(): bool
     {
         static $exists = null;
@@ -263,5 +384,32 @@ class PlatformArtPiece
         } catch (Throwable) {
             return $exists = false;
         }
+    }
+
+    private static function relationTableExists(string $tableName): bool
+    {
+        static $cache = [];
+        if (array_key_exists($tableName, $cache)) {
+            return $cache[$tableName];
+        }
+
+        try {
+            $stmt = db()->prepare(
+                'SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? LIMIT 1'
+            );
+            $stmt->execute([$tableName]);
+            $cache[$tableName] = (bool) $stmt->fetchColumn();
+        } catch (Throwable) {
+            $cache[$tableName] = false;
+        }
+
+        return $cache[$tableName];
+    }
+
+    private static function nextSortOrder(): int
+    {
+        return (int) db()->query(
+            'SELECT COALESCE(MAX(sort_order), -1) + 1 FROM art_pieces'
+        )->fetchColumn();
     }
 }

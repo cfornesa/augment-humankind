@@ -1,12 +1,17 @@
 <?php
 $isEdit    = $collection !== null;
 $collection = $collection ?? [];
-$pageTitle = ($isEdit ? 'Edit Collection' : 'New Collection') . ' — Augment Humankind Admin';
+$collectionLabel = $collectionLabel ?? 'Collection';
+$collectionPlural = $collectionPlural ?? 'Collections';
+$collectionIndexPath = $collectionIndexPath ?? '/admin/collections';
+$collectionCreatePath = $collectionCreatePath ?? '/admin/collections/create';
+$collectionEditBasePath = $collectionEditBasePath ?? '/admin/collections';
+$pageTitle = ($isEdit ? 'Edit ' . $collectionLabel : 'New ' . $collectionLabel) . ' — Augment Humankind Admin';
 $needsEditor = true;
 ob_start();
 ?>
 <div class="admin-section">
-    <h1 class="admin-heading"><?= $isEdit ? 'Edit Collection' : 'New Collection' ?></h1>
+    <h1 class="admin-heading"><?= htmlspecialchars($isEdit ? 'Edit ' . $collectionLabel : 'New ' . $collectionLabel) ?></h1>
 
     <?php if ($error ?? null): ?>
         <p class="admin-error"><?= htmlspecialchars($error) ?></p>
@@ -15,7 +20,7 @@ ob_start();
     <form
         method="POST"
         enctype="multipart/form-data"
-        action="<?= $isEdit ? '/admin/collections/' . $collection['id'] . '/edit' : '/admin/collections/create' ?>"
+        action="<?= $isEdit ? $collectionEditBasePath . '/' . $collection['id'] . '/edit' : $collectionCreatePath ?>"
         class="admin-form"
     >
         <div class="form-row">
@@ -61,9 +66,11 @@ ob_start();
             <?php if (empty($allExhibits)): ?>
                 <p class="admin-hint">No exhibits exist yet. Add some first.</p>
             <?php else: ?>
-                <div class="exhibit-artwork-list">
+                <p class="admin-hint" style="margin-bottom: 0.75rem;">Drag exhibits into your preferred order. Checked exhibits are saved in the order shown here.</p>
+                <div class="exhibit-artwork-list" data-checkbox-sortable>
                     <?php foreach ($allExhibits as $ex): ?>
-                        <label class="exhibit-artwork-check">
+                        <label class="exhibit-artwork-check" draggable="true">
+                            <span class="artwork-slide-handle" aria-hidden="true" title="Drag to reorder">&#8597;</span>
                             <input
                                 type="checkbox"
                                 name="exhibit_ids[]"
@@ -78,8 +85,8 @@ ob_start();
         </fieldset>
 
         <div class="form-actions">
-            <button type="submit" class="admin-btn"><?= $isEdit ? 'Save Changes' : 'Create Collection' ?></button>
-            <a href="/admin/collections" class="admin-btn admin-btn-ghost">Cancel</a>
+            <button type="submit" class="admin-btn"><?= htmlspecialchars($isEdit ? 'Save Changes' : 'Create ' . $collectionLabel) ?></button>
+            <a href="<?= htmlspecialchars($collectionIndexPath) ?>" class="admin-btn admin-btn-ghost">Cancel</a>
         </div>
     </form>
 </div>

@@ -120,7 +120,8 @@ class AuthController
         self::primeSchemaCache();
 
         $exhibitCount  = self::countRows('exhibits', activeOnly: true);
-        $categoryCount = self::countRows('categories', activeOnly: true);
+        $artMediaCount = self::countScopedCategories('portfolio');
+        $categoryCount = self::countScopedCategories('blog');
         $collectionCount = self::countRows('collections', activeOnly: true);
         $pageCount     = self::countRows('pages', activeOnly: true);
 
@@ -184,6 +185,23 @@ class AuthController
         }
 
         return self::countRows($table, ['deleted_at IS NOT NULL']);
+    }
+
+    private static function countScopedCategories(string $scope): int
+    {
+        if (!self::tableExists('categories')) {
+            return 0;
+        }
+
+        try {
+            $stmt = db()->prepare(
+                "SELECT COUNT(*) FROM categories WHERE deleted_at IS NULL AND category_scope = ?"
+            );
+            $stmt->execute([$scope]);
+            return (int) $stmt->fetchColumn();
+        } catch (Throwable) {
+            return 0;
+        }
     }
 
     private static function primeSchemaCache(): void

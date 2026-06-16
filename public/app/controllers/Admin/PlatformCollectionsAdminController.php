@@ -127,6 +127,7 @@ class PlatformCollectionsAdminController
                 'rows' => (int) ($_POST['rows'] ?? 1),
                 'cols' => (int) ($_POST['cols'] ?? 1),
                 'iframe_code' => trim($_POST['iframe_code'] ?? '') ?: null,
+                'sort_order' => (int) ($existing['sort_order'] ?? 0),
             ]);
 
             $items = self::resolveSelectedItems();
@@ -149,6 +150,16 @@ class PlatformCollectionsAdminController
         admin_check();
         PlatformCollection::softDelete((int) $id);
         header('Location: /admin/platform-collections');
+        exit;
+    }
+
+    public static function reorder(): void
+    {
+        admin_check();
+        $ids = array_filter(array_map('intval', explode(',', $_POST['ids'] ?? '')));
+        PlatformCollection::reorder($ids);
+        header('Content-Type: application/json');
+        echo '{"ok":true}';
         exit;
     }
 

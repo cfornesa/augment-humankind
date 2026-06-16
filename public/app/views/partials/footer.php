@@ -9,5 +9,6 @@
             <a href="/contact">Contact</a>
         </nav>
     </footer>
+    <script src="/assets/js/main.js" defer></script>
 </body>
 </html>

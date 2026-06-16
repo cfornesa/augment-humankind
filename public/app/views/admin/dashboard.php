@@ -10,12 +10,16 @@ ob_start();
             <span class="stat-label">Exhibits</span>
         </div>
         <div class="stat-card">
-            <span class="stat-num"><?= $categoryCount ?></span>
-            <span class="stat-label">Categories</span>
+            <span class="stat-num"><?= $artMediaCount ?></span>
+            <span class="stat-label">Art Media</span>
         </div>
         <div class="stat-card">
             <span class="stat-num"><?= $collectionCount ?></span>
-            <span class="stat-label">Collections</span>
+            <span class="stat-label">Exhibit Collections</span>
+        </div>
+        <div class="stat-card">
+            <span class="stat-num"><?= $categoryCount ?></span>
+            <span class="stat-label">Categories</span>
         </div>
         <div class="stat-card">
             <span class="stat-num"><?= $pageCount ?></span>

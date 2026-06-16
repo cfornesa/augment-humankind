@@ -56,27 +56,120 @@ document.querySelectorAll('tbody[data-reorder-url]').forEach(tbody => {
     });
 });
 
-// Portfolio gallery: "See More" to reveal overflow works progressively (3 at a time)
-(function () {
-    function setupSeeMore(btnId, selector) {
-        const btn = document.getElementById(btnId);
-        if (!btn) return;
-        btn.addEventListener('click', () => {
-            const hidden = [...document.querySelectorAll(selector)];
-            const toShow = hidden.slice(0, 3);
-            toShow.forEach(el => {
-                el.classList.remove(selector.replace('.', ''));
-            });
-            if (hidden.length <= 3) {
-                btn.setAttribute('aria-expanded', 'true');
-                btn.remove();
-            }
+// Drag-and-drop checkbox list ordering for forms that persist submitted order
+document.querySelectorAll('[data-checkbox-sortable]').forEach(list => {
+    let dragging = null;
+
+    list.querySelectorAll('label[draggable="true"]').forEach(label => {
+        label.addEventListener('dragstart', event => {
+            dragging = label;
+            label.classList.add('drag-active');
+            event.dataTransfer.effectAllowed = 'move';
         });
-    }
-    setupSeeMore('collections-see-more', '.collections-overflow');
-    setupSeeMore('works-see-more', '.gallery-work-overflow');
-    setupSeeMore('platform-collections-see-more', '.platform-collections-overflow');
-    setupSeeMore('pieces-see-more', '.pieces-overflow');
+
+        label.addEventListener('dragend', () => {
+            label.classList.remove('drag-active');
+            list.querySelectorAll('label').forEach(item => item.classList.remove('drag-over'));
+            dragging = null;
+        });
+
+        label.addEventListener('dragover', event => {
+            event.preventDefault();
+            if (!dragging || dragging === label) return;
+            const rect = label.getBoundingClientRect();
+            const after = event.clientY > rect.top + rect.height / 2;
+            list.insertBefore(dragging, after ? label.nextSibling : label);
+        });
+
+        label.addEventListener('dragenter', event => {
+            event.preventDefault();
+            if (label !== dragging) label.classList.add('drag-over');
+        });
+
+        label.addEventListener('dragleave', () => label.classList.remove('drag-over'));
+    });
+});
+
+// Portfolio archives: load the next batch from the same route on scroll
+(function () {
+    document.querySelectorAll('[data-lazy-listing]').forEach(listing => {
+        const grid = listing.querySelector('[data-listing-grid]');
+        const sentinel = listing.querySelector('[data-listing-sentinel]');
+        const status = listing.querySelector('[data-listing-status]');
+        const fetchUrl = listing.dataset.fetchUrl || window.location.pathname;
+        const pageSize = Number.parseInt(listing.dataset.pageSize || '12', 10) || 12;
+        let nextOffset = Number.parseInt(listing.dataset.nextOffset || '0', 10) || 0;
+        let hasMore = listing.dataset.hasMore === 'true';
+        let loading = false;
+
+        if (!grid || !sentinel || !hasMore) {
+            sentinel?.classList.add('is-hidden');
+            return;
+        }
+
+        async function loadMore() {
+            if (loading || !hasMore) return;
+            loading = true;
+            if (status) status.textContent = 'Loading more…';
+
+            try {
+                const url = new URL(fetchUrl, window.location.origin);
+                url.searchParams.set('partial', '1');
+                url.searchParams.set('offset', String(nextOffset));
+                url.searchParams.set('limit', String(pageSize));
+
+                const response = await fetch(url.toString(), {
+                    headers: { 'X-Requested-With': 'fetch' },
+                });
+                if (!response.ok) {
+                    throw new Error(`Request failed with ${response.status}`);
+                }
+
+                const html = await response.text();
+                const template = document.createElement('template');
+                template.innerHTML = html.trim();
+                const batch = template.content.querySelector('[data-listing-batch]');
+                if (!batch) {
+                    throw new Error('Missing listing batch payload.');
+                }
+
+                while (batch.firstChild) {
+                    grid.appendChild(batch.firstChild);
+                }
+
+                nextOffset = Number.parseInt(batch.dataset.nextOffset || String(nextOffset), 10) || nextOffset;
+                hasMore = batch.dataset.hasMore === 'true';
+                listing.dataset.nextOffset = String(nextOffset);
+                listing.dataset.hasMore = hasMore ? 'true' : 'false';
+
+                if (status) {
+                    status.textContent = hasMore ? `Showing ${grid.children.length} items so far.` : `All ${grid.children.length} items loaded.`;
+                }
+
+                if (!hasMore) {
+                    sentinel.classList.add('is-hidden');
+                    observer.disconnect();
+                }
+            } catch (error) {
+                if (status) status.textContent = 'Could not load more items right now.';
+                console.error(error);
+            } finally {
+                loading = false;
+            }
+        }
+
+        const observer = new IntersectionObserver(entries => {
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    loadMore();
+                }
+            });
+        }, {
+            rootMargin: '320px 0px',
+        });
+
+        observer.observe(sentinel);
+    });
 })();
 
 // Portfolio work page: lazy-loaded artwork carousel
@@ -458,9 +551,13 @@ document.querySelectorAll('tbody[data-reorder-url]').forEach(tbody => {
             }
 
             function triggerInlineCreation(query) {
-                const type = name === 'category_ids' ? 'category' : 'exhibit';
+                const type = name === 'category_ids'
+                    ? 'art-medium'
+                    : (name === 'collection_ids' ? 'collection' : 'exhibit');
                 openInlineCreateDialog(query, type, finalName => {
-                    const url = type === 'category' ? '/admin/categories/create-inline' : '/admin/exhibits/create-inline';
+                    const url = type === 'art-medium'
+                        ? '/admin/art-media/create-inline'
+                        : (type === 'collection' ? '/admin/exhibit-collections/create-inline' : '/admin/exhibits/create-inline');
                     addOption.textContent = `Creating "${finalName}"...`;
                     addOption.style.pointerEvents = 'none';
                     searchInput.disabled = true;
@@ -491,7 +588,7 @@ document.querySelectorAll('tbody[data-reorder-url]').forEach(tbody => {
                         addOption.style.display = 'none';
                     })
                     .catch(err => {
-                        alert(`Error creating ${type}: ${err.message}`);
+                        alert(`Error creating ${type.replace('-', ' ')}: ${err.message}`);
                     })
                     .finally(() => {
                         searchInput.disabled = false;
@@ -544,7 +641,9 @@ document.querySelectorAll('tbody[data-reorder-url]').forEach(tbody => {
                 });
 
                 if (query && !exactMatchFound) {
-                    const typeLabel = name === 'category_ids' ? 'Category' : 'Exhibit';
+                    const typeLabel = name === 'category_ids'
+                        ? 'Art Medium'
+                        : (name === 'collection_ids' ? 'Exhibit Collection' : 'Exhibit');
                     addOption.textContent = `+ Create ${typeLabel} "${query}"`;
                     addOption.style.display = 'block';
                 } else {
@@ -625,3 +724,221 @@ document.querySelectorAll('tbody[data-reorder-url]').forEach(tbody => {
         initMultiselects();
     }
 })();
+
+// Blog post card: expand, comments, share, embed
+
+(function () {
+    // --- Expand panel ---
+    document.addEventListener('click', async e => {
+        const btn = e.target.closest('.post-expand-btn');
+        if (!btn) return;
+        const postId = btn.dataset.postId;
+        const panel  = document.getElementById('post-expand-' + postId);
+        if (!panel) return;
+
+        const open = btn.getAttribute('aria-expanded') === 'true';
+        if (open) {
+            panel.hidden = true;
+            btn.setAttribute('aria-expanded', 'false');
+            return;
+        }
+
+        const body = panel.querySelector('.post-content-body');
+        if (!body.dataset.loaded) {
+            btn.textContent = 'Loading…';
+            btn.disabled = true;
+            try {
+                const res  = await fetch('/api/posts/' + postId + '/full');
+                const data = await res.json();
+                body.innerHTML = data.content || '';
+                body.dataset.loaded = 'true';
+            } catch {
+                body.textContent = 'Could not load post content.';
+            }
+            btn.textContent = 'Expand';
+            btn.disabled = false;
+        }
+
+        panel.hidden = false;
+        btn.setAttribute('aria-expanded', 'true');
+    });
+
+    // --- Comments panel ---
+    document.addEventListener('click', async e => {
+        const btn = e.target.closest('.post-comments-btn');
+        if (!btn) return;
+        const postId = btn.dataset.postId;
+        const panel  = document.getElementById('post-comments-' + postId);
+        if (!panel) return;
+
+        const open = btn.getAttribute('aria-expanded') === 'true';
+        if (open) {
+            panel.hidden = true;
+            btn.setAttribute('aria-expanded', 'false');
+            return;
+        }
+
+        const list = panel.querySelector('.post-comments-list');
+        if (!list.dataset.loaded) {
+            try {
+                const res      = await fetch('/api/posts/' + postId + '/comments');
+                const comments = await res.json();
+                renderComments(list, comments);
+                list.dataset.loaded = 'true';
+            } catch {
+                list.textContent = 'Could not load comments.';
+            }
+        }
+
+        panel.hidden = false;
+        btn.setAttribute('aria-expanded', 'true');
+    });
+
+    function renderComments(container, comments) {
+        if (!comments.length) {
+            container.innerHTML = '<p style="color:var(--ink-soft);font-size:.9rem">No comments yet.</p>';
+            return;
+        }
+        container.innerHTML = comments.map(c => {
+            const name = c.author_name || 'Anonymous';
+            const date = new Date(c.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+            const text = String(c.content).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+            return `<div class="post-comment-item"><strong>${name} · <span style="font-weight:700;color:var(--ink-soft)">${date}</span></strong><p style="margin:0">${text}</p></div>`;
+        }).join('');
+    }
+
+    function appendComment(container, authorName, content) {
+        const date = new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+        const text = String(content).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        const el   = document.createElement('div');
+        el.className = 'post-comment-item';
+        el.innerHTML = `<strong>${authorName} · <span style="font-weight:700;color:var(--ink-soft)">${date}</span></strong><p style="margin:0">${text}</p>`;
+        const noComments = container.querySelector('p');
+        if (noComments && noComments.textContent.includes('No comments')) noComments.remove();
+        container.appendChild(el);
+    }
+
+    // --- Comment form submit ---
+    document.addEventListener('submit', async e => {
+        const form = e.target.closest('.post-comment-form');
+        if (!form) return;
+        e.preventDefault();
+
+        const postId  = form.dataset.postId;
+        const panel   = document.getElementById('post-comments-' + postId);
+        const list    = panel?.querySelector('.post-comments-list');
+        const submit  = form.querySelector('[type="submit"]');
+        const data    = new FormData(form);
+
+        submit.disabled  = true;
+        submit.textContent = 'Posting…';
+
+        try {
+            const res  = await fetch('/api/posts/' + postId + '/comments', { method: 'POST', body: new URLSearchParams(data) });
+            const json = await res.json();
+            if (!res.ok) throw new Error(json.error || 'Error');
+            if (list) appendComment(list, json.author_name || 'Anonymous', json.content);
+            form.reset();
+            submit.textContent = 'Posted!';
+            setTimeout(() => { submit.textContent = 'Post comment'; submit.disabled = false; }, 2000);
+        } catch (err) {
+            alert(err.message || 'Could not post comment.');
+            submit.textContent = 'Post comment';
+            submit.disabled = false;
+        }
+    });
+
+    // --- Share dialog ---
+    let shareDialog = null;
+
+    function ensureShareDialog() {
+        if (shareDialog) return shareDialog;
+        shareDialog = document.createElement('dialog');
+        shareDialog.id = 'share-dialog';
+        shareDialog.innerHTML = `
+            <h2>Share this post</h2>
+            <div class="share-links">
+                <a class="post-action-btn" id="share-x" target="_blank" rel="noopener">X / Twitter</a>
+                <a class="post-action-btn" id="share-bsky" target="_blank" rel="noopener">Bluesky</a>
+                <a class="post-action-btn" id="share-li" target="_blank" rel="noopener">LinkedIn</a>
+                <a class="post-action-btn" id="share-fb" target="_blank" rel="noopener">Facebook</a>
+                <button class="post-action-btn" id="share-copy">Copy link</button>
+                <button class="post-action-btn" id="share-close">Close</button>
+            </div>`;
+        document.body.appendChild(shareDialog);
+        shareDialog.querySelector('#share-close').addEventListener('click', () => shareDialog.close());
+        shareDialog.addEventListener('click', e => { if (e.target === shareDialog) shareDialog.close(); });
+        shareDialog.querySelector('#share-copy').addEventListener('click', function () {
+            const url = this.dataset.url || '';
+            navigator.clipboard.writeText(url).then(() => {
+                this.textContent = 'Copied!';
+                setTimeout(() => { this.textContent = 'Copy link'; }, 2000);
+            });
+        });
+        return shareDialog;
+    }
+
+    document.addEventListener('click', e => {
+        const btn = e.target.closest('.post-share-btn');
+        if (!btn) return;
+
+        const title = btn.dataset.title || '';
+        const path  = btn.dataset.url   || '';
+        const url   = location.origin + path;
+        const enc   = encodeURIComponent;
+
+        const dialog = ensureShareDialog();
+        dialog.querySelector('#share-x').href    = 'https://x.com/intent/tweet?text=' + enc(title) + '&url=' + enc(url);
+        dialog.querySelector('#share-bsky').href = 'https://bsky.app/intent/compose?text=' + enc(title + ' ' + url);
+        dialog.querySelector('#share-li').href   = 'https://www.linkedin.com/sharing/share-offsite/?url=' + enc(url);
+        dialog.querySelector('#share-fb').href   = 'https://www.facebook.com/sharer/sharer.php?u=' + enc(url);
+        dialog.querySelector('#share-copy').dataset.url = url;
+        dialog.showModal();
+    });
+
+    // --- Embed copy ---
+    document.addEventListener('click', async e => {
+        const btn = e.target.closest('.post-embed-btn');
+        if (!btn) return;
+        const postId = btn.dataset.postId;
+        const src    = location.origin + '/embed/posts/' + postId;
+        const code   = `<iframe src="${src}" width="100%" height="420" frameborder="0" loading="lazy"></iframe>`;
+        try {
+            await navigator.clipboard.writeText(code);
+            const orig = btn.textContent;
+            btn.textContent = 'Copied!';
+            setTimeout(() => { btn.textContent = orig; }, 2000);
+        } catch {
+            prompt('Copy embed code:', code);
+        }
+    });
+})();
+
+// Mobile navigation toggle
+document.querySelectorAll('.menu-toggle').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const header = btn.closest('header');
+        const open = header.classList.toggle('nav-open');
+        btn.setAttribute('aria-expanded', String(open));
+    });
+});
+
+document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+        document.querySelectorAll('header.nav-open').forEach(h => {
+            h.classList.remove('nav-open');
+            const toggle = h.querySelector('.menu-toggle');
+            if (toggle) toggle.setAttribute('aria-expanded', 'false');
+        });
+    }
+});
+
+document.addEventListener('click', e => {
+    if (!e.target.closest('header')) {
+        document.querySelectorAll('header.nav-open').forEach(h => {
+            h.classList.remove('nav-open');
+            const toggle = h.querySelector('.menu-toggle');
+            if (toggle) toggle.setAttribute('aria-expanded', 'false');
+        });
+    }
+});

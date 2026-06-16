@@ -4,8 +4,9 @@ $tab       = $tab ?? 'exhibits';
 
 $tabs = [
     'exhibits'   => ['label' => 'Exhibits',   'items' => $exhibits],
+    'art-media'  => ['label' => 'Art Media',  'items' => $artMedia],
     'categories' => ['label' => 'Categories', 'items' => $categories],
-    'collections'=> ['label' => 'Collections', 'items' => $collections],
+    'collections'=> ['label' => 'Exhibit Collections', 'items' => $collections],
     'media'      => ['label' => 'Media',       'items' => $mediaFiles],
     'posts'      => ['label' => 'Posts',       'items' => $posts],
     'comments'   => ['label' => 'Comments',    'items' => $comments],
@@ -33,6 +34,7 @@ ob_start();
     $items   = $current['items'];
     $type    = match ($tab) {
         'exhibits'   => 'exhibit',
+        'art-media'  => 'art-medium',
         'categories' => 'category',
         'collections'=> 'collection',
         'media'      => 'media',

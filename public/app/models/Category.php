@@ -11,6 +11,24 @@ class Category
         )->fetchAll();
     }
 
+    public static function paginate(int $offset, int $limit): array
+    {
+        $stmt = db()->prepare(
+            'SELECT * FROM categories WHERE deleted_at IS NULL' . self::portfolioScopeSql() . ' ORDER BY sort_order ASC, id ASC LIMIT ?, ?'
+        );
+        $stmt->bindValue(1, max(0, $offset), PDO::PARAM_INT);
+        $stmt->bindValue(2, max(1, $limit), PDO::PARAM_INT);
+        $stmt->execute();
+        return $stmt->fetchAll();
+    }
+
+    public static function countVisible(): int
+    {
+        return (int) db()->query(
+            'SELECT COUNT(*) FROM categories WHERE deleted_at IS NULL' . self::portfolioScopeSql()
+        )->fetchColumn();
+    }
+
     public static function find(int $id): array|false
     {
         $stmt = db()->prepare('SELECT * FROM categories WHERE id = ? AND deleted_at IS NULL' . self::portfolioScopeSql());
@@ -25,17 +43,24 @@ class Category
         return $stmt->fetch();
     }
 
-    public static function exhibits(int $id): array
+    public static function pieces(int $id): array
     {
+        if (!self::artPiecePivotExists()) {
+            return [];
+        }
+
         $stmt = db()->prepare(
-            'SELECT e.*
-             FROM exhibit_categories ec
-             JOIN exhibits e ON e.id = ec.exhibit_id AND e.deleted_at IS NULL
-             WHERE ec.category_id = ?
-             ORDER BY e.sort_order ASC, e.id ASC'
+            "SELECT ap.*, u.name AS owner_name
+             FROM art_piece_categories apc
+             JOIN art_pieces ap ON ap.id = apc.art_piece_id
+                AND ap.deleted_at IS NULL
+                AND ap.status = 'active'
+             LEFT JOIN users u ON u.id = ap.owner_user_id
+             WHERE apc.category_id = ?
+             ORDER BY ap.sort_order ASC, ap.id ASC"
         );
         $stmt->execute([$id]);
-        return $stmt->fetchAll();
+        return PlatformArtPiece::attachCurrentVersionPublic($stmt->fetchAll());
     }
 
     public static function trashed(): array
@@ -123,6 +148,26 @@ class Category
     private static function portfolioScopeSql(): string
     {
         return self::hasCategoryScope() ? " AND category_scope = 'portfolio'" : '';
+    }
+
+    private static function artPiecePivotExists(): bool
+    {
+        static $exists = null;
+        if ($exists !== null) {
+            return $exists;
+        }
+
+        try {
+            $stmt = db()->prepare(
+                'SELECT 1 FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? LIMIT 1'
+            );
+            $stmt->execute(['art_piece_categories']);
+            $exists = (bool) $stmt->fetchColumn();
+        } catch (Throwable) {
+            $exists = false;
+        }
+
+        return $exists;
     }
 
     private static function hasCategoryScope(): bool

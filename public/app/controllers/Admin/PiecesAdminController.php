@@ -60,6 +60,8 @@ class PiecesAdminController
         admin_check();
         $piece = null;
         $error = null;
+        $artMedia = Category::all();
+        $assignedCategoryIds = [];
         [$profiles, $preferredProfileId] = self::loadProfilesData();
         require dirname(__DIR__, 2) . '/views/admin/pieces/form.php';
     }
@@ -71,6 +73,7 @@ class PiecesAdminController
         try {
             $data = self::resolvePieceData();
             $pieceId = PlatformArtPiece::create($data);
+            PlatformArtPiece::syncCategories($pieceId, $data['category_ids']);
 
             $code = self::resolveVersionCodeFromPost();
             if (self::hasAnyVersionCode($code)) {
@@ -98,6 +101,8 @@ class PiecesAdminController
         } catch (Throwable $e) {
             $piece = self::draftPieceFromPost();
             $error = $e->getMessage();
+            $artMedia = Category::all();
+            $assignedCategoryIds = $piece['category_ids'];
             [$profiles, $preferredProfileId] = self::loadProfilesData();
             require dirname(__DIR__, 2) . '/views/admin/pieces/form.php';
         }
@@ -113,6 +118,8 @@ class PiecesAdminController
             exit;
         }
         $error = null;
+        $artMedia = Category::all();
+        $assignedCategoryIds = PlatformArtPiece::categoryIds((int) $id);
         [$profiles, $preferredProfileId] = self::loadProfilesData();
         require dirname(__DIR__, 2) . '/views/admin/pieces/form.php';
     }
@@ -128,7 +135,9 @@ class PiecesAdminController
 
         try {
             $data = self::resolvePieceData();
+            $data['sort_order'] = (int) ($existing['sort_order'] ?? 0);
             PlatformArtPiece::update((int) $id, $data);
+            PlatformArtPiece::syncCategories((int) $id, $data['category_ids']);
 
             $code = self::resolveVersionCodeFromPost();
             if (self::hasAnyVersionCode($code)) {
@@ -166,6 +175,8 @@ class PiecesAdminController
         } catch (Throwable $e) {
             $piece = self::draftPieceFromPost((int) $id);
             $error = $e->getMessage();
+            $artMedia = Category::all();
+            $assignedCategoryIds = $piece['category_ids'];
             [$profiles, $preferredProfileId] = self::loadProfilesData();
             require dirname(__DIR__, 2) . '/views/admin/pieces/form.php';
         }
@@ -177,6 +188,16 @@ class PiecesAdminController
         admin_check();
         PlatformArtPiece::softDelete((int) $id);
         header('Location: /admin/pieces');
+        exit;
+    }
+
+    public static function reorder(): void
+    {
+        admin_check();
+        $ids = array_filter(array_map('intval', explode(',', $_POST['ids'] ?? '')));
+        PlatformArtPiece::reorder($ids);
+        header('Content-Type: application/json');
+        echo '{"ok":true}';
         exit;
     }
 
@@ -318,6 +339,8 @@ class PiecesAdminController
             'status' => $status,
             'thumbnail_url' => trim($_POST['thumbnail_url'] ?? '') ?: null,
             'description' => trim($_POST['description'] ?? '') ?: null,
+            'sort_order' => isset($_POST['sort_order']) ? (int) $_POST['sort_order'] : null,
+            'category_ids' => array_map('intval', $_POST['category_ids'] ?? []),
         ];
     }
 
@@ -333,6 +356,7 @@ class PiecesAdminController
             'status' => $_POST['status'] ?? ($existing['status'] ?? 'active'),
             'thumbnail_url' => trim((string) ($_POST['thumbnail_url'] ?? ($existing['thumbnail_url'] ?? ''))),
             'description' => trim((string) ($_POST['description'] ?? ($existing['description'] ?? ''))),
+            'category_ids' => array_map('intval', $_POST['category_ids'] ?? ($existing ? PlatformArtPiece::categoryIds((int) $existing['id']) : [])),
         ];
         $draft['current_version'] = array_merge(
             $existing['current_version'] ?? [],
@@ -877,4 +901,3 @@ class PiecesAdminController
         }
     }
 }
-

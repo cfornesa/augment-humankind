@@ -14,7 +14,8 @@ $adminNavItems = [
     '/admin/exhibits' => 'Exhibits',
     '/admin/pieces' => 'Pieces',
     '/admin/categories' => 'Categories',
-    '/admin/collections' => 'Collections',
+    '/admin/art-media' => 'Art Media',
+    '/admin/exhibit-collections' => 'Exhibit Collections',
     '/admin/platform-collections' => 'Platform Collections',
     '/admin/media' => 'Media',
     '/admin/trash' => 'Trash',
@@ -57,7 +58,12 @@ $adminNavItems = [
                 <span class="admin-kicker">Signed in as <?= htmlspecialchars($adminIdentity['display_name'], ENT_QUOTES, 'UTF-8') ?> via <?= htmlspecialchars(ucfirst($adminIdentity['provider']), ENT_QUOTES, 'UTF-8') ?></span>
             <?php endif ?>
         </div>
-        <nav class="admin-nav" aria-label="Admin navigation">
+        <button class="menu-toggle" aria-label="Toggle navigation" aria-expanded="false" aria-controls="admin-nav">
+            <span></span>
+            <span></span>
+            <span></span>
+        </button>
+        <nav class="admin-nav" id="admin-nav" aria-label="Admin navigation">
             <?php foreach ($adminNavItems as $href => $label): ?>
                 <?php $isActive = $currentPath === $href; ?>
                 <a href="<?= htmlspecialchars($href, ENT_QUOTES, 'UTF-8') ?>" class="<?= $isActive ? 'active' : '' ?>"<?= $isActive ? ' aria-current="page"' : '' ?>><?= htmlspecialchars($label, ENT_QUOTES, 'UTF-8') ?></a>
@@ -140,10 +146,10 @@ $adminNavItems = [
         </div>
     </dialog>
 
-    <!-- Art Piece / Collection Picker Modal -->
+    <!-- Art Piece / Platform Collection Picker Modal -->
     <dialog id="piece-picker-modal" aria-labelledby="piece-picker-title">
         <div class="media-picker-header">
-            <h2 id="piece-picker-title">Insert Art Piece or Collection</h2>
+            <h2 id="piece-picker-title">Insert Art Piece or Platform Collection</h2>
             <button type="button" class="media-picker-close" aria-label="Close">&times;</button>
         </div>
 
@@ -151,7 +157,7 @@ $adminNavItems = [
             <button class="media-picker-tab active" role="tab" data-tab="pieces"
                     aria-selected="true" aria-controls="pp-panel-pieces">Pieces</button>
             <button class="media-picker-tab" role="tab" data-tab="collections"
-                    aria-selected="false" aria-controls="pp-panel-collections">Collections</button>
+                    aria-selected="false" aria-controls="pp-panel-collections">Platform Collections</button>
         </nav>
 
         <div class="media-picker-panel" id="pp-panel-pieces" role="tabpanel">

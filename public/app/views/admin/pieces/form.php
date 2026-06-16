@@ -257,6 +257,28 @@ $preferredProfileId = $preferredProfileId ?? null;
                             </div>
                         </div>
 
+                        <fieldset class="form-fieldset">
+                            <legend>Art Media</legend>
+                            <?php if (empty($artMedia ?? [])): ?>
+                                <p class="admin-hint">No art media terms yet. Create them under <a href="/admin/art-media">Art Media</a>.</p>
+                            <?php else: ?>
+                                <div class="checkbox-sortable-list">
+                                    <?php foreach (($artMedia ?? []) as $medium): ?>
+                                        <?php $isChecked = in_array((int) $medium['id'], $assignedCategoryIds ?? [], true); ?>
+                                        <label class="checkbox-sortable-item">
+                                            <input
+                                                type="checkbox"
+                                                name="category_ids[]"
+                                                value="<?= (int) $medium['id'] ?>"
+                                                <?= $isChecked ? 'checked' : '' ?>
+                                            >
+                                            <span><?= e($medium['name']) ?></span>
+                                        </label>
+                                    <?php endforeach; ?>
+                                </div>
+                            <?php endif; ?>
+                        </fieldset>
+
                         <div class="field">
                             <label for="thumbnail_url">Thumbnail URL</label>
                             <input id="thumbnail_url" name="thumbnail_url" type="url" maxlength="2048"

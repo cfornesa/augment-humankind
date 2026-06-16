@@ -15,6 +15,51 @@ function isItemAssigned(string $type, int $id, array $assigned): bool {
     return false;
 }
 
+function itemSortWeight(string $type, int $id, array $assigned): int
+{
+    foreach ($assigned as $index => $item) {
+        if (($item['item_type'] ?? '') === $type && (int) ($item['item_id'] ?? 0) === $id) {
+            return $index;
+        }
+    }
+
+    return 1000000 + $id;
+}
+
+$sortableItems = [];
+foreach ($allPieces as $piece) {
+    $sortableItems[] = [
+        'item_type' => 'art_piece',
+        'item_id' => (int) $piece['id'],
+        'label' => ($piece['title'] ?? 'Untitled') . ' (' . ($piece['engine'] ?? 'p5') . ')',
+        'assigned' => isItemAssigned('art_piece', (int) $piece['id'], $assignedItems),
+    ];
+}
+foreach ($allAssets as $asset) {
+    $sortableItems[] = [
+        'item_type' => 'media_asset',
+        'item_id' => (int) $asset['id'],
+        'label' => ($asset['title'] ?: ($asset['filename'] ?: ('Media Asset #' . $asset['id']))) . ' (' . ($asset['mime_type'] ?? '') . ')',
+        'assigned' => isItemAssigned('media_asset', (int) $asset['id'], $assignedItems),
+    ];
+}
+
+usort($sortableItems, static function (array $left, array $right) use ($assignedItems): int {
+    $leftAssigned = $left['assigned'] ? 0 : 1;
+    $rightAssigned = $right['assigned'] ? 0 : 1;
+    if ($leftAssigned !== $rightAssigned) {
+        return $leftAssigned <=> $rightAssigned;
+    }
+
+    $leftWeight = itemSortWeight($left['item_type'], (int) $left['item_id'], $assignedItems);
+    $rightWeight = itemSortWeight($right['item_type'], (int) $right['item_id'], $assignedItems);
+    if ($leftWeight !== $rightWeight) {
+        return $leftWeight <=> $rightWeight;
+    }
+
+    return strcasecmp((string) $left['label'], (string) $right['label']);
+});
+
 ob_start();
 ?>
 <div class="admin-section">
@@ -72,51 +117,26 @@ ob_start();
 
         <fieldset class="form-fieldset">
             <legend>Items in this Collection</legend>
-            <p class="admin-hint" style="margin-bottom: 1rem;">Select the platform art pieces and media assets to display on the collection's grid wall. They will be ordered in the sequence selected below.</p>
+            <p class="admin-hint" style="margin-bottom: 1rem;">Drag items into your preferred display order. Checked items are saved in the order shown here across both pieces and media assets.</p>
 
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 2rem;">
-                <div>
-                    <h3 class="admin-subheading" style="margin-bottom: 0.5rem;">Platform Art Pieces</h3>
-                    <?php if (empty($allPieces)): ?>
-                        <p class="admin-hint">No platform art pieces found.</p>
-                    <?php else: ?>
-                        <div class="exhibit-artwork-list" style="max-height: 300px; overflow-y: auto; border: 1px solid var(--line); padding: 0.5rem; background: var(--paper);">
-                            <?php foreach ($allPieces as $piece): ?>
-                                <label class="exhibit-artwork-check" style="display: block; margin-bottom: 0.25rem; cursor: pointer;">
-                                    <input
-                                        type="checkbox"
-                                        name="items[]"
-                                        value="art_piece:<?= (int) $piece['id'] ?>"
-                                        <?= isItemAssigned('art_piece', (int) $piece['id'], $assignedItems) ? 'checked' : '' ?>
-                                    >
-                                    <span><?= htmlspecialchars($piece['title'] ?? 'Untitled') ?> <small style="color:var(--ink-soft)">(<?= htmlspecialchars($piece['engine'] ?? 'p5') ?>)</small></span>
-                                </label>
-                            <?php endforeach ?>
-                        </div>
-                    <?php endif ?>
+            <?php if (empty($sortableItems)): ?>
+                <p class="admin-hint">No platform art pieces or media assets found yet.</p>
+            <?php else: ?>
+                <div class="exhibit-artwork-list" data-checkbox-sortable style="max-height: 420px; overflow-y: auto; border: 1px solid var(--line); padding: 0.5rem; background: var(--paper);">
+                    <?php foreach ($sortableItems as $item): ?>
+                        <label class="exhibit-artwork-check" style="display: flex; gap: 0.5rem; align-items: center; margin-bottom: 0.25rem; cursor: pointer;" draggable="true">
+                            <span class="artwork-slide-handle" aria-hidden="true" title="Drag to reorder">&#8597;</span>
+                            <input
+                                type="checkbox"
+                                name="items[]"
+                                value="<?= e($item['item_type']) ?>:<?= (int) $item['item_id'] ?>"
+                                <?= $item['assigned'] ? 'checked' : '' ?>
+                            >
+                            <span><?= htmlspecialchars($item['label']) ?></span>
+                        </label>
+                    <?php endforeach ?>
                 </div>
-
-                <div>
-                    <h3 class="admin-subheading" style="margin-bottom: 0.5rem;">Media Assets</h3>
-                    <?php if (empty($allAssets)): ?>
-                        <p class="admin-hint">No media assets found.</p>
-                    <?php else: ?>
-                        <div class="exhibit-artwork-list" style="max-height: 300px; overflow-y: auto; border: 1px solid var(--line); padding: 0.5rem; background: var(--paper);">
-                            <?php foreach ($allAssets as $asset): ?>
-                                <label class="exhibit-artwork-check" style="display: block; margin-bottom: 0.25rem; cursor: pointer;">
-                                    <input
-                                        type="checkbox"
-                                        name="items[]"
-                                        value="media_asset:<?= (int) $asset['id'] ?>"
-                                        <?= isItemAssigned('media_asset', (int) $asset['id'], $assignedItems) ? 'checked' : '' ?>
-                                    >
-                                    <span><?= htmlspecialchars($asset['title'] ?: ($asset['filename'] ?: ('Media Asset #' . $asset['id']))) ?> <small style="color:var(--ink-soft)">(<?= htmlspecialchars($asset['mime_type'] ?? '') ?>)</small></span>
-                                </label>
-                            <?php endforeach ?>
-                        </div>
-                    <?php endif ?>
-                </div>
-            </div>
+            <?php endif ?>
         </fieldset>
 
         <div class="form-actions">
