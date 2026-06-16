@@ -30,7 +30,7 @@ class BlogController
         $bodyClass = 'page-blog-post';
         $canonicalUrl = seo_absolute_url('/blog/posts/' . (int) $post['id']);
         $ogImage = $post['featured_image_url'] ?? null;
-        $comments = BlogPost::commentsFor((int) $post['id']);
+        $comments = Comment::commentsFor('post', (int) $post['id']);
         require dirname(__DIR__) . '/views/blog/show.php';
     }
 
@@ -95,7 +95,7 @@ class BlogController
             echo json_encode(['error' => 'Not found']);
             exit;
         }
-        $comments = BlogPost::commentsFor((int) $id);
+        $comments = Comment::commentsFor('post', (int) $id);
         $out = array_map(static fn (array $c): array => [
             'author_name' => (string) $c['author_name'],
             'content'     => (string) $c['content'],
@@ -135,14 +135,9 @@ class BlogController
         }
 
         $postId = (int) $id;
-        $authorId = 'anon-' . bin2hex(random_bytes(8));
 
         try {
-            $stmt = db()->prepare(
-                'INSERT INTO comments (post_id, author_id, author_name, content, created_at)
-                 VALUES (?, ?, ?, ?, NOW(3))'
-            );
-            $stmt->execute([$postId, $authorId, $authorName, $content]);
+            Comment::insertComment('post', $postId, $authorName, $content, $postId);
         } catch (Throwable) {
             http_response_code(500);
             echo json_encode(['error' => 'Could not save comment.']);

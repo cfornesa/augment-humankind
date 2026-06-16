@@ -991,6 +991,14 @@ h3 {
     display: none;
 }
 
+.gallery-see-more-btn {
+    margin-top: 0.25rem;
+}
+
+.gallery-see-more-btn[hidden] {
+    display: none;
+}
+
 /* Collection / exhibit detail header */
 .collection-detail-header {
     display: grid;
@@ -1437,15 +1445,45 @@ h3 {
 
 .post-actions {
     display: flex;
-    flex-wrap: wrap;
+    flex-direction: column;
     gap: 0.5rem;
     margin-top: 1rem;
+}
+
+.post-actions-top {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.post-actions-bottom {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.post-actions-left,
+.post-actions-right {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.post-actions-show {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-block: 1rem;
 }
 
 .post-action-btn {
     appearance: none;
     display: inline-flex;
     align-items: center;
+    gap: 0.35rem;
     padding: 0.35rem 0.75rem;
     border: 2px solid var(--line);
     background: var(--white);
@@ -1459,6 +1497,10 @@ h3 {
     box-shadow: 3px 3px 0 var(--line);
 }
 
+.post-action-btn svg {
+    flex-shrink: 0;
+}
+
 .post-action-btn:hover {
     box-shadow: 1px 1px 0 var(--line);
     transform: translate(2px, 2px);
@@ -1466,6 +1508,20 @@ h3 {
 
 .post-action-btn[aria-expanded="true"] {
     background: var(--yellow);
+}
+
+@media (max-width: 520px) {
+    .btn-label {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+    }
+    .post-action-btn {
+        padding: 0.4rem 0.5rem;
+    }
 }
 
 .post-expand-panel,

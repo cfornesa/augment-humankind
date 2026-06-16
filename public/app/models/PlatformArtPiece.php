@@ -123,8 +123,8 @@ class PlatformArtPiece
         $stmt = db()->prepare(
             'INSERT INTO art_pieces
                 (owner_user_id, title, prompt, engine, status,
-                 thumbnail_url, description, sort_order, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())'
+                 thumbnail_url, description, sort_order, comments_enabled, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())'
         );
         $stmt->execute([
             $data['owner_user_id'] ?? null,
@@ -135,6 +135,7 @@ class PlatformArtPiece
             $data['thumbnail_url'] ?? null,
             $data['description'] ?? null,
             $data['sort_order'] ?? self::nextSortOrder(),
+            isset($data['comments_enabled']) ? (int)(bool) $data['comments_enabled'] : 0,
         ]);
         return (int) db()->lastInsertId();
     }
@@ -144,7 +145,7 @@ class PlatformArtPiece
         $stmt = db()->prepare(
             'UPDATE art_pieces SET
                 title = ?, prompt = ?, engine = ?, status = ?,
-                thumbnail_url = ?, description = ?, sort_order = ?, updated_at = NOW()
+                thumbnail_url = ?, description = ?, sort_order = ?, comments_enabled = ?, updated_at = NOW()
              WHERE id = ?'
         );
         $stmt->execute([
@@ -155,6 +156,7 @@ class PlatformArtPiece
             $data['thumbnail_url'] ?? null,
             $data['description'] ?? null,
             $data['sort_order'] ?? 0,
+            isset($data['comments_enabled']) ? (int)(bool) $data['comments_enabled'] : 0,
             $id,
         ]);
     }

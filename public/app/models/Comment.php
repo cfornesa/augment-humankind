@@ -65,6 +65,41 @@ class Comment
         $stmt->execute([$id]);
     }
 
+    public static function commentsFor(string $itemType, int $itemId): array
+    {
+        if (!self::tableExists()) {
+            return [];
+        }
+
+        try {
+            $stmt = db()->prepare(
+                'SELECT * FROM comments
+                 WHERE item_type = ? AND item_id = ? AND deleted_at IS NULL
+                 ORDER BY created_at ASC, id ASC'
+            );
+            $stmt->execute([$itemType, $itemId]);
+            return $stmt->fetchAll();
+        } catch (Throwable) {
+            return [];
+        }
+    }
+
+    public static function insertComment(
+        string $itemType,
+        int    $itemId,
+        string $authorName,
+        string $content,
+        ?int   $postId = null
+    ): void {
+        $authorId = 'anon-' . bin2hex(random_bytes(8));
+        $stmt = db()->prepare(
+            'INSERT INTO comments
+                (post_id, item_type, item_id, author_id, author_name, content, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, NOW(3))'
+        );
+        $stmt->execute([$postId, $itemType, $itemId, $authorId, $authorName, $content]);
+    }
+
     private static function tableExists(): bool
     {
         static $exists = null;

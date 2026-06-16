@@ -58,6 +58,7 @@ class PlatformCollectionsAdminController
                 'rows' => (int) ($_POST['rows'] ?? 1),
                 'cols' => (int) ($_POST['cols'] ?? 1),
                 'iframe_code' => trim($_POST['iframe_code'] ?? '') ?: null,
+                'comments_enabled' => isset($_POST['comments_enabled']) ? 1 : 0,
             ]);
 
             $items = self::resolveSelectedItems();
@@ -128,6 +129,7 @@ class PlatformCollectionsAdminController
                 'cols' => (int) ($_POST['cols'] ?? 1),
                 'iframe_code' => trim($_POST['iframe_code'] ?? '') ?: null,
                 'sort_order' => (int) ($existing['sort_order'] ?? 0),
+                'comments_enabled' => isset($_POST['comments_enabled']) ? 1 : 0,
             ]);
 
             $items = self::resolveSelectedItems();

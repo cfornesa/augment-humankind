@@ -14,7 +14,7 @@ require __DIR__ . '/../partials/header.php';
         <div class="gallery-intro">
             <p class="eyebrow">Portfolio</p>
             <h1>Gallery</h1>
-            <p>The gallery is now a sampler. Each section links to a dedicated archive page that keeps loading more work as you scroll.</p>
+            <p>The gallery is a sampler. Each section links to a dedicated archive page with all works. Use <strong>See More</strong> to load additional items here, or browse the full archive.</p>
         </div>
 
         <div class="gallery-section" aria-labelledby="gallery-collections-heading">
@@ -31,8 +31,7 @@ require __DIR__ . '/../partials/header.php';
             <?php else: ?>
                 <div
                     class="portfolio-archive-listing"
-                    data-lazy-listing
-                    data-page-size="<?= count($collections) ?>"
+                    data-see-more-listing
                     data-next-offset="<?= count($collections) ?>"
                     data-has-more="<?= $collectionTotal > count($collections) ? 'true' : 'false' ?>"
                     data-fetch-url="/portfolio/exhibit-collections"
@@ -44,7 +43,11 @@ require __DIR__ . '/../partials/header.php';
                         <p class="portfolio-listing-status" data-listing-status aria-live="polite">
                             Showing <?= count($collections) ?> of <?= (int) $collectionTotal ?>.
                         </p>
-                        <div class="portfolio-listing-sentinel<?= $collectionTotal > count($collections) ? '' : ' is-hidden' ?>" data-listing-sentinel aria-hidden="true"></div>
+                        <?php if ($collectionTotal > count($collections)): ?>
+                        <button class="gallery-see-more-btn post-action-btn" data-listing-see-more-btn>
+                            See More
+                        </button>
+                        <?php endif; ?>
                     </div>
                 </div>
             <?php endif ?>
@@ -65,8 +68,7 @@ require __DIR__ . '/../partials/header.php';
             <?php else: ?>
                 <div
                     class="portfolio-archive-listing"
-                    data-lazy-listing
-                    data-page-size="<?= count($exhibits) ?>"
+                    data-see-more-listing
                     data-next-offset="<?= count($exhibits) ?>"
                     data-has-more="<?= $exhibitTotal > count($exhibits) ? 'true' : 'false' ?>"
                     data-fetch-url="/portfolio/exhibits"
@@ -78,7 +80,11 @@ require __DIR__ . '/../partials/header.php';
                         <p class="portfolio-listing-status" data-listing-status aria-live="polite">
                             Showing <?= count($exhibits) ?> of <?= (int) $exhibitTotal ?>.
                         </p>
-                        <div class="portfolio-listing-sentinel<?= $exhibitTotal > count($exhibits) ? '' : ' is-hidden' ?>" data-listing-sentinel aria-hidden="true"></div>
+                        <?php if ($exhibitTotal > count($exhibits)): ?>
+                        <button class="gallery-see-more-btn post-action-btn" data-listing-see-more-btn>
+                            See More
+                        </button>
+                        <?php endif; ?>
                     </div>
                 </div>
             <?php endif ?>
@@ -96,8 +102,7 @@ require __DIR__ . '/../partials/header.php';
                 </div>
                 <div
                     class="portfolio-archive-listing"
-                    data-lazy-listing
-                    data-page-size="<?= count($platformCollections) ?>"
+                    data-see-more-listing
                     data-next-offset="<?= count($platformCollections) ?>"
                     data-has-more="<?= $platformCollectionTotal > count($platformCollections) ? 'true' : 'false' ?>"
                     data-fetch-url="/portfolio/platform-collections"
@@ -109,7 +114,11 @@ require __DIR__ . '/../partials/header.php';
                         <p class="portfolio-listing-status" data-listing-status aria-live="polite">
                             Showing <?= count($platformCollections) ?> of <?= (int) $platformCollectionTotal ?>.
                         </p>
-                        <div class="portfolio-listing-sentinel<?= $platformCollectionTotal > count($platformCollections) ? '' : ' is-hidden' ?>" data-listing-sentinel aria-hidden="true"></div>
+                        <?php if ($platformCollectionTotal > count($platformCollections)): ?>
+                        <button class="gallery-see-more-btn post-action-btn" data-listing-see-more-btn>
+                            See More
+                        </button>
+                        <?php endif; ?>
                     </div>
                 </div>
             </div>
@@ -127,8 +136,7 @@ require __DIR__ . '/../partials/header.php';
                 </div>
                 <div
                     class="portfolio-archive-listing"
-                    data-lazy-listing
-                    data-page-size="<?= count($pieces) ?>"
+                    data-see-more-listing
                     data-next-offset="<?= count($pieces) ?>"
                     data-has-more="<?= $pieceTotal > count($pieces) ? 'true' : 'false' ?>"
                     data-fetch-url="/portfolio/pieces"
@@ -140,7 +148,11 @@ require __DIR__ . '/../partials/header.php';
                         <p class="portfolio-listing-status" data-listing-status aria-live="polite">
                             Showing <?= count($pieces) ?> of <?= (int) $pieceTotal ?>.
                         </p>
-                        <div class="portfolio-listing-sentinel<?= $pieceTotal > count($pieces) ? '' : ' is-hidden' ?>" data-listing-sentinel aria-hidden="true"></div>
+                        <?php if ($pieceTotal > count($pieces)): ?>
+                        <button class="gallery-see-more-btn post-action-btn" data-listing-see-more-btn>
+                            See More
+                        </button>
+                        <?php endif; ?>
                     </div>
                 </div>
             </div>

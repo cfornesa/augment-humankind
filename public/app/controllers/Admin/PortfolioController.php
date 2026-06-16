@@ -327,6 +327,7 @@ class PortfolioAdminController
                 'thumbnail_type' => $thumbType,
                 'thumbnail_value' => $thumbValue,
                 'sort_order' => 0,
+                'comments_enabled' => isset($_POST['comments_enabled']) ? 1 : 0,
             ]);
             Collection::syncExhibits($id, array_map('intval', $_POST['exhibit_ids'] ?? []));
             header('Location: /admin/exhibit-collections');
@@ -428,6 +429,7 @@ class PortfolioAdminController
                 'thumbnail_type' => $thumbType,
                 'thumbnail_value' => $thumbValue,
                 'sort_order' => (int) ($existing['sort_order'] ?? 0),
+                'comments_enabled' => isset($_POST['comments_enabled']) ? 1 : 0,
             ]);
             Collection::syncExhibits((int) $id, array_map('intval', $_POST['exhibit_ids'] ?? []));
             header('Location: /admin/exhibit-collections');
@@ -495,6 +497,7 @@ class PortfolioAdminController
             'thumbnail_type' => $thumbType,
             'thumbnail_value' => $thumbValue,
             'sort_order' => (int) ($_POST['sort_order'] ?? 0),
+            'comments_enabled' => isset($_POST['comments_enabled']) ? 1 : 0,
             'media_items' => $mediaItems,
             'collection_ids' => array_map('intval', $_POST['collection_ids'] ?? []),
         ];

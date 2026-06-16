@@ -340,6 +340,7 @@ class PiecesAdminController
             'thumbnail_url' => trim($_POST['thumbnail_url'] ?? '') ?: null,
             'description' => trim($_POST['description'] ?? '') ?: null,
             'sort_order' => isset($_POST['sort_order']) ? (int) $_POST['sort_order'] : null,
+            'comments_enabled' => isset($_POST['comments_enabled']) ? 1 : 0,
             'category_ids' => array_map('intval', $_POST['category_ids'] ?? []),
         ];
     }
@@ -356,6 +357,7 @@ class PiecesAdminController
             'status' => $_POST['status'] ?? ($existing['status'] ?? 'active'),
             'thumbnail_url' => trim((string) ($_POST['thumbnail_url'] ?? ($existing['thumbnail_url'] ?? ''))),
             'description' => trim((string) ($_POST['description'] ?? ($existing['description'] ?? ''))),
+            'comments_enabled' => isset($_POST['comments_enabled']) ? 1 : ($existing['comments_enabled'] ?? 0),
             'category_ids' => array_map('intval', $_POST['category_ids'] ?? ($existing ? PlatformArtPiece::categoryIds((int) $existing['id']) : [])),
         ];
         $draft['current_version'] = array_merge(
@@ -429,6 +431,61 @@ class PiecesAdminController
         return $code['html_code'] !== null
             || $code['css_code'] !== null
             || $code['generated_code'] !== null;
+    }
+
+    public static function captureThumbnail(string $id): void
+    {
+        admin_check();
+        header('Content-Type: application/json');
+
+        $piece = PlatformArtPiece::find((int) $id);
+        if (!$piece) {
+            http_response_code(404);
+            echo json_encode(['error' => 'Piece not found.']);
+            exit;
+        }
+
+        $raw = trim((string) ($_POST['image_data'] ?? ''));
+        if ($raw === '') {
+            http_response_code(400);
+            echo json_encode(['error' => 'No image data received.']);
+            exit;
+        }
+
+        // Strip data URI prefix if present
+        if (str_contains($raw, ',')) {
+            $raw = substr($raw, strpos($raw, ',') + 1);
+        }
+
+        $binary = base64_decode($raw, strict: true);
+        if ($binary === false || strlen($binary) < 100) {
+            http_response_code(400);
+            echo json_encode(['error' => 'Invalid image data.']);
+            exit;
+        }
+
+        $dir = dirname(__DIR__, 3) . '/uploads/thumbnails';
+        if (!is_dir($dir)) {
+            mkdir($dir, 0755, true);
+        }
+
+        $filename = 'piece-' . (int) $id . '-' . time() . '.png';
+        $path = $dir . '/' . $filename;
+
+        if (file_put_contents($path, $binary) === false) {
+            http_response_code(500);
+            echo json_encode(['error' => 'Could not save image.']);
+            exit;
+        }
+
+        $url = '/uploads/thumbnails/' . $filename;
+        PlatformArtPiece::update((int) $id, array_merge($piece, [
+            'thumbnail_url' => $url,
+            'comments_enabled' => (int)(bool) ($piece['comments_enabled'] ?? 0),
+        ]));
+
+        echo json_encode(['ok' => true, 'url' => $url]);
+        exit;
     }
 
     public static function generateForm(): void

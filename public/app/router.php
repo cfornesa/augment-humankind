@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 require __DIR__ . '/helpers/auth.php';
 require __DIR__ . '/helpers/oauth.php';
+require __DIR__ . '/helpers/icons.php';
 require __DIR__ . '/helpers/slugify.php';
 require __DIR__ . '/helpers/seo.php';
 require __DIR__ . '/helpers/upload.php';
@@ -65,9 +66,15 @@ $publicRoutes = [
     ['GET',  '/blog',                                        [BlogController::class, 'index']],
     ['GET',  '/blog/posts/([0-9]+)',                        [BlogController::class, 'show']],
     ['GET',  '/blog/categories',                            [BlogController::class, 'categories']],
-    ['GET',  '/api/posts/([0-9]+)/full',                   [BlogController::class, 'full']],
-    ['GET',  '/api/posts/([0-9]+)/comments',               [BlogController::class, 'commentsJson']],
-    ['POST', '/api/posts/([0-9]+)/comments',               [BlogController::class, 'commentSubmit']],
+    ['GET',  '/api/posts/([0-9]+)/full',                          [BlogController::class, 'full']],
+    ['GET',  '/api/posts/([0-9]+)/comments',                      [BlogController::class, 'commentsJson']],
+    ['POST', '/api/posts/([0-9]+)/comments',                      [BlogController::class, 'commentSubmit']],
+    ['GET',  '/api/pieces/([0-9]+)/comments',                     [PiecesController::class, 'commentsJson']],
+    ['POST', '/api/pieces/([0-9]+)/comments',                     [PiecesController::class, 'commentSubmit']],
+    ['GET',  '/api/exhibits/([a-z0-9-]+)/comments',               [PortfolioController::class, 'exhibitCommentsJson']],
+    ['POST', '/api/exhibits/([a-z0-9-]+)/comments',               [PortfolioController::class, 'exhibitCommentSubmit']],
+    ['GET',  '/api/exhibit-collections/([a-z0-9-]+)/comments',    [PortfolioController::class, 'collectionCommentsJson']],
+    ['POST', '/api/exhibit-collections/([a-z0-9-]+)/comments',    [PortfolioController::class, 'collectionCommentSubmit']],
     ['GET', '/blog/category/([a-z0-9-]+)',       [BlogController::class, 'category']],
     ['GET', '/blog/feeds',                       [BlogController::class, 'feeds']],
     ['GET', '/search',                           [BlogController::class, 'search']],
@@ -254,9 +261,10 @@ $adminRoutes = [
     ['POST', '/admin/pieces/refine-ai',        [PiecesAdminController::class, 'refineAi']],
     ['GET',  '/admin/pieces/create',           [PiecesAdminController::class, 'create']],
     ['POST', '/admin/pieces/create',           [PiecesAdminController::class, 'store']],
-    ['GET',  '/admin/pieces/([0-9]+)/edit',    [PiecesAdminController::class, 'edit']],
-    ['POST', '/admin/pieces/([0-9]+)/edit',    [PiecesAdminController::class, 'update']],
-    ['POST', '/admin/pieces/([0-9]+)/delete',  [PiecesAdminController::class, 'delete']],
+    ['GET',  '/admin/pieces/([0-9]+)/edit',              [PiecesAdminController::class, 'edit']],
+    ['POST', '/admin/pieces/([0-9]+)/edit',              [PiecesAdminController::class, 'update']],
+    ['POST', '/admin/pieces/([0-9]+)/capture-thumbnail', [PiecesAdminController::class, 'captureThumbnail']],
+    ['POST', '/admin/pieces/([0-9]+)/delete',            [PiecesAdminController::class, 'delete']],
     ['GET',  '/admin/pieces/([0-9]+)/versions', [PiecesAdminController::class, 'versions']],
     ['GET',  '/admin/pieces/([0-9]+)/versions/create', [PiecesAdminController::class, 'versionCreate']],
     ['POST', '/admin/pieces/([0-9]+)/versions/create', [PiecesAdminController::class, 'versionStore']],

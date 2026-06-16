@@ -136,8 +136,8 @@ class Collection
     public static function create(array $data): int
     {
         $stmt = db()->prepare(
-            'INSERT INTO collections (name, slug, description, thumbnail_type, thumbnail_value, sort_order)
-             VALUES (?, ?, ?, ?, ?, ?)'
+            'INSERT INTO collections (name, slug, description, thumbnail_type, thumbnail_value, sort_order, comments_enabled)
+             VALUES (?, ?, ?, ?, ?, ?, ?)'
         );
         $stmt->execute([
             $data['name'],
@@ -146,6 +146,7 @@ class Collection
             $data['thumbnail_type'] ?: null,
             $data['thumbnail_value'] ?: null,
             $data['sort_order'] ?? 0,
+            isset($data['comments_enabled']) ? (int)(bool) $data['comments_enabled'] : 0,
         ]);
         return (int) db()->lastInsertId();
     }
@@ -155,7 +156,7 @@ class Collection
         $stmt = db()->prepare(
             'UPDATE collections
              SET name = ?, slug = ?, description = ?,
-                 thumbnail_type = ?, thumbnail_value = ?, sort_order = ?
+                 thumbnail_type = ?, thumbnail_value = ?, sort_order = ?, comments_enabled = ?
              WHERE id = ?'
         );
         $stmt->execute([
@@ -165,6 +166,7 @@ class Collection
             $data['thumbnail_type'] ?: null,
             $data['thumbnail_value'] ?: null,
             $data['sort_order'] ?? 0,
+            isset($data['comments_enabled']) ? (int)(bool) $data['comments_enabled'] : 0,
             $id,
         ]);
     }

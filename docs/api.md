@@ -268,6 +268,39 @@ to read migrated content without the Node platform app:
 These routes are read-only in the PHP app. Owner/admin mutations use the
 existing `/admin/*` surfaces.
 
+## Comments API
+
+Per-item comment routes are public and unauthenticated. Comments are only
+served/accepted when `comments_enabled = 1` on the target item; attempting to
+GET or POST to a disabled item returns `{"error":"not found"}` or
+`{"error":"comments not enabled"}` with HTTP 404/403.
+
+### Art pieces
+
+- `GET /api/pieces/[id]/comments` — returns a JSON array of approved comments
+  for an art piece: `[{"author_name":"...","content":"...","created_at":"..."},...]`.
+- `POST /api/pieces/[id]/comments` — submits a new comment. Accepts
+  `author_name` (optional, up to 80 chars) and `content` (required, 1–500
+  chars). Includes a `hp_field` honeypot. Returns `{"ok":true}` on success.
+
+### Exhibits
+
+- `GET /api/exhibits/[slug]/comments` — returns comments for an exhibit.
+- `POST /api/exhibits/[slug]/comments` — submits a comment on an exhibit.
+
+### Exhibit Collections
+
+- `GET /api/exhibit-collections/[slug]/comments` — returns comments for a
+  native exhibit collection.
+- `POST /api/exhibit-collections/[slug]/comments` — submits a comment on an
+  exhibit collection.
+
+All six routes share the same submission shape and validation rules. Admin
+controls for enabling/disabling comments per item are in the respective admin
+edit forms (`/admin/pieces/[id]/edit`, `/admin/exhibits/[id]/edit`,
+`/admin/exhibit-collections/[id]/edit`, `/admin/platform-collections/[id]/edit`,
+`/admin/posts/[id]/edit`, `/admin/pages/[id]/edit`).
+
 `/api/media/[filename]` looks up a migrated `media_assets` row by its
 `filename` column and streams `file_data` with the stored `Content-Type` and
 `Cache-Control: public, max-age=31536000, immutable`. It is a public,
@@ -334,6 +367,7 @@ Inline create endpoints return JSON:
 - `GET /admin/pieces/[id]/edit`
 - `POST /admin/pieces/[id]/edit`
 - `POST /admin/pieces/[id]/delete`
+- `POST /admin/pieces/[id]/capture-thumbnail`
 - `GET /admin/pieces/library`
 - `GET /admin/pieces/generate`
 - `POST /admin/pieces/generate`
@@ -532,11 +566,21 @@ buildSourceFooter, etc.) are ported from the platform's `content.ts`.
 - `POST /admin/pieces/[id]/versions/[vid]/edit`
 - `POST /admin/pieces/[id]/versions/[vid]/set-current`
 
-Art piece create/update accepts title, prompt, engine, description, and
-thumbnail URL. Numeric IDs are canonical for public piece routes. Versions are
-managed separately; each version has prompt, structured spec, HTML/CSS/generated
-code, generation vendor, model, and validation status. The public renderer
-supports migrated p5, c2, Three.js, SVG, and generic HTML/code versions.
+Art piece create/update accepts title, prompt, engine, description,
+thumbnail URL, and a `comments_enabled` toggle. Numeric IDs are canonical for
+public piece routes. Versions are managed separately; each version has prompt,
+structured spec, HTML/CSS/generated code, generation vendor, model, and
+validation status. The public renderer supports migrated p5, c2, Three.js,
+SVG, and generic HTML/code versions.
+
+`POST /admin/pieces/[id]/capture-thumbnail` renders the piece's current version
+code in an off-screen sandboxed iframe with `preserveDrawingBuffer: true`
+(overriding the Three.js default), captures the canvas as a PNG after a
+3-second animation stabilization delay, and saves it to
+`public/uploads/thumbnails/piece-{id}-{time}.png`. Accepts `image_data`
+(base64-encoded PNG string) in the request body. Returns
+`{"ok":true,"url":"/uploads/thumbnails/piece-{id}-{time}.png"}` on success and
+updates `art_pieces.thumbnail_url`.
 
 `GET /admin/pieces/generate` renders the interface for AI piece generation, letting the admin select the engine, prompt, vendor settings, and model. `POST /admin/pieces/generate` triggers the generation process (running a 3-attempt validation and repair loop checking window.sketch constraints and output structure) and returns a preview sandbox. `POST /admin/pieces/generate/save` saves the generated metadata and code as a new piece with its initial version.
 

@@ -1470,3 +1470,98 @@ without breaking old public links.
   naming remain as historical context; the canonical current naming is defined
   by this entry and the updated docs.
 
+## 2026-06-15 — Part A: Art Piece Thumbnail Capture
+
+### Context
+Art piece thumbnails in the gallery were blank black placeholders because
+`thumbnail_url` is a plain text field with no capture mechanism, and
+Three.js defaults `preserveDrawingBuffer: false`, making `canvas.toDataURL()`
+return a black frame.
+
+### Implemented
+- Added `POST /admin/pieces/[id]/capture-thumbnail` endpoint to
+  `PiecesAdminController::captureThumbnail()`.
+  - Accepts `image_data` (base64 PNG) from the admin form JS.
+  - Decodes and saves to `public/uploads/thumbnails/piece-{id}-{time}.png`.
+  - Updates `art_pieces.thumbnail_url` via `PlatformArtPiece::update()`.
+  - Returns `{"ok":true,"url":"/uploads/thumbnails/piece-{id}-{time}.png"}`.
+- Added capture JS to `public/app/views/admin/pieces/form.php`:
+  - "Capture Thumbnail" button visible in edit mode only.
+  - Creates an off-screen 960×540 iframe (`sandbox="allow-scripts"`,
+    `position:fixed; left:-9999px`).
+  - String-replaces `preserveDrawingBuffer` in the srcdoc to `true`
+    before injecting Three.js pieces (the platform's approach from
+    `art-piece-thumbnail.ts`).
+  - Waits 3 s for animation stabilization, then `canvas.toDataURL()`.
+  - POSTs base64 to the capture endpoint; updates the form preview on success.
+- Created `public/uploads/thumbnails/` directory (`.gitkeep` committed).
+- Added route to `public/app/router.php`.
+- Added `comments_enabled` to `resolvePieceData()` / `draftPieceFromPost()`
+  (see Part E below).
+
+### Verification
+- `php -l` clean on all changed files.
+
+## 2026-06-15 — Part E: Polymorphic Comments + Comments Toggle
+
+### Decisions (required sign-off per the plan)
+- Confirmed by user: proceed with making the `comments` table polymorphic and
+  adding `comments_enabled` to all six content tables.
+- Platform database (`u276695328_fornesusart`) was not touched.
+
+### Schema Changes Applied — `migrations/2026-06-15-comments-polymorphic.sql`
+Applied to `u276695328_augmentart` via `php /tmp/run-migration.php` (local
+MySQL 9.x client lacks `mysql_native_password`; PDO is used instead — same
+pattern as the earlier `scripts/run-sql.php`).
+
+```sql
+ALTER TABLE comments
+    ADD COLUMN item_type VARCHAR(32) NULL AFTER post_id,
+    ADD COLUMN item_id   INT         NULL AFTER item_type;
+UPDATE comments SET item_type = 'post', item_id = post_id
+    WHERE post_id IS NOT NULL;
+ALTER TABLE comments DROP FOREIGN KEY comments_post_id_fk;
+ALTER TABLE comments MODIFY post_id INT NULL;
+ALTER TABLE comments ADD INDEX comments_item_idx (item_type, item_id);
+ALTER TABLE posts              ADD COLUMN comments_enabled TINYINT(1) NOT NULL DEFAULT 0;
+ALTER TABLE pages              ADD COLUMN comments_enabled TINYINT(1) NOT NULL DEFAULT 0;
+ALTER TABLE art_pieces         ADD COLUMN comments_enabled TINYINT(1) NOT NULL DEFAULT 0;
+ALTER TABLE platform_collections ADD COLUMN comments_enabled TINYINT(1) NOT NULL DEFAULT 0;
+ALTER TABLE collections        ADD COLUMN comments_enabled TINYINT(1) NOT NULL DEFAULT 0;
+ALTER TABLE exhibits           ADD COLUMN comments_enabled TINYINT(1) NOT NULL DEFAULT 0;
+```
+
+### Implemented
+- `public/app/models/Comment.php` — added `commentsFor(string $type, int $id)`
+  and `insertComment(string $type, int $id, string $name, string $content, ?int $postId)`.
+- `public/app/controllers/BlogController.php` — migrated to `Comment::commentsFor('post', id)`
+  and `Comment::insertComment('post', ...)`.
+- Six content models (`Exhibit`, `Collection`, `PlatformCollection`,
+  `PlatformArtPiece`, posts, pages) — added `comments_enabled` to
+  `create()` / `update()`.
+- Six admin form views — added `comments_enabled` checkbox (`.checkbox-label`
+  CSS pattern).
+- Six admin controllers — thread `comments_enabled` through to model calls.
+- `public/app/controllers/PortfolioController.php` — added
+  `exhibitCommentsJson`, `exhibitCommentSubmit`, `collectionCommentsJson`,
+  `collectionCommentSubmit`, and shared `processCommentSubmit`.
+- `public/app/controllers/PiecesController.php` — added `commentsJson`,
+  `commentSubmit`.
+- Three public views (`portfolio/exhibit.php`, `portfolio/collection.php`,
+  `pieces/show.php`) — conditional `.comments-section.blog-comments` section
+  with `data-comment-url` attribute overriding the default post comment URL.
+- `public/assets/js/main.js` — comment form handler reads
+  `form.dataset.commentUrl` as override URL; falls back to closest
+  `.comments-section → .post-comments-list` for append target when outside
+  a blog post panel.
+- `public/assets/admin.css` — added `.checkbox-label` + `input[type=checkbox]`
+  styles using `--orange` accent color.
+- `public/app/router.php` — added six new public comment API routes and the
+  capture-thumbnail admin route.
+
+### Verification
+- All six `comments_enabled` columns confirmed present via
+  `SHOW COLUMNS FROM ... LIKE 'comments_enabled'`.
+- `post_id` confirmed nullable; `item_type`/`item_id` columns present;
+  `comments_item_idx` index created.
+

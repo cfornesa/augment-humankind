@@ -283,6 +283,25 @@ $preferredProfileId = $preferredProfileId ?? null;
                             <label for="thumbnail_url">Thumbnail URL</label>
                             <input id="thumbnail_url" name="thumbnail_url" type="url" maxlength="2048"
                                    value="<?= e($piece['thumbnail_url'] ?? '') ?>">
+                            <?php if (!empty($piece['thumbnail_url'])): ?>
+                                <img id="capture-preview-img" src="<?= e($piece['thumbnail_url'] ?? '') ?>"
+                                     style="max-width:200px;max-height:120px;border:2px solid var(--line);display:block;margin-top:0.5rem;" alt="">
+                            <?php endif ?>
+                            <?php if (!empty($piece['id'])): ?>
+                                <button type="button" id="btn-capture-thumbnail" class="admin-btn admin-btn-sm"
+                                        style="margin-top:0.5rem;"
+                                        data-piece-id="<?= (int) $piece['id'] ?>">
+                                    Capture Thumbnail
+                                </button>
+                            <?php endif ?>
+                        </div>
+
+                        <div class="field">
+                            <label class="checkbox-label">
+                                <input type="checkbox" name="comments_enabled" value="1"
+                                       <?= !empty($piece['comments_enabled']) ? 'checked' : '' ?>>
+                                Enable comments on this piece
+                            </label>
                         </div>
 
                         <div class="field">
@@ -599,11 +618,107 @@ $preferredProfileId = $preferredProfileId ?? null;
         toggleEditor.classList.remove('active');
         panePreview.classList.remove('is-hidden-mobile');
         paneEditor.classList.add('is-hidden-mobile');
-        // Trigger resize event so three.js/p5 sketches size correctly in full canvas preview
         setTimeout(function() {
             window.dispatchEvent(new Event('resize'));
         }, 50);
     });
+
+    // 7. Thumbnail capture
+    var captureBtn = document.getElementById('btn-capture-thumbnail');
+    if (captureBtn) {
+        captureBtn.addEventListener('click', async function () {
+            var pieceId = captureBtn.dataset.pieceId;
+            var engine = engineField.value || 'p5';
+            var html = htmlField.value || '';
+            var css = cssField.value || '';
+            var js = jsField.value || '';
+
+            if (!html && !js) {
+                alert('Add HTML and JS code in the code tabs before capturing a thumbnail.');
+                return;
+            }
+
+            captureBtn.textContent = 'Capturing…';
+            captureBtn.disabled = true;
+
+            try {
+                var srcdoc = renderDocumentJS(titleField.value || 'Art piece', engine, html, css, js);
+
+                // Inject preserveDrawingBuffer:true for Three.js so toDataURL() works
+                if (engine === 'three') {
+                    srcdoc = srcdoc.replace(
+                        'super({ ...(params || {}), canvas });',
+                        'super({ ...(params || {}), canvas, preserveDrawingBuffer: true });'
+                    );
+                }
+
+                // Mount in off-screen iframe
+                var captureFrame = document.createElement('iframe');
+                captureFrame.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:960px;height:540px;border:none;';
+                captureFrame.sandbox = 'allow-scripts';
+                document.body.appendChild(captureFrame);
+
+                captureFrame.srcdoc = srcdoc;
+                await new Promise(function (resolve) {
+                    captureFrame.onload = resolve;
+                    setTimeout(resolve, 800);
+                });
+
+                // Wait ~3s for animation to stabilise
+                await new Promise(function (resolve) { setTimeout(resolve, 3000); });
+
+                var iframeDoc = captureFrame.contentDocument;
+                var canvas = iframeDoc && iframeDoc.querySelector('canvas');
+
+                if (!canvas) {
+                    throw new Error('No canvas found. Make sure the piece renders to a canvas element.');
+                }
+
+                var imageData;
+                try {
+                    imageData = canvas.toDataURL('image/png');
+                } catch (e) {
+                    throw new Error('Canvas capture failed: ' + e.message + '. For Three.js this is expected until the piece is saved once.');
+                }
+
+                document.body.removeChild(captureFrame);
+
+                var formData = new FormData();
+                formData.append('image_data', imageData);
+
+                var resp = await fetch('/admin/pieces/' + pieceId + '/capture-thumbnail', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!resp.ok) {
+                    var err = await resp.json();
+                    throw new Error(err.error || 'Server error ' + resp.status);
+                }
+
+                var result = await resp.json();
+
+                document.getElementById('thumbnail_url').value = result.url;
+
+                var existing = document.getElementById('capture-preview-img');
+                if (!existing) {
+                    existing = document.createElement('img');
+                    existing.id = 'capture-preview-img';
+                    existing.style.cssText = 'max-width:200px;max-height:120px;border:2px solid var(--line);display:block;margin-top:0.5rem;';
+                    document.getElementById('thumbnail_url').insertAdjacentElement('afterend', existing);
+                }
+                existing.src = result.url + '?t=' + Date.now();
+
+                captureBtn.textContent = 'Captured!';
+                setTimeout(function () { captureBtn.textContent = 'Capture Thumbnail'; }, 3000);
+            } catch (err) {
+                alert('Thumbnail capture failed: ' + err.message);
+                captureBtn.textContent = 'Capture Thumbnail';
+            } finally {
+                captureBtn.disabled = false;
+            }
+        });
+    }
 })();
 </script>
 <?php

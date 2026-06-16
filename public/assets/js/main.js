@@ -92,15 +92,98 @@ document.querySelectorAll('[data-checkbox-sortable]').forEach(list => {
 
 // Portfolio archives: load the next batch from the same route on scroll
 (function () {
+    function responsiveBatchSize() {
+        const w = window.innerWidth;
+        return w < 640 ? 1 : w < 1024 ? 2 : 3;
+    }
+
+    async function fetchBatch(fetchUrl, nextOffset, pageSize) {
+        const url = new URL(fetchUrl, window.location.origin);
+        url.searchParams.set('partial', '1');
+        url.searchParams.set('offset', String(nextOffset));
+        url.searchParams.set('limit', String(pageSize));
+        const response = await fetch(url.toString(), {
+            headers: { 'X-Requested-With': 'fetch' },
+        });
+        if (!response.ok) throw new Error(`Request failed with ${response.status}`);
+        return response.text();
+    }
+
+    function applyBatch(html, grid, listing, status) {
+        const template = document.createElement('template');
+        template.innerHTML = html.trim();
+        const batch = template.content.querySelector('[data-listing-batch]');
+        if (!batch) throw new Error('Missing listing batch payload.');
+
+        while (batch.firstChild) grid.appendChild(batch.firstChild);
+
+        const newOffset = Number.parseInt(batch.dataset.nextOffset || '', 10) || 0;
+        const hasMore = batch.dataset.hasMore === 'true';
+        listing.dataset.nextOffset = String(newOffset);
+        listing.dataset.hasMore = hasMore ? 'true' : 'false';
+
+        if (status) {
+            status.textContent = hasMore
+                ? `Showing ${grid.children.length} items so far.`
+                : `All ${grid.children.length} items loaded.`;
+        }
+        return hasMore;
+    }
+
+    // --- See More button mode (gallery page) ---
+    document.querySelectorAll('[data-see-more-listing]').forEach(listing => {
+        const grid   = listing.querySelector('[data-listing-grid]');
+        const btn    = listing.querySelector('[data-listing-see-more-btn]');
+        const status = listing.querySelector('[data-listing-status]');
+        const fetchUrl = listing.dataset.fetchUrl || window.location.pathname;
+        let nextOffset = Number.parseInt(listing.dataset.nextOffset || '0', 10) || 0;
+        let hasMore = listing.dataset.hasMore === 'true';
+        let loading = false;
+
+        if (!grid || !btn || !hasMore) {
+            btn?.setAttribute('hidden', '');
+            return;
+        }
+
+        btn.addEventListener('click', async () => {
+            if (loading || !hasMore) return;
+            loading = true;
+            btn.disabled = true;
+            btn.textContent = 'Loading…';
+
+            try {
+                const pageSize = responsiveBatchSize();
+                const html = await fetchBatch(fetchUrl, nextOffset, pageSize);
+                hasMore = applyBatch(html, grid, listing, status);
+                nextOffset = Number.parseInt(listing.dataset.nextOffset || '', 10) || nextOffset;
+                if (!hasMore) btn.setAttribute('hidden', '');
+                else {
+                    btn.disabled = false;
+                    btn.textContent = 'See More';
+                }
+            } catch (error) {
+                if (status) status.textContent = 'Could not load more items right now.';
+                btn.disabled = false;
+                btn.textContent = 'See More';
+                console.error(error);
+            } finally {
+                loading = false;
+            }
+        });
+    });
+
+    // --- Infinite scroll mode (archive pages) ---
     document.querySelectorAll('[data-lazy-listing]').forEach(listing => {
         const grid = listing.querySelector('[data-listing-grid]');
         const sentinel = listing.querySelector('[data-listing-sentinel]');
         const status = listing.querySelector('[data-listing-status]');
         const fetchUrl = listing.dataset.fetchUrl || window.location.pathname;
-        const pageSize = Number.parseInt(listing.dataset.pageSize || '12', 10) || 12;
-        let nextOffset = Number.parseInt(listing.dataset.nextOffset || '0', 10) || 0;
         let hasMore = listing.dataset.hasMore === 'true';
         let loading = false;
+
+        // Override page size with responsive value
+        listing.dataset.pageSize = String(responsiveBatchSize());
+        let nextOffset = Number.parseInt(listing.dataset.nextOffset || '0', 10) || 0;
 
         if (!grid || !sentinel || !hasMore) {
             sentinel?.classList.add('is-hidden');
@@ -113,38 +196,10 @@ document.querySelectorAll('[data-checkbox-sortable]').forEach(list => {
             if (status) status.textContent = 'Loading more…';
 
             try {
-                const url = new URL(fetchUrl, window.location.origin);
-                url.searchParams.set('partial', '1');
-                url.searchParams.set('offset', String(nextOffset));
-                url.searchParams.set('limit', String(pageSize));
-
-                const response = await fetch(url.toString(), {
-                    headers: { 'X-Requested-With': 'fetch' },
-                });
-                if (!response.ok) {
-                    throw new Error(`Request failed with ${response.status}`);
-                }
-
-                const html = await response.text();
-                const template = document.createElement('template');
-                template.innerHTML = html.trim();
-                const batch = template.content.querySelector('[data-listing-batch]');
-                if (!batch) {
-                    throw new Error('Missing listing batch payload.');
-                }
-
-                while (batch.firstChild) {
-                    grid.appendChild(batch.firstChild);
-                }
-
-                nextOffset = Number.parseInt(batch.dataset.nextOffset || String(nextOffset), 10) || nextOffset;
-                hasMore = batch.dataset.hasMore === 'true';
-                listing.dataset.nextOffset = String(nextOffset);
-                listing.dataset.hasMore = hasMore ? 'true' : 'false';
-
-                if (status) {
-                    status.textContent = hasMore ? `Showing ${grid.children.length} items so far.` : `All ${grid.children.length} items loaded.`;
-                }
+                const pageSize = responsiveBatchSize();
+                const html = await fetchBatch(fetchUrl, nextOffset, pageSize);
+                hasMore = applyBatch(html, grid, listing, status);
+                nextOffset = Number.parseInt(listing.dataset.nextOffset || '', 10) || nextOffset;
 
                 if (!hasMore) {
                     sentinel.classList.add('is-hidden');
@@ -160,13 +215,9 @@ document.querySelectorAll('[data-checkbox-sortable]').forEach(list => {
 
         const observer = new IntersectionObserver(entries => {
             entries.forEach(entry => {
-                if (entry.isIntersecting) {
-                    loadMore();
-                }
+                if (entry.isIntersecting) loadMore();
             });
-        }, {
-            rootMargin: '320px 0px',
-        });
+        }, { rootMargin: '320px 0px' });
 
         observer.observe(sentinel);
     });
@@ -824,9 +875,12 @@ document.querySelectorAll('[data-checkbox-sortable]').forEach(list => {
         if (!form) return;
         e.preventDefault();
 
-        const postId  = form.dataset.postId;
-        const panel   = document.getElementById('post-comments-' + postId);
-        const list    = panel?.querySelector('.post-comments-list');
+        const postId     = form.dataset.postId;
+        const commentUrl = form.dataset.commentUrl || '/api/posts/' + postId + '/comments';
+        const panel      = postId ? document.getElementById('post-comments-' + postId) : null;
+        const list       = panel
+            ? panel.querySelector('.post-comments-list')
+            : form.closest('.comments-section')?.querySelector('.post-comments-list');
         const submit  = form.querySelector('[type="submit"]');
         const data    = new FormData(form);
 
@@ -834,7 +888,7 @@ document.querySelectorAll('[data-checkbox-sortable]').forEach(list => {
         submit.textContent = 'Posting…';
 
         try {
-            const res  = await fetch('/api/posts/' + postId + '/comments', { method: 'POST', body: new URLSearchParams(data) });
+            const res  = await fetch(commentUrl, { method: 'POST', body: new URLSearchParams(data) });
             const json = await res.json();
             if (!res.ok) throw new Error(json.error || 'Error');
             if (list) appendComment(list, json.author_name || 'Anonymous', json.content);

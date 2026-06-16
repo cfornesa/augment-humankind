@@ -91,8 +91,8 @@ class Exhibit
         $stmt = db()->prepare(
             'INSERT INTO exhibits
                 (title, artist_name, slug, year, medium, dimensions, description, placard_notes,
-                 thumbnail_type, thumbnail_value, sort_order)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                 thumbnail_type, thumbnail_value, sort_order, comments_enabled)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         );
         $stmt->execute([
             $data['title'],
@@ -106,6 +106,7 @@ class Exhibit
             $data['thumbnail_type'] ?: null,
             $data['thumbnail_value'] ?: null,
             $data['sort_order'] ?? 0,
+            isset($data['comments_enabled']) ? (int)(bool) $data['comments_enabled'] : 0,
         ]);
         return (int) db()->lastInsertId();
     }
@@ -116,7 +117,7 @@ class Exhibit
             'UPDATE exhibits SET
                 title = ?, artist_name = ?, slug = ?, year = ?, medium = ?, dimensions = ?,
                 description = ?, placard_notes = ?,
-                thumbnail_type = ?, thumbnail_value = ?, sort_order = ?
+                thumbnail_type = ?, thumbnail_value = ?, sort_order = ?, comments_enabled = ?
              WHERE id = ?'
         );
         $stmt->execute([
@@ -131,6 +132,7 @@ class Exhibit
             $data['thumbnail_type'] ?: null,
             $data['thumbnail_value'] ?: null,
             $data['sort_order'] ?? 0,
+            isset($data['comments_enabled']) ? (int)(bool) $data['comments_enabled'] : 0,
             $id,
         ]);
     }

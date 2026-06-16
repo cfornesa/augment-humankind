@@ -139,6 +139,14 @@ ob_start();
             <?php endif ?>
         </fieldset>
 
+        <div class="form-row">
+            <label class="checkbox-label">
+                <input type="checkbox" name="comments_enabled" value="1"
+                       <?= !empty($collection['comments_enabled']) ? 'checked' : '' ?>>
+                Enable comments on this platform collection
+            </label>
+        </div>
+
         <div class="form-actions">
             <button type="submit" class="admin-btn"><?= $isEdit ? 'Save Changes' : 'Create Collection' ?></button>
             <a href="/admin/platform-collections" class="admin-btn admin-btn-ghost">Cancel</a>

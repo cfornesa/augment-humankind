@@ -5,7 +5,7 @@ declare(strict_types=1);
 class PortfolioController
 {
     private const GALLERY_PREVIEW_LIMIT = 3;
-    private const ARCHIVE_PAGE_SIZE = 12;
+    private const ARCHIVE_PAGE_SIZE = 3;
 
     public static function gallery(): void
     {
@@ -147,6 +147,9 @@ class PortfolioController
         }
 
         $exhibits = Collection::exhibits((int) $collection['id']);
+        $comments = (int)($collection['comments_enabled'] ?? 0)
+            ? Comment::commentsFor('collection', (int) $collection['id'])
+            : [];
         require dirname(__DIR__) . '/views/portfolio/collection.php';
     }
 
@@ -159,6 +162,9 @@ class PortfolioController
         }
 
         $mediaItems = $exhibit['media_items'] ?? Exhibit::resolvedMediaItems($exhibit);
+        $comments = (int)($exhibit['comments_enabled'] ?? 0)
+            ? Comment::commentsFor('exhibit', (int) $exhibit['id'])
+            : [];
         require dirname(__DIR__) . '/views/portfolio/exhibit.php';
     }
 
@@ -233,6 +239,98 @@ class PortfolioController
         unset($collection);
 
         return $collections;
+    }
+
+    public static function exhibitCommentsJson(string $slug): void
+    {
+        header('Content-Type: application/json');
+        $exhibit = Exhibit::findBySlug($slug);
+        if (!$exhibit) {
+            http_response_code(404);
+            echo json_encode(['error' => 'Not found']);
+            exit;
+        }
+        $comments = Comment::commentsFor('exhibit', (int) $exhibit['id']);
+        echo json_encode(array_map(static fn (array $c): array => [
+            'author_name' => (string) $c['author_name'],
+            'content'     => (string) $c['content'],
+            'created_at'  => (string) $c['created_at'],
+        ], $comments));
+        exit;
+    }
+
+    public static function exhibitCommentSubmit(string $slug): void
+    {
+        header('Content-Type: application/json');
+        $exhibit = Exhibit::findBySlug($slug);
+        if (!$exhibit || !(int)($exhibit['comments_enabled'] ?? 0)) {
+            http_response_code(404);
+            echo json_encode(['error' => 'Not found']);
+            exit;
+        }
+        self::processCommentSubmit('exhibit', (int) $exhibit['id']);
+    }
+
+    public static function collectionCommentsJson(string $slug): void
+    {
+        header('Content-Type: application/json');
+        $collection = Collection::findBySlug($slug);
+        if (!$collection) {
+            http_response_code(404);
+            echo json_encode(['error' => 'Not found']);
+            exit;
+        }
+        $comments = Comment::commentsFor('collection', (int) $collection['id']);
+        echo json_encode(array_map(static fn (array $c): array => [
+            'author_name' => (string) $c['author_name'],
+            'content'     => (string) $c['content'],
+            'created_at'  => (string) $c['created_at'],
+        ], $comments));
+        exit;
+    }
+
+    public static function collectionCommentSubmit(string $slug): void
+    {
+        header('Content-Type: application/json');
+        $collection = Collection::findBySlug($slug);
+        if (!$collection || !(int)($collection['comments_enabled'] ?? 0)) {
+            http_response_code(404);
+            echo json_encode(['error' => 'Not found']);
+            exit;
+        }
+        self::processCommentSubmit('collection', (int) $collection['id']);
+    }
+
+    private static function processCommentSubmit(string $itemType, int $itemId): never
+    {
+        $hp = trim((string) ($_POST['hp_field'] ?? ''));
+        if ($hp !== '') {
+            echo json_encode(['ok' => true]);
+            exit;
+        }
+
+        $content = trim((string) ($_POST['content'] ?? ''));
+        if ($content === '' || mb_strlen($content) > 500) {
+            http_response_code(422);
+            echo json_encode(['error' => 'Comment must be 1–500 characters.']);
+            exit;
+        }
+
+        $authorName = mb_substr(trim((string) ($_POST['author_name'] ?? '')), 0, 80);
+        if ($authorName === '') {
+            $authorName = 'Anonymous';
+        }
+
+        try {
+            Comment::insertComment($itemType, $itemId, $authorName, $content);
+        } catch (Throwable) {
+            http_response_code(500);
+            echo json_encode(['error' => 'Could not save comment.']);
+            exit;
+        }
+
+        echo json_encode(['ok' => true, 'author_name' => $authorName, 'content' => $content]);
+        exit;
     }
 
     private static function decoratePieces(array $pieces): array

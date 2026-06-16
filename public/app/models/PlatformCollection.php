@@ -136,8 +136,8 @@ class PlatformCollection
     {
         $stmt = db()->prepare(
             'INSERT INTO platform_collections
-                (slug, name, description, artist_statement, biography, `rows`, cols, iframe_code, sort_order)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                (slug, name, description, artist_statement, biography, `rows`, cols, iframe_code, sort_order, comments_enabled)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         );
         $stmt->execute([
             $data['slug'],
@@ -149,6 +149,7 @@ class PlatformCollection
             $data['cols'] ?? 1,
             $data['iframe_code'] ?? null,
             $data['sort_order'] ?? self::nextSortOrder(),
+            isset($data['comments_enabled']) ? (int)(bool) $data['comments_enabled'] : 0,
         ]);
         return (int) db()->lastInsertId();
     }
@@ -158,7 +159,7 @@ class PlatformCollection
         $stmt = db()->prepare(
             'UPDATE platform_collections SET
                 slug = ?, name = ?, description = ?, artist_statement = ?,
-                biography = ?, `rows` = ?, cols = ?, iframe_code = ?, sort_order = ?
+                biography = ?, `rows` = ?, cols = ?, iframe_code = ?, sort_order = ?, comments_enabled = ?
              WHERE id = ?'
         );
         $stmt->execute([
@@ -171,6 +172,7 @@ class PlatformCollection
             $data['cols'] ?? 1,
             $data['iframe_code'] ?? null,
             $data['sort_order'] ?? 0,
+            isset($data['comments_enabled']) ? (int)(bool) $data['comments_enabled'] : 0,
             $id,
         ]);
     }

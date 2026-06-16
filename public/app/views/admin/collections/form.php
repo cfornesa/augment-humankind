@@ -84,6 +84,14 @@ ob_start();
             <?php endif ?>
         </fieldset>
 
+        <div class="form-row">
+            <label class="checkbox-label">
+                <input type="checkbox" name="comments_enabled" value="1"
+                       <?= !empty($collection['comments_enabled']) ? 'checked' : '' ?>>
+                Enable comments on this collection
+            </label>
+        </div>
+
         <div class="form-actions">
             <button type="submit" class="admin-btn"><?= htmlspecialchars($isEdit ? 'Save Changes' : 'Create ' . $collectionLabel) ?></button>
             <a href="<?= htmlspecialchars($collectionIndexPath) ?>" class="admin-btn admin-btn-ghost">Cancel</a>

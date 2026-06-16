@@ -342,6 +342,14 @@ ob_start();
             </template>
         </fieldset>
 
+        <div class="form-row">
+            <label class="checkbox-label">
+                <input type="checkbox" name="comments_enabled" value="1"
+                       <?= !empty($exhibit['comments_enabled']) ? 'checked' : '' ?>>
+                Enable comments on this exhibit
+            </label>
+        </div>
+
         <div class="form-actions">
             <button type="submit" class="admin-btn"><?= $isEdit ? 'Save Changes' : 'Create Work' ?></button>
             <a href="/admin/exhibits" class="admin-btn admin-btn-ghost">Cancel</a>
