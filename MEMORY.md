@@ -93,3 +93,4 @@ or rejection. -->
 2026-06-16 DECISION Added a Thumbnail column to Pieces and manual "Generate Thumbnail" buttons on rows in both pieces and platform collections list views.
 2026-06-16 DECISION Dark-mode contrast regressions caused by bright accent surfaces inheriting scheme-flipped text were corrected site-wide across all style presets, and row-level actions for pieces/platform collections were unified to one lightweight button pattern.
 2026-06-16 DECISION Public member profiles now live at `/user/{username}` with `/user/settings` for profile and style preferences. Comments require sign-in, and owners can now edit or soft-delete their own comments on posts, pieces, exhibits, and exhibit collections.
+2026-06-16 DECISION Owner-edit comment forms stay hidden until explicitly opened, and blog feed cards now expand inline by replacing the preview slot while keeping an always-visible Expand/Collapse toggle.

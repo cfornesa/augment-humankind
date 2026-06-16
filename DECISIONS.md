@@ -1700,3 +1700,15 @@ Further manual testing surfaced four remaining UX/correctness gaps in the site i
 - Public comments now follow lightweight parity across surfaces instead of an admin-only moderation pattern.
 - Any signed-in person may edit or soft-delete only their own comments, whether they arrived through public OAuth user auth or an admin session that resolves to the same identity.
 - The owner actions are shared across blog posts, art pieces, exhibits, and exhibit collections through `/api/comments/{id}/edit` and `/api/comments/{id}/delete`, while broader moderation remains in `/admin/comments`.
+
+## 2026-06-16 — Comment Editing Visibility and Feed-Card Reader Toggle
+
+### Comment Editing Visibility
+- Fixed the public comment owner UI so the inline edit form is hidden by default and appears only after the pencil button is activated.
+- The Cancel path now returns the comment to plain read mode instead of leaving the edit interface visible.
+- Root cause was CSS overriding the native `hidden` attribute on `.post-comment-edit-form`; the form now explicitly stays `display: none` while hidden.
+
+### Feed-Card Reader Toggle
+- Adjusted blog feed expansion so opening a card replaces the preview excerpt/meta slot with the full post body instead of inserting the body below the action row.
+- Kept the action row beneath the expanded body, matching the single-post reading flow more closely while preserving inline comments, embed, and share controls.
+- The top-right toggle is now a true two-state control: collapsed cards show `Expand` with the maximize icon, expanded cards keep the button visible and switch to `Collapse` with a minimize icon.

@@ -33,27 +33,39 @@ $postTitle = htmlspecialchars((string) (($post['title'] ?? '') ?: 'Untitled post
                 <?php endif; ?>
                 <button class="post-action-btn post-expand-btn"
                         data-post-id="<?= $postId ?>"
+                        data-collapsed-label="Expand"
+                        data-expanded-label="Collapse"
+                        data-collapsed-aria-label="Expand post"
+                        data-expanded-aria-label="Collapse inline post"
+                        data-collapsed-icon="<?= e(icon('maximize')) ?>"
+                        data-expanded-icon="<?= e(icon('minimize')) ?>"
                         aria-expanded="false"
                         aria-controls="post-expand-<?= $postId ?>"
                         aria-label="Expand post">
-                    <?= icon('maximize') ?><span class="btn-label">Expand</span>
+                    <span class="post-action-icon" aria-hidden="true"><?= icon('maximize') ?></span><span class="btn-label">Expand</span>
                 </button>
             </div>
         </div>
-        <?php if ($excerpt !== ''): ?>
-            <p><?= e($excerpt) ?></p>
-        <?php endif; ?>
-        <?php if (!empty($post['categories'])): ?>
-            <nav class="blog-chips" aria-label="Post categories">
-                <?php foreach ($post['categories'] as $category): ?>
-                    <a href="/blog/category/<?= e((string) $category['slug']) ?>"><?= e((string) $category['name']) ?></a>
-                <?php endforeach; ?>
-            </nav>
-        <?php endif; ?>
-        <p class="blog-meta">
-            <?= (int) ($post['comment_count'] ?? 0) ?> comments ·
-            <?= (int) ($post['reaction_count'] ?? 0) ?> reactions
-        </p>
+        <div class="blog-card-preview">
+            <?php if ($excerpt !== ''): ?>
+                <p><?= e($excerpt) ?></p>
+            <?php endif; ?>
+            <?php if (!empty($post['categories'])): ?>
+                <nav class="blog-chips" aria-label="Post categories">
+                    <?php foreach ($post['categories'] as $category): ?>
+                        <a href="/blog/category/<?= e((string) $category['slug']) ?>"><?= e((string) $category['name']) ?></a>
+                    <?php endforeach; ?>
+                </nav>
+            <?php endif; ?>
+            <p class="blog-meta">
+                <?= (int) ($post['comment_count'] ?? 0) ?> comments ·
+                <?= (int) ($post['reaction_count'] ?? 0) ?> reactions
+            </p>
+        </div>
+
+        <div class="post-expand-panel" id="post-expand-<?= $postId ?>" hidden>
+            <div class="post-content-body"></div>
+        </div>
 
         <div class="post-actions-bottom">
             <div class="post-actions-left">
@@ -81,10 +93,6 @@ $postTitle = htmlspecialchars((string) (($post['title'] ?? '') ?: 'Untitled post
                     <?= icon('share-2') ?><span class="btn-label">Share</span>
                 </button>
             </div>
-        </div>
-
-        <div class="post-expand-panel" id="post-expand-<?= $postId ?>" hidden>
-            <div class="post-content-body"></div>
         </div>
 
         <div class="post-comments-panel" id="post-comments-<?= $postId ?>" hidden>

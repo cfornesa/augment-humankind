@@ -158,6 +158,7 @@
 2026-06-15 · DIRECTION · Aligned post button layout to balance admin actions (Edit/Expand) in the header with sharing/engagement actions below the content.
 2026-06-16 · DIRECTION · Added inline manual generation action links for both Art Pieces and Platform Collections, prioritizing instant feedback and granular control over bulk-only regeneration.
 2026-06-16 · DIRECTION · Preferred lightweight parity over a heavier moderation UI for comment ownership and table actions, keeping controls icon-forward and visually consistent across public and admin surfaces.
+2026-06-16 · DIRECTION · Preferred inline reader states that behave like condensed single-post views: content replaces previews, primary toggles remain visible in both states, and editing interfaces stay hidden until explicitly invoked.
 
 ---
 

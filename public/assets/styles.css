@@ -1680,6 +1680,10 @@ h3 {
     margin-top: 0.2rem;
 }
 
+.blog-card-preview.is-hidden {
+    display: none;
+}
+
 .post-actions {
     display: flex;
     flex-direction: column;

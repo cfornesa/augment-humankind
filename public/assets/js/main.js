@@ -782,25 +782,48 @@ document.querySelectorAll('[data-checkbox-sortable]').forEach(list => {
     const COMMENT_PENCIL_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>';
     const COMMENT_TRASH_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>';
 
+    function setExpandButtonState(btn, expanded) {
+        const label = expanded ? (btn.dataset.expandedLabel || 'Collapse') : (btn.dataset.collapsedLabel || 'Expand');
+        const ariaLabel = expanded ? (btn.dataset.expandedAriaLabel || label) : (btn.dataset.collapsedAriaLabel || label);
+        const icon = expanded ? (btn.dataset.expandedIcon || '') : (btn.dataset.collapsedIcon || '');
+        const iconWrap = btn.querySelector('.post-action-icon');
+        const labelWrap = btn.querySelector('.btn-label');
+        if (iconWrap) {
+            iconWrap.innerHTML = icon;
+        }
+        if (labelWrap) {
+            labelWrap.textContent = label;
+        }
+        btn.setAttribute('aria-label', ariaLabel);
+        btn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    }
+
     // --- Expand panel ---
     document.addEventListener('click', async e => {
         const btn = e.target.closest('.post-expand-btn');
         if (!btn) return;
         const postId = btn.dataset.postId;
         const panel  = document.getElementById('post-expand-' + postId);
+        const card = btn.closest('.blog-card');
+        const preview = card?.querySelector('.blog-card-preview');
         if (!panel) return;
 
         const open = btn.getAttribute('aria-expanded') === 'true';
         if (open) {
             panel.hidden = true;
-            btn.setAttribute('aria-expanded', 'false');
+            preview?.classList.remove('is-hidden');
+            setExpandButtonState(btn, false);
             return;
         }
 
         const body = panel.querySelector('.post-content-body');
         if (!body.dataset.loaded) {
-            btn.textContent = 'Loading…';
             btn.disabled = true;
+            const labelWrap = btn.querySelector('.btn-label');
+            const previousLabel = labelWrap ? labelWrap.textContent : '';
+            if (labelWrap) {
+                labelWrap.textContent = 'Loading…';
+            }
             try {
                 const res  = await fetch('/api/posts/' + postId + '/full');
                 const data = await res.json();
@@ -809,12 +832,15 @@ document.querySelectorAll('[data-checkbox-sortable]').forEach(list => {
             } catch {
                 body.textContent = 'Could not load post content.';
             }
-            btn.textContent = 'Expand';
             btn.disabled = false;
+            if (labelWrap) {
+                labelWrap.textContent = previousLabel;
+            }
         }
 
         panel.hidden = false;
-        btn.setAttribute('aria-expanded', 'true');
+        preview?.classList.add('is-hidden');
+        setExpandButtonState(btn, true);
     });
 
     // --- Comments panel ---
