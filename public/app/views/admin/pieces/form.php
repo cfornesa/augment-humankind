@@ -281,7 +281,7 @@ $preferredProfileId = $preferredProfileId ?? null;
 
                         <div class="field">
                             <label for="thumbnail_url">Thumbnail URL</label>
-                            <input id="thumbnail_url" name="thumbnail_url" type="url" maxlength="2048"
+                            <input id="thumbnail_url" name="thumbnail_url" type="text" maxlength="2048"
                                    value="<?= e($piece['thumbnail_url'] ?? '') ?>">
                             <?php if (!empty($piece['thumbnail_url'])): ?>
                                 <img id="capture-preview-img" src="<?= e($piece['thumbnail_url'] ?? '') ?>"

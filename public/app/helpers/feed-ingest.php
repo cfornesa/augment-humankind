@@ -236,6 +236,23 @@ function ingest_feed(int $sourceId): array
     return $newIds;
 }
 
+function refresh_due_feeds(): int
+{
+    $count = 0;
+    foreach (FeedSource::allEnabled() as $source) {
+        if (!FeedSource::isDue($source)) {
+            continue;
+        }
+        try {
+            ingest_feed((int) $source['id']);
+            $count++;
+        } catch (Throwable) {
+            // silently skip; updateFetchStatus already logged the error
+        }
+    }
+    return $count;
+}
+
 function feed_import_table_exists(): bool
 {
     static $exists = null;

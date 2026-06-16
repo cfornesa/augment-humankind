@@ -101,9 +101,12 @@ $defaultTitle = 'AI ' . strtoupper($engine) . ' Piece - ' . date('M d, Y H:i');
             </div>
         </div>
 
-        <div class="form-actions" style="margin-top: 2rem; display: flex; gap: 0.5rem;">
+        <input type="hidden" id="thumbnail_data" name="thumbnail_data" value="">
+
+        <div class="form-actions" style="margin-top: 2rem; display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem;">
             <button type="submit" class="admin-btn">Save and Insert (Create Version 1)</button>
             <a href="/admin/pieces/generate" class="admin-btn admin-btn-ghost">Discard &amp; Restart</a>
+            <span id="thumbnail-status" style="font-size: 0.8rem; color: var(--ink-soft);">Waiting for piece to render…</span>
         </div>
     </form>
 
@@ -429,6 +432,58 @@ if (PIECE_ENGINE === 'p5') {
             }
         }, 600);
     }
+
+    // Auto-capture thumbnail from the preview iframe once the piece renders
+    (function () {
+        var captured = false;
+        var thumbnailInput = document.getElementById('thumbnail_data');
+        var statusEl = document.getElementById('thumbnail-status');
+        var engine = document.querySelector('input[name="engine"]').value;
+
+        function setStatus(msg, ok) {
+            if (!statusEl) return;
+            statusEl.textContent = msg;
+            statusEl.style.color = ok ? '#10b981' : 'var(--ink-soft)';
+        }
+
+        function capture() {
+            if (captured) return;
+            captured = true;
+            setTimeout(function () {
+                try {
+                    var wrapper = document.getElementById('preview-iframe-wrapper');
+                    var iframe = wrapper ? wrapper.querySelector('iframe') : null;
+                    if (!iframe || !iframe.contentDocument) {
+                        setStatus('Thumbnail: preview not accessible');
+                        return;
+                    }
+                    var canvas = iframe.contentDocument.querySelector('canvas');
+                    if (!canvas) {
+                        setStatus('Thumbnail: no canvas (SVG pieces use manual capture)');
+                        return;
+                    }
+                    var dataUrl = canvas.toDataURL('image/png');
+                    if (!dataUrl || dataUrl === 'data:,') {
+                        setStatus('Thumbnail: canvas empty — will need manual capture');
+                        return;
+                    }
+                    if (thumbnailInput) thumbnailInput.value = dataUrl;
+                    setStatus('Thumbnail captured ✓', true);
+                } catch (e) {
+                    setStatus('Thumbnail: capture failed (' + e.message + ')');
+                }
+            }, engine === 'three' ? 3500 : 2000);
+        }
+
+        window.addEventListener('message', function (event) {
+            if (event.data && event.data.type === 'sketch-status' && event.data.valid) {
+                capture();
+            }
+        });
+
+        // Fallback for engines that don't post sketch-status (e.g. SVG or p5 race)
+        setTimeout(function () { if (!captured) capture(); }, 10000);
+    })();
     </script>
 </div>
 <?php

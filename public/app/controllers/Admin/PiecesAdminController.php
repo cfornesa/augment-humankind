@@ -191,6 +191,17 @@ class PiecesAdminController
         exit;
     }
 
+    public static function setStatus(string $id): void
+    {
+        admin_check();
+        $status = $_POST['status'] ?? '';
+        if (in_array($status, ['active', 'draft', 'archived'], true)) {
+            PlatformArtPiece::setStatus((int) $id, $status);
+        }
+        header('Location: /admin/pieces');
+        exit;
+    }
+
     public static function reorder(): void
     {
         admin_check();
@@ -464,21 +475,8 @@ class PiecesAdminController
             exit;
         }
 
-        $dir = dirname(__DIR__, 3) . '/uploads/thumbnails';
-        if (!is_dir($dir)) {
-            mkdir($dir, 0755, true);
-        }
-
-        $filename = 'piece-' . (int) $id . '-' . time() . '.png';
-        $path = $dir . '/' . $filename;
-
-        if (file_put_contents($path, $binary) === false) {
-            http_response_code(500);
-            echo json_encode(['error' => 'Could not save image.']);
-            exit;
-        }
-
-        $url = '/uploads/thumbnails/' . $filename;
+        $mediaId = MediaFile::create($binary, 'image/png', 'piece-thumbnail.png');
+        $url = '/image/' . $mediaId;
         PlatformArtPiece::update((int) $id, array_merge($piece, [
             'thumbnail_url' => $url,
             'comments_enabled' => (int)(bool) ($piece['comments_enabled'] ?? 0),
@@ -509,6 +507,7 @@ class PiecesAdminController
 
     public static function generate(): void
     {
+        set_time_limit(660); // 5 attempts × 2 min + buffer
         admin_check();
         $prompt = trim($_POST['prompt'] ?? '');
         $engine = trim($_POST['engine'] ?? 'p5');
@@ -547,7 +546,7 @@ class PiecesAdminController
             $previousRawResponse = null;
             $lastError = '';
 
-            while ($attemptCount < 3) {
+            while ($attemptCount < ART_PIECE_MAX_ATTEMPTS) {
                 $attemptCount++;
                 $currentAttemptLog = [
                     'attempt' => $attemptCount,
@@ -556,6 +555,7 @@ class PiecesAdminController
                     'success' => false,
                     'api_error' => null,
                     'validation_error' => null,
+                    'raw_response' => null,
                     'url' => '',
                     'status' => null,
                 ];
@@ -580,6 +580,7 @@ class PiecesAdminController
 
                 $rawText = $res['text'];
                 $previousRawResponse = $rawText;
+                $currentAttemptLog['raw_response'] = $rawText;
 
                 // Extract blocks
                 $blocks = art_piece_extract_code_blocks($rawText);
@@ -648,13 +649,27 @@ class PiecesAdminController
             $owner = PlatformUser::owner();
             $ownerId = $owner ? $owner['id'] : null;
 
+            // Decode auto-captured thumbnail from the preview page
+            $thumbnailUrl = null;
+            $rawThumb = trim($_POST['thumbnail_data'] ?? '');
+            if ($rawThumb !== '') {
+                if (str_contains($rawThumb, ',')) {
+                    $rawThumb = substr($rawThumb, strpos($rawThumb, ',') + 1);
+                }
+                $binary = base64_decode($rawThumb, strict: true);
+                if ($binary !== false && strlen($binary) >= 100) {
+                    $mediaId = MediaFile::create($binary, 'image/png', 'piece-thumbnail.png');
+                    $thumbnailUrl = '/image/' . $mediaId;
+                }
+            }
+
             $pieceId = PlatformArtPiece::create([
                 'owner_user_id' => $ownerId,
                 'title' => $title,
                 'prompt' => $prompt,
                 'engine' => $engine,
                 'status' => $status,
-                'thumbnail_url' => null,
+                'thumbnail_url' => $thumbnailUrl,
                 'description' => trim($_POST['description'] ?? '') ?: null,
             ]);
 
@@ -832,6 +847,7 @@ class PiecesAdminController
 
     public static function refineAi(): void
     {
+        set_time_limit(660); // 5 attempts × 2 min + buffer
         admin_check();
         header('Content-Type: application/json; charset=utf-8');
 
@@ -872,7 +888,7 @@ class PiecesAdminController
             $previousRawResponse = null;
             $lastError = '';
 
-            while ($attemptCount < 3) {
+            while ($attemptCount < ART_PIECE_MAX_ATTEMPTS) {
                 $attemptCount++;
                 $systemPrompt = art_piece_refine_system_prompt($engine);
 

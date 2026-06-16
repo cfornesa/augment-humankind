@@ -275,7 +275,12 @@
     flex-wrap: wrap;
     gap: 0.35rem;
     align-items: center;
-    min-width: 16rem;
+}
+
+.admin-table-wrap {
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
 }
 
 .admin-del-btn,
@@ -1241,6 +1246,10 @@ dialog.inline-create-dialog::backdrop {
     :root:not([data-theme="light"]) .multiselect-tag {
         color: var(--on-accent);
     }
+    /* ghost buttons have a non-accent background: override back to readable ink */
+    :root:not([data-theme="light"]) .admin-btn-ghost {
+        color: var(--ink);
+    }
     /* --cyan backgrounds */
     :root:not([data-theme="light"]) .trash-tab-count,
     :root:not([data-theme="light"]) .nav-admin-type-system,
@@ -1291,6 +1300,10 @@ dialog.inline-create-dialog::backdrop {
 [data-theme="dark"] .nav-admin-type-page,
 [data-theme="dark"] .multiselect-tag {
     color: var(--on-accent);
+}
+/* ghost buttons have a non-accent background: override back to readable ink */
+[data-theme="dark"] .admin-btn-ghost {
+    color: var(--ink);
 }
 /* --cyan backgrounds */
 [data-theme="dark"] .trash-tab-count,

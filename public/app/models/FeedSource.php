@@ -182,6 +182,25 @@ class FeedSource
         return $stmt->fetch() ?: false;
     }
 
+    public static function allEnabled(): array
+    {
+        if (!self::tableExists()) {
+            return [];
+        }
+        return db()->query(
+            'SELECT * FROM feed_sources WHERE enabled = 1 ORDER BY id ASC'
+        )->fetchAll();
+    }
+
+    public static function isDue(array $source): bool
+    {
+        $nextFetch = $source['next_fetch_at'] ?? null;
+        if ($nextFetch === null) {
+            return true;
+        }
+        return strtotime($nextFetch) <= time();
+    }
+
     private static function calculateNextFetch(string $cadence): ?string
     {
         $intervals = [

@@ -87,6 +87,10 @@ The production document root should include:
 - `app/` — MVC layer (controllers, models, views, helpers)
 - `vendor/` — Composer dependencies, including PHPMailer
 
+There is no `uploads/` directory. Thumbnails, images, and all other binary assets
+are stored as BLOBs in the `media_files` MySQL table and served via `/image/{id}`
+or `/media/{id}`. The `public/uploads/` path is gitignored.
+
 The FTP deploy action may also create `.ftp-deploy-sync-state-public.json` in
 the document root. That file is deploy metadata, not part of the app.
 
@@ -212,9 +216,58 @@ php scripts/check-platform-deletion-readiness.php --base-url=http://127.0.0.1:80
 The readiness command must pass, and manual route/admin testing should still be
 completed before deleting `platform/`.
 
+## Scheduled Tasks (GitHub Actions)
+
+The repository includes `.github/workflows/scheduled-tasks.yml`, which runs every 30 minutes and handles two background tasks:
+
+- **Feed refresh** — calls `platform/scripts/scheduled-feed-refresh.sh`, which posts to `$PUBLIC_SITE_URL/api/feed-sources/refresh` on the Node.js platform server.
+- **Post publishing** — calls `POST $PUBLIC_SITE_URL/api/cron/publish-posts` on the PHP app to transition any scheduled posts whose `scheduled_at` time has passed.
+
+Both jobs can also be triggered manually from the Actions tab via `workflow_dispatch`.
+
+### Required GitHub repository secrets
+
+Set these under **Settings → Secrets and variables → Actions**:
+
+| Secret | Description |
+|---|---|
+| `CRON_SECRET` | A random secret used to authenticate cron requests. Generate one with `openssl rand -hex 32`. |
+| `PUBLIC_SITE_URL` | The fully-qualified origin of the deployed site, e.g. `https://augmenthumankind.com`. No trailing slash. |
+
+### Required Hostinger `.env` value
+
+The PHP app's `POST /api/cron/publish-posts` endpoint validates the same `X-Cron-Secret` header. Add the matching value to the deployed `.env`:
+
+```
+CRON_SECRET=<same value as the GitHub secret>
+```
+
+### Opportunistic feed refresh
+
+In addition to the cron job, `refresh_due_feeds()` fires on two page loads so feeds stay fresh during normal site usage:
+
+- Any visit to `/admin/feed-sources` (admin)
+- Any visit to `/blog/feeds` (public)
+
+Each enabled feed source is checked against its `next_fetch_at` cadence; only overdue sources make an outbound HTTP request.
+
+## One-Time Migration (on first Hostinger deploy)
+
+After the first deploy, SSH into Hostinger and run:
+
+```sh
+php scripts/migrate-thumbnails-to-db.php --execute
+```
+
+This backfills all existing art-piece and platform-collection thumbnails into
+`media_files` and rewrites their `thumbnail_url` to `/image/{id}`. The script
+is idempotent: rows already pointing to `/image/*` are skipped, so it is safe
+to re-run.
+
 ## Notes
 
 - MySQL is required for admin CMS, navigation registry, and portfolio content.
 - Form submissions are emailed only; they are not stored by the app.
+- All binary assets (thumbnails, images, media) are stored as BLOBs in `media_files` and served via `/image/{id}` or `/media/{id}`. There is no `uploads/` directory on disk.
 - Public routes are treated as durable. If they move later, add permanent redirects.
 - Deployments should upload the contents of `public/` into the hosting document root, not the repository root.

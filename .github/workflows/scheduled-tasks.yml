@@ -1,0 +1,32 @@
+name: Scheduled Tasks
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+
+jobs:
+  refresh-feeds:
+    name: Refresh feed sources
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run feed refresh
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          PUBLIC_SITE_URL: ${{ secrets.PUBLIC_SITE_URL }}
+        run: bash platform/scripts/scheduled-feed-refresh.sh
+
+  publish-posts:
+    name: Publish scheduled posts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger PHP publish endpoint
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          PUBLIC_SITE_URL: ${{ secrets.PUBLIC_SITE_URL }}
+        run: |
+          curl --fail-with-body -sS -X POST \
+            -H "X-Cron-Secret: ${CRON_SECRET}" \
+            -H "Accept: application/json" \
+            "${PUBLIC_SITE_URL%/}/api/cron/publish-posts"

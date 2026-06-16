@@ -215,6 +215,12 @@ class PlatformArtPiece
         )->fetchColumn();
     }
 
+    public static function setStatus(int $id, string $status): void
+    {
+        $stmt = db()->prepare('UPDATE art_pieces SET status = ?, updated_at = NOW() WHERE id = ? AND deleted_at IS NULL');
+        $stmt->execute([$status, $id]);
+    }
+
     public static function updateCurrentVersion(int $pieceId, int $versionId): void
     {
         $stmt = db()->prepare(

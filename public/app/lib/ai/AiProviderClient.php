@@ -27,9 +27,8 @@ class AiProviderClient
             $this->endpointKind = null;
         }
         $this->apiKey = $apiKey;
-        // Guzzle timeout is 60s as per PHP constraints
         $this->client = $client ?? new Client([
-            'timeout' => 60.0,
+            'timeout' => 120.0,
             'connect_timeout' => 10.0,
         ]);
     }
@@ -97,7 +96,7 @@ class AiProviderClient
 
             $body = [
                 'model' => $normalizedModel,
-                'max_tokens' => $isDeepSeek ? 12000 : 4096,
+                'max_tokens' => $isDeepSeek ? 12000 : 8192,
                 'messages' => [
                     ['role' => 'system', 'content' => $finalSystemPrompt],
                     ['role' => 'user', 'content' => $userPrompt]

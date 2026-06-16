@@ -7,6 +7,7 @@ class FeedSourcesAdminController
     public static function index(): void
     {
         admin_check();
+        refresh_due_feeds();
         $sources = FeedSource::all();
         $pending = FeedSource::pendingImports();
         require dirname(__DIR__, 2) . '/views/admin/feed-sources/index.php';

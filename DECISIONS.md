@@ -1701,6 +1701,46 @@ Further manual testing surfaced four remaining UX/correctness gaps in the site i
 - Any signed-in person may edit or soft-delete only their own comments, whether they arrived through public OAuth user auth or an admin session that resolves to the same identity.
 - The owner actions are shared across blog posts, art pieces, exhibits, and exhibit collections through `/api/comments/{id}/edit` and `/api/comments/{id}/delete`, while broader moderation remains in `/admin/comments`.
 
+## 2026-06-16 — Piece Generation Hardening + Full Thumbnail DB Migration
+
+### Piece Generation Changes
+- `ART_PIECE_MAX_ATTEMPTS` 3→5; `ART_PIECE_ATTEMPT_TIMEOUT` 60→120 (`public/app/helpers/art-piece-generation.php`).
+- `set_time_limit(660)` added to `PiecesAdminController::generate()` and `refineAi()` (5 attempts × 2 min + buffer).
+- Guzzle timeout 60→120s; `max_tokens` 4096→8192 for non-DeepSeek OpenAI-compatible models (`public/app/lib/ai/AiProviderClient.php`).
+- Root cause of "JavaScript block is empty" on minimax-m3/opencode-go: response was truncated before the closing ` ``` ` because `max_tokens: 4096` was exhausted by complex multi-function pieces. Fix: raise to 8192.
+- JS code block extraction robustness (`art_piece_extract_code_blocks()`): added `typescript`, `ts`, `jsx`, `tsx`, `ecmascript` language aliases; fallback scan for first non-html/css fenced block; last-resort `<script>` extraction from HTML block.
+- Raw API response logging added per attempt in `generate-form.php` (collapsed `<details>` panel, truncated at 4000 chars).
+- Generate-form submit button label updated to reflect actual timing (up to 5 attempts, ~10 min max).
+
+### Auto-Thumbnail Capture on Generation Save
+- `generate-preview.php` now listens for the `sketch-status` postMessage from the preview iframe, waits 2000 ms (3500 ms for Three.js), reads `canvas.toDataURL('image/png')`, and stores the result in a hidden `thumbnail_data` POST field.
+- Falls back to a forced capture attempt at 10 s if no `sketch-status` fires. SVG pieces (no canvas) show "use manual capture" status.
+
+### Full Thumbnail Storage Migration to `media_files`
+- **Architecture decision**: all thumbnail storage must live exclusively in the PHP site's `media_files` table (LONGBLOB) and be served via `/image/{id}`. No filesystem writes, no dependency on the platform website's database.
+- Three write sites patched to use `MediaFile::create($binary, 'image/png', '...')` and set `thumbnail_url = '/image/{id}'`:
+  1. `PiecesAdminController::captureThumbnail()` (manual capture on piece edit page)
+  2. `PiecesAdminController::generateSave()` (auto-captured thumbnail on AI generation save)
+  3. `PlatformCollectionsAdminController::captureThumbnail()` (collection thumbnail capture)
+- `scripts/migrate-thumbnails-to-db.php` added and executed (dry-run by default, `--execute` to commit). Handles three URL patterns:
+  - `/api/media/{uuid}.png` — resolved directly from `media_assets.file_data` in the PHP DB (no HTTP needed; blobs were already migrated from the platform)
+  - `/uploads/thumbnails/*.png` — read from local filesystem, inserted, original file deleted
+  - `https?://...` — fetched via Guzzle, inserted (fallback for any remaining external URLs)
+- **Migration ran locally**: 69 thumbnails committed to `media_files` (ids 2–70) — 29 from `media_assets`, 40 from filesystem files. All `art_pieces` and `platform_collections` rows updated to `/image/{N}`.
+- `public/uploads/thumbnails/` directory removed; `public/uploads/` added to `.gitignore` to prevent future filesystem thumbnail commits.
+- The migration script loads `.env` from `public/.env` first, then the repo root `.env` (matching the app's own `loadEnvFile` order). Run it again on Hostinger after deploying: `php scripts/migrate-thumbnails-to-db.php --execute` (will be a no-op for already-migrated rows since `/image/*` URLs are skipped).
+
+### Scheduled Tasks and Feed Infrastructure (from same session)
+- GitHub Actions `scheduled-tasks.yml` added: runs every 30 min, triggers feed refresh via `platform/scripts/scheduled-feed-refresh.sh` and PHP post publishing via `POST /api/cron/publish-posts`.
+- `CronController::publishPosts()` added (auth via `X-Cron-Secret` header + `hash_equals`); route added to `$publicRoutes`.
+- `refresh_due_feeds()` helper added to `feed-ingest.php`; wired into `FeedSourcesAdminController::index()` and `BlogController::feeds()` as opportunistic lazy triggers.
+- List-page "Generate Thumbnail" button fix: `<\\/script>` → `<\/script>` in `pieces/index.php` (double backslash in PHP JS string produced `<\/script>` in srcdoc, which the HTML5 parser never recognises as a closing tag, preventing canvas creation).
+
+### Verification
+- `php -l` clean on all changed files.
+- Migration dry-run confirmed 69 rows; `--execute` ran without errors.
+- Re-run `php scripts/migrate-thumbnails-to-db.php --execute` on Hostinger after first deploy.
+
 ## 2026-06-16 — Comment Editing Visibility and Feed-Card Reader Toggle
 
 ### Comment Editing Visibility

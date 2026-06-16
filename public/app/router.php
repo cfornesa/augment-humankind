@@ -64,6 +64,7 @@ require __DIR__ . '/controllers/ApiController.php';
 require __DIR__ . '/controllers/BlogController.php';
 require __DIR__ . '/controllers/CommentController.php';
 require __DIR__ . '/controllers/PageController.php';
+require __DIR__ . '/controllers/CronController.php';
 
 $publicRoutes = [
     ['GET',  '/blog',                                        [BlogController::class, 'index']],
@@ -157,7 +158,8 @@ $publicRoutes = [
     ['GET', '/api/media/([^/]+)/collections',         [ApiController::class, 'mediaAssetCollections']],
     ['GET', '/api/media/([^/]+)',                    [ApiController::class, 'mediaAssetByFilename']],
     ['GET', '/api/profile-photos/([^/]+)',          [ApiController::class, 'profilePhoto']],
-    ['GET', '/api/runtimes/(.+)',                    [ApiController::class, 'runtimeAsset']],
+    ['GET',  '/api/runtimes/(.+)',                   [ApiController::class, 'runtimeAsset']],
+    ['POST', '/api/cron/publish-posts',              [CronController::class, 'publishPosts']],
 
     // Public user auth — fixed paths MUST precede the catch-all /user/([a-z0-9_-]+)
     ['GET',  '/user/login',                           [UserAuthController::class, 'loginForm']],
@@ -281,6 +283,7 @@ $adminRoutes = [
     ['GET',  '/admin/pieces/([0-9]+)/edit',              [PiecesAdminController::class, 'edit']],
     ['POST', '/admin/pieces/([0-9]+)/edit',              [PiecesAdminController::class, 'update']],
     ['POST', '/admin/pieces/([0-9]+)/capture-thumbnail', [PiecesAdminController::class, 'captureThumbnail']],
+    ['POST', '/admin/pieces/([0-9]+)/set-status',        [PiecesAdminController::class, 'setStatus']],
     ['POST', '/admin/pieces/([0-9]+)/delete',            [PiecesAdminController::class, 'delete']],
     ['GET',  '/admin/pieces/([0-9]+)/versions', [PiecesAdminController::class, 'versions']],
     ['GET',  '/admin/pieces/([0-9]+)/versions/create', [PiecesAdminController::class, 'versionCreate']],

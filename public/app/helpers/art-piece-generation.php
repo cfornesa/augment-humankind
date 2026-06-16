@@ -2,8 +2,8 @@
 
 declare(strict_types=1);
 
-const ART_PIECE_MAX_ATTEMPTS = 3;
-const ART_PIECE_ATTEMPT_TIMEOUT = 60; // seconds
+const ART_PIECE_MAX_ATTEMPTS = 5;
+const ART_PIECE_ATTEMPT_TIMEOUT = 120; // seconds
 
 /**
  * Returns the engine-specific system prompt for generation.
@@ -82,6 +82,8 @@ function art_piece_generation_system_prompt(string $engine): string
 
 /**
  * Extracts HTML, CSS, and JS code blocks from AI markdown response.
+ * Tries a broad set of language aliases for JS, then falls back to any
+ * unrecognised fenced block, then to <script> content embedded in the HTML block.
  */
 function art_piece_extract_code_blocks(string $raw): array
 {
@@ -94,14 +96,38 @@ function art_piece_extract_code_blocks(string $raw): array
         return null;
     };
 
-    $htmlCode = $extract(['html']);
-    $cssCode = $extract(['css']);
-    $generatedCode = $extract(['javascript', 'js']);
+    $htmlCode      = $extract(['html']);
+    $cssCode       = $extract(['css']);
+    $generatedCode = $extract(['javascript', 'js', 'typescript', 'ts', 'jsx', 'tsx', 'ecmascript']);
+
+    // Fallback: any fenced block whose language tag is not html or css
+    if ($generatedCode === null) {
+        preg_match_all('/```([a-zA-Z]*)\s*\n([\s\S]*?)```/', $raw, $allBlocks, PREG_SET_ORDER);
+        foreach ($allBlocks as $block) {
+            $lang    = strtolower($block[1]);
+            $content = trim($block[2]);
+            if (!in_array($lang, ['html', 'css'], true) && $content !== '') {
+                $generatedCode = $content;
+                break;
+            }
+        }
+    }
+
+    // Last resort: pull <script> content out of the HTML block
+    if ($generatedCode === null && $htmlCode !== null && $htmlCode !== '') {
+        if (preg_match('/<script(?:\s[^>]*)?>[\r\n]*([\s\S]*?)<\/script>/i', $htmlCode, $m)) {
+            $extracted = trim($m[1]);
+            if ($extracted !== '') {
+                $generatedCode = $extracted;
+                $htmlCode      = trim(preg_replace('/<script(?:\s[^>]*)?>[\s\S]*?<\/script>/i', '', $htmlCode));
+            }
+        }
+    }
 
     return [
-        'htmlCode' => $htmlCode,
-        'cssCode' => $cssCode,
-        'generatedCode' => $generatedCode
+        'htmlCode'      => $htmlCode,
+        'cssCode'       => $cssCode,
+        'generatedCode' => $generatedCode,
     ];
 }
 

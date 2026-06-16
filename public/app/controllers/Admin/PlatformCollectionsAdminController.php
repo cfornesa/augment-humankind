@@ -254,21 +254,8 @@ class PlatformCollectionsAdminController
             exit;
         }
 
-        $dir = dirname(__DIR__, 3) . '/uploads/thumbnails';
-        if (!is_dir($dir)) {
-            mkdir($dir, 0755, true);
-        }
-
-        $filename = 'collection-' . (int) $id . '-' . time() . '.png';
-        $path = $dir . '/' . $filename;
-
-        if (file_put_contents($path, $binary) === false) {
-            http_response_code(500);
-            echo json_encode(['error' => 'Could not save image.']);
-            exit;
-        }
-
-        $url = '/uploads/thumbnails/' . $filename;
+        $mediaId = MediaFile::create($binary, 'image/png', 'collection-thumbnail.png');
+        $url = '/image/' . $mediaId;
         PlatformCollection::update((int) $id, array_merge($collection, [
             'thumbnail_url' => $url,
             'comments_enabled' => (int)(bool) ($collection['comments_enabled'] ?? 0),

@@ -166,6 +166,7 @@ class BlogController
 
     public static function feeds(): void
     {
+        refresh_due_feeds();
         $pageTitle = 'Feeds | Augment Humankind';
         $pageDescription = 'Subscribe to Augment Humankind feeds.';
         $bodyClass = 'page-blog-feeds';

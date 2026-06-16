@@ -49,6 +49,12 @@ ob_start();
                                 <strong>Preflight Validation Fail:</strong> <?= e($log['validation_error']) ?>
                             </div>
                         <?php endif; ?>
+                        <?php if (!empty($log['raw_response'])): ?>
+                            <details style="margin-top: 0.5rem;">
+                                <summary style="cursor: pointer; font-size: 0.8rem; color: var(--ink-soft);">Raw API Response</summary>
+                                <pre style="margin-top: 0.35rem; font-size: 0.75rem; white-space: pre-wrap; word-break: break-all; max-height: 280px; overflow-y: auto; background: var(--surface-2, #1a1a2e); padding: 0.5rem; border-radius: 4px;"><?= e(mb_substr($log['raw_response'], 0, 4000)) ?><?= mb_strlen($log['raw_response']) > 4000 ? "\n…[truncated]" : '' ?></pre>
+                            </details>
+                        <?php endif; ?>
                     </div>
                 <?php endforeach; ?>
             </div>
@@ -101,7 +107,7 @@ ob_start();
             var btn = document.getElementById('generate-submit-btn');
             if (btn) {
                 btn.disabled = true;
-                btn.innerText = 'Generating & Validating (this may take up to 60s)...';
+                btn.innerText = 'Generating & Validating (up to 5 attempts, ~10 min max)...';
             }
         });
         </script>
