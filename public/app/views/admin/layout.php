@@ -27,6 +27,11 @@ $adminNavItems = [
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <script>
+    document.documentElement.classList.add('js-enhanced');
+    // Apply stored theme before first paint to prevent flash
+    (function(){var t=localStorage.getItem('theme');if(t==='dark'||t==='light')document.documentElement.dataset.theme=t;})();
+    </script>
     <title><?= htmlspecialchars($pageTitle ?? 'Admin — Augment Humankind', ENT_QUOTES, 'UTF-8') ?></title>
     <link rel="stylesheet" href="/assets/styles.css">
     <link rel="stylesheet" href="/assets/admin.css">
@@ -47,6 +52,62 @@ $adminNavItems = [
       }
     }
     </script>
+    <?php endif ?>
+    <?php
+    // Inject SiteSettings color overrides so admin respects custom themes
+    $_ahAdminS = (class_exists('SiteSettings') ? SiteSettings::current() : false) ?: [];
+    $_ahAdminLightMap = [
+        'color_background'             => '--paper',
+        'color_foreground'             => '--ink',
+        'color_muted'                  => '--paper-deep',
+        'color_muted_foreground'       => '--ink-soft',
+        'color_primary'                => '--green',
+        'color_primary_foreground'     => '--green-fg',
+        'color_secondary'              => '--cyan',
+        'color_secondary_foreground'   => '--cyan-fg',
+        'color_accent'                 => '--orange',
+        'color_accent_foreground'      => '--orange-fg',
+        'color_destructive'            => '--destructive',
+        'color_destructive_foreground' => '--destructive-fg',
+    ];
+    $_ahAdminDarkMap = [
+        'color_background_dark'             => '--paper',
+        'color_foreground_dark'             => '--ink',
+        'color_muted_dark'                  => '--paper-deep',
+        'color_muted_foreground_dark'       => '--ink-soft',
+        'color_primary_dark'                => '--green',
+        'color_primary_foreground_dark'     => '--green-fg',
+        'color_secondary_dark'              => '--cyan',
+        'color_secondary_foreground_dark'   => '--cyan-fg',
+        'color_accent_dark'                 => '--orange',
+        'color_accent_foreground_dark'      => '--orange-fg',
+        'color_destructive_dark'            => '--destructive',
+        'color_destructive_foreground_dark' => '--destructive-fg',
+    ];
+    $_ahAdminLightVars = [];
+    foreach ($_ahAdminLightMap as $_ahC => $_ahV) {
+        if (!empty($_ahAdminS[$_ahC])) {
+            $_ahAdminLightVars[] = $_ahV . ':hsl(' . htmlspecialchars((string) $_ahAdminS[$_ahC], ENT_QUOTES, 'UTF-8') . ')';
+        }
+    }
+    $_ahAdminDarkVars = [];
+    foreach ($_ahAdminDarkMap as $_ahC => $_ahV) {
+        if (!empty($_ahAdminS[$_ahC])) {
+            $_ahAdminDarkVars[] = $_ahV . ':hsl(' . htmlspecialchars((string) $_ahAdminS[$_ahC], ENT_QUOTES, 'UTF-8') . ')';
+        }
+    }
+    unset($_ahAdminLightMap, $_ahAdminDarkMap, $_ahC, $_ahV);
+    ?>
+    <?php if ($_ahAdminLightVars !== [] || $_ahAdminDarkVars !== []): ?>
+    <style>
+        <?php if ($_ahAdminLightVars !== []): ?>
+        :root:not([data-theme="dark"]){<?= implode(';', $_ahAdminLightVars) ?>}
+        <?php endif ?>
+        <?php if ($_ahAdminDarkVars !== []): ?>
+        @media(prefers-color-scheme:dark){:root:not([data-theme="light"]){<?= implode(';', $_ahAdminDarkVars) ?>}}
+        [data-theme="dark"]{<?= implode(';', $_ahAdminDarkVars) ?>}
+        <?php endif ?>
+    </style>
     <?php endif ?>
 </head>
 <body class="admin-body">
@@ -213,6 +274,31 @@ $adminNavItems = [
         </div>
     </dialog>
 
+    <button class="theme-toggle" id="admin-theme-toggle" type="button" aria-label="Toggle dark mode">
+        <span class="theme-icon" aria-hidden="true"></span>
+    </button>
+    <script>
+    (function(){
+        var btn=document.getElementById('admin-theme-toggle');
+        var root=document.documentElement;
+        var icon=btn&&btn.querySelector('.theme-icon');
+        function update(){
+            var isDark=root.dataset.theme==='dark'||(root.dataset.theme!=='light'&&window.matchMedia('(prefers-color-scheme:dark)').matches);
+            if(icon)icon.textContent=isDark?'☀':'☾';
+        }
+        if(btn){
+            btn.addEventListener('click',function(){
+                var isDark=root.dataset.theme==='dark'||(root.dataset.theme!=='light'&&window.matchMedia('(prefers-color-scheme:dark)').matches);
+                var next=isDark?'light':'dark';
+                root.dataset.theme=next;
+                localStorage.setItem('theme',next);
+                update();
+            });
+        }
+        update();
+        if(window.matchMedia){window.matchMedia('(prefers-color-scheme:dark)').addEventListener('change',update);}
+    })();
+    </script>
     <script src="/assets/js/main.js" defer></script>
     <?php if ($needsEditor ?? false): ?>
     <script type="module" src="/assets/js/tiptap-editor.js"></script>

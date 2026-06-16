@@ -153,25 +153,16 @@ require __DIR__ . '/../partials/header.php';
         <?php if (!empty($exhibit['comments_enabled'])): ?>
         <section class="comments-section blog-comments" aria-labelledby="exhibit-comments-title">
             <h2 id="exhibit-comments-title">Comments</h2>
-            <div class="post-comments-list">
-                <?php if (empty($comments)): ?>
-                    <p class="admin-empty">No comments yet. Be the first.</p>
-                <?php else: ?>
-                    <?php foreach ($comments as $comment): ?>
-                        <div class="post-comment-item">
-                            <strong><?= e($comment['author_name']) ?> · <span style="font-weight:700;color:var(--ink-soft)"><?= e(date('M j, Y', strtotime((string) $comment['created_at']) ?: time())) ?></span></strong>
-                            <p style="margin:0"><?= nl2br(e((string) $comment['content'])) ?></p>
-                        </div>
-                    <?php endforeach; ?>
-                <?php endif; ?>
-            </div>
-            <form class="post-comment-form"
-                  data-comment-url="/api/exhibits/<?= e($exhibit['slug']) ?>/comments">
-                <input type="text" name="author_name" placeholder="Your name (optional)" maxlength="80" autocomplete="name">
-                <textarea name="content" placeholder="Write a comment…" maxlength="500" required></textarea>
-                <input type="text" name="hp_field" class="field-honeypot" tabindex="-1" autocomplete="off" aria-hidden="true">
-                <button type="submit" class="post-action-btn">Post comment</button>
-            </form>
+            <?php
+            $commentsUrl = '/api/exhibits/' . (string) $exhibit['slug'] . '/comments';
+            $emptyCommentMessage = 'No comments yet. Be the first.';
+            require dirname(__DIR__) . '/partials/comment-list.php';
+            ?>
+            <?php
+            $commentUrl = $commentsUrl;
+            $signinRedirect = $_SERVER['REQUEST_URI'] ?? ('/portfolio/exhibit/' . (string) $exhibit['slug']);
+            require dirname(__DIR__) . '/partials/comment-form.php';
+            ?>
         </section>
         <?php endif; ?>
     </section>

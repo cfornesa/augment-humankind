@@ -577,7 +577,9 @@ export function createMultiFrameExhibitWall(stage, frameCount, rows = 1, cols = 
 
   const canvas = document.createElement("canvas");
   canvas.style.width = "100%"; canvas.style.height = "100%"; canvas.style.display = "block"; canvas.style.touchAction = "none";
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+  const urlParams = new URLSearchParams(window.location.search);
+  const isCloseup = urlParams.get('closeup') === '1' || urlParams.get('thumbnail') === '1';
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: isCloseup });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   stage.innerHTML = "";
@@ -678,7 +680,10 @@ export function fitMultiFrameExhibitCamera(shell, stage, resetCamera = true) {
   const horizontalFov = 2 * Math.atan(Math.tan(verticalFov / 2) * shell.camera.aspect);
   const distanceForHeight = (totalHeight / 2) / Math.tan(verticalFov / 2);
   const distanceForWidth = (totalWidth / 2) / Math.tan(horizontalFov / 2);
-  const distance = Math.max(distanceForHeight, distanceForWidth) * 1.45;
+  const urlParams = new URLSearchParams(window.location.search);
+  const isCloseup = urlParams.get('closeup') === '1' || urlParams.get('thumbnail') === '1';
+  const multiplier = isCloseup ? 0.55 : 1.45;
+  const distance = Math.max(distanceForHeight, distanceForWidth) * multiplier;
 
   shell.controls.minDistance = Math.max(1.2, distance * 0.25);
   shell.controls.maxDistance = Math.max(20, distance * 6);

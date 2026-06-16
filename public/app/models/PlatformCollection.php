@@ -114,6 +114,13 @@ class PlatformCollection
 
     public static function firstThumbnail(int $collectionId): ?string
     {
+        $stmt = db()->prepare('SELECT thumbnail_url FROM platform_collections WHERE id = ?');
+        $stmt->execute([$collectionId]);
+        $url = $stmt->fetchColumn();
+        if (!empty($url)) {
+            return $url;
+        }
+
         foreach (self::itemsFor($collectionId) as $item) {
             $type = (string) ($item['item_type'] ?? '');
             $id = (int) ($item['item_id'] ?? 0);
@@ -136,8 +143,8 @@ class PlatformCollection
     {
         $stmt = db()->prepare(
             'INSERT INTO platform_collections
-                (slug, name, description, artist_statement, biography, `rows`, cols, iframe_code, sort_order, comments_enabled)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                (slug, name, description, artist_statement, biography, `rows`, cols, iframe_code, sort_order, comments_enabled, thumbnail_url)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         );
         $stmt->execute([
             $data['slug'],
@@ -150,6 +157,7 @@ class PlatformCollection
             $data['iframe_code'] ?? null,
             $data['sort_order'] ?? self::nextSortOrder(),
             isset($data['comments_enabled']) ? (int)(bool) $data['comments_enabled'] : 0,
+            $data['thumbnail_url'] ?? null,
         ]);
         return (int) db()->lastInsertId();
     }
@@ -159,7 +167,7 @@ class PlatformCollection
         $stmt = db()->prepare(
             'UPDATE platform_collections SET
                 slug = ?, name = ?, description = ?, artist_statement = ?,
-                biography = ?, `rows` = ?, cols = ?, iframe_code = ?, sort_order = ?, comments_enabled = ?
+                biography = ?, `rows` = ?, cols = ?, iframe_code = ?, sort_order = ?, comments_enabled = ?, thumbnail_url = ?
              WHERE id = ?'
         );
         $stmt->execute([
@@ -173,6 +181,7 @@ class PlatformCollection
             $data['iframe_code'] ?? null,
             $data['sort_order'] ?? 0,
             isset($data['comments_enabled']) ? (int)(bool) $data['comments_enabled'] : 0,
+            $data['thumbnail_url'] ?? null,
             $id,
         ]);
     }

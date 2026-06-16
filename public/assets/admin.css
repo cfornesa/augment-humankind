@@ -134,6 +134,11 @@
     background: var(--white);
 }
 
+.admin-btn-danger {
+    background: var(--orange);
+    color: var(--on-accent);
+}
+
 /* Login */
 
 .admin-login-body {
@@ -262,6 +267,15 @@
 
 .admin-btn-sm:hover {
     box-shadow: 1px 1px 0 var(--line);
+}
+
+/* Wrapping flex container for row-level action buttons in admin tables */
+.admin-actions-cell {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    align-items: center;
+    min-width: 16rem;
 }
 
 .admin-del-btn,
@@ -1180,4 +1194,107 @@ dialog.inline-create-dialog::backdrop {
     .admin-header.nav-open .admin-nav a {
         width: 100%;
     }
+}
+
+/* ── Dark-mode overrides for hardcoded light-background admin elements ─── */
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .login-error {
+        background: #2a1e00;
+        color: var(--ink);
+    }
+    :root:not([data-theme="light"]) .admin-notice {
+        background: #0e2a22;
+        color: var(--ink);
+    }
+    :root:not([data-theme="light"]) .admin-error {
+        background: #2a1e00;
+        color: var(--ink);
+    }
+    /* ── Accent-background elements: force dark ink so text always reads ── */
+    /* --yellow backgrounds */
+    :root:not([data-theme="light"]) .admin-nav a:hover,
+    :root:not([data-theme="light"]) .admin-nav a.active,
+    :root:not([data-theme="light"]) .trash-tab.active,
+    :root:not([data-theme="light"]) .admin-tab.active,
+    :root:not([data-theme="light"]) .picker-trigger,
+    :root:not([data-theme="light"]) .nav-toggle-visible,
+    :root:not([data-theme="light"]) .nav-admin-type-external,
+    :root:not([data-theme="light"]) .multiselect-option:hover,
+    :root:not([data-theme="light"]) .multiselect-option-add:hover,
+    :root:not([data-theme="light"]) .multiselect-option[data-selected="true"],
+    :root:not([data-theme="light"]) .media-card.active,
+    :root:not([data-theme="light"]) .media-card:focus-visible {
+        color: var(--on-accent);
+    }
+    /* --orange backgrounds */
+    :root:not([data-theme="light"]) .admin-nav .admin-logout,
+    :root:not([data-theme="light"]) .status-archived,
+    :root:not([data-theme="light"]) .nav-delete-btn {
+        color: var(--on-accent);
+    }
+    /* --green backgrounds */
+    :root:not([data-theme="light"]) .admin-btn,
+    :root:not([data-theme="light"]) .status-active,
+    :root:not([data-theme="light"]) .nav-toggle-hidden,
+    :root:not([data-theme="light"]) .nav-tab-switch.is-on,
+    :root:not([data-theme="light"]) .nav-admin-type-page,
+    :root:not([data-theme="light"]) .multiselect-tag {
+        color: var(--on-accent);
+    }
+    /* --cyan backgrounds */
+    :root:not([data-theme="light"]) .trash-tab-count,
+    :root:not([data-theme="light"]) .nav-admin-type-system,
+    :root:not([data-theme="light"]) .multiselect-option-add {
+        color: var(--on-accent);
+    }
+}
+
+[data-theme="dark"] .login-error {
+    background: #2a1e00;
+    color: var(--ink);
+}
+[data-theme="dark"] .admin-notice {
+    background: #0e2a22;
+    color: var(--ink);
+}
+[data-theme="dark"] .admin-error {
+    background: #2a1e00;
+    color: var(--ink);
+}
+/* ── Accent-background elements: force dark ink so text always reads ── */
+/* --yellow backgrounds */
+[data-theme="dark"] .admin-nav a:hover,
+[data-theme="dark"] .admin-nav a.active,
+[data-theme="dark"] .trash-tab.active,
+[data-theme="dark"] .admin-tab.active,
+[data-theme="dark"] .picker-trigger,
+[data-theme="dark"] .nav-toggle-visible,
+[data-theme="dark"] .nav-admin-type-external,
+[data-theme="dark"] .multiselect-option:hover,
+[data-theme="dark"] .multiselect-option-add:hover,
+[data-theme="dark"] .multiselect-option[data-selected="true"],
+[data-theme="dark"] .media-card.active,
+[data-theme="dark"] .media-card:focus-visible {
+    color: var(--on-accent);
+}
+/* --orange backgrounds */
+[data-theme="dark"] .admin-nav .admin-logout,
+[data-theme="dark"] .status-archived,
+[data-theme="dark"] .nav-delete-btn {
+    color: var(--on-accent);
+}
+/* --green backgrounds */
+[data-theme="dark"] .admin-btn,
+[data-theme="dark"] .status-active,
+[data-theme="dark"] .nav-toggle-hidden,
+[data-theme="dark"] .nav-tab-switch.is-on,
+[data-theme="dark"] .nav-admin-type-page,
+[data-theme="dark"] .multiselect-tag {
+    color: var(--on-accent);
+}
+/* --cyan backgrounds */
+[data-theme="dark"] .trash-tab-count,
+[data-theme="dark"] .nav-admin-type-system,
+[data-theme="dark"] .multiselect-option-add {
+    color: var(--on-accent);
 }

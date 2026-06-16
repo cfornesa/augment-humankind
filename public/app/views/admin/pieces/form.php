@@ -401,6 +401,62 @@ $preferredProfileId = $preferredProfileId ?? null;
 
 <script>
 (function () {
+    async function convertSvgToCanvas(svgElement, width, height) {
+        return new Promise(function (resolve, reject) {
+            try {
+                var svgClone = svgElement.cloneNode(true);
+                svgClone.setAttribute('width', width);
+                svgClone.setAttribute('height', height);
+                if (!svgClone.getAttribute('viewBox')) {
+                    var w = svgElement.getAttribute('width') || svgElement.clientWidth || width;
+                    var h = svgElement.getAttribute('height') || svgElement.clientHeight || height;
+                    svgClone.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+                }
+
+                // Copy computed styles for accurate vector rendering
+                var liveEls = [svgElement].concat(Array.from(svgElement.querySelectorAll("*")));
+                var cloneEls = [svgClone].concat(Array.from(svgClone.querySelectorAll("*")));
+                var props = ["transform", "transform-origin", "opacity", "fill", "stroke", "stroke-width", "cx", "cy", "r", "x", "y", "width", "height", "d", "stop-color", "offset", "filter", "display"];
+                liveEls.forEach(function (liveEl, i) {
+                    var cloneEl = cloneEls[i];
+                    if (!cloneEl) return;
+                    var s = window.getComputedStyle(liveEl);
+                    props.forEach(function (p) {
+                        var val = s.getPropertyValue(p);
+                        if (val) cloneEl.style.setProperty(p, val);
+                    });
+                });
+
+                // Disable animations and transitions in the cloned SVG during capture
+                var styleEl = document.createElementNS("http://www.w3.org/2000/svg", "style");
+                styleEl.textContent = "* { animation: none !important; transition: none !important; }";
+                svgClone.insertBefore(styleEl, svgClone.firstChild);
+
+                var serialized = new XMLSerializer().serializeToString(svgClone);
+                var svgData = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(serialized);
+                var img = new Image();
+                img.onload = function () {
+                    var canvas = document.createElement('canvas');
+                    canvas.width = width;
+                    canvas.height = height;
+                    var ctx = canvas.getContext('2d');
+                    if (ctx) {
+                        ctx.fillStyle = '#0d0d0f';
+                        ctx.fillRect(0, 0, width, height);
+                        ctx.drawImage(img, 0, 0, width, height);
+                    }
+                    resolve(canvas);
+                };
+                img.onerror = function () {
+                    reject(new Error('Failed to load SVG image source.'));
+                };
+                img.src = svgData;
+            } catch (e) {
+                reject(e);
+            }
+        });
+    }
+
     // DOM Elements
     var tabs = document.querySelectorAll('.piece-edit-tabs .admin-tab');
     var panels = {
@@ -457,7 +513,7 @@ $preferredProfileId = $preferredProfileId ?? null;
     function renderDocumentJS(title, engine, html, css, js) {
         var jsonEngine = JSON.stringify(engine);
         var jsonCode = JSON.stringify(js);
-        return '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>' + title + '</title>\n<script type="importmap">\n{\n  "imports": {\n    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",\n    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"\n  }\n}\n<\/script>\n<style>\nhtml,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#0d0d0f;color:#fff;}\nbody{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}\n#runtime-root{width:100vw;height:100vh;overflow:hidden;}\n#piece-error{position:fixed;inset:auto 1rem 1rem 1rem;z-index:9999;padding:1rem;border:1px solid #fca5a5;background:#450a0a;color:#fee2e2;font:14px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;display:none;}\ncanvas{display:block;width:100%;height:100%;}\n' + css + '\n</style>\n</head>\n<body>\n<div id="runtime-root">' + html + '</div>\n<div id="piece-error" role="alert"></div>\n<script>\nconst PIECE_ENGINE = ' + jsonEngine + ';\nconst PIECE_CODE = ' + jsonCode + ';\nfunction showPieceError(error) {\n  const el = document.getElementById("piece-error");\n  if (!el) return;\n  el.textContent = (error && (error.stack || error.message)) ? (error.stack || error.message) : String(error);\n  el.style.display = "block";\n}\nwindow.addEventListener("error", (event) => showPieceError(event.error || event.message));\nwindow.addEventListener("unhandledrejection", (event) => showPieceError(event.reason || "Unhandled promise rejection"));\nfunction runPieceCode() {\n  try {\n    const fn = new Function(PIECE_CODE + "\\n//# sourceURL=piece-runtime.js");\n    fn();\n  } catch (error) {\n    showPieceError(error);\n  }\n}\nfunction findCanvas(id) {\n  return document.getElementById(id) || document.querySelector("canvas") || (() => {\n    const canvas = document.createElement("canvas");\n    canvas.id = id;\n    const parent = document.getElementById("canvas-container") || document.getElementById("sketch-container") || document.getElementById("runtime-root");\n    parent.appendChild(canvas);\n    return canvas;\n  })();\n}\nfunction sizeCanvas(canvas) {\n  const w = Math.max(1, canvas.parentElement?.clientWidth || window.innerWidth || 1280);\n  const h = Math.max(1, canvas.parentElement?.clientHeight || window.innerHeight || 720);\n  canvas.width = w;\n  canvas.height = h;\n}\nfunction startFrame(callback) {\n  let count = 0;\n  function tick() {\n    count++;\n    try { callback(count); } catch (error) { showPieceError(error); return; }\n    requestAnimationFrame(tick);\n  }\n  requestAnimationFrame(tick);\n}\nfunction bootCanvasRuntime(extra) {\n  runPieceCode();\n  if (typeof window.sketch !== "function") return;\n  const canvas = findCanvas(PIECE_ENGINE === "c2" ? "c2-canvas" : "scene");\n  canvas.style.cssText = "display:block;width:100%;height:100%;";\n  sizeCanvas(canvas);\n  window.addEventListener("resize", () => sizeCanvas(canvas));\n  try { window.sketch({ canvas, startFrame, ...(extra || {}) }); } catch (error) { showPieceError(error); }\n}\nfunction bootP5() {\n  const script = document.createElement("script");\n  script.src = "https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js";\n  script.onload = () => {\n    runPieceCode();\n    try {\n      if (typeof window.sketch === "function" && typeof window.p5 === "function") {\n        const parent = document.getElementById("canvas-container") || document.getElementById("sketch-container") || document.getElementById("runtime-root");\n        new window.p5(window.sketch, parent);\n      }\n    } catch (error) { showPieceError(error); }\n  };\n  script.onerror = () => showPieceError("Could not load p5.js runtime.");\n  document.head.appendChild(script);\n}\nfunction bootC2() {\n  const script = document.createElement("script");\n  script.src = "https://cdn.jsdelivr.net/npm/c2.js@1.0.9/dist/c2.min.js";\n  script.onload = () => {\n    bootCanvasRuntime({ c2: window.c2 });\n  };\n  script.onerror = () => showPieceError("Could not load c2.js runtime.");\n  document.head.appendChild(script);\n}\nasync function bootThree() {\n  try {\n    const mod = await import("https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js");\n    const { OrbitControls } = await import("https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js");\n    window.THREE = mod;\n    runPieceCode();\n    if (typeof window.sketch !== "function") return;\n    const canvas = findCanvas("scene");\n    canvas.style.cssText = "display:block;width:100%;height:100%;";\n    sizeCanvas(canvas);\n    const state = { scene: null, camera: null, renderer: null };\n    let controls = null;\n    let rafIds = [];\n    const instrumentedThree = { ...mod };\n    instrumentedThree.Scene = class extends mod.Scene {\n      constructor() { super(); state.scene = this; }\n    };\n    instrumentedThree.PerspectiveCamera = class extends mod.PerspectiveCamera {\n      constructor(...args) { super(...args); state.camera = this; }\n    };\n    instrumentedThree.WebGLRenderer = class extends mod.WebGLRenderer {\n      constructor(params) {\n        super({ ...(params || {}), canvas });\n        state.renderer = this;\n        const _origSetSize = this.setSize.bind(this);\n        this.setSize = (w, h) => _origSetSize(w, h, false);\n        const _origRender = this.render.bind(this);\n        this.render = (sc, cam) => {\n          if (sc) state.scene = sc;\n          if (cam) state.camera = cam;\n          return _origRender(sc, cam);\n        };\n      }\n    };\n    const width = canvas.width || window.innerWidth || 1280;\n    const height = canvas.height || window.innerHeight || 720;\n    function autoFit() {\n      if (!state.scene || !state.camera) return;\n      const box = new mod.Box3();\n      state.scene.traverse((obj) => {\n        if (obj.isHelper || obj.isLight || obj.isCamera) return;\n        if (obj.isPoints) return;\n        if (obj.material) {\n          const mat = obj.material;\n          if (mat.side === 1 || (Array.isArray(mat) && mat.some(m => m.side === 1))) return;\n        }\n        const name = (obj.name || '').toLowerCase();\n        if (name.includes('sky') || name.includes('background') || name.includes('env') || name.includes('floor') || name.includes('ground') || name.includes('grid') || name.includes('dome') || name.includes('space') || name.includes('star')) return;\n        if ((obj.isMesh || obj.isLine || obj.isSprite) && obj.geometry) {\n          obj.geometry.computeBoundingBox?.();\n          if (obj.geometry.boundingBox) {\n            const worldBox = obj.geometry.boundingBox.clone().applyMatrix4(obj.matrixWorld);\n            const worldSize = new mod.Vector3();\n            worldBox.getSize(worldSize);\n            if (worldSize.x >= 30 || worldSize.y >= 30 || worldSize.z >= 30) return;\n            if (obj.geometry.type === 'PlaneGeometry' || obj.geometry.type === 'PlaneBufferGeometry') {\n              if (worldSize.x >= 15 || worldSize.y >= 15 || worldSize.z >= 15) return;\n            }\n            box.union(worldBox);\n          }\n        }\n      });\n      if (box.isEmpty()) return;\n      const center = new mod.Vector3(); box.getCenter(center);\n      const size = new mod.Vector3();   box.getSize(size);\n      if (state.camera.position.lengthSq() > 0.01) {\n        if (controls) { controls.target.copy(center); controls.update(); }\n        return;\n      }\n      const maxDim = Math.max(size.x, size.y, size.z) || 1;\n      const fov = state.camera.fov * (Math.PI / 180);\n      const dist = Math.abs(maxDim / 2 / Math.tan(fov / 2)) * 0.63;\n      state.camera.position.set(center.x + dist, center.y + dist * 0.4, center.z + dist);\n      state.camera.lookAt(center);\n      state.camera.updateMatrixWorld(true);\n      if (controls) { controls.target.copy(center); controls.update(); }\n    }\n    function ensureFallbackLighting() {\n      if (!state.scene?.traverse) return;\n      let hasRealLight = false;\n      let hasFallback = false;\n      const fallbacks = [];\n      state.scene.traverse((obj) => {\n        if (!obj.isLight) return;\n        if (obj.name?.startsWith("__viewer_fallback_")) { hasFallback = true; fallbacks.push(obj); }\n        else hasRealLight = true;\n      });\n      if (hasRealLight) {\n        fallbacks.forEach((obj) => state.scene.remove(obj));\n        return;\n      }\n      if (hasFallback) return;\n      const amb = new mod.AmbientLight(0xffffff, 0.7);\n      amb.name = "__viewer_fallback_ambient__";\n      state.scene.add(amb);\n      const dir = new mod.DirectionalLight(0xffffff, 0.8);\n      dir.position.set(5, 10, 7.5);\n      dir.name = "__viewer_fallback_dir__";\n      state.scene.add(dir);\n    }\n    function startFrame(handler) {\n      let count = 0;\n      function tick() {\n        count++;\n        try { handler(count); } catch (error) { showPieceError(error); return; }\n        if (count === 15) autoFit();\n        const id = requestAnimationFrame(tick);\n        rafIds.push(id);\n      }\n      const id = requestAnimationFrame(tick);\n      rafIds.push(id);\n      return () => { rafIds.forEach((rafId) => cancelAnimationFrame(rafId)); rafIds = []; };\n    }\n    window.THREE = instrumentedThree;\n    window.sketch({ THREE: instrumentedThree, canvas, startFrame, width, height, size: { width, height }, OrbitControls });\n    ensureFallbackLighting();\n    autoFit();\n\n    if (state.camera && state.renderer) {\n      controls = new OrbitControls(state.camera, canvas);\n      controls.enableDamping = true;\n      controls.enablePan = true;\n      const camDir = new mod.Vector3();\n      state.camera.getWorldDirection(camDir);\n      const camLen = state.camera.position.length();\n      controls.target.copy(state.camera.position).addScaledVector(camDir, Math.max(camLen * 0.8, 3));\n      autoFit();\n      controls.update();\n\n      let consecutiveErrors = 0;\n      const animateControls = () => {\n        const id = requestAnimationFrame(animateControls);\n        rafIds.push(id);\n        try {\n          ensureFallbackLighting();\n          controls.update();\n          state.renderer.render(state.scene, state.camera);\n          consecutiveErrors = 0;\n        } catch (renderError) {\n          consecutiveErrors++;\n          if (consecutiveErrors === 1) showPieceError(renderError);\n          if (consecutiveErrors >= 5) cancelAnimationFrame(id);\n        }\n      };\n      animateControls();\n    }\n\n    window.addEventListener("resize", () => {\n      sizeCanvas(canvas);\n      if (state.renderer && state.camera) {\n        state.camera.aspect = canvas.width / canvas.height;\n        state.camera.updateProjectionMatrix();\n        state.renderer.setSize(canvas.width, canvas.height, false);\n      }\n    });\n\n    window.parent.postMessage({ type: "sketch-status", valid: true }, "*");\n  } catch (error) {\n    showPieceError(error);\n  }\n}\nif (PIECE_ENGINE === "p5") {\n  bootP5();\n} else if (PIECE_ENGINE === "three") {\n  bootThree();\n} else if (PIECE_ENGINE === "c2") {\n  bootC2();\n} else {\n  runPieceCode();\n  if (typeof window.sketch === "function") {\n    try { window.sketch(); } catch (error) { showPieceError(error); }\n  }\n}\n<\/script>\n</body>\n</html>';
+        return '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>' + title + '</title>\n<script type="importmap">\n{\n  "imports": {\n    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",\n    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"\n  }\n}\n<\/script>\n<style>\nhtml,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#0d0d0f;color:#fff;}\nbody{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}\n#runtime-root{width:100vw;height:100vh;overflow:hidden;}\n#piece-error{position:fixed;inset:auto 1rem 1rem 1rem;z-index:9999;padding:1rem;border:1px solid #fca5a5;background:#450a0a;color:#fee2e2;font:14px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;display:none;}\ncanvas{display:block;width:100%;height:100%;}\n' + css + '\n</style>\n</head>\n<body>\n<div id="runtime-root">' + html + '</div>\n<div id="piece-error" role="alert"></div>\n<script>\nconst PIECE_ENGINE = ' + jsonEngine + ';\nconst PIECE_CODE = ' + jsonCode + ';\nfunction showPieceError(error) {\n  const el = document.getElementById("piece-error");\n  if (!el) return;\n  el.textContent = (error && (error.stack || error.message)) ? (error.stack || error.message) : String(error);\n  el.style.display = "block";\n}\nwindow.addEventListener("error", (event) => showPieceError(event.error || event.message));\nwindow.addEventListener("unhandledrejection", (event) => showPieceError(event.reason || "Unhandled promise rejection"));\nfunction runPieceCode() {\n  try {\n    const fn = new Function(PIECE_CODE + "\\n//# sourceURL=piece-runtime.js");\n    fn();\n  } catch (error) {\n    showPieceError(error);\n  }\n}\nfunction findCanvas(id) {\n  return document.getElementById(id) || document.querySelector("canvas") || (() => {\n    const canvas = document.createElement("canvas");\n    canvas.id = id;\n    const parent = document.getElementById("canvas-container") || document.getElementById("sketch-container") || document.getElementById("runtime-root");\n    parent.appendChild(canvas);\n    return canvas;\n  })();\n}\nfunction sizeCanvas(canvas) {\n  const w = Math.max(1, canvas.parentElement?.clientWidth || window.innerWidth || 1280);\n  const h = Math.max(1, canvas.parentElement?.clientHeight || window.innerHeight || 720);\n  canvas.width = w;\n  canvas.height = h;\n}\nfunction startFrame(callback) {\n  let count = 0;\n  function tick() {\n    count++;\n    try { callback(count); } catch (error) { showPieceError(error); return; }\n    requestAnimationFrame(tick);\n  }\n  requestAnimationFrame(tick);\n}\nfunction bootCanvasRuntime(extra) {\n  runPieceCode();\n  if (typeof window.sketch !== "function") return;\n  const canvas = findCanvas(PIECE_ENGINE === "c2" ? "c2-canvas" : "scene");\n  canvas.style.cssText = "display:block;width:100%;height:100%;";\n  sizeCanvas(canvas);\n  window.addEventListener("resize", () => sizeCanvas(canvas));\n  try { window.sketch({ canvas, startFrame, ...(extra || {}) }); } catch (error) { showPieceError(error); }\n}\nfunction bootP5() {\n  const script = document.createElement("script");\n  script.src = "https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js";\n  script.onload = () => {\n    runPieceCode();\n    try {\n      if (typeof window.sketch === "function" && typeof window.p5 === "function") {\n        const parent = document.getElementById("canvas-container") || document.getElementById("sketch-container") || document.getElementById("runtime-root");\n        new window.p5(window.sketch, parent);\n      }\n    } catch (error) { showPieceError(error); }\n  };\n  script.onerror = () => showPieceError("Could not load p5.js runtime.");\n  document.head.appendChild(script);\n}\nfunction bootC2() {\n  const script = document.createElement("script");\n  script.src = "https://cdn.jsdelivr.net/npm/c2.js@1.0.9/dist/c2.min.js";\n  script.onload = () => {\n    bootCanvasRuntime({ c2: window.c2 });\n  };\n  script.onerror = () => showPieceError("Could not load c2.js runtime.");\n  document.head.appendChild(script);\n}\nasync function bootThree() {\n  try {\n    const mod = await import("https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js");\n    const { OrbitControls } = await import("https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js");\n    window.THREE = mod;\n    runPieceCode();\n    if (typeof window.sketch !== "function") return;\n    const canvas = findCanvas("scene");\n    canvas.style.cssText = "display:block;width:100%;height:100%;";\n    sizeCanvas(canvas);\n    const state = { scene: null, camera: null, renderer: null };\n    let controls = null;\n    let rafIds = [];\n    const instrumentedThree = { ...mod };\n    instrumentedThree.Scene = class extends mod.Scene {\n      constructor() { super(); state.scene = this; }\n    };\n    instrumentedThree.PerspectiveCamera = class extends mod.PerspectiveCamera {\n      constructor(...args) { super(...args); state.camera = this; }\n    };\n    instrumentedThree.WebGLRenderer = class extends mod.WebGLRenderer {\n      constructor(params) {\n        super({ ...(params || {}), canvas });\n        state.renderer = this;\n        const _origSetSize = this.setSize.bind(this);\n        this.setSize = (w, h) => _origSetSize(w, h, false);\n        const _origRender = this.render.bind(this);\n        this.render = (sc, cam) => {\n          if (sc) state.scene = sc;\n          if (cam) state.camera = cam;\n          return _origRender(sc, cam);\n        };\n      }\n    };\n    const width = canvas.width || window.innerWidth || 1280;\n    const height = canvas.height || window.innerHeight || 720;\n    function autoFit() {\n      if (!state.scene || !state.camera) return;\n      const box = new mod.Box3();\n      state.scene.traverse((obj) => {\n        if (obj.isHelper || obj.isLight || obj.isCamera) return;\n        if (obj.isPoints) return;\n        if (obj.material) {\n          const mat = obj.material;\n          if (mat.side === 1 || (Array.isArray(mat) && mat.some(m => m.side === 1))) return;\n        }\n        const name = (obj.name || "").toLowerCase();\n        if (name.includes("sky") || name.includes("background") || name.includes("env") || name.includes("floor") || name.includes("ground") || name.includes("grid") || name.includes("dome") || name.includes("space") || name.includes("star")) return;\n        if ((obj.isMesh || obj.isLine || obj.isSprite) && obj.geometry) {\n          obj.geometry.computeBoundingBox?.();\n          if (obj.geometry.boundingBox) {\n            const worldBox = obj.geometry.boundingBox.clone().applyMatrix4(obj.matrixWorld);\n            const worldSize = new mod.Vector3();\n            worldBox.getSize(worldSize);\n            if (worldSize.x >= 30 || worldSize.y >= 30 || worldSize.z >= 30) return;\n            if (obj.geometry.type === "PlaneGeometry" || obj.geometry.type === "PlaneBufferGeometry") {\n              if (worldSize.x >= 15 || worldSize.y >= 15 || worldSize.z >= 15) return;\n            }\n            box.union(worldBox);\n          }\n        }\n      });\n      if (box.isEmpty()) return;\n      const center = new mod.Vector3(); box.getCenter(center);\n      const size = new mod.Vector3();   box.getSize(size);\n      if (state.camera.position.lengthSq() > 0.01) {\n        if (controls) { controls.target.copy(center); controls.update(); }\n        return;\n      }\n      const maxDim = Math.max(size.x, size.y, size.z) || 1;\n      const fov = state.camera.fov * (Math.PI / 180);\n      const dist = Math.abs(maxDim / 2 / Math.tan(fov / 2)) * 0.63;\n      state.camera.position.set(center.x + dist, center.y + dist * 0.4, center.z + dist);\n      state.camera.lookAt(center);\n      state.camera.updateMatrixWorld(true);\n      if (controls) { controls.target.copy(center); controls.update(); }\n    }\n    function ensureFallbackLighting() {\n      if (!state.scene?.traverse) return;\n      let hasRealLight = false;\n      let hasFallback = false;\n      const fallbacks = [];\n      state.scene.traverse((obj) => {\n        if (!obj.isLight) return;\n        if (obj.name?.startsWith("__viewer_fallback_")) { hasFallback = true; fallbacks.push(obj); }\n        else hasRealLight = true;\n      });\n      if (hasRealLight) {\n        fallbacks.forEach((obj) => state.scene.remove(obj));\n        return;\n      }\n      if (hasFallback) return;\n      const amb = new mod.AmbientLight(0xffffff, 0.7);\n      amb.name = "__viewer_fallback_ambient__";\n      state.scene.add(amb);\n      const dir = new mod.DirectionalLight(0xffffff, 0.8);\n      dir.position.set(5, 10, 7.5);\n      dir.name = "__viewer_fallback_dir__";\n      state.scene.add(dir);\n    }\n    function startFrame(handler) {\n      let count = 0;\n      function tick() {\n        count++;\n        try { handler(count); } catch (error) { showPieceError(error); return; }\n        if (count === 15) autoFit();\n        const id = requestAnimationFrame(tick);\n        rafIds.push(id);\n      }\n      const id = requestAnimationFrame(tick);\n      rafIds.push(id);\n      return () => { rafIds.forEach((rafId) => cancelAnimationFrame(rafId)); rafIds = []; };\n    }\n    window.THREE = instrumentedThree;\n    window.sketch({ THREE: instrumentedThree, canvas, startFrame, width, height, size: { width, height }, OrbitControls });\n    ensureFallbackLighting();\n    autoFit();\n\n    if (state.camera && state.renderer) {\n      controls = new OrbitControls(state.camera, canvas);\n      controls.enableDamping = true;\n      controls.enablePan = true;\n      const camDir = new mod.Vector3();\n      state.camera.getWorldDirection(camDir);\n      const camLen = state.camera.position.length();\n      controls.target.copy(state.camera.position).addScaledVector(camDir, Math.max(camLen * 0.8, 3));\n      autoFit();\n      controls.update();\n\n      let consecutiveErrors = 0;\n      const animateControls = () => {\n        const id = requestAnimationFrame(animateControls);\n        rafIds.push(id);\n        try {\n          ensureFallbackLighting();\n          controls.update();\n          state.renderer.render(state.scene, state.camera);\n          consecutiveErrors = 0;\n        } catch (renderError) {\n          consecutiveErrors++;\n          if (consecutiveErrors === 1) showPieceError(renderError);\n          if (consecutiveErrors >= 5) cancelAnimationFrame(id);\n        }\n      };\n      animateControls();\n    }\n\n    window.addEventListener("resize", () => {\n      sizeCanvas(canvas);\n      if (state.renderer && state.camera) {\n        state.camera.aspect = canvas.width / canvas.height;\n        state.camera.updateProjectionMatrix();\n        state.renderer.setSize(canvas.width, canvas.height, false);\n      }\n    });\n\n    window.parent.postMessage({ type: "sketch-status", valid: true }, "*");\n  } catch (error) {\n    showPieceError(error);\n  }\n}\nif (PIECE_ENGINE === "p5") {\n  bootP5();\n} else if (PIECE_ENGINE === "three") {\n  bootThree();\n} else if (PIECE_ENGINE === "c2") {\n  bootC2();\n} else {\n  runPieceCode();\n  if (typeof window.sketch === "function") {\n    try { window.sketch(); } catch (error) { showPieceError(error); }\n  }\n}\n<\/script>\n</body>\n</html>';
     }
 
     // 3. Update Live Preview function
@@ -623,80 +679,150 @@ $preferredProfileId = $preferredProfileId ?? null;
         }, 50);
     });
 
-    // 7. Thumbnail capture
+    // 7. Reusable performCapture helper
+    async function performCapture(pieceId) {
+        var engine = engineField.value || 'p5';
+        var html = htmlField.value || '';
+        var css = cssField.value || '';
+        var js = jsField.value || '';
+
+        if (!html && !js) {
+            throw new Error('Add HTML and JS code in the code tabs before capturing a thumbnail.');
+        }
+
+        var srcdoc = renderDocumentJS(titleField.value || 'Art piece', engine, html, css, js);
+
+        // Inject preserveDrawingBuffer:true for Three.js so toDataURL() works
+        if (engine === 'three') {
+            srcdoc = srcdoc.replace(
+                'super({ ...(params || {}), canvas });',
+                'super({ ...(params || {}), canvas, preserveDrawingBuffer: true });'
+            );
+        }
+
+        // Mount in off-screen iframe with both allow-scripts and allow-same-origin
+        var captureFrame = document.createElement('iframe');
+        captureFrame.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:960px;height:540px;border:none;';
+        captureFrame.sandbox = 'allow-scripts allow-same-origin';
+        document.body.appendChild(captureFrame);
+
+        captureFrame.srcdoc = srcdoc;
+        await new Promise(function (resolve) {
+            captureFrame.onload = resolve;
+            setTimeout(resolve, 800);
+        });
+
+        // Wait ~3s for animation to stabilise
+        await new Promise(function (resolve) { setTimeout(resolve, 3000); });
+
+        var iframeDoc = captureFrame.contentDocument;
+        var canvas = iframeDoc && iframeDoc.querySelector('canvas');
+
+        if (!canvas) {
+            var svg = iframeDoc && iframeDoc.querySelector('svg');
+            if (svg) {
+                canvas = await convertSvgToCanvas(svg, 960, 540);
+            }
+        }
+
+        if (!canvas) {
+            document.body.removeChild(captureFrame);
+            throw new Error('No canvas found. Make sure the piece renders to a canvas or svg element.');
+        }
+
+        var imageData;
+        try {
+            imageData = canvas.toDataURL('image/png');
+        } catch (e) {
+            document.body.removeChild(captureFrame);
+            throw new Error('Canvas capture failed: ' + e.message);
+        }
+
+        document.body.removeChild(captureFrame);
+
+        var formData = new FormData();
+        formData.append('image_data', imageData);
+
+        var resp = await fetch('/admin/pieces/' + pieceId + '/capture-thumbnail', {
+            method: 'POST',
+            body: formData
+        });
+
+        if (!resp.ok) {
+            var err = await resp.json();
+            throw new Error(err.error || 'Server error ' + resp.status);
+        }
+
+        return await resp.json();
+    }
+
+    // 8. Auto-capture on form submit if dirty
+    var initialHTML = htmlField.value;
+    var initialCSS = cssField.value;
+    var initialJS = jsField.value;
+    var initialEngine = engineField.value;
+
+    var form = document.getElementById('piece-editor-form');
+    var isSubmitting = false;
+
+    if (form) {
+        form.addEventListener('submit', async function (e) {
+            if (isSubmitting) return;
+
+            var pieceId = <?= $isEdit ? (int) $piece['id'] : 'null' ?>;
+            if (!pieceId) {
+                // Creating a new piece: we don't have an ID yet, so we cannot capture the thumbnail beforehand.
+                return;
+            }
+
+            var isDirty = (
+                htmlField.value !== initialHTML ||
+                cssField.value !== initialCSS ||
+                jsField.value !== initialJS ||
+                engineField.value !== initialEngine
+            );
+
+            if (isDirty) {
+                e.preventDefault();
+                isSubmitting = true;
+
+                var submitBtn = form.querySelector('button[type="submit"]');
+                var origText = submitBtn ? submitBtn.textContent : '';
+                if (submitBtn) {
+                    submitBtn.disabled = true;
+                    submitBtn.textContent = 'Saving & Capturing Thumbnail…';
+                }
+
+                try {
+                    var result = await performCapture(pieceId);
+                    document.getElementById('thumbnail_url').value = result.url;
+                } catch (err) {
+                    console.error('Auto thumbnail capture failed:', err);
+                    if (!confirm('Auto thumbnail capture failed: ' + err.message + '\n\nDo you want to save the changes anyway without updating the thumbnail?')) {
+                        if (submitBtn) {
+                            submitBtn.disabled = false;
+                            submitBtn.textContent = origText;
+                        }
+                        isSubmitting = false;
+                        return;
+                    }
+                }
+
+                form.submit();
+            }
+        });
+    }
+
+    // 9. Manual capture button click
     var captureBtn = document.getElementById('btn-capture-thumbnail');
     if (captureBtn) {
         captureBtn.addEventListener('click', async function () {
             var pieceId = captureBtn.dataset.pieceId;
-            var engine = engineField.value || 'p5';
-            var html = htmlField.value || '';
-            var css = cssField.value || '';
-            var js = jsField.value || '';
-
-            if (!html && !js) {
-                alert('Add HTML and JS code in the code tabs before capturing a thumbnail.');
-                return;
-            }
-
             captureBtn.textContent = 'Capturing…';
             captureBtn.disabled = true;
 
             try {
-                var srcdoc = renderDocumentJS(titleField.value || 'Art piece', engine, html, css, js);
-
-                // Inject preserveDrawingBuffer:true for Three.js so toDataURL() works
-                if (engine === 'three') {
-                    srcdoc = srcdoc.replace(
-                        'super({ ...(params || {}), canvas });',
-                        'super({ ...(params || {}), canvas, preserveDrawingBuffer: true });'
-                    );
-                }
-
-                // Mount in off-screen iframe
-                var captureFrame = document.createElement('iframe');
-                captureFrame.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:960px;height:540px;border:none;';
-                captureFrame.sandbox = 'allow-scripts';
-                document.body.appendChild(captureFrame);
-
-                captureFrame.srcdoc = srcdoc;
-                await new Promise(function (resolve) {
-                    captureFrame.onload = resolve;
-                    setTimeout(resolve, 800);
-                });
-
-                // Wait ~3s for animation to stabilise
-                await new Promise(function (resolve) { setTimeout(resolve, 3000); });
-
-                var iframeDoc = captureFrame.contentDocument;
-                var canvas = iframeDoc && iframeDoc.querySelector('canvas');
-
-                if (!canvas) {
-                    throw new Error('No canvas found. Make sure the piece renders to a canvas element.');
-                }
-
-                var imageData;
-                try {
-                    imageData = canvas.toDataURL('image/png');
-                } catch (e) {
-                    throw new Error('Canvas capture failed: ' + e.message + '. For Three.js this is expected until the piece is saved once.');
-                }
-
-                document.body.removeChild(captureFrame);
-
-                var formData = new FormData();
-                formData.append('image_data', imageData);
-
-                var resp = await fetch('/admin/pieces/' + pieceId + '/capture-thumbnail', {
-                    method: 'POST',
-                    body: formData
-                });
-
-                if (!resp.ok) {
-                    var err = await resp.json();
-                    throw new Error(err.error || 'Server error ' + resp.status);
-                }
-
-                var result = await resp.json();
+                var result = await performCapture(pieceId);
 
                 document.getElementById('thumbnail_url').value = result.url;
 

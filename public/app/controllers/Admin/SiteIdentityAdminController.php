@@ -59,7 +59,7 @@ class SiteIdentityAdminController
 
     private static function resolveSettingsData(): array
     {
-        return [
+        $data = [
             'site_title' => trim($_POST['site_title'] ?? '') ?: 'Augment Humankind',
             'hero_heading' => trim($_POST['hero_heading'] ?? '') ?: '',
             'hero_subheading' => trim($_POST['hero_subheading'] ?? '') ?: '',
@@ -73,6 +73,37 @@ class SiteIdentityAdminController
             'logo_dark_url' => trim($_POST['logo_dark_url'] ?? '') ?: null,
             'logo_layout' => trim($_POST['logo_layout'] ?? '') ?: 'text_only',
             'default_theme_mode' => trim($_POST['default_theme_mode'] ?? '') ?: 'system',
+            'theme'   => mb_substr(trim($_POST['theme'] ?? ''), 0, 32) ?: null,
+            'palette' => mb_substr(trim($_POST['palette'] ?? ''), 0, 32) ?: null,
+        ];
+
+        foreach (self::colorColumns() as $col) {
+            $val = trim($_POST[$col] ?? '');
+            // Accept "H S% L%" or bare "H S L" — reject anything else to prevent injection
+            if ($val !== '' && !preg_match('/^[\d.]+\s+[\d.]+%?\s+[\d.]+%?$/', $val)) {
+                $val = '';
+            }
+            $data[$col] = $val !== '' ? $val : null;
+        }
+
+        return $data;
+    }
+
+    private static function colorColumns(): array
+    {
+        return [
+            'color_background', 'color_foreground',
+            'color_muted', 'color_muted_foreground',
+            'color_primary', 'color_primary_foreground',
+            'color_secondary', 'color_secondary_foreground',
+            'color_accent', 'color_accent_foreground',
+            'color_destructive', 'color_destructive_foreground',
+            'color_background_dark', 'color_foreground_dark',
+            'color_muted_dark', 'color_muted_foreground_dark',
+            'color_primary_dark', 'color_primary_foreground_dark',
+            'color_secondary_dark', 'color_secondary_foreground_dark',
+            'color_accent_dark', 'color_accent_foreground_dark',
+            'color_destructive_dark', 'color_destructive_foreground_dark',
         ];
     }
 
@@ -82,6 +113,8 @@ class SiteIdentityAdminController
             'site_title', 'hero_heading', 'hero_subheading', 'about_heading',
             'about_body', 'copyright_line', 'footer_credit', 'cta_label',
             'cta_href', 'logo_url', 'logo_dark_url', 'logo_layout', 'default_theme_mode',
+            'theme', 'palette',
+            ...self::colorColumns(),
         ];
 
         $sets = [];

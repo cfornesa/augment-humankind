@@ -77,14 +77,42 @@ if (!in_array($tab, ['settings', 'assets', 'media'])) {
             </div>
             <div class="field-grid">
                 <div class="field">
-                    <label for="logo_url">Logo URL</label>
-                    <input id="logo_url" name="logo_url" type="url" maxlength="2048"
-                           value="<?= e($settings['logo_url'] ?? '') ?>">
+                    <label for="logo_url">Logo (light mode)</label>
+                    <div class="media-field-preview" id="logo-url-preview">
+                        <?php if (!empty($settings['logo_url'])): ?>
+                            <img src="<?= e($settings['logo_url']) ?>" alt="" style="max-height:60px;border:1px solid var(--line);">
+                        <?php endif ?>
+                    </div>
+                    <input id="logo_url" name="logo_url" type="text" maxlength="2048" readonly
+                           value="<?= e($settings['logo_url'] ?? '') ?>"
+                           placeholder="No image selected">
+                    <div class="media-field-actions">
+                        <button type="button" class="picker-trigger"
+                                data-picker-target="logo_url"
+                                data-picker-preview="logo-url-preview">Choose Image</button>
+                        <button type="button" class="admin-btn admin-btn-ghost admin-btn-sm"
+                                data-clear-input="logo_url"
+                                data-clear-preview="logo-url-preview">Clear</button>
+                    </div>
                 </div>
                 <div class="field">
-                    <label for="logo_dark_url">Logo Dark URL</label>
-                    <input id="logo_dark_url" name="logo_dark_url" type="url" maxlength="2048"
-                           value="<?= e($settings['logo_dark_url'] ?? '') ?>">
+                    <label for="logo_dark_url">Logo (dark mode)</label>
+                    <div class="media-field-preview" id="logo-dark-url-preview">
+                        <?php if (!empty($settings['logo_dark_url'])): ?>
+                            <img src="<?= e($settings['logo_dark_url']) ?>" alt="" style="max-height:60px;border:1px solid var(--line);">
+                        <?php endif ?>
+                    </div>
+                    <input id="logo_dark_url" name="logo_dark_url" type="text" maxlength="2048" readonly
+                           value="<?= e($settings['logo_dark_url'] ?? '') ?>"
+                           placeholder="No image selected">
+                    <div class="media-field-actions">
+                        <button type="button" class="picker-trigger"
+                                data-picker-target="logo_dark_url"
+                                data-picker-preview="logo-dark-url-preview">Choose Image</button>
+                        <button type="button" class="admin-btn admin-btn-ghost admin-btn-sm"
+                                data-clear-input="logo_dark_url"
+                                data-clear-preview="logo-dark-url-preview">Clear</button>
+                    </div>
                 </div>
             </div>
             <div class="field-grid">
@@ -105,6 +133,100 @@ if (!in_array($tab, ['settings', 'assets', 'media'])) {
                     </select>
                 </div>
             </div>
+            <div class="field-grid">
+                <div class="field">
+                    <label for="theme">Layout Theme</label>
+                    <select id="theme" name="theme">
+                        <option value="" <?= ($settings['theme'] ?? '') === '' ? 'selected' : '' ?>>(default)</option>
+                        <?php
+                        $themeOptions = [
+                            'bauhaus'     => 'Bauhaus — Heavy borders, hard shadows, all-caps',
+                            'traditional' => 'Traditional — Serif body, hairline borders',
+                            'minimalist'  => 'Minimalist — No borders, generous whitespace',
+                            'academic'    => 'Academic — Old-style serif, scholarly feel',
+                            'airy'        => 'Airy — Light weights, soft shadows, rounded',
+                            'nature'      => 'Nature — Friendly Nunito sans, soft radius',
+                            'comfort'     => 'Comfort — Quicksand, pillowy radius',
+                            'audacious'   => 'Audacious — Bebas Neue, oversized borders',
+                            'artistic'    => 'Artistic — Caveat handwriting, hand-drawn feel',
+                        ];
+                        foreach ($themeOptions as $val => $label): ?>
+                        <option value="<?= e($val) ?>" <?= ($settings['theme'] ?? '') === $val ? 'selected' : '' ?>><?= e($label) ?></option>
+                        <?php endforeach ?>
+                    </select>
+                </div>
+                <div class="field">
+                    <label for="palette">Color Palette</label>
+                    <select id="palette" name="palette" data-palette-select>
+                        <option value="" <?= ($settings['palette'] ?? '') === '' ? 'selected' : '' ?>>(custom — edit fields below)</option>
+                        <option value="original" <?= ($settings['palette'] ?? '') === 'original' ? 'selected' : '' ?>>Original — Cream/navy/lime (site default)</option>
+                        <option value="bauhaus" <?= ($settings['palette'] ?? '') === 'bauhaus' ? 'selected' : '' ?>>Bauhaus — Red, blue, yellow on black & white</option>
+                        <option value="monochrome" <?= ($settings['palette'] ?? '') === 'monochrome' ? 'selected' : '' ?>>Monochrome — Pure greyscale</option>
+                        <option value="newsprint" <?= ($settings['palette'] ?? '') === 'newsprint' ? 'selected' : '' ?>>Newsprint — Cream paper, black ink, red accent</option>
+                        <option value="ocean" <?= ($settings['palette'] ?? '') === 'ocean' ? 'selected' : '' ?>>Ocean — Cool blues with teal accents</option>
+                        <option value="forest" <?= ($settings['palette'] ?? '') === 'forest' ? 'selected' : '' ?>>Forest — Deep greens with earth tones</option>
+                        <option value="sunset" <?= ($settings['palette'] ?? '') === 'sunset' ? 'selected' : '' ?>>Sunset — Warm orange and pink</option>
+                        <option value="sepia" <?= ($settings['palette'] ?? '') === 'sepia' ? 'selected' : '' ?>>Sepia — Aged paper with brown ink</option>
+                        <option value="high-contrast" <?= ($settings['palette'] ?? '') === 'high-contrast' ? 'selected' : '' ?>>High Contrast — Maximum contrast (WCAG)</option>
+                        <option value="pastel" <?= ($settings['palette'] ?? '') === 'pastel' ? 'selected' : '' ?>>Pastel — Soft, low-saturation washes</option>
+                    </select>
+                </div>
+            </div>
+            <hr style="margin: 2rem 0; border: 0; border-top: 2px solid var(--line);">
+            <h2 style="margin: 0 0 0.5rem; font-size: 1.1rem;">Colors</h2>
+            <p style="margin: 0 0 1.5rem; font-size: 0.85rem; color: var(--ink-soft);">Select a palette above to auto-fill all fields, or click any swatch to pick a color visually. HSL values can also be typed directly as <code>H S% L%</code>. Leave blank to use the stylesheet default.</p>
+            <?php
+            $colorGroups = [
+                'Light Mode' => [
+                    'color_background'             => 'Background',
+                    'color_foreground'             => 'Foreground / ink',
+                    'color_muted'                  => 'Muted background',
+                    'color_muted_foreground'       => 'Muted foreground',
+                    'color_primary'                => 'Primary',
+                    'color_primary_foreground'     => 'Primary foreground',
+                    'color_secondary'              => 'Secondary',
+                    'color_secondary_foreground'   => 'Secondary foreground',
+                    'color_accent'                 => 'Accent',
+                    'color_accent_foreground'      => 'Accent foreground',
+                    'color_destructive'            => 'Destructive',
+                    'color_destructive_foreground' => 'Destructive foreground',
+                ],
+                'Dark Mode' => [
+                    'color_background_dark'             => 'Background',
+                    'color_foreground_dark'             => 'Foreground / ink',
+                    'color_muted_dark'                  => 'Muted background',
+                    'color_muted_foreground_dark'       => 'Muted foreground',
+                    'color_primary_dark'                => 'Primary',
+                    'color_primary_foreground_dark'     => 'Primary foreground',
+                    'color_secondary_dark'              => 'Secondary',
+                    'color_secondary_foreground_dark'   => 'Secondary foreground',
+                    'color_accent_dark'                 => 'Accent',
+                    'color_accent_foreground_dark'      => 'Accent foreground',
+                    'color_destructive_dark'            => 'Destructive',
+                    'color_destructive_foreground_dark' => 'Destructive foreground',
+                ],
+            ];
+            foreach ($colorGroups as $groupLabel => $cols): ?>
+            <h3 style="margin: 1.5rem 0 0.75rem; font-size: 1rem; border-bottom: 1px solid var(--line); padding-bottom: 0.4rem;"><?= e($groupLabel) ?></h3>
+            <div class="field-grid" style="grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));">
+                <?php foreach ($cols as $col => $label): ?>
+                <div class="field">
+                    <label for="<?= e($col) ?>"><?= e($label) ?></label>
+                    <div style="display:flex;gap:0.4rem;align-items:center;">
+                        <input type="color" class="color-swatch" aria-label="Pick color for <?= e($label) ?>"
+                               data-hsl-target="<?= e($col) ?>" value="#808080"
+                               style="width:2.4rem;height:2.4rem;padding:0.15rem;border:2px solid var(--line);background:var(--paper);cursor:pointer;flex-shrink:0;">
+                        <input id="<?= e($col) ?>" name="<?= e($col) ?>" type="text" maxlength="64"
+                               value="<?= e((string) ($settings[$col] ?? '')) ?>"
+                               placeholder="H S% L%"
+                               class="color-hsl-input"
+                               style="font-family:monospace;flex:1;min-width:0;">
+                    </div>
+                </div>
+                <?php endforeach ?>
+            </div>
+            <?php endforeach ?>
+
             <div class="form-actions">
                 <button type="submit" class="admin-btn">Save Settings</button>
             </div>
@@ -180,6 +302,225 @@ if (!in_array($tab, ['settings', 'assets', 'media'])) {
         <?php endif; ?>
     <?php endif; ?>
 </div>
+<script>
+(function(){
+
+// --- HSL <-> Hex conversion ---
+function hue2rgb(p,q,t){if(t<0)t+=1;if(t>1)t-=1;if(t<1/6)return p+(q-p)*6*t;if(t<1/2)return q;if(t<2/3)return p+(q-p)*(2/3-t)*6;return p;}
+function hslToHex(hslStr){
+  var m=String(hslStr).match(/^([\d.]+)\s+([\d.]+)%?\s+([\d.]+)%?$/);
+  if(!m)return null;
+  var h=parseFloat(m[1])/360,s=parseFloat(m[2])/100,l=parseFloat(m[3])/100;
+  var r,g,b;
+  if(s===0){r=g=b=l;}else{var q=l<0.5?l*(1+s):l+s-l*s,p=2*l-q;r=hue2rgb(p,q,h+1/3);g=hue2rgb(p,q,h);b=hue2rgb(p,q,h-1/3);}
+  return '#'+[r,g,b].map(function(x){return Math.round(x*255).toString(16).padStart(2,'0');}).join('');
+}
+function hexToHsl(hex){
+  var r=parseInt(hex.slice(1,3),16)/255,g=parseInt(hex.slice(3,5),16)/255,b=parseInt(hex.slice(5,7),16)/255;
+  var max=Math.max(r,g,b),min=Math.min(r,g,b),h,s,l=(max+min)/2;
+  if(max===min){h=s=0;}else{var d=max-min;s=l>0.5?d/(2-max-min):d/(max+min);switch(max){case r:h=((g-b)/d+(g<b?6:0))/6;break;case g:h=((b-r)/d+2)/6;break;default:h=((r-g)/d+4)/6;}}
+  return Math.round(h*360)+' '+Math.round(s*100)+'% '+Math.round(l*100)+'%';
+}
+
+// --- Palette data (from site-themes.ts) ---
+var PALETTES = {
+  original:{
+    color_background:'40 49% 94%',color_foreground:'201 56% 19%',
+    color_muted:'37 50% 88%',color_muted_foreground:'197 42% 32%',
+    color_primary:'88 60% 53%',color_primary_foreground:'0 0% 100%',
+    color_secondary:'189 51% 57%',color_secondary_foreground:'0 0% 100%',
+    color_accent:'33 90% 60%',color_accent_foreground:'0 0% 0%',
+    color_destructive:'0 72% 51%',color_destructive_foreground:'0 0% 100%',
+    color_background_dark:'206 55% 11%',color_foreground_dark:'203 36% 90%',
+    color_muted_dark:'206 45% 16%',color_muted_foreground_dark:'203 37% 65%',
+    color_primary_dark:'88 60% 53%',color_primary_foreground_dark:'0 0% 0%',
+    color_secondary_dark:'189 51% 57%',color_secondary_foreground_dark:'0 0% 0%',
+    color_accent_dark:'33 90% 60%',color_accent_foreground_dark:'0 0% 0%',
+    color_destructive_dark:'0 72% 51%',color_destructive_foreground_dark:'0 0% 100%'
+  },
+  bauhaus:{
+    color_background:'234 100% 87%',color_foreground:'0 0% 0%',
+    color_muted:'0 0% 90%',color_muted_foreground:'0 0% 20%',
+    color_primary:'240 100% 35%',color_primary_foreground:'0 0% 100%',
+    color_secondary:'280 100% 30%',color_secondary_foreground:'0 0% 100%',
+    color_accent:'50 100% 50%',color_accent_foreground:'0 0% 0%',
+    color_destructive:'0 100% 40%',color_destructive_foreground:'0 0% 100%',
+    color_background_dark:'0 0% 5%',color_foreground_dark:'0 0% 95%',
+    color_muted_dark:'0 0% 15%',color_muted_foreground_dark:'0 0% 80%',
+    color_primary_dark:'240 100% 65%',color_primary_foreground_dark:'0 0% 0%',
+    color_secondary_dark:'280 100% 70%',color_secondary_foreground_dark:'0 0% 0%',
+    color_accent_dark:'50 100% 50%',color_accent_foreground_dark:'0 0% 0%',
+    color_destructive_dark:'0 100% 55%',color_destructive_foreground_dark:'0 0% 100%'
+  },
+  monochrome:{
+    color_background:'0 0% 98%',color_foreground:'0 0% 5%',
+    color_muted:'0 0% 92%',color_muted_foreground:'0 0% 35%',
+    color_primary:'0 0% 10%',color_primary_foreground:'0 0% 100%',
+    color_secondary:'0 0% 30%',color_secondary_foreground:'0 0% 100%',
+    color_accent:'0 0% 50%',color_accent_foreground:'0 0% 100%',
+    color_destructive:'0 60% 45%',color_destructive_foreground:'0 0% 100%',
+    color_background_dark:'0 0% 8%',color_foreground_dark:'0 0% 92%',
+    color_muted_dark:'0 0% 15%',color_muted_foreground_dark:'0 0% 65%',
+    color_primary_dark:'0 0% 90%',color_primary_foreground_dark:'0 0% 8%',
+    color_secondary_dark:'0 0% 70%',color_secondary_foreground_dark:'0 0% 8%',
+    color_accent_dark:'0 0% 50%',color_accent_foreground_dark:'0 0% 100%',
+    color_destructive_dark:'0 60% 55%',color_destructive_foreground_dark:'0 0% 100%'
+  },
+  newsprint:{
+    color_background:'43 35% 92%',color_foreground:'0 0% 10%',
+    color_muted:'43 25% 85%',color_muted_foreground:'0 0% 35%',
+    color_primary:'0 75% 40%',color_primary_foreground:'0 0% 100%',
+    color_secondary:'0 0% 20%',color_secondary_foreground:'0 0% 100%',
+    color_accent:'30 80% 45%',color_accent_foreground:'0 0% 100%',
+    color_destructive:'0 72% 45%',color_destructive_foreground:'0 0% 100%',
+    color_background_dark:'30 15% 12%',color_foreground_dark:'43 25% 88%',
+    color_muted_dark:'30 10% 18%',color_muted_foreground_dark:'43 15% 65%',
+    color_primary_dark:'0 65% 55%',color_primary_foreground_dark:'0 0% 100%',
+    color_secondary_dark:'0 0% 70%',color_secondary_foreground_dark:'0 0% 10%',
+    color_accent_dark:'30 70% 55%',color_accent_foreground_dark:'0 0% 0%',
+    color_destructive_dark:'0 65% 55%',color_destructive_foreground_dark:'0 0% 100%'
+  },
+  ocean:{
+    color_background:'200 30% 97%',color_foreground:'210 60% 15%',
+    color_muted:'200 25% 90%',color_muted_foreground:'210 40% 35%',
+    color_primary:'199 89% 40%',color_primary_foreground:'0 0% 100%',
+    color_secondary:'175 60% 40%',color_secondary_foreground:'0 0% 100%',
+    color_accent:'220 80% 55%',color_accent_foreground:'0 0% 100%',
+    color_destructive:'0 72% 51%',color_destructive_foreground:'0 0% 100%',
+    color_background_dark:'216 45% 10%',color_foreground_dark:'200 30% 92%',
+    color_muted_dark:'216 35% 16%',color_muted_foreground_dark:'200 25% 65%',
+    color_primary_dark:'199 80% 55%',color_primary_foreground_dark:'0 0% 0%',
+    color_secondary_dark:'175 55% 50%',color_secondary_foreground_dark:'0 0% 0%',
+    color_accent_dark:'220 70% 65%',color_accent_foreground_dark:'0 0% 0%',
+    color_destructive_dark:'0 65% 55%',color_destructive_foreground_dark:'0 0% 100%'
+  },
+  forest:{
+    color_background:'90 20% 96%',color_foreground:'140 40% 10%',
+    color_muted:'90 15% 88%',color_muted_foreground:'140 30% 30%',
+    color_primary:'130 45% 35%',color_primary_foreground:'0 0% 100%',
+    color_secondary:'30 55% 40%',color_secondary_foreground:'0 0% 100%',
+    color_accent:'80 50% 45%',color_accent_foreground:'0 0% 100%',
+    color_destructive:'0 65% 45%',color_destructive_foreground:'0 0% 100%',
+    color_background_dark:'140 30% 8%',color_foreground_dark:'90 20% 90%',
+    color_muted_dark:'140 20% 14%',color_muted_foreground_dark:'90 15% 65%',
+    color_primary_dark:'130 40% 50%',color_primary_foreground_dark:'0 0% 0%',
+    color_secondary_dark:'30 50% 55%',color_secondary_foreground_dark:'0 0% 0%',
+    color_accent_dark:'80 45% 55%',color_accent_foreground_dark:'0 0% 0%',
+    color_destructive_dark:'0 60% 55%',color_destructive_foreground_dark:'0 0% 100%'
+  },
+  sunset:{
+    color_background:'20 60% 97%',color_foreground:'330 40% 10%',
+    color_muted:'20 40% 90%',color_muted_foreground:'330 25% 35%',
+    color_primary:'15 90% 55%',color_primary_foreground:'0 0% 100%',
+    color_secondary:'340 75% 55%',color_secondary_foreground:'0 0% 100%',
+    color_accent:'45 95% 55%',color_accent_foreground:'0 0% 0%',
+    color_destructive:'0 72% 51%',color_destructive_foreground:'0 0% 100%',
+    color_background_dark:'335 40% 8%',color_foreground_dark:'20 50% 92%',
+    color_muted_dark:'335 30% 14%',color_muted_foreground_dark:'20 30% 65%',
+    color_primary_dark:'15 80% 60%',color_primary_foreground_dark:'0 0% 0%',
+    color_secondary_dark:'340 65% 65%',color_secondary_foreground_dark:'0 0% 0%',
+    color_accent_dark:'45 90% 60%',color_accent_foreground_dark:'0 0% 0%',
+    color_destructive_dark:'0 65% 55%',color_destructive_foreground_dark:'0 0% 100%'
+  },
+  sepia:{
+    color_background:'35 40% 93%',color_foreground:'25 40% 15%',
+    color_muted:'35 30% 85%',color_muted_foreground:'25 30% 35%',
+    color_primary:'20 55% 35%',color_primary_foreground:'35 40% 93%',
+    color_secondary:'35 45% 45%',color_secondary_foreground:'0 0% 100%',
+    color_accent:'15 70% 40%',color_accent_foreground:'0 0% 100%',
+    color_destructive:'0 65% 40%',color_destructive_foreground:'0 0% 100%',
+    color_background_dark:'25 35% 10%',color_foreground_dark:'35 30% 88%',
+    color_muted_dark:'25 25% 16%',color_muted_foreground_dark:'35 20% 65%',
+    color_primary_dark:'20 50% 55%',color_primary_foreground_dark:'0 0% 0%',
+    color_secondary_dark:'35 40% 55%',color_secondary_foreground_dark:'0 0% 0%',
+    color_accent_dark:'15 65% 55%',color_accent_foreground_dark:'0 0% 0%',
+    color_destructive_dark:'0 60% 55%',color_destructive_foreground_dark:'0 0% 100%'
+  },
+  'high-contrast':{
+    color_background:'0 0% 100%',color_foreground:'0 0% 0%',
+    color_muted:'0 0% 94%',color_muted_foreground:'0 0% 20%',
+    color_primary:'220 100% 30%',color_primary_foreground:'0 0% 100%',
+    color_secondary:'0 0% 20%',color_secondary_foreground:'0 0% 100%',
+    color_accent:'40 100% 35%',color_accent_foreground:'0 0% 0%',
+    color_destructive:'0 100% 35%',color_destructive_foreground:'0 0% 100%',
+    color_background_dark:'0 0% 0%',color_foreground_dark:'0 0% 100%',
+    color_muted_dark:'0 0% 10%',color_muted_foreground_dark:'0 0% 80%',
+    color_primary_dark:'220 100% 70%',color_primary_foreground_dark:'0 0% 0%',
+    color_secondary_dark:'0 0% 80%',color_secondary_foreground_dark:'0 0% 0%',
+    color_accent_dark:'40 100% 60%',color_accent_foreground_dark:'0 0% 0%',
+    color_destructive_dark:'0 100% 60%',color_destructive_foreground_dark:'0 0% 0%'
+  },
+  pastel:{
+    color_background:'300 30% 98%',color_foreground:'270 30% 20%',
+    color_muted:'300 20% 92%',color_muted_foreground:'270 20% 45%',
+    color_primary:'260 60% 70%',color_primary_foreground:'0 0% 100%',
+    color_secondary:'180 50% 65%',color_secondary_foreground:'0 0% 100%',
+    color_accent:'340 65% 70%',color_accent_foreground:'0 0% 100%',
+    color_destructive:'0 65% 65%',color_destructive_foreground:'0 0% 100%',
+    color_background_dark:'270 30% 12%',color_foreground_dark:'300 20% 92%',
+    color_muted_dark:'270 20% 18%',color_muted_foreground_dark:'300 15% 70%',
+    color_primary_dark:'260 55% 75%',color_primary_foreground_dark:'0 0% 0%',
+    color_secondary_dark:'180 45% 70%',color_secondary_foreground_dark:'0 0% 0%',
+    color_accent_dark:'340 60% 75%',color_accent_foreground_dark:'0 0% 0%',
+    color_destructive_dark:'0 60% 65%',color_destructive_foreground_dark:'0 0% 100%'
+  }
+};
+
+function syncSwatch(swatch){
+  var field=document.getElementById(swatch.dataset.hslTarget);
+  if(field&&field.value){var hex=hslToHex(field.value);if(hex)swatch.value=hex;}
+}
+
+function fillPalette(id){
+  var p=PALETTES[id];
+  if(!p)return;
+  Object.keys(p).forEach(function(col){
+    var field=document.getElementById(col);
+    var swatch=document.querySelector('.color-swatch[data-hsl-target="'+col+'"]');
+    if(field)field.value=p[col];
+    if(swatch){var hex=hslToHex(p[col]);if(hex)swatch.value=hex;}
+  });
+}
+
+// Init swatches from existing field values
+document.querySelectorAll('.color-swatch').forEach(syncSwatch);
+
+// Swatch → HSL text field
+document.querySelectorAll('.color-swatch').forEach(function(swatch){
+  swatch.addEventListener('input',function(){
+    var field=document.getElementById(swatch.dataset.hslTarget);
+    if(field)field.value=hexToHsl(swatch.value);
+  });
+});
+
+// HSL text field → swatch
+document.querySelectorAll('.color-hsl-input').forEach(function(input){
+  input.addEventListener('input',function(){
+    var swatch=document.querySelector('.color-swatch[data-hsl-target="'+input.id+'"]');
+    if(swatch&&input.value){var hex=hslToHex(input.value);if(hex)swatch.value=hex;}
+  });
+});
+
+// Palette dropdown → fill all fields
+var paletteSelect=document.querySelector('[data-palette-select]');
+if(paletteSelect){
+  paletteSelect.addEventListener('change',function(){
+    if(this.value)fillPalette(this.value);
+  });
+}
+
+// Media picker clear buttons
+document.querySelectorAll('[data-clear-input]').forEach(function(btn){
+  btn.addEventListener('click',function(){
+    var inp=document.getElementById(btn.dataset.clearInput);
+    if(inp)inp.value='';
+    var prev=document.getElementById(btn.dataset.clearPreview);
+    if(prev)prev.innerHTML='';
+  });
+});
+
+})();
+</script>
 <?php
 $content = ob_get_clean();
 

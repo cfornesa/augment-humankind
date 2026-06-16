@@ -12,6 +12,205 @@
     --white: #fffaf0;
     --shadow: 10px 10px 0 #1d485c;
     --max: 1180px;
+    /* Text colour guaranteed to read on any accent background (yellow/orange/green/cyan).
+       These colours stay bright in dark mode, so --ink (which flips to near-white) cannot
+       be used directly on them. --on-accent is always the original dark ink value. */
+    --on-accent: #15374a;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+        color-scheme: dark;
+        --paper: #0d1f2d;
+        --paper-deep: #162a3a;
+        --ink: #dde8ef;
+        --ink-soft: #82afc8;
+        --line: #3d7a9b;
+        --shadow: 10px 10px 0 #3d7a9b;
+        --white: #162a3a;
+    }
+
+    :root:not([data-theme="light"]) body {
+        background:
+            linear-gradient(90deg, rgba(200, 220, 235, 0.04) 1px, transparent 1px),
+            linear-gradient(rgba(200, 220, 235, 0.04) 1px, transparent 1px),
+            var(--paper);
+        background-size: 32px 32px;
+    }
+}
+
+[data-theme="dark"] {
+    color-scheme: dark;
+    --paper: #0d1f2d;
+    --paper-deep: #162a3a;
+    --ink: #dde8ef;
+    --ink-soft: #82afc8;
+    --line: #3d7a9b;
+    --shadow: 10px 10px 0 #3d7a9b;
+    --white: #162a3a;
+}
+
+html[data-theme="dark"] body {
+    background:
+        linear-gradient(90deg, rgba(200, 220, 235, 0.04) 1px, transparent 1px),
+        linear-gradient(rgba(200, 220, 235, 0.04) 1px, transparent 1px),
+        var(--paper);
+    background-size: 32px 32px;
+}
+
+/* ── Dark-mode overrides for hardcoded light-background elements ─────────
+   These elements use literal colour values (not CSS vars) so the --white
+   remap alone cannot fix them. We force dark surfaces + explicit text
+   colour so content is always legible regardless of how dark mode is
+   triggered (OS preference or the toggle button).
+   ─────────────────────────────────────────────────────────────────────── */
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .service-card:nth-child(2) {
+        background: #0e2a22;
+        color: var(--ink);
+    }
+    :root:not([data-theme="light"]) .service-card:nth-child(3) {
+        background: #1f1a08;
+        color: var(--ink);
+    }
+    :root:not([data-theme="light"]) .method-list li,
+    :root:not([data-theme="light"]) .deliverable-list li {
+        background: rgba(61, 122, 155, 0.15);
+        color: var(--ink);
+    }
+    :root:not([data-theme="light"]) .note-card-accent {
+        background: #2a2000;
+        color: var(--ink);
+    }
+    :root:not([data-theme="light"]) .guide-card {
+        background: var(--paper-deep);
+        color: var(--ink);
+    }
+    :root:not([data-theme="light"]) .guide-card .guide-caption {
+        color: var(--ink-soft);
+    }
+    /* Mission band / callout — hardcoded rgba warm-white background */
+    :root:not([data-theme="light"]) .mission-band,
+    :root:not([data-theme="light"]) .callout {
+        background: var(--paper-deep);
+        color: var(--ink);
+    }
+    /* Yellow chips — keep dark ink so text reads on bright yellow */
+    :root:not([data-theme="light"]) .blog-category-strip a,
+    :root:not([data-theme="light"]) .blog-chips a {
+        color: #15374a;
+    }
+    /* ── Accent-background elements: force dark ink so text always reads ── */
+    /* --orange backgrounds */
+    :root:not([data-theme="light"]) .site-nav a:hover,
+    :root:not([data-theme="light"]) .site-nav a[aria-current="page"],
+    :root:not([data-theme="light"]) .button-primary {
+        color: var(--on-accent);
+    }
+    /* --yellow backgrounds */
+    :root:not([data-theme="light"]) .guide-panel::before,
+    :root:not([data-theme="light"]) .post-action-btn[aria-expanded="true"] {
+        color: var(--on-accent);
+    }
+    /* --green backgrounds */
+    :root:not([data-theme="light"]) .brand-mark {
+        color: var(--on-accent);
+    }
+}
+
+[data-theme="dark"] .service-card:nth-child(2) {
+    background: #0e2a22;
+    color: var(--ink);
+}
+[data-theme="dark"] .service-card:nth-child(3) {
+    background: #1f1a08;
+    color: var(--ink);
+}
+[data-theme="dark"] .method-list li,
+[data-theme="dark"] .deliverable-list li {
+    background: rgba(61, 122, 155, 0.15);
+    color: var(--ink);
+}
+[data-theme="dark"] .note-card-accent {
+    background: #2a2000;
+    color: var(--ink);
+}
+[data-theme="dark"] .guide-card {
+    background: var(--paper-deep);
+    color: var(--ink);
+}
+[data-theme="dark"] .guide-card .guide-caption {
+    color: var(--ink-soft);
+}
+/* Mission band / callout — hardcoded rgba warm-white background */
+[data-theme="dark"] .mission-band,
+[data-theme="dark"] .callout {
+    background: var(--paper-deep);
+    color: var(--ink);
+}
+/* Yellow chips — keep dark ink so text reads on bright yellow */
+[data-theme="dark"] .blog-category-strip a,
+[data-theme="dark"] .blog-chips a {
+    color: #15374a;
+}
+/* ── Accent-background elements: force dark ink so text always reads ── */
+/* --orange backgrounds */
+[data-theme="dark"] .site-nav a:hover,
+[data-theme="dark"] .site-nav a[aria-current="page"],
+[data-theme="dark"] .button-primary {
+    color: var(--on-accent);
+}
+/* --yellow backgrounds */
+[data-theme="dark"] .guide-panel::before,
+[data-theme="dark"] .post-action-btn[aria-expanded="true"] {
+    color: var(--on-accent);
+}
+/* --green backgrounds */
+[data-theme="dark"] .brand-mark {
+    color: var(--on-accent);
+}
+
+[data-theme="light"] {
+    color-scheme: light;
+}
+
+.theme-toggle {
+    position: fixed;
+    bottom: 1.5rem;
+    right: 1.5rem;
+    z-index: 9000;
+    width: 2.75rem;
+    height: 2.75rem;
+    border-radius: 50%;
+    border: 2px solid var(--line);
+    background: var(--paper);
+    color: var(--ink);
+    cursor: pointer;
+    font-size: 1.1rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 3px 3px 0 var(--line);
+    transition: background 0.15s;
+}
+
+.theme-toggle:hover {
+    background: var(--paper-deep);
+}
+
+.post-comment-signin {
+    margin: 0.75rem 0 0;
+    font-size: 0.9rem;
+    color: var(--ink-soft);
+}
+
+.post-comment-signin a {
+    color: var(--ink);
+    font-weight: 700;
+}
+
+.user-nav-link {
+    text-decoration: none;
 }
 
 * {
@@ -42,6 +241,13 @@ a {
 
 img {
     display: block;
+    max-width: 100%;
+}
+
+iframe,
+embed,
+object,
+video {
     max-width: 100%;
 }
 
@@ -1443,6 +1649,37 @@ h3 {
     font-weight: 800;
 }
 
+.blog-card-header,
+.blog-hero-header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1.5rem;
+    width: 100%;
+    margin-bottom: 0.75rem;
+}
+
+.blog-card-header-left,
+.blog-hero-header-left {
+    flex: 1;
+    min-width: 0;
+}
+
+.blog-card-header-left h2,
+.blog-hero-header-left h1 {
+    margin-bottom: 0;
+}
+
+.blog-card-header-right,
+.blog-hero-header-right {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    align-items: center;
+    flex-shrink: 0;
+    margin-top: 0.2rem;
+}
+
 .post-actions {
     display: flex;
     flex-direction: column;
@@ -1462,6 +1699,7 @@ h3 {
     justify-content: space-between;
     gap: 0.5rem;
     flex-wrap: wrap;
+    margin-top: 1.5rem;
 }
 
 .post-actions-left,
@@ -1578,10 +1816,80 @@ h3 {
     border-bottom: 1px solid var(--line);
 }
 
+.post-comment-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+}
+
 .post-comment-item strong {
     display: block;
     font-size: 0.9rem;
     margin-bottom: 0.25rem;
+}
+
+.post-comment-date {
+    font-weight: 700;
+    color: var(--ink-soft);
+}
+
+.post-comment-content {
+    margin: 0;
+}
+
+.post-comment-actions,
+.post-comment-edit-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.post-comment-icon-btn {
+    appearance: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    border: 2px solid var(--line);
+    background: var(--white);
+    color: var(--ink);
+    cursor: pointer;
+    box-shadow: 2px 2px 0 var(--line);
+    transition: transform 120ms ease, box-shadow 120ms ease;
+}
+
+.post-comment-icon-btn:hover {
+    box-shadow: 1px 1px 0 var(--line);
+    transform: translate(1px, 1px);
+}
+
+.post-comment-icon-btn-danger {
+    background: var(--orange);
+    color: var(--on-accent, #15374a);
+}
+
+.post-comment-edit-form {
+    display: grid;
+    gap: 0.6rem;
+    margin-top: 0.75rem;
+}
+
+.post-comment-edit-form[hidden] {
+    display: none !important;
+}
+
+.post-comment-edit-form textarea {
+    width: 100%;
+    min-height: 6rem;
+    border: 2px solid var(--line);
+    background: var(--paper);
+    color: var(--ink);
+    font: inherit;
+    font-weight: 700;
+    padding: 0.6rem;
+    resize: vertical;
 }
 
 #share-dialog {

@@ -779,6 +779,9 @@ document.querySelectorAll('[data-checkbox-sortable]').forEach(list => {
 // Blog post card: expand, comments, share, embed
 
 (function () {
+    const COMMENT_PENCIL_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>';
+    const COMMENT_TRASH_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>';
+
     // --- Expand panel ---
     document.addEventListener('click', async e => {
         const btn = e.target.closest('.post-expand-btn');
@@ -832,9 +835,7 @@ document.querySelectorAll('[data-checkbox-sortable]').forEach(list => {
         const list = panel.querySelector('.post-comments-list');
         if (!list.dataset.loaded) {
             try {
-                const res      = await fetch('/api/posts/' + postId + '/comments');
-                const comments = await res.json();
-                renderComments(list, comments);
+                await reloadComments(list);
                 list.dataset.loaded = 'true';
             } catch {
                 list.textContent = 'Could not load comments.';
@@ -845,28 +846,77 @@ document.querySelectorAll('[data-checkbox-sortable]').forEach(list => {
         btn.setAttribute('aria-expanded', 'true');
     });
 
-    function renderComments(container, comments) {
-        if (!comments.length) {
-            container.innerHTML = '<p style="color:var(--ink-soft);font-size:.9rem">No comments yet.</p>';
-            return;
-        }
-        container.innerHTML = comments.map(c => {
-            const name = c.author_name || 'Anonymous';
-            const date = new Date(c.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
-            const text = String(c.content).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-            return `<div class="post-comment-item"><strong>${name} · <span style="font-weight:700;color:var(--ink-soft)">${date}</span></strong><p style="margin:0">${text}</p></div>`;
-        }).join('');
+    function escapeHtml(value) {
+        return String(value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
     }
 
-    function appendComment(container, authorName, content) {
-        const date = new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
-        const text = String(content).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-        const el   = document.createElement('div');
-        el.className = 'post-comment-item';
-        el.innerHTML = `<strong>${authorName} · <span style="font-weight:700;color:var(--ink-soft)">${date}</span></strong><p style="margin:0">${text}</p>`;
-        const noComments = container.querySelector('p');
-        if (noComments && noComments.textContent.includes('No comments')) noComments.remove();
-        container.appendChild(el);
+    function formatCommentDate(value) {
+        return new Date(value).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+    }
+
+    function commentItemMarkup(comment) {
+        const id = Number(comment.id || 0);
+        const name = escapeHtml(comment.author_name || 'Anonymous');
+        const date = escapeHtml(formatCommentDate(comment.created_at));
+        const text = escapeHtml(comment.content || '').replace(/\n/g, '<br>');
+        const manageButtons = comment.can_manage ? `
+            <div class="post-comment-actions">
+                <button type="button"
+                        class="post-comment-icon-btn"
+                        data-comment-edit-toggle
+                        aria-expanded="false"
+                        aria-controls="comment-edit-${id}"
+                        aria-label="Edit your comment">
+                    ${COMMENT_PENCIL_ICON}
+                </button>
+                <button type="button"
+                        class="post-comment-icon-btn post-comment-icon-btn-danger"
+                        data-comment-delete
+                        aria-label="Delete your comment">
+                    ${COMMENT_TRASH_ICON}
+                </button>
+            </div>
+        ` : '';
+        const editForm = comment.can_manage ? `
+            <form class="post-comment-edit-form" id="comment-edit-${id}" data-comment-id="${id}" hidden>
+                <textarea name="content" maxlength="500" required>${escapeHtml(comment.content || '')}</textarea>
+                <div class="post-comment-edit-actions">
+                    <button type="submit" class="post-action-btn">Save</button>
+                    <button type="button" class="post-action-btn" data-comment-edit-cancel>Cancel</button>
+                </div>
+            </form>
+        ` : '';
+
+        return `<div class="post-comment-item" data-comment-id="${id}">
+            <div class="post-comment-header">
+                <strong>${name} · <span class="post-comment-date">${date}</span></strong>
+                ${manageButtons}
+            </div>
+            <p class="post-comment-content">${text}</p>
+            ${editForm}
+        </div>`;
+    }
+
+    function renderComments(container, comments) {
+        const emptyMessage = container.dataset.emptyMessage || 'No comments yet.';
+        if (!comments.length) {
+            container.innerHTML = `<p class="admin-empty">${escapeHtml(emptyMessage)}</p>`;
+            return;
+        }
+        container.innerHTML = comments.map(commentItemMarkup).join('');
+    }
+
+    async function reloadComments(container) {
+        const url = container?.dataset.commentsUrl;
+        if (!url) return;
+        const res = await fetch(url);
+        const comments = await res.json();
+        renderComments(container, Array.isArray(comments) ? comments : []);
     }
 
     // --- Comment form submit ---
@@ -880,7 +930,7 @@ document.querySelectorAll('[data-checkbox-sortable]').forEach(list => {
         const panel      = postId ? document.getElementById('post-comments-' + postId) : null;
         const list       = panel
             ? panel.querySelector('.post-comments-list')
-            : form.closest('.comments-section')?.querySelector('.post-comments-list');
+            : form.closest('.blog-comments, .comments-section, .post-comments-panel')?.querySelector('.post-comments-list');
         const submit  = form.querySelector('[type="submit"]');
         const data    = new FormData(form);
 
@@ -891,7 +941,10 @@ document.querySelectorAll('[data-checkbox-sortable]').forEach(list => {
             const res  = await fetch(commentUrl, { method: 'POST', body: new URLSearchParams(data) });
             const json = await res.json();
             if (!res.ok) throw new Error(json.error || 'Error');
-            if (list) appendComment(list, json.author_name || 'Anonymous', json.content);
+            if (list) {
+                await reloadComments(list);
+                list.dataset.loaded = 'true';
+            }
             form.reset();
             submit.textContent = 'Posted!';
             setTimeout(() => { submit.textContent = 'Post comment'; submit.disabled = false; }, 2000);
@@ -899,6 +952,85 @@ document.querySelectorAll('[data-checkbox-sortable]').forEach(list => {
             alert(err.message || 'Could not post comment.');
             submit.textContent = 'Post comment';
             submit.disabled = false;
+        }
+    });
+
+    document.addEventListener('click', e => {
+        const toggle = e.target.closest('[data-comment-edit-toggle]');
+        if (toggle) {
+            const item = toggle.closest('.post-comment-item');
+            const form = item?.querySelector('.post-comment-edit-form');
+            if (!form) return;
+            const open = toggle.getAttribute('aria-expanded') === 'true';
+            form.hidden = open;
+            toggle.setAttribute('aria-expanded', open ? 'false' : 'true');
+            if (!open) {
+                form.querySelector('textarea')?.focus();
+            }
+            return;
+        }
+
+        const cancel = e.target.closest('[data-comment-edit-cancel]');
+        if (cancel) {
+            const form = cancel.closest('.post-comment-edit-form');
+            const item = cancel.closest('.post-comment-item');
+            const toggleBtn = item?.querySelector('[data-comment-edit-toggle]');
+            if (form) form.hidden = true;
+            if (toggleBtn) toggleBtn.setAttribute('aria-expanded', 'false');
+            return;
+        }
+
+        const deleteBtn = e.target.closest('[data-comment-delete]');
+        if (!deleteBtn) return;
+
+        const item = deleteBtn.closest('.post-comment-item');
+        const list = deleteBtn.closest('.post-comments-list');
+        const commentId = item?.dataset.commentId;
+        if (!commentId || !list) return;
+        if (!window.confirm('Delete this comment?')) return;
+
+        deleteBtn.disabled = true;
+        fetch('/api/comments/' + commentId + '/delete', { method: 'POST' })
+            .then(async res => {
+                const json = await res.json();
+                if (!res.ok) throw new Error(json.error || 'Could not delete comment.');
+                await reloadComments(list);
+            })
+            .catch(err => {
+                alert(err.message || 'Could not delete comment.');
+            })
+            .finally(() => {
+                deleteBtn.disabled = false;
+            });
+    });
+
+    document.addEventListener('submit', async e => {
+        const form = e.target.closest('.post-comment-edit-form');
+        if (!form) return;
+        e.preventDefault();
+
+        const item = form.closest('.post-comment-item');
+        const list = form.closest('.post-comments-list');
+        const commentId = item?.dataset.commentId;
+        const submit = form.querySelector('[type="submit"]');
+        if (!commentId || !list || !submit) return;
+
+        submit.disabled = true;
+        submit.textContent = 'Saving…';
+
+        try {
+            const res = await fetch('/api/comments/' + commentId + '/edit', {
+                method: 'POST',
+                body: new URLSearchParams(new FormData(form)),
+            });
+            const json = await res.json();
+            if (!res.ok) throw new Error(json.error || 'Could not update comment.');
+            await reloadComments(list);
+        } catch (err) {
+            alert(err.message || 'Could not update comment.');
+        } finally {
+            submit.disabled = false;
+            submit.textContent = 'Save';
         }
     });
 

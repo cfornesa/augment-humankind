@@ -155,6 +155,9 @@
 2026-06-11 · DIRECTION · Chose a mascot-forward Fieldguide direction over a more conventional consulting-site posture.
     [Context: selected Fieldguide positioning, journal-ready routes, and mascot energy for `Friendly Guide.png` during the Augment Humankind v1 site plan.]
 2026-06-15 · DIRECTION · Chose Overlay transition model for immersive views, allowing instant, smooth fullscreen toggle without reloading pages or resetting WebGL rendering contexts.
+2026-06-15 · DIRECTION · Aligned post button layout to balance admin actions (Edit/Expand) in the header with sharing/engagement actions below the content.
+2026-06-16 · DIRECTION · Added inline manual generation action links for both Art Pieces and Platform Collections, prioritizing instant feedback and granular control over bulk-only regeneration.
+2026-06-16 · DIRECTION · Preferred lightweight parity over a heavier moderation UI for comment ownership and table actions, keeping controls icon-forward and visually consistent across public and admin surfaces.
 
 ---
 

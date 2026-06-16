@@ -96,6 +96,7 @@
             display: block;
             position: relative;
             width: 100%;
+            max-width: 100%;
             aspect-ratio: 16 / 9;
             min-height: 300px;
             overflow: hidden;
@@ -103,6 +104,11 @@
             border-radius: 12px;
             border: 1px solid rgba(255, 255, 255, 0.1);
             font-family: system-ui, -apple-system, sans-serif;
+          }
+          @media (max-width: 600px) {
+            :host {
+              min-height: 180px !important;
+            }
           }
           .loader {
             display: flex;
@@ -130,6 +136,7 @@
               display: block;
               position: relative;
               width: 100%;
+              max-width: 100%;
               aspect-ratio: 16 / 9;
               min-height: 300px;
               overflow: hidden;
@@ -137,6 +144,11 @@
               border-radius: 12px;
               border: 1px solid rgba(255, 255, 255, 0.1);
               font-family: system-ui, -apple-system, sans-serif;
+            }
+            @media (max-width: 600px) {
+              :host {
+                min-height: 180px !important;
+              }
             }
             .error {
               display: flex;
@@ -167,6 +179,7 @@
             display: block;
             position: relative;
             width: 100%;
+            max-width: 100%;
             aspect-ratio: 16 / 9;
             min-height: 300px;
             overflow: hidden;
@@ -174,6 +187,11 @@
             border-radius: 12px;
             border: 1px solid rgba(255, 255, 255, 0.1);
             font-family: system-ui, -apple-system, sans-serif;
+          }
+          @media (max-width: 600px) {
+            :host {
+              min-height: 180px !important;
+            }
           }
           #stage-container {
             width: 100%;
@@ -519,6 +537,7 @@
             display: block;
             position: relative;
             width: 100%;
+            max-width: 100%;
             aspect-ratio: 16 / 9;
             min-height: 300px;
             overflow: hidden;
@@ -526,6 +545,11 @@
             border-radius: 12px;
             border: 1px solid rgba(255, 255, 255, 0.1);
             font-family: system-ui, -apple-system, sans-serif;
+          }
+          @media (max-width: 600px) {
+            :host {
+              min-height: 180px !important;
+            }
           }
           .mount, iframe {
             width: 100% !important;
@@ -625,6 +649,7 @@
             display: block;
             position: relative;
             width: 100%;
+            max-width: 100%;
             aspect-ratio: 16 / 9;
             min-height: 300px;
             overflow: hidden;
@@ -632,6 +657,11 @@
             border-radius: 12px;
             border: 1px solid rgba(255, 255, 255, 0.1);
             font-family: system-ui, -apple-system, sans-serif;
+          }
+          @media (max-width: 600px) {
+            :host {
+              min-height: 180px !important;
+            }
           }
           .mount {
             width: 100%;

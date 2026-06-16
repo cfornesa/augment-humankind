@@ -51,6 +51,7 @@ if ($path === '/portfolio' || str_starts_with($path, '/portfolio/')
     || str_starts_with($path, '/feeds/')
     || in_array($path, ['/feed.xml', '/atom', '/feed.json', '/jsonfeed', '/export.json', '/export/json'], true)
     || $path === '/admin' || str_starts_with($path, '/admin/')
+    || $path === '/user' || str_starts_with($path, '/user/')
     || preg_match('#^/(media|image)/[0-9]+$#', $path)
     || preg_match('#^/[a-z0-9-]+/feed\.(xml|json)$#', $path)) {
     require_once __DIR__ . '/app/bootstrap.php';

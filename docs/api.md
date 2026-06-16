@@ -270,18 +270,29 @@ existing `/admin/*` surfaces.
 
 ## Comments API
 
-Per-item comment routes are public and unauthenticated. Comments are only
-served/accepted when `comments_enabled = 1` on the target item; attempting to
-GET or POST to a disabled item returns `{"error":"not found"}` or
-`{"error":"comments not enabled"}` with HTTP 404/403.
+Per-item comment list routes are public, but comment creation and owner
+management require a signed-in public profile or an active admin session that
+resolves to the same person. Comments are only accepted when
+`comments_enabled = 1` on the target item; attempting to POST to a disabled
+item returns `{"error":"not found"}` with HTTP 404.
+
+### Blog posts
+
+- `GET /api/posts/[id]/comments` — returns a JSON array of visible comments
+  for a published post:
+  `[{"id":1,"author_name":"...","content":"...","created_at":"...","can_manage":false}, ...]`.
+- `POST /api/posts/[id]/comments` — submits a new signed-in comment on a
+  published post. Accepts `content` (required, 1–500 chars) plus a
+  `hp_field` honeypot. Returns `{"ok":true,"comment":{...}}` on success.
 
 ### Art pieces
 
-- `GET /api/pieces/[id]/comments` — returns a JSON array of approved comments
-  for an art piece: `[{"author_name":"...","content":"...","created_at":"..."},...]`.
-- `POST /api/pieces/[id]/comments` — submits a new comment. Accepts
-  `author_name` (optional, up to 80 chars) and `content` (required, 1–500
-  chars). Includes a `hp_field` honeypot. Returns `{"ok":true}` on success.
+- `GET /api/pieces/[id]/comments` — returns a JSON array of visible comments
+  for an art piece:
+  `[{"id":1,"author_name":"...","content":"...","created_at":"...","can_manage":false}, ...]`.
+- `POST /api/pieces/[id]/comments` — submits a new signed-in comment. Accepts
+  `content` (required, 1–500 chars) plus a `hp_field` honeypot. Returns
+  `{"ok":true,"comment":{...}}` on success.
 
 ### Exhibits
 
@@ -295,11 +306,26 @@ GET or POST to a disabled item returns `{"error":"not found"}` or
 - `POST /api/exhibit-collections/[slug]/comments` — submits a comment on an
   exhibit collection.
 
-All six routes share the same submission shape and validation rules. Admin
-controls for enabling/disabling comments per item are in the respective admin
-edit forms (`/admin/pieces/[id]/edit`, `/admin/exhibits/[id]/edit`,
+All eight item routes share the same submission shape and validation rules.
+Admin controls for enabling/disabling comments per item are in the respective
+admin edit forms (`/admin/pieces/[id]/edit`, `/admin/exhibits/[id]/edit`,
 `/admin/exhibit-collections/[id]/edit`, `/admin/platform-collections/[id]/edit`,
 `/admin/posts/[id]/edit`, `/admin/pages/[id]/edit`).
+
+### Shared owner actions
+
+- `POST /api/comments/[id]/edit` — updates an existing non-deleted comment
+  owned by the current signed-in person. Accepts `content` (required, 1–500
+  chars). Returns `{"ok":true,"comment":{...}}`.
+- `POST /api/comments/[id]/delete` — soft-deletes an existing non-deleted
+  comment owned by the current signed-in person. Returns `{"ok":true}` and
+  leaves the record available to existing admin trash/moderation flows.
+
+Ownership is checked against `comments.author_user_id` when available, with
+`comments.author_id` as the fallback for older comments and admin-only
+sessions that do not have a linked public user row yet. These public endpoints
+allow people to manage only their own comments; broader moderation remains at
+`/admin/comments`.
 
 `/api/media/[filename]` looks up a migrated `media_assets` row by its
 `filename` column and streams `file_data` with the stored `Content-Type` and

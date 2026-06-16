@@ -193,6 +193,7 @@ try {
     createTablesFromSql($pdo, dirname(__DIR__) . '/migrations/2026-06-14-platform-assimilation.sql', $applied);
 
     addColumn($pdo, 'platform_collections', 'iframe_code', 'TEXT NULL', $applied);
+    addColumn($pdo, 'platform_collections', 'thumbnail_url', 'VARCHAR(500) NULL AFTER iframe_code', $applied);
 
     addColumn($pdo, 'platform_connections', 'access_token_format', "VARCHAR(32) NOT NULL DEFAULT 'platform_encrypted'", $applied);
     addColumn($pdo, 'platform_connections', 'refresh_token_format', "VARCHAR(32) NOT NULL DEFAULT 'platform_encrypted'", $applied);

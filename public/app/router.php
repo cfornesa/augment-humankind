@@ -38,6 +38,8 @@ require __DIR__ . '/models/UserAiSettings.php';
 require __DIR__ . '/models/PlatformConnection.php';
 require __DIR__ . '/models/PlatformCollection.php';
 require __DIR__ . '/controllers/Admin/AuthController.php';
+require __DIR__ . '/controllers/UserAuthController.php';
+require __DIR__ . '/controllers/UserProfileController.php';
 require __DIR__ . '/controllers/Admin/PagesController.php';
 require __DIR__ . '/controllers/Admin/PortfolioController.php';
 require __DIR__ . '/controllers/Admin/BlogAdminController.php';
@@ -60,6 +62,7 @@ require __DIR__ . '/controllers/EmbedController.php';
 require __DIR__ . '/controllers/ImmersiveController.php';
 require __DIR__ . '/controllers/ApiController.php';
 require __DIR__ . '/controllers/BlogController.php';
+require __DIR__ . '/controllers/CommentController.php';
 require __DIR__ . '/controllers/PageController.php';
 
 $publicRoutes = [
@@ -75,6 +78,8 @@ $publicRoutes = [
     ['POST', '/api/exhibits/([a-z0-9-]+)/comments',               [PortfolioController::class, 'exhibitCommentSubmit']],
     ['GET',  '/api/exhibit-collections/([a-z0-9-]+)/comments',    [PortfolioController::class, 'collectionCommentsJson']],
     ['POST', '/api/exhibit-collections/([a-z0-9-]+)/comments',    [PortfolioController::class, 'collectionCommentSubmit']],
+    ['POST', '/api/comments/([0-9]+)/edit',                       [CommentController::class, 'update']],
+    ['POST', '/api/comments/([0-9]+)/delete',                     [CommentController::class, 'delete']],
     ['GET', '/blog/category/([a-z0-9-]+)',       [BlogController::class, 'category']],
     ['GET', '/blog/feeds',                       [BlogController::class, 'feeds']],
     ['GET', '/search',                           [BlogController::class, 'search']],
@@ -153,6 +158,18 @@ $publicRoutes = [
     ['GET', '/api/media/([^/]+)',                    [ApiController::class, 'mediaAssetByFilename']],
     ['GET', '/api/profile-photos/([^/]+)',          [ApiController::class, 'profilePhoto']],
     ['GET', '/api/runtimes/(.+)',                    [ApiController::class, 'runtimeAsset']],
+
+    // Public user auth — fixed paths MUST precede the catch-all /user/([a-z0-9_-]+)
+    ['GET',  '/user/login',                           [UserAuthController::class, 'loginForm']],
+    ['GET',  '/user/logout',                          [UserAuthController::class, 'logout']],
+    ['GET',  '/user/auth/github/start',               [UserAuthController::class, 'oauthStart']],
+    ['GET',  '/user/auth/github/callback',            [UserAuthController::class, 'oauthCallback']],
+    ['GET',  '/user/auth/google/start',               [UserAuthController::class, 'oauthStart']],
+    ['GET',  '/user/auth/google/callback',            [UserAuthController::class, 'oauthCallback']],
+    ['GET',  '/user/settings',                        [UserProfileController::class, 'settings']],
+    ['POST', '/user/settings/profile',                [UserProfileController::class, 'settingsProfileUpdate']],
+    ['POST', '/user/settings/style',                  [UserProfileController::class, 'settingsStyleUpdate']],
+    ['GET',  '/user/([a-z0-9_-]+)',                   [UserProfileController::class, 'show']],
 ];
 
 $adminRoutes = [
@@ -279,6 +296,7 @@ $adminRoutes = [
     ['POST', '/admin/platform-collections/create',  [PlatformCollectionsAdminController::class, 'store']],
     ['GET',  '/admin/platform-collections/([0-9]+)/edit', [PlatformCollectionsAdminController::class, 'edit']],
     ['POST', '/admin/platform-collections/([0-9]+)/edit', [PlatformCollectionsAdminController::class, 'update']],
+    ['POST', '/admin/platform-collections/([0-9]+)/capture-thumbnail', [PlatformCollectionsAdminController::class, 'captureThumbnail']],
     ['POST', '/admin/platform-collections/([0-9]+)/delete', [PlatformCollectionsAdminController::class, 'delete']],
     ['GET',  '/admin/platform-collections/library', [PlatformCollectionsAdminController::class, 'library']],
 

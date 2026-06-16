@@ -81,3 +81,15 @@ or rejection. -->
 2026-06-15 DECISION Enabled route dispatching for /collections paths in public/index.php gate, restoring platform collection detail rendering.
 2026-06-15 DECISION Implemented batched 3-item progressive see-more gallery disclosure on portfolio.php.
 2026-06-15 DECISION Portfolio taxonomy is now split three ways: `/admin/categories` manages blog post categories, `/admin/art-media` manages piece taxonomy (`category_scope='portfolio'`), and `/admin/exhibit-collections` is the renamed native collection surface. Public redirects keep `/portfolio/collections`, `/portfolio/categories`, and `/portfolio/category/{slug}` durable while canonical routes are `/portfolio/exhibit-collections` and `/portfolio/art-media`.
+2026-06-15 DECISION Aligned blog action buttons via flexbox, keeping Edit/Expand at the top-right and Embed/Share/Comments at the bottom.
+
+2026-06-16 DECISION Fixed mobile viewport overflows by restricting embed elements and web components to max-width: 100% and reducing min-height on small viewports.
+
+2026-06-16 DECISION Upgraded the art piece thumbnail capture flow with allow-same-origin sandboxing, dirty-check auto-capture-on-save, and a sequential bulk-regeneration utility in the admin index.
+
+2026-06-16 DECISION Added close-up Three.js gallery room thumbnail generation for Platform Collections, including a database-backed schema option, conditional WebGL preserveDrawingBuffer properties, and auto-capture-on-save form interception.
+2026-06-16 DECISION Resolved blank SVG thumbnails by copying computed DOM styles inline to vector nodes before canvas serialization, disabling transient CSS animations during capture.
+2026-06-16 DECISION Synced platform collection edit form states with hidden input thumbnail fields and AJAX JSON slug responses, preventing 404s and data loss on metadata saves.
+2026-06-16 DECISION Added a Thumbnail column to Pieces and manual "Generate Thumbnail" buttons on rows in both pieces and platform collections list views.
+2026-06-16 DECISION Dark-mode contrast regressions caused by bright accent surfaces inheriting scheme-flipped text were corrected site-wide across all style presets, and row-level actions for pieces/platform collections were unified to one lightweight button pattern.
+2026-06-16 DECISION Public member profiles now live at `/user/{username}` with `/user/settings` for profile and style preferences. Comments require sign-in, and owners can now edit or soft-delete their own comments on posts, pieces, exhibits, and exhibit collections.

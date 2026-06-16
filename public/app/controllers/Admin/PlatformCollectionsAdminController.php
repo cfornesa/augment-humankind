@@ -119,9 +119,10 @@ class PlatformCollectionsAdminController
         }
 
         try {
+            $newSlug = self::uniqueSlug($slug, (int) $id);
             PlatformCollection::update((int) $id, [
                 'name' => $name,
-                'slug' => self::uniqueSlug($slug, (int) $id),
+                'slug' => $newSlug,
                 'description' => trim($_POST['description'] ?? '') ?: null,
                 'artist_statement' => trim($_POST['artist_statement'] ?? '') ?: null,
                 'biography' => trim($_POST['biography'] ?? '') ?: null,
@@ -130,10 +131,17 @@ class PlatformCollectionsAdminController
                 'iframe_code' => trim($_POST['iframe_code'] ?? '') ?: null,
                 'sort_order' => (int) ($existing['sort_order'] ?? 0),
                 'comments_enabled' => isset($_POST['comments_enabled']) ? 1 : 0,
+                'thumbnail_url' => trim($_POST['thumbnail_url'] ?? '') ?: ($existing['thumbnail_url'] ?? null),
             ]);
 
             $items = self::resolveSelectedItems();
             PlatformCollection::syncItems((int) $id, $items);
+
+            if (isset($_GET['ajax']) || (isset($_SERVER['HTTP_ACCEPT']) && str_contains($_SERVER['HTTP_ACCEPT'], 'application/json'))) {
+                header('Content-Type: application/json');
+                echo json_encode(['ok' => true, 'slug' => $newSlug]);
+                exit;
+            }
 
             header('Location: /admin/platform-collections');
             exit;
@@ -214,5 +222,59 @@ class PlatformCollectionsAdminController
             $slug = $original . '-' . $count;
             $count++;
         }
+    }
+
+    public static function captureThumbnail(string $id): void
+    {
+        admin_check();
+        header('Content-Type: application/json');
+
+        $collection = PlatformCollection::find((int) $id);
+        if (!$collection) {
+            http_response_code(404);
+            echo json_encode(['error' => 'Platform Collection not found.']);
+            exit;
+        }
+
+        $raw = trim((string) ($_POST['image_data'] ?? ''));
+        if ($raw === '') {
+            http_response_code(400);
+            echo json_encode(['error' => 'No image data received.']);
+            exit;
+        }
+
+        if (str_contains($raw, ',')) {
+            $raw = substr($raw, strpos($raw, ',') + 1);
+        }
+
+        $binary = base64_decode($raw, strict: true);
+        if ($binary === false || strlen($binary) < 100) {
+            http_response_code(400);
+            echo json_encode(['error' => 'Invalid image data.']);
+            exit;
+        }
+
+        $dir = dirname(__DIR__, 3) . '/uploads/thumbnails';
+        if (!is_dir($dir)) {
+            mkdir($dir, 0755, true);
+        }
+
+        $filename = 'collection-' . (int) $id . '-' . time() . '.png';
+        $path = $dir . '/' . $filename;
+
+        if (file_put_contents($path, $binary) === false) {
+            http_response_code(500);
+            echo json_encode(['error' => 'Could not save image.']);
+            exit;
+        }
+
+        $url = '/uploads/thumbnails/' . $filename;
+        PlatformCollection::update((int) $id, array_merge($collection, [
+            'thumbnail_url' => $url,
+            'comments_enabled' => (int)(bool) ($collection['comments_enabled'] ?? 0),
+        ]));
+
+        echo json_encode(['ok' => true, 'url' => $url]);
+        exit;
     }
 }

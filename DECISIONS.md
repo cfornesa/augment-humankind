@@ -1565,3 +1565,138 @@ ALTER TABLE exhibits           ADD COLUMN comments_enabled TINYINT(1) NOT NULL D
 - `post_id` confirmed nullable; `item_type`/`item_id` columns present;
   `comments_item_idx` index created.
 
+## 2026-06-15 — Part F: Public Post Button Alignment & Styling
+
+### Context
+Post action buttons in both the blog list cards and the full-page post views had suboptimal alignment, and the "Edit" button spanned the full width of the container in full-page mode.
+
+### Implemented
+- **Blog card view (`_post-card.php`)**: Wrapped card metadata and title in `.blog-card-header-left`, and placed `Edit` and `Expand` buttons in `.blog-card-header-right`, all nested under a new `.blog-card-header` flex row. Placed `Comments`, `Open post`, `Embed`, and `Share` buttons at the bottom row (`.post-actions-bottom`).
+- **Full page view (`show.php`)**: Wrapped page hero metadata and title in `.blog-hero-header-left`, and placed the `Edit` button (if admin) in `.blog-hero-header-right` as the sole top-right button. Placed `Embed` and `Share` buttons in `.post-actions-bottom` container below the content.
+- **Styles (`styles.css`)**: Added flex rules for `.blog-card-header` and `.blog-hero-header-row` containers and updated `.post-actions-bottom` margins.
+
+### Verification
+- Ran PHP lint syntax checks (`php -l`) on both templates.
+- Ran all 67 core test cases successfully.
+
+## 2026-06-16 — Thumbnail Regeneration Button Fix
+
+### Context
+The "Regenerate All Thumbnails" button in the admin art pieces view (`/admin/pieces`) was unresponsive due to a JavaScript SyntaxError.
+
+### Implemented
+- **Admin pieces index view (`index.php`)**: Formatted the `<script>` tag block with physical newlines (matching `form.php`) and resolved the parser error by closing the `renderDocumentJS` helper function correctly. This ensures the document click listener is parsed and registered successfully.
+
+### Verification
+- Ran PHP lint check (`php -l`) on `index.php`.
+- Ran JavaScript syntax validation using Node VM script compilation, which now compiles both pieces views successfully.
+
+## 2026-06-16 — Platform Collections Thumbnail Regeneration
+
+### Context
+Curated collections migrated from the platform app did not have custom close-up gallery screenshots as thumbnails. The user requested database schema-backed persistent thumbnail storage.
+
+### Decisions & Actions
+- **Database Schema**: Created `scripts/apply-collection-thumbnail-schema.php` and added the `thumbnail_url` column (VARCHAR(500) NULL) to the `platform_collections` table.
+- **Model Mapping**: Updated `PlatformCollection` model (`PlatformCollection.php`) to save, update, and fetch the `thumbnail_url` column, with `firstThumbnail` returning the DB thumbnail if present and falling back to dynamic first item thumbnail resolution.
+- **Off-screen Iframe Capture**: Modified `immersive-gallery.js` to parse URL query parameters. Conditionally set `preserveDrawingBuffer: true` and reduced the camera auto-fit distance multiplier from `1.45` to `0.55` (zooming in 2.6x closer) when `closeup=1` or `thumbnail=1` is present.
+- **Sequential Queue**: Added a "Regenerate All Thumbnails" button and sequential canvas screenshot capture queue inside `admin/platform-collections/index.php`.
+- **Form Auto-Capture**: Wired auto-capture on configuration edits in `admin/platform-collections/form.php` by intercepting standard form submission, performing AJAX save, rendering the updated collection offscreen, uploading the PNG capture, and then redirecting.
+- **Verification**: Verified using syntax checks, the 42-test Three.js runtime consistency suite, and the 33-test platform deletion readiness checks. All checks passed.
+
+## 2026-06-16 — SVG Computed Style Propagation & Form Sync Robustness
+
+### Context
+SVG pieces rendered black or blank in captures because styles inside document `<style>` tags were not copied to stand-alone serialized SVG images. Platform collection thumbnail captures were discarded during edits because forms lacked a `thumbnail_url` hidden field to serialize and update the model state, and dirty edits changed slugs triggering 404s in offscreen frames.
+
+### Decisions & Actions
+- **SVG Styles Cloning**: Modified `convertSvgToCanvas` in both `public/app/views/admin/pieces/form.php` and `public/app/views/admin/pieces/index.php` to traverse elements, compute stylesheet rules using `window.getComputedStyle()`, inject them inline, and disable animation styles during capture.
+- **Hidden input and AJAX Slug Response**: Added a hidden input field `thumbnail_url` inside `platform-collections/form.php` to track changes in thumbnail state. Modified the dirty-check submit event handler to post with `ajax=1` and parse the newly saved slug from the JSON response, dynamically loading the iframe with the correct URL to prevent 404s.
+- **Controller Persistence**: Hardened `PlatformCollectionsAdminController::update()` to parse submitted `thumbnail_url` from the form payload, and output the JSON slug response.
+- **Individual List View Actions**: Added a "Thumbnail" column and individual yellow "Generate Thumbnail" buttons to `pieces/index.php` and `platform-collections/index.php` list views, allowing manual, dynamically updated captures in-place.
+- **Verification**: Verified that all 42 Three.js runtime consistency tests and 33 platform deletion readiness checks pass successfully.
+
+## 2026-06-16 — Session UX/Style Fixes: Auth Unification, Dark Mode Toggle, User Profiles
+
+### Context
+Manual browser testing after the platform assimilation work surfaced several usability and polish gaps: admin users had to re-log-in to access public user features; the dark mode toggle was inline in the nav rather than a floating corner button; the "Edit Profile" button was hidden from admin users viewing their own profile; navigation did not surface profile/settings links when the admin was logged in; and style presets were inaccessible from a clean state.
+
+### Decisions & Actions
+
+**Auth Unification**
+- Extended `user_logged_in()` to return `true` if either `$_SESSION['user_id']` (public user) or `$_SESSION['admin_identity_id']` (admin) is set.
+- Extended `current_user()` to fall back to looking up the `users` table by admin identity email when no `user_id` session key is present.
+- This makes admin session = site-wide session. No separate sign-in is required for user-facing features after admin login. Rule 3 sign-off: this is an additive change and no existing auth flow was removed.
+
+**Dark Mode Toggle**
+- Moved the toggle button from inside `<header>` to immediately after `<main id="main">` opens.
+- Changed CSS to `position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 9000` — floating corner button matching the platform app's placement.
+
+**Profile "Edit" Button & Nav Links**
+- Computed `$isOwnProfile` server-side in `UserProfileController` by comparing `current_user()['id']` to the viewed profile's id. This correctly catches both admin and public user logins.
+- Replaced the `$_SESSION['user_username'] === $profileUser['username']` check in `profile.php` with `if ($isOwnProfile)`.
+- Added profile and settings nav links to `header.php` that fall back to `current_user()` when the `user_username` session key is absent (i.e. when the admin is logged in).
+
+**Style Presets**
+- Added "Original" and "Bauhaus" quick-fill preset buttons with inline JS to `user/settings.php`.
+- Added `ALL_COLS` list covering all 14 user color columns with clear-all support.
+
+### Files Modified
+- `public/app/helpers/auth.php` — `user_logged_in()`, `current_user()`
+- `public/app/controllers/UserProfileController.php` — `$isOwnProfile` computation
+- `public/app/views/user/profile.php` — uses `$isOwnProfile`
+- `public/app/views/partials/header.php` — nav user links, dark mode toggle placement
+- `public/assets/styles.css` — `.theme-toggle` fixed positioning
+
+### Verification
+- `php -l` clean on all modified PHP files.
+
+---
+
+## 2026-06-16 — Session 2: Color Pickers, Palette Dropdowns, Logo Picker, CSS Scope Fix
+
+### Context
+Further manual testing surfaced four remaining UX/correctness gaps in the site identity admin and user settings: logo URL fields rejected internal media paths; color fields were raw HSL text with no visual picker; there was no access to the platform's 9 structural themes or 9 named palettes; and DB-injected light-mode colors bled into dark mode when dark DB vars were absent.
+
+### Decisions & Actions
+
+**CSS Injection Scope Fix**
+- Changed `header.php` line 94 from `:root{...}` to `:root:not([data-theme="dark"]){...}`.
+- This prevents the DB light-mode color vars from applying when dark mode is active, fixing readability regressions in dark mode.
+
+**Logo Media Picker**
+- Replaced `<input type="url">` on both logo_url and logo_dark_url fields in site-identity with `type="text" readonly` + `picker-trigger` button pattern.
+- Eliminates browser HTML5 URL validation that rejected relative internal paths (e.g. `/api/media/...`).
+
+**Theme & Palette Dropdowns**
+- Added `theme` and `palette` `<select>` dropdowns to site-identity admin (9 structural themes + 10 palettes including Original).
+- Added the same dropdowns to user settings (user table only carries theme/palette + 14 color columns; the `_dark` columns beyond background/foreground are site_settings-only).
+- Confirmed `SiteIdentityAdminController::resolveSettingsData()` and `updateSettings()` already handle `theme`/`palette` columns; `UserProfileController::settingsStyleUpdate()` already handles them too.
+
+**Visual Color Pickers**
+- Replaced all plain HSL text inputs in both site-identity and user settings with swatch + text pairs: `<input type="color" class="color-swatch" data-hsl-target="...">` + `<input class="color-hsl-input">`.
+- No external library — browser-native `<input type="color">` only.
+- Added inline `<script>` with `hslToHex()`/`hexToHsl()`/`hue2rgb()` helpers; on-load swatch init from existing HSL field values; bidirectional sync (swatch→text, text→swatch); palette dropdown auto-fill that fills all fields and swatches simultaneously.
+- Removed old `data-site-preset` / `data-preset` button JS entirely.
+
+**Palette Data Source**
+- Full 24-column HSL values for all 10 palettes (Original + 9 platform palettes) sourced from `augment-humankind-platform/artifacts/microblog/src/lib/site-themes.ts`.
+- The same PALETTES constant is present in both site-identity (24 cols) and user settings (14-col subset that matches the `users` table schema).
+
+### Files Modified
+- `public/app/views/partials/header.php` — CSS scope fix
+- `public/app/views/admin/site-identity/index.php` — logo picker, theme/palette dropdowns, color swatch pairs, palette JS
+- `public/app/views/user/settings.php` — theme/palette dropdowns, color swatch pairs, palette JS (preset buttons removed)
+
+### Verification
+- `php -l` clean on both view files.
+
+## 2026-06-16 — Public Profiles, Theme Controls, and Comment Ownership
+
+### Documentation Gap Closed
+- Recorded the previously uncommitted public-user work that had not yet been reflected in the memory files: canonical `/user/{username}` public profiles, `/user/settings` profile/style controls, site-wide dark-mode contrast fixes, and the unified lightweight action styling used in pieces and platform collections.
+
+### Comment Ownership Decision
+- Public comments now follow lightweight parity across surfaces instead of an admin-only moderation pattern.
+- Any signed-in person may edit or soft-delete only their own comments, whether they arrived through public OAuth user auth or an admin session that resolves to the same identity.
+- The owner actions are shared across blog posts, art pieces, exhibits, and exhibit collections through `/api/comments/{id}/edit` and `/api/comments/{id}/delete`, while broader moderation remains in `/admin/comments`.

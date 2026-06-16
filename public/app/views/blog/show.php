@@ -11,13 +11,24 @@ require dirname(__DIR__) . '/partials/header.php';
 ?>
 <article class="blog-post">
     <header class="page-hero blog-post-hero">
-        <p class="eyebrow">
-            <?= e(date('M j, Y', strtotime((string) $post['created_at']) ?: time())) ?>
-            <?php if (!empty($post['source_name'])): ?>
-                · via <?= e((string) $post['source_name']) ?>
+        <div class="blog-hero-header-row">
+            <div class="blog-hero-header-left">
+                <p class="eyebrow">
+                    <?= e(date('M j, Y', strtotime((string) $post['created_at']) ?: time())) ?>
+                    <?php if (!empty($post['source_name'])): ?>
+                        · via <?= e((string) $post['source_name']) ?>
+                    <?php endif; ?>
+                </p>
+                <h1><?= e((string) (($post['title'] ?? '') ?: 'Untitled post')) ?></h1>
+            </div>
+            <?php if ($isAdmin): ?>
+            <div class="blog-hero-header-right">
+                <a href="/admin/posts/<?= $postId ?>/edit" class="post-action-btn edit-btn" aria-label="Edit post">
+                    <?= icon('pencil') ?><span class="btn-label">Edit</span>
+                </a>
+            </div>
             <?php endif; ?>
-        </p>
-        <h1><?= e((string) (($post['title'] ?? '') ?: 'Untitled post')) ?></h1>
+        </div>
         <?php if (!empty($post['categories'])): ?>
             <nav class="blog-chips" aria-label="Post categories">
                 <?php foreach ($post['categories'] as $category): ?>
@@ -25,27 +36,6 @@ require dirname(__DIR__) . '/partials/header.php';
                 <?php endforeach; ?>
             </nav>
         <?php endif; ?>
-
-        <div class="post-actions post-actions-show">
-            <?php if ($isAdmin): ?>
-            <a href="/admin/posts/<?= $postId ?>/edit" class="post-action-btn" aria-label="Edit post">
-                <?= icon('pencil') ?><span class="btn-label">Edit</span>
-            </a>
-            <?php endif; ?>
-            <div class="post-actions-right">
-                <button class="post-action-btn post-embed-btn"
-                        data-post-id="<?= $postId ?>"
-                        aria-label="Copy embed code">
-                    <?= icon('code') ?><span class="btn-label">Embed</span>
-                </button>
-                <button class="post-action-btn post-share-btn"
-                        data-title="<?= $postTitle ?>"
-                        data-url="<?= e($postUrl) ?>"
-                        aria-label="Share post">
-                    <?= icon('share-2') ?><span class="btn-label">Share</span>
-                </button>
-            </div>
-        </div>
     </header>
 
     <?php if (!empty($post['featured_image_url'])): ?>
@@ -64,6 +54,25 @@ require dirname(__DIR__) . '/partials/header.php';
         </div>
     </div>
 
+    <div class="post-actions-bottom">
+        <div class="post-actions-left">
+            <!-- Left side empty to mirror card layout structure -->
+        </div>
+        <div class="post-actions-right">
+            <button class="post-action-btn post-embed-btn"
+                    data-post-id="<?= $postId ?>"
+                    aria-label="Copy embed code">
+                <?= icon('code') ?><span class="btn-label">Embed</span>
+            </button>
+            <button class="post-action-btn post-share-btn"
+                    data-title="<?= $postTitle ?>"
+                    data-url="<?= e($postUrl) ?>"
+                    aria-label="Share post">
+                <?= icon('share-2') ?><span class="btn-label">Share</span>
+            </button>
+        </div>
+    </div>
+
     <footer class="blog-post-footer">
         <p><?= (int) ($post['comment_count'] ?? 0) ?> comments · <?= (int) ($post['reaction_count'] ?? 0) ?> reactions</p>
         <?php if (!empty($post['source_canonical_url'])): ?>
@@ -74,18 +83,15 @@ require dirname(__DIR__) . '/partials/header.php';
     <section class="blog-comments" aria-labelledby="blog-comments-title">
         <h2 id="blog-comments-title">Comments</h2>
         <div id="post-comments-<?= $postId ?>">
-            <div class="post-comments-list">
-                <?php if (empty($comments)): ?>
-                    <p class="admin-empty">No comments yet.</p>
-                <?php else: ?>
-                    <?php foreach ($comments as $comment): ?>
-                        <div class="post-comment-item">
-                            <strong><?= e((string) $comment['author_name']) ?> · <span style="font-weight:700;color:var(--ink-soft)"><?= e(date('M j, Y', strtotime((string) $comment['created_at']) ?: time())) ?></span></strong>
-                            <p style="margin:0"><?= nl2br(e((string) $comment['content'])) ?></p>
-                        </div>
-                    <?php endforeach; ?>
-                <?php endif; ?>
-            </div>
+            <?php
+            $commentsUrl = '/api/posts/' . $postId . '/comments';
+            $emptyCommentMessage = 'No comments yet.';
+            require dirname(__DIR__) . '/partials/comment-list.php';
+            ?>
+            <?php
+            $commentUrl = $commentsUrl;
+            $signinRedirect = $_SERVER['REQUEST_URI'] ?? $postUrl;
+            ?>
             <?php require __DIR__ . '/_comment-form.php'; ?>
         </div>
     </section>

@@ -96,13 +96,8 @@ class BlogController
             exit;
         }
         $comments = Comment::commentsFor('post', (int) $id);
-        $out = array_map(static fn (array $c): array => [
-            'author_name' => (string) $c['author_name'],
-            'content'     => (string) $c['content'],
-            'created_at'  => (string) $c['created_at'],
-        ], $comments);
         header('Content-Type: application/json');
-        echo json_encode($out);
+        echo json_encode(Comment::toApiPayloadList($comments));
         exit;
     }
 
@@ -113,6 +108,12 @@ class BlogController
         if (!ctype_digit($id)) {
             http_response_code(404);
             echo json_encode(['error' => 'Not found']);
+            exit;
+        }
+
+        if (!user_logged_in()) {
+            http_response_code(401);
+            echo json_encode(['error' => 'Sign in to comment.']);
             exit;
         }
 
@@ -129,22 +130,37 @@ class BlogController
             exit;
         }
 
-        $authorName = mb_substr(trim((string) ($_POST['author_name'] ?? '')), 0, 80);
-        if ($authorName === '') {
-            $authorName = 'Anonymous';
+        $actor = current_comment_actor();
+        if (!$actor) {
+            http_response_code(401);
+            echo json_encode(['error' => 'Sign in to comment.']);
+            exit;
         }
-
         $postId = (int) $id;
 
         try {
-            Comment::insertComment('post', $postId, $authorName, $content, $postId);
+            Comment::insertComment(
+                'post',
+                $postId,
+                (string) $actor['name'],
+                $content,
+                $postId,
+                (string) $actor['id'],
+                $actor['user_id'] !== null ? (string) $actor['user_id'] : null,
+                (string) ($actor['image'] ?? '')
+            );
+            $commentId = (int) db()->lastInsertId();
+            $created = Comment::find($commentId);
         } catch (Throwable) {
             http_response_code(500);
             echo json_encode(['error' => 'Could not save comment.']);
             exit;
         }
 
-        echo json_encode(['ok' => true, 'author_name' => $authorName, 'content' => $content]);
+        echo json_encode([
+            'ok' => true,
+            'comment' => $created ? Comment::toApiPayload($created) : null,
+        ]);
         exit;
     }
 

@@ -251,11 +251,7 @@ class PortfolioController
             exit;
         }
         $comments = Comment::commentsFor('exhibit', (int) $exhibit['id']);
-        echo json_encode(array_map(static fn (array $c): array => [
-            'author_name' => (string) $c['author_name'],
-            'content'     => (string) $c['content'],
-            'created_at'  => (string) $c['created_at'],
-        ], $comments));
+        echo json_encode(Comment::toApiPayloadList($comments));
         exit;
     }
 
@@ -281,11 +277,7 @@ class PortfolioController
             exit;
         }
         $comments = Comment::commentsFor('collection', (int) $collection['id']);
-        echo json_encode(array_map(static fn (array $c): array => [
-            'author_name' => (string) $c['author_name'],
-            'content'     => (string) $c['content'],
-            'created_at'  => (string) $c['created_at'],
-        ], $comments));
+        echo json_encode(Comment::toApiPayloadList($comments));
         exit;
     }
 
@@ -303,6 +295,12 @@ class PortfolioController
 
     private static function processCommentSubmit(string $itemType, int $itemId): never
     {
+        if (!user_logged_in()) {
+            http_response_code(401);
+            echo json_encode(['error' => 'Sign in to comment.']);
+            exit;
+        }
+
         $hp = trim((string) ($_POST['hp_field'] ?? ''));
         if ($hp !== '') {
             echo json_encode(['ok' => true]);
@@ -316,20 +314,36 @@ class PortfolioController
             exit;
         }
 
-        $authorName = mb_substr(trim((string) ($_POST['author_name'] ?? '')), 0, 80);
-        if ($authorName === '') {
-            $authorName = 'Anonymous';
+        $actor = current_comment_actor();
+        if (!$actor) {
+            http_response_code(401);
+            echo json_encode(['error' => 'Sign in to comment.']);
+            exit;
         }
 
         try {
-            Comment::insertComment($itemType, $itemId, $authorName, $content);
+            Comment::insertComment(
+                $itemType,
+                $itemId,
+                (string) $actor['name'],
+                $content,
+                null,
+                (string) $actor['id'],
+                $actor['user_id'] !== null ? (string) $actor['user_id'] : null,
+                (string) ($actor['image'] ?? '')
+            );
+            $commentId = (int) db()->lastInsertId();
+            $created = Comment::find($commentId);
         } catch (Throwable) {
             http_response_code(500);
             echo json_encode(['error' => 'Could not save comment.']);
             exit;
         }
 
-        echo json_encode(['ok' => true, 'author_name' => $authorName, 'content' => $content]);
+        echo json_encode([
+            'ok' => true,
+            'comment' => $created ? Comment::toApiPayload($created) : null,
+        ]);
         exit;
     }
 

@@ -4,6 +4,17 @@ declare(strict_types=1);
 
 class Comment
 {
+    public static function find(int $id): array|false
+    {
+        if (!self::tableExists()) {
+            return false;
+        }
+
+        $stmt = db()->prepare('SELECT * FROM comments WHERE id = ? LIMIT 1');
+        $stmt->execute([$id]);
+        return $stmt->fetch();
+    }
+
     public static function recent(int $limit = 100): array
     {
         if (!self::tableExists()) {
@@ -65,6 +76,12 @@ class Comment
         $stmt->execute([$id]);
     }
 
+    public static function updateContent(int $id, string $content): void
+    {
+        $stmt = db()->prepare('UPDATE comments SET content = ? WHERE id = ?');
+        $stmt->execute([$content, $id]);
+    }
+
     public static function commentsFor(string $itemType, int $itemId): array
     {
         if (!self::tableExists()) {
@@ -85,19 +102,50 @@ class Comment
     }
 
     public static function insertComment(
-        string $itemType,
-        int    $itemId,
-        string $authorName,
-        string $content,
-        ?int   $postId = null
+        string  $itemType,
+        int     $itemId,
+        string  $authorName,
+        string  $content,
+        ?int    $postId = null,
+        ?string $authorId = null,
+        ?string $authorUserId = null,
+        ?string $authorImageUrl = null
     ): void {
-        $authorId = 'anon-' . bin2hex(random_bytes(8));
+        $resolvedAuthorId = $authorId ?? $authorUserId ?? ('anon-' . bin2hex(random_bytes(8)));
         $stmt = db()->prepare(
             'INSERT INTO comments
-                (post_id, item_type, item_id, author_id, author_name, content, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, NOW(3))'
+                (post_id, item_type, item_id, author_id, author_user_id, author_name, author_image_url, content, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW(3))'
         );
-        $stmt->execute([$postId, $itemType, $itemId, $authorId, $authorName, $content]);
+        $stmt->execute([
+            $postId,
+            $itemType,
+            $itemId,
+            $resolvedAuthorId,
+            $authorUserId,
+            $authorName,
+            $authorImageUrl,
+            $content,
+        ]);
+    }
+
+    public static function toApiPayload(array $comment): array
+    {
+        return [
+            'id' => (int) ($comment['id'] ?? 0),
+            'author_name' => (string) ($comment['author_name'] ?? 'Anonymous'),
+            'content' => (string) ($comment['content'] ?? ''),
+            'created_at' => (string) ($comment['created_at'] ?? ''),
+            'can_manage' => comment_belongs_to_current_actor($comment),
+        ];
+    }
+
+    public static function toApiPayloadList(array $comments): array
+    {
+        return array_map(
+            static fn (array $comment): array => self::toApiPayload($comment),
+            $comments
+        );
     }
 
     private static function tableExists(): bool

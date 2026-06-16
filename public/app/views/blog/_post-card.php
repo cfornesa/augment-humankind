@@ -15,13 +15,31 @@ $postTitle = htmlspecialchars((string) (($post['title'] ?? '') ?: 'Untitled post
         </a>
     <?php endif; ?>
     <div class="blog-card-body">
-        <p class="eyebrow">
-            <?= e(date('M j, Y', strtotime((string) $post['created_at']) ?: time())) ?>
-            <?php if (!empty($post['source_name'])): ?>
-                · via <?= e((string) $post['source_name']) ?>
-            <?php endif; ?>
-        </p>
-        <h2><a href="<?= e($postUrl) ?>"><?= e((string) (($post['title'] ?? '') ?: 'Untitled post')) ?></a></h2>
+        <div class="blog-card-header">
+            <div class="blog-card-header-left">
+                <p class="eyebrow">
+                    <?= e(date('M j, Y', strtotime((string) $post['created_at']) ?: time())) ?>
+                    <?php if (!empty($post['source_name'])): ?>
+                        · via <?= e((string) $post['source_name']) ?>
+                    <?php endif; ?>
+                </p>
+                <h2><a href="<?= e($postUrl) ?>"><?= e((string) (($post['title'] ?? '') ?: 'Untitled post')) ?></a></h2>
+            </div>
+            <div class="blog-card-header-right">
+                <?php if ($isAdmin): ?>
+                <a href="/admin/posts/<?= $postId ?>/edit" class="post-action-btn edit-btn" aria-label="Edit post">
+                    <?= icon('pencil') ?><span class="btn-label">Edit</span>
+                </a>
+                <?php endif; ?>
+                <button class="post-action-btn post-expand-btn"
+                        data-post-id="<?= $postId ?>"
+                        aria-expanded="false"
+                        aria-controls="post-expand-<?= $postId ?>"
+                        aria-label="Expand post">
+                    <?= icon('maximize') ?><span class="btn-label">Expand</span>
+                </button>
+            </div>
+        </div>
         <?php if ($excerpt !== ''): ?>
             <p><?= e($excerpt) ?></p>
         <?php endif; ?>
@@ -37,47 +55,31 @@ $postTitle = htmlspecialchars((string) (($post['title'] ?? '') ?: 'Untitled post
             <?= (int) ($post['reaction_count'] ?? 0) ?> reactions
         </p>
 
-        <div class="post-actions">
-            <div class="post-actions-top">
-                <?php if ($isAdmin): ?>
-                <a href="/admin/posts/<?= $postId ?>/edit" class="post-action-btn" aria-label="Edit post">
-                    <?= icon('pencil') ?><span class="btn-label">Edit</span>
-                </a>
-                <?php endif; ?>
-                <button class="post-action-btn post-expand-btn"
+        <div class="post-actions-bottom">
+            <div class="post-actions-left">
+                <button class="post-action-btn post-comments-btn"
                         data-post-id="<?= $postId ?>"
                         aria-expanded="false"
-                        aria-controls="post-expand-<?= $postId ?>"
-                        aria-label="Expand post">
-                    <?= icon('maximize') ?><span class="btn-label">Expand</span>
+                        aria-controls="post-comments-<?= $postId ?>"
+                        aria-label="Toggle comments">
+                    <?= icon('message-circle') ?><span class="btn-label">Comments (<?= (int) ($post['comment_count'] ?? 0) ?>)</span>
                 </button>
+                <a href="<?= e($postUrl) ?>" class="post-action-btn" aria-label="Open full post">
+                    <?= icon('external-link') ?><span class="btn-label">Open post</span>
+                </a>
             </div>
-            <div class="post-actions-bottom">
-                <div class="post-actions-left">
-                    <button class="post-action-btn post-comments-btn"
-                            data-post-id="<?= $postId ?>"
-                            aria-expanded="false"
-                            aria-controls="post-comments-<?= $postId ?>"
-                            aria-label="Toggle comments">
-                        <?= icon('message-circle') ?><span class="btn-label">Comments (<?= (int) ($post['comment_count'] ?? 0) ?>)</span>
-                    </button>
-                    <a href="<?= e($postUrl) ?>" class="post-action-btn" aria-label="Open full post">
-                        <?= icon('external-link') ?><span class="btn-label">Open post</span>
-                    </a>
-                </div>
-                <div class="post-actions-right">
-                    <button class="post-action-btn post-embed-btn"
-                            data-post-id="<?= $postId ?>"
-                            aria-label="Copy embed code">
-                        <?= icon('code') ?><span class="btn-label">Embed</span>
-                    </button>
-                    <button class="post-action-btn post-share-btn"
-                            data-title="<?= $postTitle ?>"
-                            data-url="<?= e($postUrl) ?>"
-                            aria-label="Share post">
-                        <?= icon('share-2') ?><span class="btn-label">Share</span>
-                    </button>
-                </div>
+            <div class="post-actions-right">
+                <button class="post-action-btn post-embed-btn"
+                        data-post-id="<?= $postId ?>"
+                        aria-label="Copy embed code">
+                    <?= icon('code') ?><span class="btn-label">Embed</span>
+                </button>
+                <button class="post-action-btn post-share-btn"
+                        data-title="<?= $postTitle ?>"
+                        data-url="<?= e($postUrl) ?>"
+                        aria-label="Share post">
+                    <?= icon('share-2') ?><span class="btn-label">Share</span>
+                </button>
             </div>
         </div>
 
@@ -86,7 +88,16 @@ $postTitle = htmlspecialchars((string) (($post['title'] ?? '') ?: 'Untitled post
         </div>
 
         <div class="post-comments-panel" id="post-comments-<?= $postId ?>" hidden>
-            <div class="post-comments-list"></div>
+            <?php
+            $comments = [];
+            $commentsUrl = '/api/posts/' . $postId . '/comments';
+            $emptyCommentMessage = 'No comments yet.';
+            require dirname(__DIR__) . '/partials/comment-list.php';
+            ?>
+            <?php
+            $commentUrl = $commentsUrl;
+            $signinRedirect = $_SERVER['REQUEST_URI'] ?? $postUrl;
+            ?>
             <?php require __DIR__ . '/_comment-form.php'; ?>
         </div>
     </div>
