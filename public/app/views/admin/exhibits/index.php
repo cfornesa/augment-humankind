@@ -1,5 +1,20 @@
 <?php
 $pageTitle = 'Exhibits — Augment Humankind Admin';
+
+$q    = $q    ?? '';
+$sort = $sort ?? 'sort_order';
+$dir  = $dir  ?? 'asc';
+
+function exhibit_sort_link(string $col, string $label, string $cur, string $curDir, array $carry): string {
+    $next  = ($cur === $col && $curDir === 'asc') ? 'desc' : 'asc';
+    $arrow = $cur === $col ? ($curDir === 'asc' ? ' &#8593;' : ' &#8595;') : '';
+    $qs    = http_build_query(array_merge($carry, ['sort' => $col, 'dir' => $next]));
+    return '<a href="?' . $qs . '">' . htmlspecialchars($label, ENT_QUOTES, 'UTF-8') . $arrow . '</a>';
+}
+
+$carry         = array_filter(['q' => $q], fn($v) => $v !== '');
+$isDefaultSort = ($sort === 'sort_order');
+
 ob_start();
 ?>
 <div class="admin-section">
@@ -9,22 +24,33 @@ ob_start();
         <a href="/admin/exhibits/create" class="admin-btn">+ Add Exhibit</a>
     </div>
 
+    <form class="admin-filter-bar" action="/admin/exhibits" method="get" role="search">
+        <label class="sr-only" for="admin-exhibits-q">Search exhibits</label>
+        <input id="admin-exhibits-q" class="admin-filter-input" name="q" type="search"
+               value="<?= e($q) ?>" placeholder="Search title, description…" autocomplete="off">
+        <button class="admin-btn admin-btn-sm" type="submit">Filter</button>
+        <?php if ($q !== '' || !$isDefaultSort): ?>
+            <a href="/admin/exhibits" class="admin-filter-reset">Reset view</a>
+        <?php endif; ?>
+    </form>
+
     <?php if (empty($exhibits)): ?>
-        <p class="admin-empty">No exhibits yet.</p>
+        <p class="admin-empty"><?= $q !== '' ? 'No exhibits matched your search.' : 'No exhibits yet.' ?></p>
     <?php else: ?>
         <table class="admin-table">
             <thead>
                 <tr>
                     <th></th>
-                    <th>Title</th>
+                    <th><?= exhibit_sort_link('title', 'Title', $sort, $dir, $carry) ?></th>
                     <th>Year</th>
                     <th>Category</th>
                     <th>Collection</th>
                     <th>Slides</th>
+                    <th><?= exhibit_sort_link('created', 'Created', $sort, $dir, $carry) ?></th>
                     <th></th>
                 </tr>
             </thead>
-            <tbody id="artworks-sortable" data-reorder-url="/admin/exhibits/reorder">
+            <tbody id="artworks-sortable" data-reorder-url="/admin/exhibits/reorder" class="<?= !$isDefaultSort ? 'drag-handles-hidden' : '' ?>">
                 <?php foreach ($exhibits as $ex): ?>
                     <tr data-id="<?= $ex['id'] ?>">
                         <td class="drag-handle" title="Drag to reorder">&#8597;</td>
@@ -37,6 +63,7 @@ ob_start();
                         <td><?= htmlspecialchars(implode(', ', array_column($ex['categories'] ?? [], 'name')) ?: '—') ?></td>
                         <td><?= htmlspecialchars(implode(', ', array_column($ex['collections'] ?? [], 'name')) ?: '—') ?></td>
                         <td><?= count($ex['media_items'] ?? Exhibit::resolvedMediaItems($ex)) ?></td>
+                        <td><?= htmlspecialchars($ex['created_at'] ?? '') ?></td>
                         <td class="admin-actions">
                             <a href="/admin/exhibits/<?= $ex['id'] ?>/edit">Edit</a>
                             <form method="POST" action="/admin/exhibits/<?= $ex['id'] ?>/delete"

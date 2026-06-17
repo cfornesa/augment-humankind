@@ -43,6 +43,65 @@ class Exhibit
         )->fetchColumn();
     }
 
+    public static function latestActive(int $limit = 3): array
+    {
+        $stmt = db()->prepare(
+            'SELECT e.*
+             FROM exhibits e
+             WHERE e.deleted_at IS NULL
+             ORDER BY e.created_at DESC, e.id DESC
+             LIMIT ?'
+        );
+        $stmt->bindValue(1, max(1, $limit), PDO::PARAM_INT);
+        $stmt->execute();
+        return self::attachCollections(self::attachCategories($stmt->fetchAll()));
+    }
+
+    public static function paginateLatest(int $offset, int $limit): array
+    {
+        $stmt = db()->prepare(
+            'SELECT e.*
+             FROM exhibits e
+             WHERE e.deleted_at IS NULL
+             ORDER BY e.created_at DESC, e.id DESC
+             LIMIT ?, ?'
+        );
+        $stmt->bindValue(1, max(0, $offset), PDO::PARAM_INT);
+        $stmt->bindValue(2, max(1, $limit), PDO::PARAM_INT);
+        $stmt->execute();
+        return self::attachCollections(self::attachCategories($stmt->fetchAll()));
+    }
+
+    public static function searchFiltered(string $q, string $sort = 'newest', string $dir = 'desc', int $offset = 0, int $limit = 500): array
+    {
+        $like = $q !== '' ? '%' . str_replace(['%', '_'], ['\\%', '\\_'], $q) . '%' : '%';
+
+        $dir = strtoupper($dir) === 'ASC' ? 'ASC' : 'DESC';
+        $sortCol = match ($sort) {
+            'title'   => 'e.title',
+            'created' => 'e.created_at',
+            'az'      => 'e.title',
+            'za'      => 'e.title',
+            default   => 'e.created_at',
+        };
+        if ($sort === 'az') {
+            $dir = 'ASC';
+        } elseif ($sort === 'za') {
+            $dir = 'DESC';
+        }
+
+        $stmt = db()->prepare(
+            "SELECT e.*
+             FROM exhibits e
+             WHERE e.deleted_at IS NULL
+               AND (e.title LIKE ? OR e.description LIKE ?)
+             ORDER BY {$sortCol} {$dir}, e.id {$dir}
+             LIMIT ? OFFSET ?"
+        );
+        $stmt->execute([$like, $like, $limit, $offset]);
+        return self::attachCollections(self::attachCategories($stmt->fetchAll()));
+    }
+
     public static function find(int $id): array|false
     {
         $stmt = db()->prepare(

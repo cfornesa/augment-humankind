@@ -93,8 +93,7 @@ document.querySelectorAll('[data-checkbox-sortable]').forEach(list => {
 // Portfolio archives: load the next batch from the same route on scroll
 (function () {
     function responsiveBatchSize() {
-        const w = window.innerWidth;
-        return w < 640 ? 1 : w < 1024 ? 2 : 3;
+        return 3;
     }
 
     async function fetchBatch(fetchUrl, nextOffset, pageSize) {

@@ -54,6 +54,88 @@ class PlatformCollection
         )->fetchColumn();
     }
 
+    public static function latestActive(int $limit = 3): array
+    {
+        if (!self::tableExists()) {
+            return [];
+        }
+
+        $stmt = db()->prepare(
+            "SELECT pc.*, COUNT(pcii.item_id) AS item_count
+             FROM platform_collections pc
+             LEFT JOIN platform_collection_items pcii ON pcii.collection_id = pc.id
+             WHERE pc.deleted_at IS NULL
+             GROUP BY pc.id
+             ORDER BY GREATEST(pc.created_at, pc.updated_at) DESC, pc.id DESC
+             LIMIT ?"
+        );
+        $stmt->bindValue(1, max(1, $limit), PDO::PARAM_INT);
+        $stmt->execute();
+        return $stmt->fetchAll();
+    }
+
+    public static function paginateLatest(int $offset, int $limit): array
+    {
+        if (!self::tableExists()) {
+            return [];
+        }
+
+        $stmt = db()->prepare(
+            "SELECT pc.*, COUNT(pcii.item_id) AS item_count
+             FROM platform_collections pc
+             LEFT JOIN platform_collection_items pcii ON pcii.collection_id = pc.id
+             WHERE pc.deleted_at IS NULL
+             GROUP BY pc.id
+             ORDER BY GREATEST(pc.created_at, pc.updated_at) DESC, pc.id DESC
+             LIMIT ?, ?"
+        );
+        $stmt->bindValue(1, max(0, $offset), PDO::PARAM_INT);
+        $stmt->bindValue(2, max(1, $limit), PDO::PARAM_INT);
+        $stmt->execute();
+        return $stmt->fetchAll();
+    }
+
+    public static function searchFiltered(string $q, string $sort = 'newest', string $dir = 'desc', int $offset = 0, int $limit = 500): array
+    {
+        if (!self::tableExists()) {
+            return [];
+        }
+
+        $like = $q !== '' ? '%' . str_replace(['%', '_'], ['\\%', '\\_'], $q) . '%' : '%';
+
+        $dir = strtoupper($dir) === 'ASC' ? 'ASC' : 'DESC';
+        $sortCol = match ($sort) {
+            'name'    => 'pc.name',
+            'items'   => 'item_count',
+            'created' => 'pc.created_at',
+            'updated' => 'pc.updated_at',
+            default   => 'GREATEST(pc.created_at, pc.updated_at)',
+        };
+
+        $stmt = db()->prepare(
+            "SELECT pc.*, COUNT(DISTINCT pcii.item_id) AS item_count
+             FROM platform_collections pc
+             LEFT JOIN platform_collection_items pcii ON pcii.collection_id = pc.id
+             LEFT JOIN art_pieces ap
+               ON ap.id = pcii.item_id
+               AND pcii.item_type = 'art_piece'
+               AND ap.deleted_at IS NULL
+             WHERE pc.deleted_at IS NULL
+               AND (
+                   pc.name LIKE ?
+                   OR pc.description LIKE ?
+                   OR pc.artist_statement LIKE ?
+                   OR ap.title LIKE ?
+                   OR ap.description LIKE ?
+               )
+             GROUP BY pc.id
+             ORDER BY {$sortCol} {$dir}, pc.id {$dir}
+             LIMIT ? OFFSET ?"
+        );
+        $stmt->execute([$like, $like, $like, $like, $like, $limit, $offset]);
+        return $stmt->fetchAll();
+    }
+
     public static function findBySlug(string $slug): array|false
     {
         if (!self::tableExists()) {

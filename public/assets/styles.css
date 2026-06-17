@@ -1983,3 +1983,276 @@ h3 {
         aspect-ratio: 16 / 9;
     }
 }
+
+/* ── Content filter bar (pieces, collections public pages) ── */
+.content-filter-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+    margin-bottom: 1.5rem;
+}
+
+.filter-bar-primary {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    flex-wrap: wrap;
+    flex: 1 1 auto;
+}
+
+.filter-search-input {
+    flex: 1 1 220px;
+    min-width: 0;
+    padding: 0.45rem 0.75rem;
+    border: 1px solid var(--line);
+    background: var(--paper);
+    color: var(--ink);
+    font-size: 0.95rem;
+    border-radius: 3px;
+}
+
+.filter-submit {
+    white-space: nowrap;
+}
+
+.filter-reset {
+    font-size: 0.85rem;
+    color: var(--ink-soft);
+    text-decoration: underline;
+    white-space: nowrap;
+}
+
+.filter-bar-secondary {
+    width: 100%;
+}
+
+.filter-toggle {
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: var(--ink-soft);
+    user-select: none;
+    list-style: none;
+    padding: 0.25rem 0;
+}
+.filter-toggle::-webkit-details-marker { display: none; }
+
+.filter-bar-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    padding: 0.75rem 0 0.25rem;
+    align-items: flex-start;
+}
+
+.filter-fieldset {
+    border: none;
+    padding: 0;
+    margin: 0;
+}
+
+.filter-fieldset legend {
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--ink-soft);
+    margin-bottom: 0.4rem;
+}
+
+.filter-chip-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+}
+
+.filter-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.3rem 0.75rem;
+    border: 1px solid var(--line);
+    border-radius: 99px;
+    font-size: 0.85rem;
+    cursor: pointer;
+    background: var(--paper);
+    color: var(--ink);
+    transition: background 0.1s, border-color 0.1s;
+    user-select: none;
+}
+
+.filter-chip:hover {
+    border-color: var(--ink-soft);
+}
+
+.filter-chip-active,
+.filter-chip:has(input:checked) {
+    background: var(--ink);
+    color: var(--paper);
+    border-color: var(--ink);
+}
+
+/* ── Blog sort row ── */
+.blog-sort-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 1.25rem;
+    font-size: 0.9rem;
+}
+
+.blog-sort-label {
+    color: var(--ink-soft);
+}
+
+.blog-sort-link {
+    color: var(--ink-soft);
+    text-decoration: none;
+    padding: 0.2rem 0.5rem;
+    border-radius: 3px;
+    border: 1px solid transparent;
+}
+
+.blog-sort-link:hover {
+    border-color: var(--line);
+    color: var(--ink);
+}
+
+.blog-sort-active {
+    border-color: var(--line);
+    color: var(--ink);
+    font-weight: 600;
+}
+
+/* ── Site-wide search results ── */
+.search-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    align-items: center;
+    margin-bottom: 2rem;
+}
+
+.search-type-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    flex: 1 1 auto;
+}
+
+.search-type-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.3rem 0.8rem;
+    border: 1px solid var(--line);
+    border-radius: 99px;
+    font-size: 0.85rem;
+    text-decoration: none;
+    color: var(--ink);
+    background: var(--paper);
+    transition: background 0.1s;
+}
+
+.search-type-chip:hover {
+    background: var(--paper-alt, var(--paper));
+    border-color: var(--ink-soft);
+}
+
+.search-type-chip-active {
+    background: var(--ink);
+    color: var(--paper);
+    border-color: var(--ink);
+}
+
+.search-sort-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.9rem;
+}
+
+.search-results {
+    display: flex;
+    flex-direction: column;
+    gap: 2.5rem;
+}
+
+.search-result-section {
+    border-top: 1px solid var(--line);
+    padding-top: 1.25rem;
+}
+
+.search-result-heading {
+    font-size: 1rem;
+    font-weight: 600;
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.search-result-count {
+    font-size: 0.8rem;
+    font-weight: 400;
+    color: var(--ink-soft);
+    background: var(--line);
+    padding: 0.1rem 0.45rem;
+    border-radius: 99px;
+}
+
+.search-result-item {
+    padding: 0.75rem 0;
+    border-bottom: 1px solid var(--line);
+}
+
+.search-result-item:last-child {
+    border-bottom: none;
+}
+
+.search-result-title {
+    display: block;
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+    color: var(--ink);
+    text-decoration: none;
+}
+
+.search-result-title:hover {
+    text-decoration: underline;
+}
+
+.search-result-excerpt {
+    font-size: 0.9rem;
+    color: var(--ink-soft);
+    margin: 0 0 0.3rem;
+}
+
+.search-result-meta {
+    font-size: 0.8rem;
+    color: var(--ink-soft);
+}
+
+/* ── Accessibility utility ── */
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+/* ── Hide lazy-load status text visually on archive pages ── */
+[data-listing-status] {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+

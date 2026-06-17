@@ -78,21 +78,137 @@ class PlatformArtPiece
         return $rows[0] ?? false;
     }
 
-    public static function allForAdmin(): array
+    public static function latestActive(int $limit = 3): array
     {
         if (!self::tableExists()) {
             return [];
         }
 
-        $rows = db()->query(
+        $stmt = db()->prepare(
             "SELECT ap.*, u.name AS owner_name
              FROM art_pieces ap
              LEFT JOIN users u ON u.id = ap.owner_user_id
              WHERE ap.deleted_at IS NULL
-             ORDER BY ap.sort_order ASC, ap.id ASC"
-        )->fetchAll();
+               AND ap.status = 'active'
+             ORDER BY GREATEST(ap.created_at, ap.updated_at) DESC, ap.id DESC
+             LIMIT ?"
+        );
+        $stmt->bindValue(1, max(1, $limit), PDO::PARAM_INT);
+        $stmt->execute();
+        return self::attachCategories(self::attachCurrentVersion($stmt->fetchAll()));
+    }
 
-        return self::attachCategories(self::attachCurrentVersion($rows));
+    public static function paginateLatest(int $offset, int $limit): array
+    {
+        if (!self::tableExists()) {
+            return [];
+        }
+
+        $stmt = db()->prepare(
+            "SELECT ap.*, u.name AS owner_name
+             FROM art_pieces ap
+             LEFT JOIN users u ON u.id = ap.owner_user_id
+             WHERE ap.deleted_at IS NULL
+               AND ap.status = 'active'
+             ORDER BY GREATEST(ap.created_at, ap.updated_at) DESC, ap.id DESC
+             LIMIT ?, ?"
+        );
+        $stmt->bindValue(1, max(0, $offset), PDO::PARAM_INT);
+        $stmt->bindValue(2, max(1, $limit), PDO::PARAM_INT);
+        $stmt->execute();
+        return self::attachCategories(self::attachCurrentVersion($stmt->fetchAll()));
+    }
+
+    public static function searchFiltered(
+        ?string $q,
+        ?string $engine,
+        string $sort = 'newest',
+        string $dir = 'desc',
+        int $offset = 0,
+        int $limit = 500
+    ): array {
+        if (!self::tableExists()) {
+            return [];
+        }
+
+        [$whereClause, $params] = self::buildSearchWhere($q, $engine, adminMode: false);
+        $orderBy = self::buildSortClause($sort, $dir);
+
+        $sql = "SELECT ap.*, u.name AS owner_name
+                FROM art_pieces ap
+                LEFT JOIN users u ON u.id = ap.owner_user_id
+                {$whereClause}
+                ORDER BY {$orderBy}
+                LIMIT ? OFFSET ?";
+
+        $params[] = $limit;
+        $params[] = $offset;
+
+        $stmt = db()->prepare($sql);
+        $stmt->execute($params);
+        return self::attachCategories(self::attachCurrentVersion($stmt->fetchAll()));
+    }
+
+    public static function allForAdmin(?string $q = null, ?string $engine = null, string $sort = 'sort_order', string $dir = 'asc'): array
+    {
+        if (!self::tableExists()) {
+            return [];
+        }
+
+        [$whereClause, $params] = self::buildSearchWhere($q, $engine, adminMode: true);
+        $orderBy = self::buildSortClause($sort, $dir);
+
+        $sql = "SELECT ap.*, u.name AS owner_name
+                FROM art_pieces ap
+                LEFT JOIN users u ON u.id = ap.owner_user_id
+                {$whereClause}
+                ORDER BY {$orderBy}";
+
+        $stmt = db()->prepare($sql);
+        $stmt->execute($params);
+        return self::attachCategories(self::attachCurrentVersion($stmt->fetchAll()));
+    }
+
+    private static function buildSearchWhere(?string $q, ?string $engine, bool $adminMode): array
+    {
+        $where = ['ap.deleted_at IS NULL'];
+        $params = [];
+
+        if (!$adminMode) {
+            $where[] = "ap.status = 'active'";
+        }
+
+        if ($engine !== null && $engine !== '' && in_array($engine, ['p5', 'c2', 'three', 'svg'], true)) {
+            $where[] = 'ap.engine = ?';
+            $params[] = $engine;
+        }
+
+        if ($q !== null && $q !== '') {
+            $like = '%' . str_replace(['%', '_'], ['\\%', '\\_'], $q) . '%';
+            $where[] = '(ap.title LIKE ? OR ap.description LIKE ? OR ap.prompt LIKE ?)';
+            $params[] = $like;
+            $params[] = $like;
+            $params[] = $like;
+        }
+
+        return ['WHERE ' . implode(' AND ', $where), $params];
+    }
+
+    private static function buildSortClause(string $sort, string $dir): string
+    {
+        $dir = strtoupper($dir) === 'ASC' ? 'ASC' : 'DESC';
+        $col = match ($sort) {
+            'newest'     => 'GREATEST(ap.created_at, ap.updated_at)',
+            'title'      => 'ap.title',
+            'engine'     => 'ap.engine',
+            'status'     => 'ap.status',
+            'created'    => 'ap.created_at',
+            'updated'    => 'ap.updated_at',
+            'sort_order' => 'ap.sort_order',
+            default      => 'GREATEST(ap.created_at, ap.updated_at)',
+        };
+        $idDir = ($sort === 'sort_order') ? 'ASC' : $dir;
+        return "{$col} {$dir}, ap.id {$idDir}";
     }
 
     public static function find(int $id): array|false
@@ -417,7 +533,7 @@ class PlatformArtPiece
     private static function nextSortOrder(): int
     {
         return (int) db()->query(
-            'SELECT COALESCE(MAX(sort_order), -1) + 1 FROM art_pieces'
+            'SELECT COALESCE(MIN(sort_order), 1) - 1 FROM art_pieces WHERE deleted_at IS NULL'
         )->fetchColumn();
     }
 }

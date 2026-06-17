@@ -74,6 +74,75 @@ class Collection
         return (int) $stmt->fetchColumn();
     }
 
+    public static function latestActive(int $limit = 3): array
+    {
+        $stmt = db()->prepare(
+            'SELECT c.*
+             FROM collections c
+             WHERE c.deleted_at IS NULL
+               AND EXISTS (
+                   SELECT 1 FROM collection_exhibits ce
+                   JOIN exhibits e ON e.id = ce.exhibit_id AND e.deleted_at IS NULL
+                   WHERE ce.collection_id = c.id
+               )
+             ORDER BY c.created_at DESC, c.id DESC
+             LIMIT ?'
+        );
+        $stmt->bindValue(1, max(1, $limit), PDO::PARAM_INT);
+        $stmt->execute();
+        return $stmt->fetchAll();
+    }
+
+    public static function paginateLatest(int $offset, int $limit): array
+    {
+        $stmt = db()->prepare(
+            'SELECT c.*
+             FROM collections c
+             WHERE c.deleted_at IS NULL
+               AND EXISTS (
+                   SELECT 1 FROM collection_exhibits ce
+                   JOIN exhibits e ON e.id = ce.exhibit_id AND e.deleted_at IS NULL
+                   WHERE ce.collection_id = c.id
+               )
+             ORDER BY c.created_at DESC, c.id DESC
+             LIMIT ?, ?'
+        );
+        $stmt->bindValue(1, max(0, $offset), PDO::PARAM_INT);
+        $stmt->bindValue(2, max(1, $limit), PDO::PARAM_INT);
+        $stmt->execute();
+        return $stmt->fetchAll();
+    }
+
+    public static function searchFiltered(string $q, string $sort = 'newest', string $dir = 'desc', int $offset = 0, int $limit = 500): array
+    {
+        $like = $q !== '' ? '%' . str_replace(['%', '_'], ['\\%', '\\_'], $q) . '%' : '%';
+
+        $dir = strtoupper($dir) === 'ASC' ? 'ASC' : 'DESC';
+        $sortCol = match ($sort) {
+            'name'    => 'c.name',
+            'created' => 'c.created_at',
+            'az'      => 'c.name',
+            'za'      => 'c.name',
+            default   => 'c.created_at',
+        };
+        if ($sort === 'az') {
+            $dir = 'ASC';
+        } elseif ($sort === 'za') {
+            $dir = 'DESC';
+        }
+
+        $stmt = db()->prepare(
+            "SELECT c.*
+             FROM collections c
+             WHERE c.deleted_at IS NULL
+               AND (c.name LIKE ? OR c.description LIKE ?)
+             ORDER BY {$sortCol} {$dir}, c.id {$dir}
+             LIMIT ? OFFSET ?"
+        );
+        $stmt->execute([$like, $like, $limit, $offset]);
+        return $stmt->fetchAll();
+    }
+
     public static function find(int $id): array|false
     {
         $stmt = db()->prepare('SELECT * FROM collections WHERE id = ? AND deleted_at IS NULL');

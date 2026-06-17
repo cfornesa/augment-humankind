@@ -58,6 +58,35 @@ class Page
         }
     }
 
+    public static function searchPublished(string $q, int $limit = 5): array
+    {
+        $q = trim($q);
+        if ($q === '') {
+            return [];
+        }
+
+        try {
+            $like = '%' . str_replace(['%', '_'], ['\\%', '\\_'], $q) . '%';
+            $stmt = db()->prepare(
+                'SELECT id, title, slug, meta_description
+                 FROM pages
+                 WHERE status = ? AND deleted_at IS NULL
+                   AND (title LIKE ? OR meta_description LIKE ?)
+                 ORDER BY CASE WHEN title LIKE ? THEN 0 ELSE 1 END, id DESC
+                 LIMIT ?'
+            );
+            $stmt->bindValue(1, 'published');
+            $stmt->bindValue(2, $like);
+            $stmt->bindValue(3, $like);
+            $stmt->bindValue(4, $like);
+            $stmt->bindValue(5, max(1, $limit), PDO::PARAM_INT);
+            $stmt->execute();
+            return $stmt->fetchAll();
+        } catch (Throwable) {
+            return [];
+        }
+    }
+
     public static function create(array $data): int
     {
         $stmt = db()->prepare(

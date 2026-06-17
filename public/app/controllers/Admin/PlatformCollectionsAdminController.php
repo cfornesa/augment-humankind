@@ -8,7 +8,26 @@ class PlatformCollectionsAdminController
     {
         admin_check();
 
-        $collections = PlatformCollection::all();
+        $q    = trim((string) ($_GET['q'] ?? ''));
+        $sort = (string) ($_GET['sort'] ?? 'sort_order');
+        $dir  = strtolower((string) ($_GET['dir'] ?? 'asc'));
+
+        $allowedSorts = ['sort_order', 'newest', 'name', 'items', 'created', 'updated'];
+        if (!in_array($sort, $allowedSorts, true)) {
+            $sort = 'sort_order';
+        }
+        if (!in_array($dir, ['asc', 'desc'], true)) {
+            $dir = 'asc';
+        }
+
+        if ($q !== '') {
+            $collections = PlatformCollection::searchFiltered($q, $sort === 'sort_order' ? 'newest' : $sort, $dir);
+        } elseif ($sort !== 'sort_order') {
+            $collections = PlatformCollection::searchFiltered('', $sort, $dir);
+        } else {
+            $collections = PlatformCollection::all();
+        }
+
         foreach ($collections as &$collection) {
             $collection['thumbnail_url'] = PlatformCollection::firstThumbnail((int) $collection['id']);
         }

@@ -1752,3 +1752,58 @@ Further manual testing surfaced four remaining UX/correctness gaps in the site i
 - Adjusted blog feed expansion so opening a card replaces the preview excerpt/meta slot with the full post body instead of inserting the body below the action row.
 - Kept the action row beneath the expanded body, matching the single-post reading flow more closely while preserving inline comments, embed, and share controls.
 - The top-right toggle is now a true two-state control: collapsed cards show `Expand` with the maximize icon, expanded cards keep the button visible and switch to `Collapse` with a minimize icon.
+
+## 2026-06-17 — Search / Filter / Sort + Infinite Scroll on All Public Archive Pages
+
+### Context
+All four portfolio-type archive pages and the blog lacked functional search, filter, and sort UI. The portfolio archive pages `/portfolio/exhibits` and `/portfolio/exhibit-collections` had working infinite scroll but no filter forms. `/portfolio/pieces` and `/portfolio/platform-collections` had no filter UI and no pagination — they called `paginateLatest()` and loaded everything. The standalone `/pieces` and `/collections` pages loaded all items at once. The blog had a flat flex layout with visible `<select>` elements that broke on mobile.
+
+### Design Decisions
+- **Chip/disclosure pattern** applied uniformly: `content-filter-bar` → `filter-bar-primary` (search + button inline) → `filter-bar-secondary` `<details>` with radio chip fieldsets (SORT everywhere; TYPE/engine chips only on pieces pages; Category chips on blog).
+- **No visible search label** anywhere — `<label class="sr-only">` only; placeholder text is the sole visible prompt.
+- **`[data-listing-status]`** ("Showing N items so far.") is visually hidden site-wide via a CSS rule; kept for screen readers via `aria-live`.
+- **`/portfolio` gallery page** (See More buttons per section) is explicitly untouched — infinite scroll only applies to the 4 individual archive type pages and 2 standalone archive pages.
+- **+1 trick pagination**: fetch `PAGE_SIZE + 1` items, derive `$hasMore` without a COUNT query; `PortfolioController::renderArchive()` now treats `$fetchTotal` as optional (`null` = use +1 trick).
+
+### Models Changed
+- `PlatformArtPiece::searchFiltered()` — added `$offset`, `$limit` params; LIMIT/OFFSET appended to SQL.
+- `PlatformCollection::searchFiltered()` — same; empty `$q` now passes `'%'` (match-all) instead of short-circuiting, enabling sort-only use.
+- `Exhibit::searchFiltered()` — added `az`/`za` sort cases (`e.title ASC/DESC`) + offset/limit.
+- `Collection::searchFiltered()` — same (`c.name ASC/DESC`).
+
+### Controllers Changed
+- `PiecesController::index()` — PAGE_SIZE=12, offset, +1 trick, sort mapping (newest/oldest/az/za), filter-aware `$fetchUrl`, partial=1 → `pieces/_batch.php`.
+- `CollectionsController::index()` — same pattern; fixed bug where `'newest'` was hardcoded instead of `$modelSort` in the `searchFiltered()` call.
+- `PortfolioController::exhibitsIndex()` — reads `$q`/`$sort`, builds filter-aware `$fetchUrl`, passes `showFilterBar: true` to `renderArchive()`.
+- `PortfolioController::collectionsIndex()` — same for `/portfolio/exhibit-collections`.
+- `PortfolioController::piecesIndex()` — reads `$q`/`$engine`/`$sort`, uses `PlatformArtPiece::searchFiltered()` (was `paginateLatest()`), passes `showFilterBar: true`, `showEngineFilter: true`.
+- `PortfolioController::platformCollectionsIndex()` — reads `$q`/`$sort`, uses `PlatformCollection::searchFiltered()` (was `paginateLatest()`), passes `showFilterBar: true`.
+- `PortfolioController::renderArchive()` — `$fetchTotal` is now `?callable = null`; new optional params: `$fetchUrl`, `$showFilterBar`, `$filterQ`, `$filterSort`, `$showEngineFilter`, `$filterEngine`; exposes these as view variables.
+- `BlogController::index()` — reads `$cat`, validates against actual category slugs, passes `$activeCat` to view; calls `BlogPost::published()` with category JOIN.
+- `BlogPost::published()` — optional `$cat` param; when non-empty, adds `INNER JOIN` on `post_categories`/`categories` to filter by slug.
+
+### Views/Partials Created
+- `public/app/views/pieces/_piece-card.php` — extracted card partial used by index and batch.
+- `public/app/views/pieces/_batch.php` — AJAX batch response wrapper.
+- `public/app/views/collections/_collection-card.php` — extracted card partial.
+- `public/app/views/collections/_batch.php` — AJAX batch response wrapper.
+
+### Views Updated
+- `public/app/views/pieces/index.php` — chip/disclosure filter (TYPE + SORT chips), sr-only label, `data-lazy-listing` wrapper with `data-fetch-url`/`data-next-offset`/`data-has-more`/`data-page-size`.
+- `public/app/views/collections/index.php` — same structure, SORT chips only.
+- `public/app/views/portfolio/archive.php` — conditional filter form (`$showFilterBar`); engine fieldset conditional on `$showEngineFilter`; uses `$fetchUrl` on `data-fetch-url` attribute (was hardcoded `$canonicalPath`); status `<p>` is now empty + sr-only (was "Showing N of M.").
+- `public/app/views/blog/index.php` — replaced flat flex `<select>` form with chip/disclosure pattern; Category chips (dynamic, from `$categories`); Sort chips (Newest first / Oldest first); Reset link when any filter active.
+
+### CSS Updated
+- `public/assets/styles.css` — added `.sr-only` definition; added `[data-listing-status]` sr-only rule; removed `.blog-filter-bar` block (replaced by shared `.content-filter-bar` classes).
+- `public/assets/admin.css` — admin filter bar, admin sortable header link styles, `.drag-handles-hidden .drag-handle` visibility rule.
+
+### Admin Views Updated (search/sort/filter parity)
+- `public/app/views/admin/pieces/index.php` — search + engine-filter form, sortable column headers (Title/Engine/Status/Created/Updated), drag-handle hiding, Reset link.
+- `public/app/views/admin/platform-collections/index.php` — same pattern.
+- `public/app/views/admin/exhibits/index.php` — same pattern.
+- `public/app/views/admin/collections/index.php` — same pattern.
+
+### Verification
+- `php -l` passed on all changed PHP files (15 files).
+- Browser verified: `/blog`, `/portfolio/pieces`, `/portfolio/platform-collections`, `/portfolio/exhibits`, `/portfolio/exhibit-collections`, `/pieces`, `/collections`.

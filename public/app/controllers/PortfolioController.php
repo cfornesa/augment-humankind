@@ -10,19 +10,19 @@ class PortfolioController
     public static function gallery(): void
     {
         $collections = self::decorateCollections(
-            Collection::paginateWithAtLeastOneExhibit(0, self::GALLERY_PREVIEW_LIMIT)
+            Collection::latestActive(self::GALLERY_PREVIEW_LIMIT)
         );
         $collectionTotal = Collection::countWithAtLeastOneExhibit();
         $exhibits = self::decorateExhibits(
-            Exhibit::paginateSorted(0, self::GALLERY_PREVIEW_LIMIT)
+            Exhibit::latestActive(self::GALLERY_PREVIEW_LIMIT)
         );
         $exhibitTotal = Exhibit::countVisible();
         $platformCollections = self::decoratePlatformCollections(
-            PlatformCollection::paginate(0, self::GALLERY_PREVIEW_LIMIT)
+            PlatformCollection::latestActive(self::GALLERY_PREVIEW_LIMIT)
         );
         $platformCollectionTotal = PlatformCollection::countVisible();
         $pieces = self::decoratePieces(
-            PlatformArtPiece::paginate(0, self::GALLERY_PREVIEW_LIMIT)
+            PlatformArtPiece::latestActive(self::GALLERY_PREVIEW_LIMIT)
         );
         $pieceTotal = PlatformArtPiece::countActive();
         require dirname(__DIR__) . '/views/portfolio/gallery.php';
@@ -30,6 +30,20 @@ class PortfolioController
 
     public static function collectionsIndex(): void
     {
+        $q    = trim((string) ($_GET['q'] ?? ''));
+        $sort = (string) ($_GET['sort'] ?? 'newest');
+        if (!in_array($sort, ['newest', 'oldest', 'az', 'za'], true)) {
+            $sort = 'newest';
+        }
+        [$modelSort, $dir] = match ($sort) {
+            'oldest' => ['created', 'asc'],
+            'az'     => ['az',      'asc'],
+            'za'     => ['za',      'desc'],
+            default  => ['newest',  'desc'],
+        };
+        $filterQs = http_build_query(array_filter(['q' => $q, 'sort' => $sort !== 'newest' ? $sort : '']));
+        $fetchUrl = '/portfolio/exhibit-collections' . ($filterQs !== '' ? '?' . $filterQs : '');
+
         self::renderArchive(
             itemType: 'collections',
             pageTitle: 'Exhibit Collections | Augment Humankind',
@@ -39,14 +53,31 @@ class PortfolioController
             heading: 'Exhibit Collections',
             intro: 'Native exhibit collections, each gathering related exhibits into a durable archive page.',
             fetchItems: static fn (int $offset, int $limit): array => self::decorateCollections(
-                Collection::paginateWithAtLeastOneExhibit($offset, $limit)
+                Collection::searchFiltered($q, $modelSort, $dir, $offset, $limit)
             ),
-            fetchTotal: static fn (): int => Collection::countWithAtLeastOneExhibit()
+            fetchUrl: $fetchUrl,
+            showFilterBar: true,
+            filterQ: $q,
+            filterSort: $sort,
         );
     }
 
     public static function exhibitsIndex(): void
     {
+        $q    = trim((string) ($_GET['q'] ?? ''));
+        $sort = (string) ($_GET['sort'] ?? 'newest');
+        if (!in_array($sort, ['newest', 'oldest', 'az', 'za'], true)) {
+            $sort = 'newest';
+        }
+        [$modelSort, $dir] = match ($sort) {
+            'oldest' => ['created', 'asc'],
+            'az'     => ['az',      'asc'],
+            'za'     => ['za',      'desc'],
+            default  => ['newest',  'desc'],
+        };
+        $filterQs = http_build_query(array_filter(['q' => $q, 'sort' => $sort !== 'newest' ? $sort : '']));
+        $fetchUrl = '/portfolio/exhibits' . ($filterQs !== '' ? '?' . $filterQs : '');
+
         self::renderArchive(
             itemType: 'exhibits',
             pageTitle: 'Portfolio Exhibits | Augment Humankind',
@@ -56,14 +87,31 @@ class PortfolioController
             heading: 'Exhibits',
             intro: 'Individual exhibits with media, metadata, and collection context.',
             fetchItems: static fn (int $offset, int $limit): array => self::decorateExhibits(
-                Exhibit::paginateSorted($offset, $limit)
+                Exhibit::searchFiltered($q, $modelSort, $dir, $offset, $limit)
             ),
-            fetchTotal: static fn (): int => Exhibit::countVisible()
+            fetchUrl: $fetchUrl,
+            showFilterBar: true,
+            filterQ: $q,
+            filterSort: $sort,
         );
     }
 
     public static function platformCollectionsIndex(): void
     {
+        $q    = trim((string) ($_GET['q'] ?? ''));
+        $sort = (string) ($_GET['sort'] ?? 'newest');
+        if (!in_array($sort, ['newest', 'oldest', 'az', 'za'], true)) {
+            $sort = 'newest';
+        }
+        [$modelSort, $dir] = match ($sort) {
+            'oldest' => ['newest', 'asc'],
+            'az'     => ['name',   'asc'],
+            'za'     => ['name',   'desc'],
+            default  => ['newest', 'desc'],
+        };
+        $filterQs = http_build_query(array_filter(['q' => $q, 'sort' => $sort !== 'newest' ? $sort : '']));
+        $fetchUrl = '/portfolio/platform-collections' . ($filterQs !== '' ? '?' . $filterQs : '');
+
         self::renderArchive(
             itemType: 'platform-collections',
             pageTitle: 'Platform Collections | Augment Humankind',
@@ -73,14 +121,35 @@ class PortfolioController
             heading: 'Platform Collections',
             intro: 'Migrated platform-native collections, each with its own public detail page and immersive mode.',
             fetchItems: static fn (int $offset, int $limit): array => self::decoratePlatformCollections(
-                PlatformCollection::paginate($offset, $limit)
+                PlatformCollection::searchFiltered($q, $modelSort, $dir, $offset, $limit)
             ),
-            fetchTotal: static fn (): int => PlatformCollection::countVisible()
+            fetchUrl: $fetchUrl,
+            showFilterBar: true,
+            filterQ: $q,
+            filterSort: $sort,
         );
     }
 
     public static function piecesIndex(): void
     {
+        $q      = trim((string) ($_GET['q'] ?? ''));
+        $engine = trim((string) ($_GET['engine'] ?? ''));
+        $sort   = (string) ($_GET['sort'] ?? 'newest');
+        if (!in_array($sort, ['newest', 'oldest', 'az', 'za'], true)) {
+            $sort = 'newest';
+        }
+        if (!in_array($engine, ['p5', 'c2', 'three', 'svg'], true)) {
+            $engine = '';
+        }
+        [$modelSort, $dir] = match ($sort) {
+            'oldest' => ['newest', 'asc'],
+            'az'     => ['title',  'asc'],
+            'za'     => ['title',  'desc'],
+            default  => ['newest', 'desc'],
+        };
+        $filterQs = http_build_query(array_filter(['q' => $q, 'engine' => $engine, 'sort' => $sort !== 'newest' ? $sort : '']));
+        $fetchUrl = '/portfolio/pieces' . ($filterQs !== '' ? '?' . $filterQs : '');
+
         self::renderArchive(
             itemType: 'pieces',
             pageTitle: 'Portfolio Art Pieces | Augment Humankind',
@@ -90,9 +159,14 @@ class PortfolioController
             heading: 'Art Pieces',
             intro: 'Generative art pieces and creative experiments from the migrated platform archive.',
             fetchItems: static fn (int $offset, int $limit): array => self::decoratePieces(
-                PlatformArtPiece::paginate($offset, $limit)
+                PlatformArtPiece::searchFiltered($q ?: null, $engine ?: null, $modelSort, $dir, $offset, $limit)
             ),
-            fetchTotal: static fn (): int => PlatformArtPiece::countActive()
+            fetchUrl: $fetchUrl,
+            showFilterBar: true,
+            showEngineFilter: true,
+            filterQ: $q,
+            filterSort: $sort,
+            filterEngine: $engine,
         );
     }
 
@@ -177,14 +251,36 @@ class PortfolioController
         string $heading,
         string $intro,
         callable $fetchItems,
-        callable $fetchTotal
+        ?callable $fetchTotal = null,
+        ?string $fetchUrl = null,
+        bool $showFilterBar = false,
+        string $filterQ = '',
+        string $filterSort = 'newest',
+        bool $showEngineFilter = false,
+        string $filterEngine = '',
     ): void {
         $offset = isset($_GET['offset']) ? max(0, (int) $_GET['offset']) : 0;
-        $limit = isset($_GET['limit']) ? max(1, min(24, (int) $_GET['limit'])) : self::ARCHIVE_PAGE_SIZE;
-        $items = $fetchItems($offset, $limit);
-        $total = $fetchTotal();
-        $nextOffset = $offset + count($items);
-        $hasMore = $nextOffset < $total;
+        $limit  = isset($_GET['limit'])  ? max(1, min(24, (int) $_GET['limit'])) : self::ARCHIVE_PAGE_SIZE;
+
+        if ($fetchTotal !== null) {
+            $items      = $fetchItems($offset, $limit);
+            $total      = $fetchTotal();
+            $nextOffset = $offset + count($items);
+            $hasMore    = $nextOffset < $total;
+        } else {
+            $batch      = $fetchItems($offset, $limit + 1);
+            $hasMore    = count($batch) > $limit;
+            $items      = $hasMore ? array_slice($batch, 0, $limit) : $batch;
+            $nextOffset = $offset + $limit;
+        }
+
+        $fetchUrl = $fetchUrl ?? $canonicalPath;
+
+        // expose filter vars to view
+        $q              = $filterQ;
+        $sort           = $filterSort;
+        $engine         = $filterEngine;
+        $showEngineFilter = $showEngineFilter;
 
         if (self::isPartialRequest()) {
             require dirname(__DIR__) . '/views/portfolio/archive-batch.php';

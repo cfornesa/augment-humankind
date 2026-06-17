@@ -4,9 +4,52 @@ declare(strict_types=1);
 
 class PiecesController
 {
+    private const PAGE_SIZE = 12;
+
     public static function index(): void
     {
-        $pieces = PlatformArtPiece::all();
+        $q      = trim((string) ($_GET['q'] ?? ''));
+        $engine = (string) ($_GET['engine'] ?? '');
+        $sort   = (string) ($_GET['sort'] ?? 'newest');
+        $offset = max(0, (int) ($_GET['offset'] ?? 0));
+
+        if (!in_array($engine, ['p5', 'c2', 'three', 'svg'], true)) {
+            $engine = '';
+        }
+        if (!in_array($sort, ['newest', 'oldest', 'az', 'za'], true)) {
+            $sort = 'newest';
+        }
+
+        [$modelSort, $dir] = match ($sort) {
+            'oldest' => ['newest', 'asc'],
+            'az'     => ['title',  'asc'],
+            'za'     => ['title',  'desc'],
+            default  => ['newest', 'desc'],
+        };
+
+        $batch = PlatformArtPiece::searchFiltered(
+            $q !== '' ? $q : null,
+            $engine !== '' ? $engine : null,
+            $modelSort,
+            $dir,
+            $offset,
+            self::PAGE_SIZE + 1
+        );
+
+        $hasMore    = count($batch) > self::PAGE_SIZE;
+        $pieces     = $hasMore ? array_slice($batch, 0, self::PAGE_SIZE) : $batch;
+        $nextOffset = $offset + self::PAGE_SIZE;
+
+        $filterParams = array_filter(['q' => $q, 'engine' => $engine, 'sort' => $sort !== 'newest' ? $sort : '']);
+        $filterQs     = http_build_query(array_filter($filterParams));
+        $fetchUrl     = '/pieces' . ($filterQs !== '' ? '?' . $filterQs : '');
+
+        if (($_GET['partial'] ?? '') === '1') {
+            header('Content-Type: text/html; charset=utf-8');
+            require dirname(__DIR__) . '/views/pieces/_batch.php';
+            exit;
+        }
+
         $pageTitle = 'Art Pieces | Augment Humankind';
         $pageDescription = 'Generative art pieces and creative experiments.';
         $bodyClass = 'page-pieces';

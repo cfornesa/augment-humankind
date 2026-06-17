@@ -3,6 +3,21 @@
 declare(strict_types=1);
 
 $pageTitle = 'Platform Collections';
+
+$q    = $q    ?? '';
+$sort = $sort ?? 'sort_order';
+$dir  = $dir  ?? 'asc';
+
+function pcol_sort_link(string $col, string $label, string $cur, string $curDir, array $carry): string {
+    $next  = ($cur === $col && $curDir === 'asc') ? 'desc' : 'asc';
+    $arrow = $cur === $col ? ($curDir === 'asc' ? ' &#8593;' : ' &#8595;') : '';
+    $qs    = http_build_query(array_merge($carry, ['sort' => $col, 'dir' => $next]));
+    return '<a href="?' . $qs . '">' . htmlspecialchars($label, ENT_QUOTES, 'UTF-8') . $arrow . '</a>';
+}
+
+$carry         = array_filter(['q' => $q], fn($v) => $v !== '');
+$isDefaultSort = ($sort === 'sort_order');
+
 ob_start();
 ?>
 <div class="admin-container">
@@ -20,22 +35,33 @@ ob_start();
 
     <p>Curated collections migrated from the platform app. Manage their metadata, items, layouts, and external embeds here.</p>
 
+    <form class="admin-filter-bar" action="/admin/platform-collections" method="get" role="search">
+        <label class="sr-only" for="admin-pcol-q">Search collections</label>
+        <input id="admin-pcol-q" class="admin-filter-input" name="q" type="search"
+               value="<?= e($q) ?>" placeholder="Search name, description, piece titles…" autocomplete="off">
+        <button class="admin-btn admin-btn-sm" type="submit">Filter</button>
+        <?php if ($q !== '' || !$isDefaultSort): ?>
+            <a href="/admin/platform-collections" class="admin-filter-reset">Reset view</a>
+        <?php endif; ?>
+    </form>
+
     <?php if (empty($collections)): ?>
-        <p>No platform collections yet.</p>
+        <p><?= $q !== '' ? 'No collections matched your search.' : 'No platform collections yet.' ?></p>
     <?php else: ?>
         <table class="admin-table">
             <thead>
                 <tr>
                     <th></th>
                     <th>Thumbnail</th>
-                    <th>Name</th>
+                    <th><?= pcol_sort_link('name', 'Name', $sort, $dir, $carry) ?></th>
                     <th>Slug</th>
-                    <th>Items</th>
-                    <th>Created</th>
+                    <th><?= pcol_sort_link('items', 'Items', $sort, $dir, $carry) ?></th>
+                    <th><?= pcol_sort_link('created', 'Created', $sort, $dir, $carry) ?></th>
+                    <th><?= pcol_sort_link('updated', 'Updated', $sort, $dir, $carry) ?></th>
                     <th>Actions</th>
                 </tr>
             </thead>
-            <tbody data-reorder-url="/admin/platform-collections/reorder">
+            <tbody data-reorder-url="/admin/platform-collections/reorder" class="<?= !$isDefaultSort ? 'drag-handles-hidden' : '' ?>">
                 <?php foreach ($collections as $collection): ?>
                     <tr data-id="<?= (int) $collection['id'] ?>" data-slug="<?= e($collection['slug'] ?? '') ?>">
                         <td class="drag-handle" title="Drag to reorder">&#8597;</td>
@@ -48,6 +74,7 @@ ob_start();
                         <td><code><?= e($collection['slug'] ?? '') ?></code></td>
                         <td><?= (int) ($collection['item_count'] ?? 0) ?></td>
                         <td><?= e($collection['created_at'] ?? '') ?></td>
+                        <td><?= e($collection['updated_at'] ?? '') ?></td>
                         <td class="admin-actions-cell">
                                 <a href="/collections/<?= e($collection['slug'] ?? '') ?>" target="_blank" class="admin-btn admin-btn-sm admin-btn-ghost">View</a>
                                 <a href="/immersive/collections/<?= e($collection['slug'] ?? '') ?>" target="_blank" class="admin-btn admin-btn-sm admin-btn-ghost">Immersive</a>

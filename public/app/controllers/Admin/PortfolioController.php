@@ -7,7 +7,25 @@ class PortfolioAdminController
     public static function exhibitsIndex(): void
     {
         admin_check();
-        $exhibits = Exhibit::all();
+
+        $q    = trim((string) ($_GET['q'] ?? ''));
+        $sort = (string) ($_GET['sort'] ?? 'sort_order');
+        $dir  = strtolower((string) ($_GET['dir'] ?? 'asc'));
+
+        $allowedSorts = ['sort_order', 'title', 'created'];
+        if (!in_array($sort, $allowedSorts, true)) {
+            $sort = 'sort_order';
+        }
+        if (!in_array($dir, ['asc', 'desc'], true)) {
+            $dir = 'asc';
+        }
+
+        if ($q !== '' || $sort !== 'sort_order') {
+            $exhibits = Exhibit::searchFiltered($q, $sort === 'sort_order' ? 'created' : $sort, $dir);
+        } else {
+            $exhibits = Exhibit::all();
+        }
+
         require dirname(__DIR__, 2) . '/views/admin/exhibits/index.php';
     }
 
@@ -275,7 +293,25 @@ class PortfolioAdminController
     public static function collectionsIndex(): void
     {
         admin_check();
-        $collections = Collection::allWithExhibitCount();
+
+        $q    = trim((string) ($_GET['q'] ?? ''));
+        $sort = (string) ($_GET['sort'] ?? 'sort_order');
+        $dir  = strtolower((string) ($_GET['dir'] ?? 'asc'));
+
+        $allowedSorts = ['sort_order', 'name', 'created'];
+        if (!in_array($sort, $allowedSorts, true)) {
+            $sort = 'sort_order';
+        }
+        if (!in_array($dir, ['asc', 'desc'], true)) {
+            $dir = 'asc';
+        }
+
+        if ($q !== '' || $sort !== 'sort_order') {
+            $collections = Collection::searchFiltered($q, $sort === 'sort_order' ? 'created' : $sort, $dir);
+        } else {
+            $collections = Collection::allWithExhibitCount();
+        }
+
         $collectionLabel = 'Exhibit Collection';
         $collectionPlural = 'Exhibit Collections';
         $collectionIndexPath = '/admin/exhibit-collections';

@@ -4,23 +4,49 @@ declare(strict_types=1);
 
 class BlogPost
 {
-    public static function published(int $limit = 25, int $offset = 0): array
+    public static function published(int $limit = 25, int $offset = 0, string $sort = 'newest', string $cat = '', string $q = ''): array
     {
         if (!self::tableExists('posts')) {
             return [];
         }
 
-        $stmt = db()->prepare(
-            'SELECT p.*, fs.name AS source_name, fs.site_url AS source_site_url
-             FROM posts p
-             LEFT JOIN feed_sources fs ON fs.id = p.source_feed_id
-             WHERE p.status = ? AND p.deleted_at IS NULL
-             ORDER BY p.created_at DESC, p.id DESC
-             LIMIT ? OFFSET ?'
-        );
-        $stmt->bindValue(1, 'published');
-        $stmt->bindValue(2, $limit, PDO::PARAM_INT);
-        $stmt->bindValue(3, $offset, PDO::PARAM_INT);
+        $order = $sort === 'oldest' ? 'p.created_at ASC, p.id ASC' : 'p.created_at DESC, p.id DESC';
+        $params = [];
+
+        $sql = "SELECT p.*, fs.name AS source_name, fs.site_url AS source_site_url
+                FROM posts p
+                LEFT JOIN feed_sources fs ON fs.id = p.source_feed_id";
+
+        if ($cat !== '') {
+            $sql .= " INNER JOIN post_categories pc2 ON pc2.post_id = p.id
+                      INNER JOIN categories c2 ON c2.id = pc2.category_id
+                          AND c2.slug = ? AND c2.category_scope = 'blog' AND c2.deleted_at IS NULL";
+            $params[] = $cat;
+        }
+
+        $sql .= " WHERE p.status = ? AND p.deleted_at IS NULL";
+        $params[] = 'published';
+
+        if ($q !== '') {
+            $like = '%' . str_replace(['%', '_'], ['\\%', '\\_'], $q) . '%';
+            $sql .= " AND (p.title LIKE ? OR p.content_text LIKE ? OR p.content LIKE ?)";
+            $params[] = $like;
+            $params[] = $like;
+            $params[] = $like;
+        }
+
+        if ($cat !== '') {
+            $sql .= " GROUP BY p.id";
+        }
+
+        $sql .= " ORDER BY {$order} LIMIT ? OFFSET ?";
+        $params[] = $limit;
+        $params[] = $offset;
+
+        $stmt = db()->prepare($sql);
+        foreach ($params as $i => $val) {
+            $stmt->bindValue($i + 1, $val, is_int($val) ? PDO::PARAM_INT : PDO::PARAM_STR);
+        }
         $stmt->execute();
         return self::attachMeta($stmt->fetchAll());
     }

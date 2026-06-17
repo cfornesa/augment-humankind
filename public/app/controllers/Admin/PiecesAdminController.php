@@ -7,7 +7,30 @@ class PiecesAdminController
     public static function index(): void
     {
         admin_check();
-        $pieces = PlatformArtPiece::allForAdmin();
+
+        $q      = trim((string) ($_GET['q'] ?? ''));
+        $engine = (string) ($_GET['engine'] ?? '');
+        $sort   = (string) ($_GET['sort'] ?? 'sort_order');
+        $dir    = strtolower((string) ($_GET['dir'] ?? 'asc'));
+
+        $allowedSorts = ['sort_order', 'newest', 'title', 'engine', 'status', 'created', 'updated'];
+        if (!in_array($sort, $allowedSorts, true)) {
+            $sort = 'sort_order';
+        }
+        if (!in_array($dir, ['asc', 'desc'], true)) {
+            $dir = 'asc';
+        }
+        if (!in_array($engine, ['p5', 'c2', 'three', 'svg'], true)) {
+            $engine = '';
+        }
+
+        $pieces = PlatformArtPiece::allForAdmin(
+            $q !== '' ? $q : null,
+            $engine !== '' ? $engine : null,
+            $sort,
+            $dir
+        );
+
         require dirname(__DIR__, 2) . '/views/admin/pieces/index.php';
     }
 

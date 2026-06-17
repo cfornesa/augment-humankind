@@ -12,24 +12,66 @@ require dirname(__DIR__) . '/partials/header.php';
 
 <section class="managed-section">
     <div class="managed-section-body">
+        <form class="content-filter-bar" action="/pieces" method="get" role="search">
+            <div class="filter-bar-primary">
+                <label class="sr-only" for="pieces-q">Search pieces</label>
+                <input id="pieces-q" class="filter-search-input" name="q" type="search"
+                    value="<?= e($q) ?>" placeholder="Search pieces…" autocomplete="off">
+                <button class="button button-primary filter-submit" type="submit">Search</button>
+            </div>
+            <details class="filter-bar-secondary" <?= ($engine !== '' || $sort !== 'newest') ? 'open' : '' ?>>
+                <summary class="filter-toggle">Filters &amp; Sort</summary>
+                <div class="filter-bar-options">
+                    <fieldset class="filter-fieldset">
+                        <legend>Type</legend>
+                        <div class="filter-chip-group" role="group">
+                            <?php foreach (['' => 'All', 'p5' => 'P5.js', 'c2' => 'C2.js', 'three' => 'Three.js', 'svg' => 'SVG'] as $val => $label): ?>
+                                <label class="filter-chip <?= $engine === $val ? 'filter-chip-active' : '' ?>">
+                                    <input type="radio" name="engine" value="<?= e($val) ?>"
+                                        <?= $engine === $val ? 'checked' : '' ?>
+                                        class="sr-only">
+                                    <?= e($label) ?>
+                                </label>
+                            <?php endforeach; ?>
+                        </div>
+                    </fieldset>
+                    <fieldset class="filter-fieldset">
+                        <legend>Sort</legend>
+                        <div class="filter-chip-group" role="group">
+                            <?php foreach (['newest' => 'Newest first', 'oldest' => 'Oldest first', 'az' => 'A–Z', 'za' => 'Z–A'] as $val => $label): ?>
+                                <label class="filter-chip <?= $sort === $val ? 'filter-chip-active' : '' ?>">
+                                    <input type="radio" name="sort" value="<?= e($val) ?>"
+                                        <?= $sort === $val ? 'checked' : '' ?>
+                                        class="sr-only">
+                                    <?= e($label) ?>
+                                </label>
+                            <?php endforeach; ?>
+                        </div>
+                    </fieldset>
+                    <?php if ($q !== '' || $engine !== '' || $sort !== 'newest'): ?>
+                        <a href="/pieces" class="filter-reset">Clear filters</a>
+                    <?php endif; ?>
+                </div>
+            </details>
+        </form>
+
         <?php if (empty($pieces)): ?>
-            <p>No art pieces published yet.</p>
+            <p class="admin-empty">
+                <?= $q !== '' || $engine !== '' ? 'No pieces matched your search.' : 'No art pieces published yet.' ?>
+            </p>
         <?php else: ?>
-            <div class="piece-grid">
-                <?php foreach ($pieces as $piece): ?>
-                    <article class="piece-card">
-                        <?php if (!empty($piece['thumbnail_url'])): ?>
-                            <img src="<?= e($piece['thumbnail_url']) ?>" alt="" loading="lazy">
-                        <?php endif; ?>
-                        <h2><a href="/pieces/<?= (int) $piece['id'] ?>"><?= e($piece['title'] ?? 'Untitled') ?></a></h2>
-                        <?php if (!empty($piece['description'])): ?>
-                            <p><?= e(seo_excerpt($piece['description'], 120) ?? '') ?></p>
-                        <?php endif; ?>
-                        <p class="piece-meta">
-                            <?= (int) ($piece['version_count'] ?? 0) ?> version<?= ((int) ($piece['version_count'] ?? 0) === 1) ? '' : 's' ?>
-                        </p>
-                    </article>
-                <?php endforeach; ?>
+            <div data-lazy-listing
+                 data-fetch-url="<?= e($fetchUrl) ?>"
+                 data-next-offset="<?= (int) $nextOffset ?>"
+                 data-has-more="<?= $hasMore ? 'true' : 'false' ?>"
+                 data-page-size="<?= PiecesController::PAGE_SIZE ?>">
+                <div class="piece-grid" data-listing-grid>
+                    <?php foreach ($pieces as $piece): ?>
+                        <?php require __DIR__ . '/_piece-card.php'; ?>
+                    <?php endforeach; ?>
+                </div>
+                <div data-listing-sentinel <?= !$hasMore ? 'class="is-hidden"' : '' ?>></div>
+                <p data-listing-status class="sr-only" aria-live="polite"></p>
             </div>
         <?php endif; ?>
     </div>

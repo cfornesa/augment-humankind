@@ -3,6 +3,22 @@
 declare(strict_types=1);
 
 $pageTitle = 'Pieces';
+
+$q      = $q      ?? '';
+$engine = $engine ?? '';
+$sort   = $sort   ?? 'sort_order';
+$dir    = $dir    ?? 'asc';
+
+function pieces_sort_link(string $col, string $label, string $cur, string $curDir, array $carry): string {
+    $next  = ($cur === $col && $curDir === 'asc') ? 'desc' : 'asc';
+    $arrow = $cur === $col ? ($curDir === 'asc' ? ' &#8593;' : ' &#8595;') : '';
+    $qs    = http_build_query(array_merge($carry, ['sort' => $col, 'dir' => $next]));
+    return '<a href="?' . $qs . '">' . htmlspecialchars($label, ENT_QUOTES, 'UTF-8') . $arrow . '</a>';
+}
+
+$carry         = array_filter(['q' => $q, 'engine' => $engine], fn($v) => $v !== '');
+$isDefaultSort = ($sort === 'sort_order');
+
 ob_start();
 ?>
 <div class="admin-container">
@@ -19,8 +35,25 @@ ob_start();
         </div>
     </div>
 
+    <form class="admin-filter-bar" action="/admin/pieces" method="get" role="search">
+        <label class="sr-only" for="admin-pieces-q">Search pieces</label>
+        <input id="admin-pieces-q" class="admin-filter-input" name="q" type="search"
+               value="<?= e($q) ?>" placeholder="Search title, description, prompt…" autocomplete="off">
+        <select name="engine" class="admin-filter-select" aria-label="Engine">
+            <option value="" <?= $engine === '' ? 'selected' : '' ?>>All engines</option>
+            <option value="p5"    <?= $engine === 'p5'    ? 'selected' : '' ?>>P5.js</option>
+            <option value="c2"    <?= $engine === 'c2'    ? 'selected' : '' ?>>C2.js</option>
+            <option value="three" <?= $engine === 'three' ? 'selected' : '' ?>>Three.js</option>
+            <option value="svg"   <?= $engine === 'svg'   ? 'selected' : '' ?>>SVG</option>
+        </select>
+        <button class="admin-btn admin-btn-sm" type="submit">Filter</button>
+        <?php if ($q !== '' || $engine !== '' || !$isDefaultSort): ?>
+            <a href="/admin/pieces" class="admin-filter-reset">Reset view</a>
+        <?php endif; ?>
+    </form>
+
     <?php if (empty($pieces)): ?>
-        <p>No art pieces yet. <a href="/admin/pieces/create">Create the first one</a>.</p>
+        <p><?= ($q !== '' || $engine !== '') ? 'No pieces matched your filters.' : 'No art pieces yet. <a href="/admin/pieces/create">Create the first one</a>.' ?></p>
     <?php else: ?>
         <div class="admin-table-wrap">
         <table class="admin-table">
@@ -28,17 +61,18 @@ ob_start();
                 <tr>
                     <th></th>
                     <th>Thumbnail</th>
-                    <th>Title</th>
+                    <th><?= pieces_sort_link('title', 'Title', $sort, $dir, $carry) ?></th>
                     <th>ID</th>
-                    <th>Engine</th>
+                    <th><?= pieces_sort_link('engine', 'Engine', $sort, $dir, $carry) ?></th>
                     <th>Art Media</th>
-                    <th>Status</th>
+                    <th><?= pieces_sort_link('status', 'Status', $sort, $dir, $carry) ?></th>
                     <th>Versions</th>
-                    <th>Created</th>
+                    <th><?= pieces_sort_link('created', 'Created', $sort, $dir, $carry) ?></th>
+                    <th><?= pieces_sort_link('updated', 'Updated', $sort, $dir, $carry) ?></th>
                     <th>Actions</th>
                 </tr>
             </thead>
-            <tbody data-reorder-url="/admin/pieces/reorder">
+            <tbody data-reorder-url="/admin/pieces/reorder" class="<?= !$isDefaultSort ? 'drag-handles-hidden' : '' ?>">
                 <?php foreach ($pieces as $piece): ?>
                     <tr data-id="<?= (int) $piece['id'] ?>">
                         <td class="drag-handle" title="Drag to reorder">&#8597;</td>
@@ -66,6 +100,7 @@ ob_start();
                         </td>
                         <td><?= (int) ($piece['version_count'] ?? 0) ?></td>
                         <td><?= e($piece['created_at'] ?? '') ?></td>
+                        <td><?= e($piece['updated_at'] ?? '') ?></td>
                         <td class="admin-actions-cell">
                                 <a href="/pieces/<?= (int) $piece['id'] ?>" target="_blank" class="admin-btn admin-btn-sm admin-btn-ghost">View</a>
                                 <a href="/immersive/pieces/<?= (int) $piece['id'] ?>" target="_blank" class="admin-btn admin-btn-sm admin-btn-ghost">Immersive</a>

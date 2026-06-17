@@ -7,8 +7,19 @@ class BlogController
     public static function index(): void
     {
         BlogPost::publishDuePosts();
-        $posts = BlogPost::published();
+        $sort = (string) ($_GET['sort'] ?? 'newest');
+        if (!in_array($sort, ['newest', 'oldest'], true)) {
+            $sort = 'newest';
+        }
+        $q = trim((string) ($_GET['q'] ?? ''));
+        $cat = trim((string) ($_GET['cat'] ?? ''));
         $categories = BlogCategory::all();
+        $validCatSlugs = array_column($categories, 'slug');
+        if ($cat !== '' && !in_array($cat, $validCatSlugs, true)) {
+            $cat = '';
+        }
+        $activeCat = $cat;
+        $posts = BlogPost::published(25, 0, $sort, $cat, $q);
         $pageTitle = 'Blog | Augment Humankind';
         $pageDescription = 'Posts, notes, imported feed items, and updates from Augment Humankind.';
         $bodyClass = 'page-blog';
@@ -65,9 +76,53 @@ class BlogController
     {
         BlogPost::publishDuePosts();
         $query = trim((string) ($_GET['q'] ?? ''));
-        $posts = $query === '' ? [] : BlogPost::search($query);
+        $type  = (string) ($_GET['type'] ?? '');
+        $sort  = (string) ($_GET['sort'] ?? 'newest');
+
+        $validTypes = ['posts', 'pieces', 'collections', 'platform-collections', 'exhibits', 'pages'];
+        if (!in_array($type, $validTypes, true)) {
+            $type = '';
+        }
+        if (!in_array($sort, ['newest', 'relevance'], true)) {
+            $sort = 'newest';
+        }
+
+        $posts             = [];
+        $pieces            = [];
+        $platformCollections = [];
+        $exhibitCollections  = [];
+        $exhibits          = [];
+        $pages             = [];
+
+        if ($query !== '') {
+            $pieceSort = $sort === 'relevance' ? 'title' : 'newest';
+
+            if ($type === '' || $type === 'posts') {
+                $posts = BlogPost::search($query, 10);
+            }
+            if ($type === '' || $type === 'pieces') {
+                $pieces = PlatformArtPiece::searchFiltered($query, null, $pieceSort, 'asc');
+                $pieces = array_slice($pieces, 0, 10);
+            }
+            if ($type === '' || $type === 'platform-collections') {
+                $platformCollections = PlatformCollection::searchFiltered($query, 'newest', 'desc');
+                $platformCollections = array_slice($platformCollections, 0, 10);
+            }
+            if ($type === '' || $type === 'collections') {
+                $exhibitCollections = Collection::searchFiltered($query, 'newest', 'desc');
+                $exhibitCollections = array_slice($exhibitCollections, 0, 10);
+            }
+            if ($type === '' || $type === 'exhibits') {
+                $exhibits = Exhibit::searchFiltered($query, 'newest', 'desc');
+                $exhibits = array_slice($exhibits, 0, 10);
+            }
+            if ($type === '' || $type === 'pages') {
+                $pages = Page::searchPublished($query, 10);
+            }
+        }
+
         $pageTitle = 'Search | Augment Humankind';
-        $pageDescription = 'Search published Augment Humankind posts.';
+        $pageDescription = 'Search across posts, pieces, collections, exhibits, and pages.';
         $bodyClass = 'page-search';
         $canonicalUrl = seo_absolute_url('/search');
         require dirname(__DIR__) . '/views/blog/search.php';
