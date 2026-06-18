@@ -60,7 +60,12 @@ require __DIR__ . '/../partials/header.php';
                                     data-iframe-html="<?= e($kind === 'iframe' ? ($item['iframe_html'] ?? '') : '') ?>"
                                     aria-hidden="<?= $isActive ? 'false' : 'true' ?>"
                                 >
-                                    <?php if ($isActive && $kind === 'image'): ?>
+                                    <?php if ($kind === 'content'): ?>
+                                        <?php $cwc = $item['content_wrapper_class'] ?? ''; ?>
+                                        <div class="work-content-slide<?= $cwc ? ' ' . e($cwc) : '' ?>">
+                                            <?= $item['content_html'] ?? '' ?>
+                                        </div>
+                                    <?php elseif ($isActive && $kind === 'image'): ?>
                                         <img
                                             src="<?= e($sourceUrl) ?>"
                                             alt="<?= e($altText) ?>"

@@ -93,6 +93,21 @@ class PlatformConnection
         $stmt->execute([$encryptedAccess, $encryptedRefresh, $encryptedRefresh, $expiresAt, $id]);
     }
 
+    public static function allEnabled(): array
+    {
+        if (!self::tableExists()) {
+            return [];
+        }
+
+        try {
+            return db()->query(
+                "SELECT * FROM platform_connections WHERE enabled = 1 ORDER BY platform ASC"
+            )->fetchAll();
+        } catch (Throwable) {
+            return [];
+        }
+    }
+
     public static function delete(int $id): void
     {
         $stmt = db()->prepare('DELETE FROM platform_connections WHERE id = ?');
@@ -211,6 +226,35 @@ class PostSyndication
             $data['synced_at'] ?? null,
             $id,
         ]);
+    }
+
+    public static function pendingForPosts(array $postIds): array
+    {
+        if (!$postIds || !self::tableExists()) {
+            return [];
+        }
+        $in = implode(',', array_fill(0, count($postIds), '?'));
+        $stmt = db()->prepare(
+            "SELECT * FROM post_syndications WHERE status = 'pending' AND post_id IN ($in)"
+        );
+        $stmt->execute($postIds);
+        return $stmt->fetchAll();
+    }
+
+    public static function syncedConnectionIdsForPost(int $postId): array
+    {
+        if (!self::tableExists()) {
+            return [];
+        }
+        try {
+            $stmt = db()->prepare(
+                "SELECT platform_connection_id FROM post_syndications WHERE post_id = ? AND status = 'synced'"
+            );
+            $stmt->execute([$postId]);
+            return array_column($stmt->fetchAll(), 'platform_connection_id');
+        } catch (Throwable) {
+            return [];
+        }
     }
 
     public static function delete(int $id): void

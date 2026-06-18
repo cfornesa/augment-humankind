@@ -336,6 +336,32 @@ class BlogPost
         return $ids;
     }
 
+    public static function forDateRange(string $from, string $to): array
+    {
+        if (!self::tableExists('posts')) {
+            return [];
+        }
+
+        try {
+            $stmt = db()->prepare(
+                'SELECT p.*, GROUP_CONCAT(c.name SEPARATOR ", ") AS category_names
+                 FROM posts p
+                 LEFT JOIN post_categories pc ON pc.post_id = p.id
+                 LEFT JOIN categories c ON c.id = pc.category_id
+                     AND c.category_scope = "blog" AND c.deleted_at IS NULL
+                 WHERE p.deleted_at IS NULL
+                   AND (DATE(p.created_at) BETWEEN ? AND ?
+                        OR DATE(p.scheduled_at) BETWEEN ? AND ?)
+                 GROUP BY p.id
+                 ORDER BY COALESCE(p.scheduled_at, p.created_at) ASC'
+            );
+            $stmt->execute([$from, $to, $from, $to]);
+            return $stmt->fetchAll();
+        } catch (Throwable) {
+            return [];
+        }
+    }
+
     private static function attachMeta(array $posts): array
     {
         if ($posts === []) {

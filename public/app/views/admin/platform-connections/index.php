@@ -61,18 +61,26 @@ $error = $_GET['error'] ?? null;
         <?php else: ?>
             <table class="admin-table">
                 <thead>
-                    <tr><th>Post</th><th>Platform</th><th>External ID</th><th>Status</th><th>Created</th><th>Actions</th></tr>
+                    <tr><th>Post</th><th>Platform</th><th>Status</th><th>Error / External ID</th><th>Created</th><th>Actions</th></tr>
                 </thead>
                 <tbody>
                     <?php foreach ($syndications as $s): ?>
                         <tr>
                             <td><?= e($s['post_title'] ?? '') ?></td>
                             <td><?= e($s['platform'] ?? '') ?></td>
-                            <td><?= e($s['external_id'] ?? '') ?></td>
                             <td>
                                 <span class="status-badge status-<?= e($s['status'] ?? 'pending') ?>">
                                     <?= e($s['status'] ?? 'pending') ?>
                                 </span>
+                            </td>
+                            <td style="font-size:0.8rem;max-width:28rem;word-break:break-word">
+                                <?php if (!empty($s['error_message'])): ?>
+                                    <span style="color:#c0392b"><?= e($s['error_message']) ?></span>
+                                <?php elseif (!empty($s['external_url'])): ?>
+                                    <a href="<?= e($s['external_url']) ?>" target="_blank" rel="noopener"><?= e($s['external_id'] ?? $s['external_url']) ?></a>
+                                <?php else: ?>
+                                    <?= e($s['external_id'] ?? '—') ?>
+                                <?php endif ?>
                             </td>
                             <td><?= e($s['created_at'] ?? '') ?></td>
                             <td>

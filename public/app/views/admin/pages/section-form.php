@@ -25,6 +25,24 @@ ob_start();
             <input id="section-heading" type="text" name="heading" value="<?= htmlspecialchars($section['heading'] ?? '', ENT_QUOTES, 'UTF-8') ?>">
         </div>
         <div class="form-row">
+            <label for="section-wrapper-class">Section style <span class="form-hint">(wraps this section in a styled container)</span></label>
+            <select id="section-wrapper-class" name="wrapper_class">
+                <?php
+                $currentWrapper = $section['wrapper_class'] ?? '';
+                $wrapperOptions = [
+                    ''                => 'None — raw output',
+                    'mission-band'    => 'Mission band — styled accent band',
+                    'callout'         => 'Callout — same accent, alternate name',
+                    'content-cards'   => 'Content cards — 3-column card grid (wrap each item in <div class="content-card">)',
+                    'managed-section' => 'Standard section box (border + shadow)',
+                ];
+                foreach ($wrapperOptions as $val => $label):
+                ?>
+                    <option value="<?= htmlspecialchars($val, ENT_QUOTES, 'UTF-8') ?>"<?= $currentWrapper === $val ? ' selected' : ''?>><?= htmlspecialchars($label, ENT_QUOTES, 'UTF-8') ?></option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+        <div class="form-row">
             <label for="section-content">Content *</label>
             <textarea id="section-content" name="content" rows="10" required data-tiptap><?= htmlspecialchars($section['content'] ?? '', ENT_QUOTES, 'UTF-8') ?></textarea>
         </div>

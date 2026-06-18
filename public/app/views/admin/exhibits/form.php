@@ -121,6 +121,7 @@ ob_start();
                 <button type="button" class="admin-btn admin-btn-sm" data-add-slide="image">Add Image Slide</button>
                 <button type="button" class="admin-btn admin-btn-sm" data-add-slide="video">Add Video Slide</button>
                 <button type="button" class="admin-btn admin-btn-sm" data-add-slide="iframe">Add Iframe Slide</button>
+                <button type="button" class="admin-btn admin-btn-sm" data-add-slide="content">Add Content Slide</button>
             </div>
 
             <div class="artwork-media-list" data-slide-list>
@@ -150,13 +151,15 @@ ob_start();
                                 <img src="<?= htmlspecialchars($legacyImageUrl) ?>" alt="">
                             <?php elseif ($kind === 'video' && $assetUrl): ?>
                                 <video src="<?= htmlspecialchars($assetUrl) ?>" <?= $posterUrl ? 'poster="' . htmlspecialchars($posterUrl) . '"' : '' ?> muted preload="metadata"></video>
+                            <?php elseif ($kind === 'content'): ?>
+                                <div class="artwork-slide-preview-embed">Content slide</div>
                             <?php else: ?>
                                 <div class="artwork-slide-preview-embed">Iframe embed slide</div>
                             <?php endif ?>
                         </div>
 
                         <div class="artwork-slide-fields">
-                            <div class="form-row artwork-slide-asset-row<?= $kind === 'iframe' ? ' is-hidden' : '' ?>" data-slide-asset-row>
+                            <div class="form-row artwork-slide-asset-row<?= ($kind === 'iframe' || $kind === 'content') ? ' is-hidden' : '' ?>" data-slide-asset-row>
                                 <label>Selected Asset</label>
                                 <input type="text" value="<?= htmlspecialchars($assetUrl) ?>" readonly data-slide-asset-url>
                                 <div class="media-field-actions">
@@ -181,12 +184,34 @@ ob_start();
                                 <textarea name="iframe_html[<?= $index ?>]" rows="5" data-field="iframe_html" placeholder="<iframe …></iframe>"><?= htmlspecialchars($item['iframe_html'] ?? '') ?></textarea>
                             </div>
 
+                            <?php if ($kind === 'content'): ?>
+                            <div class="form-row">
+                                <label>Section style</label>
+                                <select name="content_wrapper_class[<?= $index ?>]" data-field="content_wrapper_class">
+                                    <?php
+                                    $cwc = $item['content_wrapper_class'] ?? '';
+                                    $cwOptions = ['' => 'None', 'mission-band' => 'Mission band', 'callout' => 'Callout', 'content-cards' => 'Content cards', 'managed-section' => 'Standard section box'];
+                                    foreach ($cwOptions as $cwVal => $cwLabel):
+                                    ?>
+                                        <option value="<?= htmlspecialchars($cwVal, ENT_QUOTES, 'UTF-8') ?>"<?= $cwc === $cwVal ? ' selected' : '' ?>><?= htmlspecialchars($cwLabel, ENT_QUOTES, 'UTF-8') ?></option>
+                                    <?php endforeach ?>
+                                </select>
+                            </div>
+                            <div class="form-row">
+                                <label>Content</label>
+                                <textarea name="content_html[<?= $index ?>]" rows="8" data-tiptap data-field="content_html"><?= htmlspecialchars($item['content_html'] ?? '', ENT_QUOTES, 'UTF-8') ?></textarea>
+                            </div>
+                            <?php else: ?>
+                            <input type="hidden" name="content_html[<?= $index ?>]" value="">
+                            <input type="hidden" name="content_wrapper_class[<?= $index ?>]" value="">
+                            <?php endif ?>
+
                             <div class="form-row">
                                 <label>Title <span class="form-hint">(optional, shown publicly above the slide)</span></label>
                                 <input type="text" name="slide_title[<?= $index ?>]" value="<?= htmlspecialchars($item['title'] ?? '') ?>" maxlength="255" data-field="slide_title">
                             </div>
 
-                            <div class="form-row">
+                            <div class="form-row<?= $kind === 'content' ? ' is-hidden' : '' ?>">
                                 <label>Alt Text <span class="form-hint">(recommended for image and poster context)</span></label>
                                 <input type="text" name="alt_text[<?= $index ?>]" value="<?= htmlspecialchars($item['alt_text'] ?? '') ?>" maxlength="250" data-field="alt_text">
                             </div>
@@ -332,6 +357,58 @@ ob_start();
                         <div class="form-row">
                             <label>Alt Text <span class="form-hint">(optional)</span></label>
                             <input type="text" name="alt_text[__INDEX__]" value="" maxlength="250" data-field="alt_text">
+                        </div>
+                        <div class="form-row">
+                            <label>Caption <span class="form-hint">(shown publicly, updates as the carousel changes)</span></label>
+                            <input type="text" name="caption[__INDEX__]" value="" maxlength="250" data-field="caption">
+                        </div>
+                    </div>
+                </article>
+            </template>
+            <template id="artwork-slide-template-content">
+                <article class="artwork-slide-card" data-slide-item data-kind="content">
+                    <div class="artwork-slide-head">
+                        <span class="artwork-slide-handle" title="Drag to reorder">&#8597;</span>
+                        <strong class="artwork-slide-title">Content Slide</strong>
+                        <button type="button" class="admin-btn admin-btn-ghost admin-btn-sm" data-edit-slide>Edit</button>
+                        <button type="button" class="admin-btn admin-btn-ghost admin-btn-sm" data-remove-slide>Remove</button>
+                    </div>
+                    <input type="hidden" name="media_kind[__INDEX__]" value="content" data-field="kind">
+                    <input type="hidden" name="media_file_id[__INDEX__]" value="" data-field="media_file_id">
+                    <input type="hidden" name="poster_media_file_id[__INDEX__]" value="" data-field="poster_media_file_id">
+                    <div class="artwork-slide-preview" data-slide-preview>
+                        <div class="artwork-slide-preview-embed">Content slide</div>
+                    </div>
+                    <div class="artwork-slide-fields">
+                        <div class="form-row artwork-slide-asset-row is-hidden" data-slide-asset-row>
+                            <label>Selected Asset</label>
+                            <input type="text" value="" readonly data-slide-asset-url>
+                        </div>
+                        <div class="form-row is-hidden" data-slide-poster-row>
+                            <label>Video Poster Image <span class="form-hint">(optional)</span></label>
+                            <input type="text" value="" readonly data-slide-poster-url>
+                        </div>
+                        <div class="form-row is-hidden" data-slide-iframe-row>
+                            <label>Iframe HTML</label>
+                            <textarea name="iframe_html[__INDEX__]" rows="5" data-field="iframe_html" placeholder="<iframe …></iframe>"></textarea>
+                        </div>
+                        <div class="form-row">
+                            <label>Section style</label>
+                            <select name="content_wrapper_class[__INDEX__]" data-field="content_wrapper_class">
+                                <option value="">None</option>
+                                <option value="mission-band">Mission band</option>
+                                <option value="callout">Callout</option>
+                                <option value="content-cards">Content cards</option>
+                                <option value="managed-section">Standard section box</option>
+                            </select>
+                        </div>
+                        <div class="form-row">
+                            <label>Content</label>
+                            <textarea name="content_html[__INDEX__]" rows="8" data-tiptap-new data-field="content_html"></textarea>
+                        </div>
+                        <div class="form-row">
+                            <label>Title <span class="form-hint">(optional, shown publicly above the slide)</span></label>
+                            <input type="text" name="slide_title[__INDEX__]" value="" maxlength="255" data-field="slide_title">
                         </div>
                         <div class="form-row">
                             <label>Caption <span class="form-hint">(shown publicly, updates as the carousel changes)</span></label>

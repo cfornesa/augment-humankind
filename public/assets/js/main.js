@@ -385,6 +385,7 @@ document.querySelectorAll('[data-checkbox-sortable]').forEach(list => {
         image: document.getElementById('artwork-slide-template-image'),
         video: document.getElementById('artwork-slide-template-video'),
         iframe: document.getElementById('artwork-slide-template-iframe'),
+        content: document.getElementById('artwork-slide-template-content'),
     };
 
     function assetUrlFor(kind, asset) {
@@ -509,11 +510,19 @@ document.querySelectorAll('[data-checkbox-sortable]').forEach(list => {
         const card = wrap.firstElementChild;
         list.appendChild(card);
         bindCard(card);
+
+        const tiptapNew = card.querySelector('[data-tiptap-new]');
+        if (tiptapNew) {
+            tiptapNew.removeAttribute('data-tiptap-new');
+            tiptapNew.setAttribute('data-tiptap', '');
+            if (window.initTiptap) window.initTiptap(tiptapNew);
+        }
+
         renumber();
         setActiveSlide(card);
 
         const assetBtn = card.querySelector('[data-slide-pick-asset]');
-        if (assetBtn && kind !== 'iframe') {
+        if (assetBtn && kind !== 'iframe' && kind !== 'content') {
             assetBtn.click();
         }
     }

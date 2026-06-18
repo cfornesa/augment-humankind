@@ -62,18 +62,20 @@ CREATE TABLE exhibits (
 );
 
 CREATE TABLE exhibit_media_items (
-    id                   INT AUTO_INCREMENT PRIMARY KEY,
-    exhibit_id           INT NOT NULL,
-    media_kind           ENUM('image', 'video', 'iframe') NOT NULL,
-    media_file_id        INT NULL,
-    iframe_html          MEDIUMTEXT NULL,
-    poster_media_file_id INT NULL,
-    alt_text             VARCHAR(250) NULL,
-    title                VARCHAR(255) NULL,
-    caption              VARCHAR(250) NULL,
-    sort_order           INT NOT NULL DEFAULT 0,
-    created_at           TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at           TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    id                     INT AUTO_INCREMENT PRIMARY KEY,
+    exhibit_id             INT NOT NULL,
+    media_kind             ENUM('image', 'video', 'iframe', 'content') NOT NULL,
+    media_file_id          INT NULL,
+    iframe_html            MEDIUMTEXT NULL,
+    poster_media_file_id   INT NULL,
+    alt_text               VARCHAR(250) NULL,
+    title                  VARCHAR(255) NULL,
+    caption                VARCHAR(250) NULL,
+    content_html           MEDIUMTEXT NULL DEFAULT NULL,
+    content_wrapper_class  VARCHAR(100) NULL DEFAULT NULL,
+    sort_order             INT NOT NULL DEFAULT 0,
+    created_at             TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at             TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (exhibit_id) REFERENCES exhibits(id) ON DELETE CASCADE
 );
 
@@ -126,13 +128,25 @@ CREATE TABLE pages (
 );
 
 CREATE TABLE page_sections (
-    id          INT AUTO_INCREMENT PRIMARY KEY,
-    page_id     INT NOT NULL,
-    heading     VARCHAR(255) NULL,
-    content     TEXT NOT NULL,
-    sort_order  INT DEFAULT 0,
-    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    id            INT AUTO_INCREMENT PRIMARY KEY,
+    page_id       INT NOT NULL,
+    heading       VARCHAR(255) NULL,
+    content       TEXT NOT NULL,
+    wrapper_class VARCHAR(100) NULL DEFAULT NULL,
+    sort_order    INT DEFAULT 0,
+    created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE
+);
+
+CREATE TABLE post_sections (
+    id            INT           NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    post_id       INT           NOT NULL,
+    heading       VARCHAR(255)  NULL DEFAULT NULL,
+    content       TEXT          NOT NULL,
+    wrapper_class VARCHAR(100)  NULL DEFAULT NULL,
+    sort_order    INT           NOT NULL DEFAULT 0,
+    created_at    TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE
 );
 
 CREATE TABLE navigation_items (

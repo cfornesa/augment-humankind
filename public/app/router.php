@@ -18,6 +18,7 @@ require __DIR__ . '/models/AdminIdentity.php';
 require __DIR__ . '/models/PlatformUser.php';
 require __DIR__ . '/models/Page.php';
 require __DIR__ . '/models/PageSection.php';
+require __DIR__ . '/models/PostSection.php';
 require __DIR__ . '/models/SiteSettings.php';
 require __DIR__ . '/models/Category.php';
 require __DIR__ . '/models/Exhibit.php';
@@ -201,12 +202,14 @@ $adminRoutes = [
     ['POST', '/admin/pages/sections/([0-9]+)/delete',  [PagesController::class, 'sectionDelete']],
     ['POST', '/admin/pages/([0-9]+)/sections/reorder', [PagesController::class, 'sectionReorder']],
 
-    ['GET',  '/admin/posts',                  [BlogAdminController::class, 'postsIndex']],
-    ['GET',  '/admin/posts/create',           [BlogAdminController::class, 'postCreate']],
-    ['POST', '/admin/posts/create',           [BlogAdminController::class, 'postStore']],
-    ['GET',  '/admin/posts/([0-9]+)/edit',    [BlogAdminController::class, 'postEdit']],
-    ['POST', '/admin/posts/([0-9]+)/edit',    [BlogAdminController::class, 'postUpdate']],
-    ['POST', '/admin/posts/([0-9]+)/delete',  [BlogAdminController::class, 'postDelete']],
+    ['GET',  '/admin/posts',                             [BlogAdminController::class, 'postsIndex']],
+    ['GET',  '/admin/posts/calendar',                    [BlogAdminController::class, 'postCalendar']],
+    ['GET',  '/admin/posts/create',                      [BlogAdminController::class, 'postCreate']],
+    ['POST', '/admin/posts/create',                      [BlogAdminController::class, 'postStore']],
+    ['POST', '/admin/blog/categories/create-inline',     [BlogAdminController::class, 'categoryCreateInline']],
+    ['GET',  '/admin/posts/([0-9]+)/edit',               [BlogAdminController::class, 'postEdit']],
+    ['POST', '/admin/posts/([0-9]+)/edit',               [BlogAdminController::class, 'postUpdate']],
+    ['POST', '/admin/posts/([0-9]+)/delete',             [BlogAdminController::class, 'postDelete']],
 
     ['GET',  '/admin/comments',                  [BlogAdminController::class, 'commentsIndex']],
     ['POST', '/admin/comments/([0-9]+)/delete',  [BlogAdminController::class, 'commentDelete']],

@@ -94,7 +94,7 @@
 /* ─── Editor content area ──────────────────────────────────────────────────── */
 
 .tiptap-editor {
-    min-height: 160px;
+    min-height: 280px;
     padding: 0.8rem 1rem;
     outline: none;
     color: var(--ink);
@@ -121,6 +121,9 @@
 .tiptap-editor a { color: var(--ink-soft); text-decoration: underline; opacity: 0.85; }
 .tiptap-editor a:hover { opacity: 1; }
 .tiptap-editor img { max-width: 100%; display: block; }
+.tiptap-editor .content-card { padding: 0.75rem 1rem; border: 2px dashed var(--line); margin: 0.5em 0; }
+.tiptap-editor .content-card > :first-child { margin-top: 0; }
+.tiptap-editor .content-card > :last-child { margin-bottom: 0; }
 
 /* iframe placeholder inside editor */
 .tiptap-iframe-preview {
@@ -548,10 +551,12 @@ input[type="url"][readonly] { opacity: 0.6; cursor: default; }
 
 /* ─── Tiptap HTML source view ───────────────────────────────────────────────── */
 
+.tiptap-embed-notice[hidden] { display: none; }
+
 .tiptap-source {
     display: none;
     width: 100%;
-    min-height: 160px;
+    min-height: 280px;
     background: var(--paper-deep);
     border: none;
     border-top: 3px solid var(--line);

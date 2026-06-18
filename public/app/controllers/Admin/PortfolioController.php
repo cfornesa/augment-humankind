@@ -548,6 +548,8 @@ class PortfolioAdminController
         $titles = $_POST['slide_title'] ?? [];
         $captions = $_POST['caption'] ?? [];
         $iframeHtml = $_POST['iframe_html'] ?? [];
+        $contentHtml = $_POST['content_html'] ?? [];
+        $contentWrapperClasses = $_POST['content_wrapper_class'] ?? [];
         $items = [];
 
         foreach ($kinds as $index => $kindRaw) {
@@ -555,7 +557,7 @@ class PortfolioAdminController
             if ($kind === '') {
                 continue;
             }
-            if (!in_array($kind, ['image', 'video', 'iframe'], true)) {
+            if (!in_array($kind, ['image', 'video', 'iframe', 'content'], true)) {
                 throw new InvalidArgumentException('Invalid exhibit slide type.');
             }
 
@@ -565,6 +567,24 @@ class PortfolioAdminController
             $slideTitle = trim((string) ($titles[$index] ?? ''));
             $caption = trim((string) ($captions[$index] ?? ''));
             $iframe = trim((string) ($iframeHtml[$index] ?? ''));
+
+            if ($kind === 'content') {
+                $html = trim((string) ($contentHtml[$index] ?? ''));
+                $wc = trim((string) ($contentWrapperClasses[$index] ?? ''));
+                $allowed = ['mission-band', 'callout', 'content-cards', 'managed-section'];
+                $items[] = [
+                    'media_kind' => 'content',
+                    'media_file_id' => null,
+                    'iframe_html' => null,
+                    'poster_media_file_id' => null,
+                    'alt_text' => $alt ?: null,
+                    'title' => $slideTitle ?: null,
+                    'caption' => $caption ?: null,
+                    'content_html' => $html ?: null,
+                    'content_wrapper_class' => in_array($wc, $allowed, true) ? $wc : null,
+                ];
+                continue;
+            }
 
             if ($kind === 'iframe') {
                 if ($iframe === '' || stripos($iframe, '<iframe') === false || Exhibit::extractIframeSourcePublic($iframe) === null) {
@@ -578,6 +598,8 @@ class PortfolioAdminController
                     'alt_text' => $alt ?: null,
                     'title' => $slideTitle ?: null,
                     'caption' => $caption ?: null,
+                    'content_html' => null,
+                    'content_wrapper_class' => null,
                 ];
                 continue;
             }
@@ -600,6 +622,8 @@ class PortfolioAdminController
                 'alt_text' => $alt ?: null,
                 'title' => $slideTitle ?: null,
                 'caption' => $caption ?: null,
+                'content_html' => null,
+                'content_wrapper_class' => null,
             ];
         }
 
@@ -651,6 +675,8 @@ class PortfolioAdminController
                 'alt_text' => trim((string) (($_POST['alt_text'] ?? [])[$index] ?? '')),
                 'title' => trim((string) (($_POST['slide_title'] ?? [])[$index] ?? '')),
                 'caption' => trim((string) (($_POST['caption'] ?? [])[$index] ?? '')),
+                'content_html' => trim((string) (($_POST['content_html'] ?? [])[$index] ?? '')),
+                'content_wrapper_class' => trim((string) (($_POST['content_wrapper_class'] ?? [])[$index] ?? '')),
                 'source_url' => $mediaFileId > 0 ? '/media/' . $mediaFileId : null,
                 'poster_url' => $posterMediaFileId > 0 ? '/media/' . $posterMediaFileId : null,
             ]);

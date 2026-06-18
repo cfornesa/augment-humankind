@@ -20,21 +20,21 @@ class PageSection
         return $stmt->fetch();
     }
 
-    public static function create(int $pageId, string $heading, string $content, int $sortOrder = 0): int
+    public static function create(int $pageId, string $heading, string $content, int $sortOrder = 0, ?string $wrapperClass = null): int
     {
         $stmt = db()->prepare(
-            'INSERT INTO page_sections (page_id, heading, content, sort_order) VALUES (?, ?, ?, ?)'
+            'INSERT INTO page_sections (page_id, heading, content, wrapper_class, sort_order) VALUES (?, ?, ?, ?, ?)'
         );
-        $stmt->execute([$pageId, $heading ?: null, $content, $sortOrder]);
+        $stmt->execute([$pageId, $heading ?: null, $content, $wrapperClass ?: null, $sortOrder]);
         return (int) db()->lastInsertId();
     }
 
-    public static function update(int $id, string $heading, string $content): void
+    public static function update(int $id, string $heading, string $content, ?string $wrapperClass = null): void
     {
         $stmt = db()->prepare(
-            'UPDATE page_sections SET heading = ?, content = ? WHERE id = ?'
+            'UPDATE page_sections SET heading = ?, content = ?, wrapper_class = ? WHERE id = ?'
         );
-        $stmt->execute([$heading ?: null, $content, $id]);
+        $stmt->execute([$heading ?: null, $content, $wrapperClass ?: null, $id]);
     }
 
     public static function delete(int $id): void

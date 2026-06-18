@@ -42,6 +42,7 @@ class BlogController
         $canonicalUrl = seo_absolute_url('/blog/posts/' . (int) $post['id']);
         $ogImage = $post['featured_image_url'] ?? null;
         $comments = Comment::commentsFor('post', (int) $post['id']);
+        $postSections = PostSection::allForPost((int) $post['id']);
         require dirname(__DIR__) . '/views/blog/show.php';
     }
 

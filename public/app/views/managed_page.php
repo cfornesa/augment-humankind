@@ -20,7 +20,14 @@ require __DIR__ . '/partials/header.php';
         </section>
     <?php else: ?>
         <?php foreach ($sections as $section): ?>
-            <?php if ($section['heading']): ?>
+            <?php if ($section['wrapper_class']): ?>
+                <section class="<?= e($section['wrapper_class']) ?>"<?= $section['heading'] ? ' aria-labelledby="managed-section-' . (int) $section['id'] . '"' : '' ?>>
+                    <?php if ($section['heading']): ?>
+                        <h2 id="managed-section-<?= (int) $section['id'] ?>"><?= e($section['heading']) ?></h2>
+                    <?php endif; ?>
+                    <?= $section['content'] ?>
+                </section>
+            <?php elseif ($section['heading']): ?>
                 <section class="managed-section" aria-labelledby="managed-section-<?= (int) $section['id'] ?>">
                     <h2 id="managed-section-<?= (int) $section['id'] ?>"><?= e($section['heading']) ?></h2>
                     <div class="managed-section-body"><?= $section['content'] ?></div>

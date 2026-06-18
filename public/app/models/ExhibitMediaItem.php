@@ -31,8 +31,9 @@ class ExhibitMediaItem
             if ($items) {
                 $insert = $pdo->prepare(
                     'INSERT INTO exhibit_media_items
-                        (exhibit_id, media_kind, media_file_id, iframe_html, poster_media_file_id, alt_text, title, caption, sort_order)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                        (exhibit_id, media_kind, media_file_id, iframe_html, poster_media_file_id,
+                         alt_text, title, caption, content_html, content_wrapper_class, sort_order)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
                 );
 
                 foreach (array_values($items) as $index => $item) {
@@ -45,6 +46,8 @@ class ExhibitMediaItem
                         $item['alt_text'] ?: null,
                         $item['title'] ?: null,
                         $item['caption'] ?: null,
+                        $item['content_html'] ?: null,
+                        $item['content_wrapper_class'] ?: null,
                         $index,
                     ]);
                 }
@@ -67,9 +70,12 @@ class ExhibitMediaItem
             ?? ($mediaFileId > 0 ? '/media/' . $mediaFileId : null);
         $item['poster_url'] = $item['poster_url']
             ?? ($posterId > 0 ? '/media/' . $posterId : null);
-        $item['display_kind'] = $mediaKind === 'iframe'
-            ? 'iframe'
-            : ($mediaKind === 'video' ? 'video' : 'image');
+        $item['display_kind'] = match ($mediaKind) {
+            'iframe'  => 'iframe',
+            'video'   => 'video',
+            'content' => 'content',
+            default   => 'image',
+        };
 
         return $item;
     }

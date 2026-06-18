@@ -393,6 +393,7 @@ tr.drag-over td {
     display: grid;
     gap: 0.4rem;
 }
+.form-row[hidden] { display: none; }
 
 .form-row label {
     font-weight: 950;

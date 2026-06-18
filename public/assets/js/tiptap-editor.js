@@ -236,6 +236,23 @@ const IframeNode = Node.create({
   },
 })
 
+// ─── Custom: Content Card block ──────────────────────────────────────────────
+// Teaches Tiptap about <div class="content-card"> so it survives round-trips
+// between WYSIWYG and HTML source mode without being stripped.
+
+const ContentCardNode = Node.create({
+  name: 'contentCard',
+  group: 'block',
+  content: 'block+',
+  defining: true,
+  parseHTML() {
+    return [{ tag: 'div.content-card' }]
+  },
+  renderHTML() {
+    return ['div', { class: 'content-card' }, 0]
+  },
+})
+
 // ─── Custom: Link with title attribute ───────────────────────────────────────
 
 const LinkWithTitle = Link.configure({ openOnClick: false }).extend({
@@ -617,6 +634,7 @@ function initTiptap(textarea) {
       LinkWithTitle,
       ImageWithEditButton,
       IframeNode,
+      ContentCardNode,
     ],
     content: textarea.value || '',
     editorProps: {
@@ -895,6 +913,7 @@ function initTiptap(textarea) {
       textarea.value = sourceMode ? sourceTa.value : editor.getHTML()
     }, { capture: true })
   }
+
 }
 
 // ─── Media Picker ─────────────────────────────────────────────────────────────
@@ -1029,27 +1048,49 @@ function initMediaPicker() {
     return item
   }
 
+  const PICKER_PAGE_SIZE = 48
+  let _pickerAllItems = [], _pickerShown = 0, _pickerPreselectUrl = null
+
+  // "Load more" button sits below the grid, never inside it
+  const loadMoreBtn = document.createElement('button')
+  loadMoreBtn.type = 'button'
+  loadMoreBtn.className = 'admin-btn admin-btn-ghost'
+  loadMoreBtn.style.cssText = 'display:none;margin:0.7rem auto'
+  loadMoreBtn.textContent = 'Load more'
+  grid.insertAdjacentElement('afterend', loadMoreBtn)
+
+  function renderPickerBatch() {
+    const batch = _pickerAllItems.slice(_pickerShown, _pickerShown + PICKER_PAGE_SIZE)
+    batch.forEach(f => {
+      const item = renderGridItem(f)
+      grid.appendChild(item)
+      const url = f.legacy_url || f.url || (f.kind === 'image' ? `/image/${f.id}` : `/media/${f.id}`)
+      if (_pickerPreselectUrl && url === _pickerPreselectUrl) {
+        item.classList.add('selected'); selectedUrl = url; selectedAsset = f; selectBtn.disabled = false
+        if (altRow && !_libraryMode && currentTab === 'select' && f.kind === 'image') altRow.hidden = false
+      }
+    })
+    _pickerShown += batch.length
+    loadMoreBtn.style.display = _pickerShown < _pickerAllItems.length ? 'block' : 'none'
+  }
+
+  loadMoreBtn.addEventListener('click', renderPickerBatch)
+
   async function loadGrid(preselectUrl = null) {
-    grid.innerHTML = ''; selectedUrl = null; selectedAsset = null; selectBtn.disabled = true
+    grid.innerHTML = ''; _pickerAllItems = []; _pickerShown = 0; _pickerPreselectUrl = preselectUrl
+    loadMoreBtn.style.display = 'none'
+    selectedUrl = null; selectedAsset = null; selectBtn.disabled = true
     if (altRow) altRow.hidden = true
     try {
       const res = await fetch('/admin/media/library')
       const files = await res.json()
-      const filtered = files.filter(f => {
+      _pickerAllItems = files.filter(f => {
         if (currentMode === 'video') return f.kind === 'video'
         if (currentMode === 'media') return f.kind === 'image' || f.kind === 'video' || f.kind === 'iframe'
         return f.kind === 'image'
       })
-      if (!filtered.length) { grid.innerHTML = `<p class="media-picker-empty">${pickerModeConfig().empty}</p>`; return }
-      filtered.forEach(f => {
-        const item = renderGridItem(f)
-        grid.appendChild(item)
-        const url = f.legacy_url || f.url || (f.kind === 'image' ? `/image/${f.id}` : `/media/${f.id}`)
-        if (preselectUrl && url === preselectUrl) {
-          item.classList.add('selected'); selectedUrl = url; selectedAsset = f; selectBtn.disabled = false
-          if (altRow && !_libraryMode && currentTab === 'select' && f.kind === 'image') altRow.hidden = false
-        }
-      })
+      if (!_pickerAllItems.length) { grid.innerHTML = `<p class="media-picker-empty">${pickerModeConfig().empty}</p>`; return }
+      renderPickerBatch()
     } catch { grid.innerHTML = '<p class="media-picker-empty">Failed to load media library.</p>' }
   }
 
@@ -1423,6 +1464,8 @@ function initStandalonePickers() {
 }
 
 // ─── Bootstrap ───────────────────────────────────────────────────────────────
+
+window.initTiptap = initTiptap
 
 document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('textarea[data-tiptap]').forEach(initTiptap)

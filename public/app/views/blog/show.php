@@ -44,15 +44,35 @@ require dirname(__DIR__) . '/partials/header.php';
         </figure>
     <?php endif; ?>
 
-    <div class="managed-section blog-post-content">
-        <div class="managed-section-body">
-            <?php if (($post['content_format'] ?? 'plain') === 'html'): ?>
-                <?= (string) $post['content'] ?>
+    <?php if (!empty($postSections)): ?>
+        <?php foreach ($postSections as $section): ?>
+            <?php if ($section['wrapper_class']): ?>
+                <section class="<?= e($section['wrapper_class']) ?>"<?= $section['heading'] ? ' aria-labelledby="post-section-' . (int)$section['id'] . '"' : '' ?>>
+                    <?php if ($section['heading']): ?><h2 id="post-section-<?= (int)$section['id'] ?>"><?= e($section['heading']) ?></h2><?php endif; ?>
+                    <?= $section['content'] ?>
+                </section>
+            <?php elseif ($section['heading']): ?>
+                <section class="managed-section" aria-labelledby="post-section-<?= (int)$section['id'] ?>">
+                    <h2 id="post-section-<?= (int)$section['id'] ?>"><?= e($section['heading']) ?></h2>
+                    <div class="managed-section-body"><?= $section['content'] ?></div>
+                </section>
             <?php else: ?>
-                <?= nl2br(e((string) $post['content'])) ?>
+                <div class="managed-section blog-post-content">
+                    <div class="managed-section-body"><?= $section['content'] ?></div>
+                </div>
             <?php endif; ?>
+        <?php endforeach; ?>
+    <?php elseif (!empty($post['content'])): ?>
+        <div class="managed-section blog-post-content">
+            <div class="managed-section-body">
+                <?php if (($post['content_format'] ?? 'plain') === 'html'): ?>
+                    <?= (string) $post['content'] ?>
+                <?php else: ?>
+                    <?= nl2br(e((string) $post['content'])) ?>
+                <?php endif; ?>
+            </div>
         </div>
-    </div>
+    <?php endif; ?>
 
     <div class="post-actions-bottom">
         <div class="post-actions-left">

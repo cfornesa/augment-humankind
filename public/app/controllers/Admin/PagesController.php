@@ -147,8 +147,9 @@ class PagesController
             exit;
         }
 
-        $heading = trim($_POST['heading'] ?? '');
-        $content = trim($_POST['content'] ?? '');
+        $heading      = trim($_POST['heading'] ?? '');
+        $content      = trim($_POST['content'] ?? '');
+        $wrapperClass = self::sanitiseWrapperClass($_POST['wrapper_class'] ?? '');
         if ($content === '') {
             $section = null;
             $sectionError = 'Content is required.';
@@ -156,7 +157,7 @@ class PagesController
             return;
         }
 
-        PageSection::create((int) $pageId, $heading, $content);
+        PageSection::create((int) $pageId, $heading, $content, 0, $wrapperClass);
         header('Location: /admin/pages/' . (int) $pageId . '/edit');
         exit;
     }
@@ -183,16 +184,17 @@ class PagesController
             exit;
         }
 
-        $page = Page::find((int) $section['page_id']);
-        $heading = trim($_POST['heading'] ?? '');
-        $content = trim($_POST['content'] ?? '');
+        $page         = Page::find((int) $section['page_id']);
+        $heading      = trim($_POST['heading'] ?? '');
+        $content      = trim($_POST['content'] ?? '');
+        $wrapperClass = self::sanitiseWrapperClass($_POST['wrapper_class'] ?? '');
         if ($content === '') {
             $sectionError = 'Content is required.';
             require dirname(__DIR__, 2) . '/views/admin/pages/section-form.php';
             return;
         }
 
-        PageSection::update((int) $sectionId, $heading, $content);
+        PageSection::update((int) $sectionId, $heading, $content, $wrapperClass);
         header('Location: /admin/pages/' . (int) $section['page_id'] . '/edit');
         exit;
     }
@@ -219,6 +221,13 @@ class PagesController
         header('Content-Type: application/json');
         echo '{"ok":true}';
         exit;
+    }
+
+    private static function sanitiseWrapperClass(string $raw): ?string
+    {
+        $allowed = ['mission-band', 'callout', 'content-cards', 'managed-section'];
+        $value = trim($raw);
+        return in_array($value, $allowed, true) ? $value : null;
     }
 
     private static function resolvePageData(?int $existingId): array
