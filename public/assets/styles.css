@@ -2384,3 +2384,78 @@ h3 {
     white-space: nowrap;
     border: 0;
 }
+
+/* ── Style preview panel (user settings + admin site identity) ── */
+.style-preview {
+    border: 2px solid var(--line);
+    overflow: hidden;
+    font-size: 0.875rem;
+    line-height: 1.5;
+}
+.sp-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.6rem 1rem;
+    background: hsl(var(--sp-paper, var(--paper-hsl, 40 49% 94%)));
+    color: hsl(var(--sp-ink, var(--ink-hsl, 201 56% 19%)));
+    border-bottom: 2px solid hsl(var(--sp-ink, var(--ink-hsl, 201 56% 19%)));
+}
+.sp-brand {
+    font-weight: 900;
+    font-size: 0.9rem;
+    letter-spacing: -0.02em;
+}
+.sp-nav-links {
+    font-size: 0.8rem;
+    opacity: 0.75;
+}
+.sp-body {
+    padding: 1rem;
+    background: hsl(var(--sp-paper, var(--paper-hsl, 40 49% 94%)));
+    color: hsl(var(--sp-ink, var(--ink-hsl, 201 56% 19%)));
+}
+.sp-heading {
+    margin: 0 0 0.4rem;
+    font-size: 1rem;
+    font-weight: 900;
+    color: hsl(var(--sp-ink, var(--ink-hsl, 201 56% 19%)));
+}
+.sp-text {
+    margin: 0 0 0.4rem;
+    font-size: 0.85rem;
+    color: hsl(var(--sp-ink, var(--ink-hsl, 201 56% 19%)));
+}
+.sp-muted {
+    margin: 0 0 0.75rem;
+    font-size: 0.8rem;
+    padding: 0.4rem 0.6rem;
+    background: hsl(var(--sp-paper-deep, var(--sp-paper, 40 49% 94%)));
+    color: hsl(var(--sp-ink-soft, var(--sp-ink, 201 56% 19%)));
+    border: 1px solid hsl(var(--sp-ink, var(--ink-hsl, 201 56% 19%)));
+    opacity: 0.75;
+}
+.sp-btn {
+    display: inline-block;
+    padding: 0.3rem 0.7rem;
+    font-size: 0.8rem;
+    font-weight: 700;
+    cursor: default;
+    border: 2px solid transparent;
+}
+.sp-btn-primary {
+    background: hsl(var(--sp-primary, 88 60% 53%));
+    color: hsl(var(--sp-primary-fg, 0 0% 100%));
+    border-color: hsl(var(--sp-primary, 88 60% 53%));
+}
+.sp-btn-secondary {
+    background: hsl(var(--sp-secondary, 189 51% 57%));
+    color: hsl(var(--sp-secondary-fg, 0 0% 100%));
+    border-color: hsl(var(--sp-secondary, 189 51% 57%));
+}
+.sp-btn-accent {
+    background: hsl(var(--sp-accent, 33 90% 60%));
+    color: hsl(var(--sp-accent-fg, 0 0% 0%));
+    border-color: hsl(var(--sp-accent, 33 90% 60%));
+}

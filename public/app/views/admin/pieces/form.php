@@ -367,6 +367,15 @@ $preferredProfileId = $preferredProfileId ?? null;
                             </select>
                         </div>
                         <div class="field">
+                            <label for="ai_persona_id">AI Persona <span style="font-weight:400;color:var(--ink-soft);">(optional)</span></label>
+                            <select id="ai_persona_id">
+                                <option value="">None — use the base refinement prompt</option>
+                                <?php foreach (($personas ?? []) as $persona): ?>
+                                    <option value="<?= (int) $persona['id'] ?>"><?= e((string) $persona['name']) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="field">
                             <label for="ai_refine_prompt">What would you like to change about this piece?</label>
                             <textarea id="ai_refine_prompt" rows="6" placeholder="Describe the changes you want to make, e.g., 'Turn the background to deep blue and make the shapes expand and contract.'"></textarea>
                             <small>This will send your prompt and the current code blocks in the HTML/CSS/JS tabs above to the AI, then suggest changes that you can inspect, edit, and accept or reject.</small>
@@ -476,6 +485,7 @@ $preferredProfileId = $preferredProfileId ?? null;
 
     var btnRefineAi = document.getElementById('btn-refine-ai');
     var aiProfileField = document.getElementById('ai_profile_id');
+    var aiPersonaField = document.getElementById('ai_persona_id');
     var aiPromptField = document.getElementById('ai_refine_prompt');
 
     var aiBanner = document.getElementById('ai-suggestion-banner');
@@ -587,6 +597,7 @@ $preferredProfileId = $preferredProfileId ?? null;
             prompt: prompt,
             engine: engine,
             profile_id: parseInt(profileId, 10),
+            persona_id: aiPersonaField && aiPersonaField.value ? parseInt(aiPersonaField.value, 10) : 0,
             html_code: htmlField.value,
             css_code: cssField.value,
             generated_code: jsField.value

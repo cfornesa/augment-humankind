@@ -202,13 +202,21 @@ class UserProfileController
             'color_destructive', 'color_destructive_foreground',
         ];
 
-        $sets = ['theme = ?', 'palette = ?'];
-        $params = [
-            mb_substr(trim((string) ($_POST['theme'] ?? '')), 0, 32) ?: null,
-            mb_substr(trim((string) ($_POST['palette'] ?? '')), 0, 32) ?: null,
-        ];
+        $sets = [];
+        $params = [];
+        if (ah_column_exists('users', 'theme')) {
+            $sets[] = 'theme = ?';
+            $params[] = mb_substr(trim((string) ($_POST['theme'] ?? '')), 0, 32) ?: null;
+        }
+        if (ah_column_exists('users', 'palette')) {
+            $sets[] = 'palette = ?';
+            $params[] = mb_substr(trim((string) ($_POST['palette'] ?? '')), 0, 32) ?: null;
+        }
 
         foreach ($colorColumns as $col) {
+            if (!ah_column_exists('users', $col)) {
+                continue;
+            }
             $val = mb_substr(trim((string) ($_POST[$col] ?? '')), 0, 64);
             // Accept "H S% L%" or "H S L" format, reject anything unsafe
             if ($val !== '' && !preg_match('/^[\d.]+\s+[\d.]+%?\s+[\d.]+%?$/', $val)) {
@@ -216,6 +224,11 @@ class UserProfileController
             }
             $sets[] = "$col = ?";
             $params[] = $val ?: null;
+        }
+
+        if ($sets === []) {
+            header('Location: /user/settings?error=' . urlencode('Profile style columns are not available in this database yet.'));
+            exit;
         }
 
         $params[] = $user['id'];

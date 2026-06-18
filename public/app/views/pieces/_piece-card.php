@@ -1,6 +1,6 @@
 <article class="piece-card">
     <?php if (!empty($piece['thumbnail_url'])): ?>
-        <img src="<?= e($piece['thumbnail_url']) ?>" alt="" loading="lazy">
+        <img src="<?= e($piece['thumbnail_url']) ?>" alt="<?= e((string)($piece['thumbnail_alt_text'] ?? $piece['title'] ?? '')) ?>" loading="lazy">
     <?php endif; ?>
     <h2><a href="/pieces/<?= (int) $piece['id'] ?>"><?= e($piece['title'] ?? 'Untitled') ?></a></h2>
     <?php if (!empty($piece['description'])): ?>

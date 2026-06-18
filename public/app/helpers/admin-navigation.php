@@ -8,7 +8,7 @@ function admin_navigation_registry(): array
         ['key' => 'dashboard', 'label' => 'Dashboard', 'href' => '/admin', 'description' => 'Overview and quick links.'],
         ['key' => 'posts', 'label' => 'Posts', 'href' => '/admin/posts', 'description' => 'Publish and schedule blog posts.'],
         ['key' => 'comments', 'label' => 'Comments', 'href' => '/admin/comments', 'description' => 'Moderate comments and reactions.'],
-        ['key' => 'feed', 'label' => 'Feed', 'href' => '/admin/feed-sources', 'description' => 'Connect, manage, and review imported feed items.'],
+        ['key' => 'feed', 'label' => 'External Feeds', 'href' => '/admin/feed-sources', 'description' => 'Connect, manage, and review imported feed items.'],
         ['key' => 'identity', 'label' => 'Identity', 'href' => '/admin/site-identity', 'description' => 'Site-wide copy and brand settings.'],
         ['key' => 'navigation', 'label' => 'Navigation', 'href' => '/admin/navigation', 'description' => 'Public navigation links and ordering.'],
         ['key' => 'ai_settings', 'label' => 'AI Settings', 'href' => '/admin/ai-settings', 'description' => 'Profiles, keys, and preferred AI vendors.'],

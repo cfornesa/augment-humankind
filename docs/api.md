@@ -428,6 +428,8 @@ thumbnail URL, and `category_ids[]` for Art Media assignment. Current-version
 HTML/CSS/JS can be edited inline on the piece form, and `/admin/pieces/library`
 returns JSON for picker dialogs.
 
+`art_pieces` now carries a `thumbnail_alt_text VARCHAR(500) NULL` column. When a piece is saved via `POST /admin/pieces/generate/save` or a thumbnail is captured via `POST /admin/pieces/[id]/capture-thumbnail`, the first 500 characters of the piece's creative prompt are automatically written to `thumbnail_alt_text` — no AI tokens are used. All piece thumbnail `<img>` elements use this value as their `alt` attribute, falling back to the piece title when the column is NULL.
+
 ### Media Library
 
 - `GET /admin/media`
@@ -436,13 +438,14 @@ returns JSON for picker dialogs.
 - `POST /admin/media/import`
 - `POST /admin/media/[id]/trash`
 - `POST /admin/media/[id]/destroy`
+- `POST /admin/media/[id]/update` — updates `alt_text` (max 500 chars) for a native `media_files` record. Redirects to `/admin/media`.
 - `POST /admin/media/asset/[id]/update`
 - `POST /admin/media/asset/[id]/trash`
 - `POST /admin/media/asset/[id]/destroy`
 
 `/admin/media/library` returns a JSON array for the existing Tiptap/media
 picker. It includes native uploads (`media_files`) plus migrated platform
-media (`media_assets`):
+media (`media_assets`). Both entry types include `alt_text`:
 
 ```json
 [
@@ -549,10 +552,17 @@ per-user preferred AI profile selections remain here.
 - `POST /admin/ai-settings/keys/[id]/edit`
 - `POST /admin/ai-settings/keys/[id]/delete`
 - `POST /admin/ai-settings/vendor`
+- `GET /admin/ai-settings/personas/create`
+- `POST /admin/ai-settings/personas/create`
+- `GET /admin/ai-settings/personas/[id]/edit`
+- `POST /admin/ai-settings/personas/[id]/edit`
+- `POST /admin/ai-settings/personas/[id]/delete`
 
-The AI settings admin has three tabs: **AI Profiles**, **API Keys**, and
-**AI Vendor**. The vendor tab controls owner-facing preferred AI profiles for
-art generation, text improvement, and alt-text generation.
+The AI settings admin has four tabs: **AI Profiles**, **API Keys**, **AI Vendor**, and **AI Personas**. The vendor tab controls owner-facing preferred AI profiles for art generation, text improvement, and alt-text generation.
+
+Each **AI Profile** row now carries a `capabilities` field (comma-separated tokens: `text`, `code`, `vision`; default `text,code`). Only profiles with the `code` capability should be used for piece generation; only profiles with the `vision` capability can call `POST /admin/ai/describe-image`. The generate form shows an inline warning when a profile without `code` capability is selected, and the describe-image endpoint returns HTTP 400 if the selected profile lacks `vision` capability.
+
+**AI Personas** are reusable named system prompts stored in `ai_personas`. When a persona is selected in the generate form, the AI receives: `{persona system_prompt}\n\nApply this to the following prompt:\n\n{user prompt}` as the effective prompt. Persona records belong to `user_id` rows; they are hard-deleted (no soft-delete). The create endpoint accepts `Accept: application/json` or `_format=json` for inline AJAX creation from the generate form and returns `{ok: true, persona: {id, name}}`.
 
 The user edit form includes three preferred AI profile selects:
 - **Art Piece Generation** — `preferred_art_piece_profile_id`
@@ -563,11 +573,11 @@ These preferences are automatically pre-selected in the AI generation form when 
 
 ### AI Content Helpers
 
-- `POST /admin/ai/process` — improves the provided text using the selected AI profile. Accepts `profile_id`, `content`, and `mode` (`html` or `text`). Returns JSON `{result: string}`.
-- `POST /admin/ai/describe-image` — generates alt text for an image using the selected AI profile. Accepts `profile_id` and `image_url`. Resolves the image from `/api/media/{filename}`, `/media/{id}`, or `/image/{id}`. Returns JSON `{result: string}`.
-- `GET /admin/ai/profiles` — returns a JSON array of enabled AI vendor profiles (`id`, `profile_name`, `vendor`, `model`, `user_name`) for the Tiptap "Improve with AI" profile picker.
+- `POST /admin/ai/process` — improves the provided text using the selected AI profile. Accepts `profile_id`, `content` (HTML markup or plain text), and `mode` (`html` or `text`). Returns JSON `{result: string}`. When text is selected in TipTap, the selected fragment is serialized as HTML. When no text is selected, the full editor HTML is sent and the entire content is replaced on success. The HTML-mode system prompt explicitly preserves all iframes, images, videos, figures, and HTML attributes — only visible text words are changed.
+- `POST /admin/ai/describe-image` — generates alt text for an image using the selected AI profile. Accepts `profile_id` and `image_url`. Resolves the image binary from `/api/media/{filename}`, `/media/{id}`, or `/image/{id}`. Returns JSON `{result: string}` on success. On configuration failures it now returns a stable `code` plus `error` message and `diagnostics` payload. Current codes include `vision_not_enabled`, `vision_transport_unsupported`, `vision_model_unsupported`, `missing_api_key`, `image_load_failed`, `provider_request_failed`, and `unexpected_error`.
+- `GET /admin/ai/profiles` — returns a JSON array of enabled AI vendor profiles for the "Improve with AI" and "Generate Alt Text with AI" picker modals. Each entry includes `id`, `profile_name`, `vendor`, `model`, `user_name`, resolved `capabilities`, and diagnostics fields such as `capability_source`, `explicit_capabilities`, `inferred_capabilities`, `transport_kind`, and `vision_inferred`. The picker filters by the resolved capability set client-side, so schema-missing or stale capability flags can fall back to vendor/model inference instead of producing false negatives.
 
-Both endpoints require an authenticated admin session. They use `AiProviderClient::chat()` and `AiProviderClient::describeImage()` respectively, supporting `chat-completions`, `google-generate-content`, `anthropic-messages`, and `openai-responses` transports.
+All three endpoints require an authenticated admin session. They use `AiProviderClient::chat()` and `AiProviderClient::describeImage()` respectively, supporting `chat-completions`, `google-generate-content`, `anthropic-messages`, and `openai-responses` transports.
 
 ### Platform Connections
 

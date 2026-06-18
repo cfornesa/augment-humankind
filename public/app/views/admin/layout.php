@@ -2,6 +2,17 @@
 $currentUri = $_SERVER['REQUEST_URI'] ?? '/admin';
 $adminIdentity = admin_identity();
 $adminNavItems = function_exists('admin_navigation_ordered_items') ? admin_navigation_ordered_items() : [];
+$tiptapCssVersion = ($needsEditor ?? false) ? @filemtime(dirname(__DIR__, 3) . '/assets/css/tiptap.css') : null;
+$tiptapJsVersion = ($needsEditor ?? false) ? @filemtime(dirname(__DIR__, 3) . '/assets/js/tiptap-editor.js') : null;
+$ownerAiPrefs = class_exists('PlatformUser') ? (PlatformUser::owner() ?: []) : [];
+$aiPickerPersonas = [];
+if (function_exists('ah_table_exists') && ah_table_exists('ai_personas')) {
+    try {
+        $aiPickerPersonas = db()->query('SELECT id, name FROM ai_personas ORDER BY name ASC')->fetchAll();
+    } catch (Throwable) {
+        $aiPickerPersonas = [];
+    }
+}
 ?>
 <!doctype html>
 <html lang="en">
@@ -17,7 +28,7 @@ $adminNavItems = function_exists('admin_navigation_ordered_items') ? admin_navig
     <link rel="stylesheet" href="/assets/styles.css">
     <link rel="stylesheet" href="/assets/admin.css">
     <?php if ($needsEditor ?? false): ?>
-    <link rel="stylesheet" href="/assets/css/tiptap.css">
+    <link rel="stylesheet" href="/assets/css/tiptap.css?v=<?= (int) $tiptapCssVersion ?>">
     <script type="importmap">
     {
       "imports": {
@@ -182,8 +193,12 @@ $adminNavItems = function_exists('admin_navigation_ordered_items') ? admin_navig
         <!-- Alt text field — shown when an image is selected on the Select tab -->
         <div class="media-picker-alt-row" id="mp-alt-row" hidden>
             <label for="mp-alt-input">Alt text <em>(describe the image for screen readers — leave blank if purely decorative)</em></label>
-            <input type="text" id="mp-alt-input" class="media-picker-url-input"
-                   placeholder="e.g. A cityscape at night with red lanterns" maxlength="250" autocomplete="off">
+            <div style="display:flex;gap:0.5rem;align-items:center;">
+                <input type="text" id="mp-alt-input" class="media-picker-url-input"
+                       placeholder="e.g. A cityscape at night with red lanterns" maxlength="250" autocomplete="off" style="flex:1;">
+                <button type="button" id="mp-alt-ai-btn" class="admin-btn admin-btn-ghost admin-btn-sm"
+                        title="Generate alt text with AI (requires vision-capable profile)">✨</button>
+            </div>
         </div>
 
         <div class="media-picker-footer">
@@ -248,14 +263,28 @@ $adminNavItems = function_exists('admin_navigation_ordered_items') ? admin_navig
 
         <div class="media-picker-panel">
             <label for="ai-profile-picker-select" class="media-picker-field-label">AI Profile / Vendor &amp; Model</label>
-            <select id="ai-profile-picker-select" class="media-picker-select">
+            <select
+                id="ai-profile-picker-select"
+                class="media-picker-select"
+                data-preferred-text-profile-id="<?= (int) ($ownerAiPrefs['preferred_text_improve_profile_id'] ?? 0) ?>"
+                data-preferred-alt-profile-id="<?= (int) ($ownerAiPrefs['preferred_alt_text_profile_id'] ?? 0) ?>"
+                data-preferred-piece-profile-id="<?= (int) ($ownerAiPrefs['preferred_art_piece_profile_id'] ?? 0) ?>"
+            >
                 <option value="">Loading&hellip;</option>
             </select>
+            <label for="ai-persona-picker-select" class="media-picker-field-label" style="margin-top:1rem;">AI Persona <span style="font-weight:400;color:var(--ink-soft);">(optional)</span></label>
+            <select id="ai-persona-picker-select" class="media-picker-select">
+                <option value="">None — use the base task prompt</option>
+                <?php foreach ($aiPickerPersonas as $persona): ?>
+                    <option value="<?= (int) $persona['id'] ?>"><?= htmlspecialchars((string) $persona['name'], ENT_QUOTES, 'UTF-8') ?></option>
+                <?php endforeach; ?>
+            </select>
+            <p class="media-picker-hint" id="ai-profile-picker-hint">Pick the model/profile and optionally layer a persona on top of the task prompt.</p>
         </div>
 
         <div class="media-picker-footer">
             <button type="button" class="admin-btn admin-btn-ghost ai-profile-picker-cancel-btn">Cancel</button>
-            <button type="button" class="admin-btn ai-profile-picker-select-btn" disabled>Use Profile</button>
+            <button type="button" class="admin-btn ai-profile-picker-select-btn" disabled>Use Settings</button>
         </div>
     </dialog>
 
@@ -286,7 +315,7 @@ $adminNavItems = function_exists('admin_navigation_ordered_items') ? admin_navig
     </script>
     <script src="/assets/js/main.js" defer></script>
     <?php if ($needsEditor ?? false): ?>
-    <script type="module" src="/assets/js/tiptap-editor.js"></script>
+    <script type="module" src="/assets/js/tiptap-editor.js?v=<?= (int) $tiptapJsVersion ?>"></script>
     <?php endif ?>
 </body>
 </html>

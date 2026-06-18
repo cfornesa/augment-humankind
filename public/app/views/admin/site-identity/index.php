@@ -194,8 +194,35 @@ if (!in_array($tab, ['settings', 'design', 'assets', 'media'], true)) {
                     <?php endforeach ?>
                 </div>
             <?php endforeach ?>
-            <div class="form-actions">
+            <!-- Live style preview -->
+            <div style="margin-top:2rem;">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.5rem;flex-wrap:wrap;gap:0.5rem;">
+                    <strong style="font-size:0.9rem;">Preview</strong>
+                    <div style="display:flex;gap:0.4rem;">
+                        <button type="button" id="preview-mode-light" class="admin-btn admin-btn-ghost admin-btn-sm">☀ Light</button>
+                        <button type="button" id="preview-mode-dark" class="admin-btn admin-btn-ghost admin-btn-sm">☾ Dark</button>
+                    </div>
+                </div>
+                <div id="style-preview" class="style-preview">
+                    <div class="sp-header">
+                        <span class="sp-brand">Site Name</span>
+                        <span class="sp-nav-links">Coded Art · Feeds · Categories</span>
+                    </div>
+                    <div class="sp-body">
+                        <h2 class="sp-heading">Your heading here</h2>
+                        <p class="sp-text">Body copy — foreground text on background. This reflects the live color values.</p>
+                        <p class="sp-muted">Muted text on muted background for secondary information.</p>
+                        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.75rem;">
+                            <span class="sp-btn sp-btn-primary">Primary</span>
+                            <span class="sp-btn sp-btn-secondary">Secondary</span>
+                            <span class="sp-btn sp-btn-accent">Accent</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="form-actions" style="display:flex;gap:0.75rem;flex-wrap:wrap;align-items:center;">
                 <button type="submit" class="admin-btn">Save Design</button>
+                <button type="button" id="reset-palette-btn" class="admin-btn admin-btn-ghost">Reset to palette defaults</button>
             </div>
         </form>
         <section class="nav-admin-board" aria-labelledby="admin-nav-order-heading" style="margin-top:2rem;">
@@ -461,6 +488,35 @@ function syncSwatch(swatch){
   if(field&&field.value){var hex=hslToHex(field.value);if(hex)swatch.value=hex;}
 }
 
+// Preview sync
+var PREVIEW_MAP = {
+  color_background:'--sp-paper',color_foreground:'--sp-ink',
+  color_muted:'--sp-paper-deep',color_muted_foreground:'--sp-ink-soft',
+  color_primary:'--sp-primary',color_primary_foreground:'--sp-primary-fg',
+  color_secondary:'--sp-secondary',color_secondary_foreground:'--sp-secondary-fg',
+  color_accent:'--sp-accent',color_accent_foreground:'--sp-accent-fg'
+};
+var PREVIEW_MAP_DARK = {
+  color_background_dark:'--sp-paper',color_foreground_dark:'--sp-ink'
+};
+var previewMode='light';
+function syncPreview(){
+  var p=document.getElementById('style-preview');
+  if(!p)return;
+  // Apply light vars first
+  Object.keys(PREVIEW_MAP).forEach(function(col){
+    var v=document.getElementById('design_'+col)||document.getElementById(col);
+    if(v&&v.value) p.style.setProperty(PREVIEW_MAP[col],'hsl('+v.value+')');
+  });
+  // Overlay dark vars if previewing dark mode
+  if(previewMode==='dark'){
+    Object.keys(PREVIEW_MAP_DARK).forEach(function(col){
+      var v=document.getElementById('design_'+col)||document.getElementById(col);
+      if(v&&v.value) p.style.setProperty(PREVIEW_MAP_DARK[col],'hsl('+v.value+')');
+    });
+  }
+}
+
 function fillPalette(id){
   var p=PALETTES[id];
   if(!p)return;
@@ -472,6 +528,7 @@ function fillPalette(id){
       if(swatch){var hex=hslToHex(p[col]);if(hex)swatch.value=hex;}
     });
   });
+  syncPreview();
 }
 
 // Init swatches from existing field values
@@ -482,6 +539,7 @@ document.querySelectorAll('.color-swatch').forEach(function(swatch){
   swatch.addEventListener('input',function(){
     var field=document.getElementById(swatch.dataset.hslTarget);
     if(field)field.value=hexToHsl(swatch.value);
+    syncPreview();
   });
 });
 
@@ -490,6 +548,7 @@ document.querySelectorAll('.color-hsl-input').forEach(function(input){
   input.addEventListener('input',function(){
     var swatch=document.querySelector('.color-swatch[data-hsl-target="'+input.id+'"]');
     if(swatch&&input.value){var hex=hslToHex(input.value);if(hex)swatch.value=hex;}
+    syncPreview();
   });
 });
 
@@ -500,6 +559,23 @@ if(paletteSelect){
     if(this.value)fillPalette(this.value);
   });
 }
+
+// Reset to palette defaults
+var resetBtn=document.getElementById('reset-palette-btn');
+if(resetBtn){
+  resetBtn.addEventListener('click',function(){
+    var pal=paletteSelect?paletteSelect.value:'';
+    if(pal)fillPalette(pal);
+  });
+}
+
+// Preview mode toggle
+var lightBtn=document.getElementById('preview-mode-light');
+var darkBtn=document.getElementById('preview-mode-dark');
+if(lightBtn)lightBtn.addEventListener('click',function(){ previewMode='light'; syncPreview(); });
+if(darkBtn)darkBtn.addEventListener('click',function(){ previewMode='dark'; syncPreview(); });
+
+syncPreview();
 
 // Media picker clear buttons
 document.querySelectorAll('[data-clear-input]').forEach(function(btn){

@@ -1906,3 +1906,176 @@ Each platform connection checkbox in the "Publish to" fieldset now reveals a `<t
 **`public/app/views/user/settings.php`:** Added a photo upload section before the Profile section — shows the current circular avatar (72px) or an initial-letter placeholder, with a `<form method="post" action="/user/settings/photo" enctype="multipart/form-data">` containing a file input.
 
 **`public/app/router.php`:** Added `['POST', '/user/settings/photo', [UserProfileController::class, 'settingsPhotoUpload']]`.
+
+## 2026-06-18 — AI Personas, Style Preview, Alt Text Standardization, Capability Checks
+
+### Database Schema Changes (run `docs/migrations/2026-06-18-ai-personas.sql`)
+
+- **`ai_personas`** — new table: `id`, `user_id`, `name VARCHAR(128)`, `system_prompt TEXT`, timestamps, indexed on `user_id`.
+- **`user_ai_vendor_settings.capabilities`** — new column: `VARCHAR(128) NOT NULL DEFAULT 'text,code'`. Comma-separated tokens: `text`, `code`, `vision`. Existing rows get the default.
+- **`art_pieces.thumbnail_alt_text`** — new column: `VARCHAR(500) NULL DEFAULT NULL`. Auto-populated from the piece's creative prompt (first 500 chars) when saving or capturing a thumbnail. No AI tokens used.
+
+### Admin Navigation
+
+**`public/app/helpers/admin-navigation.php`:** "Feed" label renamed to "External Feeds".
+
+### Profile Page Dark Mode Color Fix
+
+**`public/app/views/user/profile.php`:** When a user has light-mode color overrides set but no dark-mode overrides, the light-mode colors now also apply in dark mode via the `elseif` fallback block. Previously the scoped injection omitted dark-mode blocks entirely, causing profiles to show site defaults (dark navy) rather than the user's chosen palette when viewed in dark mode.
+
+### Live Style Preview + Reset Button
+
+Both **`public/app/views/user/settings.php`** and **`public/app/views/admin/site-identity/index.php`** now include a `.style-preview` preview panel and a "Reset to palette defaults" button alongside the Save button.
+
+- **Preview panel:** A static HTML mockup styled entirely with scoped CSS custom properties (`--sp-paper`, `--sp-ink`, etc.). `syncPreview()` reads the current color field values and writes them as inline style properties on `#style-preview`. Updated on palette change, any color field `input` event, and page load.
+- **Mode toggle:** "☀ Light" / "☾ Dark" buttons above the preview apply the light or dark-mode color set to the preview without a page reload.
+- **Reset button:** Calls `fillPalette(currentPaletteId)` and `syncPreview()` to revert all color fields to the selected palette's preset values.
+- **CSS:** `.style-preview` component added to `public/assets/styles.css` and `public/assets/admin.css`.
+
+### AI Personas
+
+**New routes (`public/app/router.php`):**
+- `GET /admin/ai-settings/personas/create`
+- `POST /admin/ai-settings/personas/create` (also accepts `Accept: application/json` / `_format=json` for inline AJAX creation)
+- `GET /admin/ai-settings/personas/[id]/edit`
+- `POST /admin/ai-settings/personas/[id]/edit`
+- `POST /admin/ai-settings/personas/[id]/delete`
+
+**`public/app/controllers/Admin/UserProfilesAdminController.php`:** Added `personaCreate`, `personaStore`, `personaEdit`, `personaUpdate`, `personaDelete` public methods and private helpers `allPersonas`, `findPersona`, `insertPersona`, `updatePersona`, `resolvePersonaData`, `wantsJson`.
+
+**`public/app/views/admin/ai-settings/index.php`:** Added "AI Personas" tab with list table and Create button.
+
+**`public/app/views/admin/ai-settings/persona-form.php`:** New view — name input (128 chars) + system_prompt textarea (4000 chars, monospace).
+
+**`public/app/views/admin/pieces/generate-form.php`:** Added persona `<select>` with `__new__` option that opens an inline `<dialog id="persona-dialog">`. The dialog POSTs to the persona create endpoint via `fetch()` (JSON mode), adds the new option to the select, and selects it. Prompt assembly: `{persona system_prompt}\n\nApply this to the following prompt:\n\n{user prompt}`.
+
+**`public/app/controllers/Admin/PiecesAdminController.php`:** `generate()` loads the selected persona (if any) and prepends its system prompt to `$basePrompt`. This prefixed prompt is used for attempt 1 and all repair attempts.
+
+### AI Profile Capabilities
+
+**`public/app/views/admin/user-profiles/settings-form.php`:** Added capabilities fieldset with three checkboxes: `cap_text`, `cap_code`, `cap_vision`. The saved value is a comma-separated string.
+
+**`public/app/models/UserAiSettings.php`:** `create()` and `update()` now include `capabilities` in INSERT/UPDATE. Added static `hasCapability(array $profile, string $capability): bool`.
+
+**`public/app/views/admin/pieces/generate-form.php`:** JS `checkCodeCap()` watches the profile select and shows `#code-cap-warning` when the selected profile lacks the `code` capability.
+
+**`public/app/controllers/Admin/PiecesAdminController.php`:** `aiDescribeImage()` returns HTTP 400 `{error: string}` when the selected profile lacks the `vision` capability.
+
+### Thumbnail Alt Text (No AI Tokens)
+
+**`public/app/controllers/Admin/PiecesAdminController.php`:** `generateSave()` sets `thumbnail_alt_text = mb_substr($prompt, 0, 500)` after piece creation. `captureThumbnail()` reads `art_pieces.prompt` and sets `thumbnail_alt_text` after saving the thumbnail blob.
+
+**Views updated** to use `thumbnail_alt_text` (falling back to `title`):
+- `public/app/views/pieces/_piece-card.php`
+- `public/app/views/user/profile.php`
+- `public/app/views/collections/show.php`
+- `public/app/views/admin/pieces/index.php`
+
+### AI Alt Text — TipTap Sparkle Fix + Media Picker + Vision Filter
+
+**`public/assets/js/tiptap-editor.js`:**
+
+- **E1 — HTML extraction:** The TipTap sparkle button now uses `getHTMLFromFragment(editor.state.doc.slice(from, to).content, editor.schema)` (imported from `@tiptap/core`) instead of `textBetween()`. This correctly serializes the selected content as HTML before POSTing to `POST /admin/ai/process`, preserving iframes and images outside the selection.
+- **E2 — Image popover AI alt button:** `ImageWithEditButton` NodeView now includes a `✨` button in the edit popover (row 1, between alt input and Save). Calls `window.openAiProfilePicker` with `{capability: 'vision', title: 'Generate Alt Text with AI'}`. POSTs to `POST /admin/ai/describe-image` and populates the alt text input.
+- **E3 — Media picker AI alt button:** `initMediaPicker()` now wires `#mp-alt-ai-btn` (added to `layout.php`) with the same vision-filtered profile picker flow.
+- **E4 — AI profile picker capability filter:** `openAiProfilePicker(callback, opts)` now accepts `opts.capability` to filter the profile list; `opts.title` changes the dialog heading. Profiles are cached in `_aiProfiles` after the first fetch. If no profiles match the capability filter, an inline warning notice is shown.
+
+**`public/app/views/admin/layout.php`:** Added `#mp-alt-ai-btn` (`✨`) alongside the `#mp-alt-input` field in the media picker alt text row.
+
+**`public/app/views/admin/media.php`:** Replaced `<input type="number" id="ai-alt-profile">` with `<select>`. JS on DOMContentLoaded fetches `/admin/ai/profiles`, filters to vision-capable profiles, and populates the select. If no vision profiles are configured, an empty placeholder is shown.
+
+### docs/api.md Updates
+
+- AI Settings section updated with 5 new persona routes, `capabilities` field explanation, capability enforcement rules, and inline persona creation JSON response.
+- Pieces section updated with `thumbnail_alt_text` column and auto-population behavior.
+- AI Content Helpers section updated: `/admin/ai/process` now notes HTML serialization; `/admin/ai/describe-image` documents the vision capability requirement; `/admin/ai/profiles` documents the `capabilities` field in its response.
+
+## 2026-06-18 — Bug Fix Session: Profile Colors, Migration Compatibility, Media Alt Text, AI Button, Republish
+
+### Root Causes Fixed
+
+1. **Profile page custom colors never applied** — The `$extraHeadHtml` CSS injection targeted `.page-user-profile` but the wrapper `<div>` in `profile.php` only had `class="managed-section"`. Added `page-user-profile` to that element. The 7-variable color map (`--paper`, `--ink`, `--paper-deep`, `--ink-soft`, `--green`, `--cyan`, `--orange`) correctly matches the actual CSS custom properties in `styles.css`; no map changes needed.
+
+2. **AI Personas migration incompatible with MySQL** — `ADD COLUMN IF NOT EXISTS` is MariaDB-only. Standard MySQL (Hostinger) rejects it. Removed `IF NOT EXISTS` from both `ALTER TABLE` statements in `docs/migrations/2026-06-18-ai-personas.sql`. **User must run the updated migration once in Hostinger phpMyAdmin.**
+
+3. **Vision capability filter always empty** — `GET /admin/ai/profiles` did not include `capabilities` in the JSON response. Added it to `PiecesAdminController::aiProfilesLibrary()`. The query already fetched `uavs.*`; only the return array needed updating.
+
+4. **Native media uploads had no stored alt text** — `media_files` table had no `alt_text` column; the `all()` query didn't include it; and the details panel hid the metadata form for native files entirely. Fixed by:
+   - Adding `alt_text VARCHAR(500) NULL` to the migration file
+   - Updating `MediaFile::all()` and `MediaFile::trashed()` to select `alt_text`
+   - Adding `MediaFile::updateAltText()` static method
+   - Adding `alt_text` to the library JSON response for native files
+   - Adding `MediaAdminController::updateFile()` handler
+   - Adding `POST /admin/media/[id]/update` route
+   - Updating `media.php` JS: native file cards now show the metadata form (title row hidden; alt text row shown) with action pointing to the correct endpoint
+
+5. **TipTap AI button alerted when no selection** — Replaced the early-return alert with a full-document fallback: when `from === to`, `editor.getHTML()` is sent and the result replaces the entire content via `editor.commands.setContent()`. Selection-only path unchanged when text is selected.
+
+6. **TipTap AI system prompt too weak** — The HTML-mode prompt vaguely said "preserve structure." Replaced with an explicit instruction to preserve all iframes, images, videos, figures, and HTML attributes and only change words in text nodes.
+
+7. **Republish to social platforms blocked** — `checked disabled` on already-published checkboxes prevented re-publishing. Removed `disabled`; updated hint text to "previously published (will republish if checked)." The controller already handles re-publishing without restriction.
+
+### Files Modified
+
+- `public/app/views/user/profile.php` — added `page-user-profile` class to wrapper div
+- `docs/migrations/2026-06-18-ai-personas.sql` — MySQL-compatible syntax; added `media_files.alt_text`
+- `public/app/controllers/Admin/PiecesAdminController.php` — `capabilities` in `aiProfilesLibrary()`; stronger HTML system prompt in `aiProcessText()`
+- `public/app/models/MediaFile.php` — `all()`/`trashed()` include `alt_text`; added `updateAltText()`
+- `public/app/controllers/Admin/MediaController.php` — `alt_text` in library JSON; added `updateFile()`
+- `public/app/router.php` — added `POST /admin/media/([0-9]+)/update`
+- `public/app/views/admin/media.php` — title row gets `id="asset-title-row"`; native file cards show alt-text edit form
+- `public/assets/js/tiptap-editor.js` — full-body improve fallback when no selection
+- `public/app/views/admin/posts/form.php` — removed `disabled` from synced platform checkboxes
+
+## 2026-06-18 — Schema-Tolerant AI / Media / Profile Runtime
+
+### Runtime Tolerance
+
+- Added shared schema introspection helpers in `public/app/helpers/schema.php` and wired them into the app router bootstrap. New helper functions: `ah_table_exists()`, `ah_column_exists()`, and `ah_existing_columns()`.
+- Chosen repair boundary: keep the June 18 schema additions, but make runtime behavior tolerate those columns/tables being absent until migration is applied.
+
+### AI Profile Capability Resolution
+
+- `UserAiVendorSettings` now supports two-layer capability resolution:
+  - explicit saved `capabilities` when the column exists
+  - vendor/model inference when the column is missing or stale
+- Resolved capability diagnostics now include `capability_source`, `explicit_capabilities`, `inferred_capabilities`, `transport_kind`, and `vision_inferred`.
+- `PiecesAdminController::aiProfilesLibrary()` now returns the resolved capability set plus diagnostics so TipTap and media-library pickers do not have to guess with a hardcoded fallback.
+
+### Truthful Vision Failure Reporting
+
+- `POST /admin/ai/describe-image` now returns machine-readable error `code` values with diagnostics instead of a single generic “not vision-capable” message.
+- Current failure codes: `vision_not_enabled`, `vision_transport_unsupported`, `vision_model_unsupported`, `missing_api_key`, `image_load_failed`, `provider_request_failed`, `unexpected_error`.
+- Mistral Small Latest and similar known vision-capable models can now surface through inference even when the saved capability flags are missing or stale.
+
+### Media Library Tolerance
+
+- `MediaFile::all()` / `trashed()` now fall back to `NULL AS alt_text` when `media_files.alt_text` is absent, preventing `/admin/media` fatals during partial rollout.
+- `/admin/media` now shows an inline migration notice when native media alt-text persistence is unavailable.
+- Native media alt-text editing is disabled gracefully when the column is missing; AI generation can still draft text for temporary copy/use.
+
+### User/Profile Tolerance
+
+- User style saving (`/user/settings/style`) now updates only the profile theme/palette/color columns that actually exist in the current database.
+- Admin-side user updates now only write optional theme/palette/preferred-profile columns when those columns exist, preventing unrelated profile saves from failing on older schemas.
+
+### Verification Utility
+
+- Added `scripts/verify-ai-media-profile-schema.php` to report the presence/absence of the key AI/media/profile schema pieces needed by the June 18 work and related profile-style behavior.
+
+## 2026-06-18 — Media Modal And Dual AI Selectors
+
+### UX Direction
+
+- Replaced the inline side inspector in `/admin/media` with a responsive asset dialog that uses a centered desktop modal and a fullscreen mobile presentation.
+- Chosen behavior combines the platform app's richer asset-editing flow with the Studio-style mobile treatment, rather than keeping the narrower side panel.
+
+### Media Metadata
+
+- Native `media_files` records now support a stored `title` alongside `alt_text`, with both fields surfaced inside the media modal.
+- The media modal now preloads stored title and alt text, treats description text as the editable alt-text/default description field, and keeps the metadata form available for supported native assets.
+
+### AI Authoring Controls
+
+- The shared AI profile picker now supports choosing both an AI profile and an optional AI persona for text improvement, image alt-text generation, and piece-generation/refinement workflows.
+- Media-library alt-text generation and TipTap improvement flows now consume the same profile/persona selection model instead of assuming a single profile-only choice.

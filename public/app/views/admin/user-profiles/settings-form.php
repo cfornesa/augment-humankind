@@ -21,6 +21,11 @@ $setting = $setting ?? [];
     <?php endif; ?>
 
     <form method="post" class="admin-form">
+        <?php if (!UserAiVendorSettings::supportsCapabilitiesColumn()): ?>
+            <div class="form-status" role="status">
+                <p>This database does not yet store explicit AI profile capabilities. Saved profiles will still work, and the runtime will infer capabilities from vendor/model metadata until the June 18 migration is applied.</p>
+            </div>
+        <?php endif; ?>
         <div class="field">
             <label for="user_id">User</label>
             <select id="user_id" name="user_id" required>
@@ -58,6 +63,26 @@ $setting = $setting ?? [];
                 Enabled
             </label>
         </div>
+        <?php
+        $caps = array_map('trim', explode(',', (string) ($setting['capabilities'] ?? 'text,code')));
+        ?>
+        <fieldset class="field" style="border: 1px solid var(--line); padding: 0.75rem 1rem; margin: 0;">
+            <legend style="font-weight: 700; font-size: 0.875rem; padding: 0 0.25rem;">Capabilities</legend>
+            <div style="display: flex; flex-wrap: wrap; gap: 0.75rem 1.5rem; margin-top: 0.25rem;">
+                <label class="checkbox-label">
+                    <input type="checkbox" name="cap_text" value="1" <?= in_array('text', $caps, true) ? 'checked' : '' ?>>
+                    Text generation
+                </label>
+                <label class="checkbox-label">
+                    <input type="checkbox" name="cap_code" value="1" <?= in_array('code', $caps, true) ? 'checked' : '' ?>>
+                    Code generation (art pieces)
+                </label>
+                <label class="checkbox-label">
+                    <input type="checkbox" name="cap_vision" value="1" <?= in_array('vision', $caps, true) ? 'checked' : '' ?>>
+                    Vision / image description
+                </label>
+            </div>
+        </fieldset>
         <div class="form-actions">
             <button type="submit" class="admin-btn"><?= $isEdit ? 'Update' : 'Add' ?> Setting</button>
             <a href="/admin/ai-settings?tab=profiles" class="admin-btn admin-btn-ghost">Cancel</a>

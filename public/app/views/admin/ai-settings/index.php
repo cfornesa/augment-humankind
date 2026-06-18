@@ -6,7 +6,7 @@ $pageTitle = 'AI Settings';
 
 ob_start();
 $tab = $_GET['tab'] ?? 'profiles';
-if (!in_array($tab, ['profiles', 'keys', 'vendor'], true)) {
+if (!in_array($tab, ['profiles', 'keys', 'vendor', 'personas'], true)) {
     $tab = 'profiles';
 }
 $error = $_GET['error'] ?? null;
@@ -28,9 +28,13 @@ $success = $_GET['success'] ?? null;
         <a href="/admin/ai-settings?tab=profiles" class="admin-tab <?= $tab === 'profiles' ? 'active' : '' ?>">AI Profiles</a>
         <a href="/admin/ai-settings?tab=keys" class="admin-tab <?= $tab === 'keys' ? 'active' : '' ?>">API Keys</a>
         <a href="/admin/ai-settings?tab=vendor" class="admin-tab <?= $tab === 'vendor' ? 'active' : '' ?>">AI Vendor</a>
+        <a href="/admin/ai-settings?tab=personas" class="admin-tab <?= $tab === 'personas' ? 'active' : '' ?>">AI Personas</a>
     </nav>
 
     <?php if ($tab === 'profiles'): ?>
+        <?php if (!$capabilitiesSchemaSupported): ?>
+            <div class="form-status" role="status"><p>AI profile capability flags are not stored in this database yet. The runtime is inferring capabilities from vendor/model metadata until `docs/migrations/2026-06-18-ai-personas.sql` is applied.</p></div>
+        <?php endif; ?>
         <p class="admin-copy">Profiles define which vendor, transport, and model a workflow should use.</p>
         <a href="/admin/user-profiles/settings/create" class="admin-btn" style="margin-bottom:1rem;display:inline-block;">Add AI Profile</a>
         <?php if (empty($settings)): ?>
@@ -78,6 +82,37 @@ $success = $_GET['success'] ?? null;
                             <td>
                                 <a href="/admin/user-profiles/keys/<?= (int) $k['id'] ?>/edit" class="admin-link">Edit</a>
                                 <form method="post" action="/admin/user-profiles/keys/<?= (int) $k['id'] ?>/delete" class="inline-form" onsubmit="return confirm('Delete this key?')">
+                                    <button type="submit" class="admin-link danger">Delete</button>
+                                </form>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        <?php endif; ?>
+    <?php elseif ($tab === 'personas'): ?>
+        <?php if (!$personasSchemaSupported): ?>
+            <div class="form-status" role="status"><p>The `ai_personas` table is not present yet. Apply `docs/migrations/2026-06-18-ai-personas.sql` to create and store personas.</p></div>
+        <?php endif; ?>
+        <p class="admin-copy">Personas are named system prompts that shape how the AI interprets piece generation prompts. Select one in the generation form to prepend it automatically.</p>
+        <a href="/admin/ai-settings/personas/create" class="admin-btn" style="margin-bottom:1rem;display:inline-block;">Create Persona</a>
+        <?php if (empty($personas)): ?>
+            <p>No personas created yet.</p>
+        <?php else: ?>
+            <table class="admin-table">
+                <thead>
+                    <tr><th>Name</th><th>System Prompt</th><th>Actions</th></tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($personas as $p): ?>
+                        <tr>
+                            <td style="white-space: nowrap;"><?= e($p['name']) ?></td>
+                            <td style="max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-soft); font-size: 0.875rem;">
+                                <?= e(mb_substr($p['system_prompt'], 0, 120)) ?><?= mb_strlen($p['system_prompt']) > 120 ? '…' : '' ?>
+                            </td>
+                            <td style="white-space: nowrap;">
+                                <a href="/admin/ai-settings/personas/<?= (int) $p['id'] ?>/edit" class="admin-link">Edit</a>
+                                <form method="post" action="/admin/ai-settings/personas/<?= (int) $p['id'] ?>/delete" class="inline-form" onsubmit="return confirm('Delete this persona?')">
                                     <button type="submit" class="admin-link danger">Delete</button>
                                 </form>
                             </td>

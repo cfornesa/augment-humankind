@@ -169,10 +169,47 @@ require dirname(__DIR__) . '/partials/header.php';
             </div>
             <?php endforeach ?>
 
-            <div style="margin-top: 1.5rem;">
+            <!-- Live style preview -->
+            <div style="margin-top: 2rem;">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:0.5rem;flex-wrap:wrap;gap:0.5rem;">
+                    <strong style="font-size:0.9rem;">Preview</strong>
+                    <div style="display:flex;gap:0.4rem;">
+                        <button type="button" id="preview-mode-light"
+                                style="padding:0.3rem 0.75rem;border:2px solid var(--line);background:var(--paper);color:var(--ink);font-size:0.8rem;cursor:pointer;font-family:inherit;">
+                            ☀ Light
+                        </button>
+                        <button type="button" id="preview-mode-dark"
+                                style="padding:0.3rem 0.75rem;border:2px solid var(--line);background:var(--paper);color:var(--ink);font-size:0.8rem;cursor:pointer;font-family:inherit;">
+                            ☾ Dark
+                        </button>
+                    </div>
+                </div>
+                <div id="style-preview" class="style-preview">
+                    <div class="sp-header">
+                        <span class="sp-brand">Augment Humankind</span>
+                        <span class="sp-nav-links">Coded Art · Feeds · Categories</span>
+                    </div>
+                    <div class="sp-body">
+                        <h2 class="sp-heading">Your profile heading</h2>
+                        <p class="sp-text">Body text — foreground on background. Explore the visual rhythm of your chosen palette.</p>
+                        <p class="sp-muted">Muted text on muted background for secondary information.</p>
+                        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-top:0.75rem;">
+                            <span class="sp-btn sp-btn-primary">Primary</span>
+                            <span class="sp-btn sp-btn-secondary">Secondary</span>
+                            <span class="sp-btn sp-btn-accent">Accent</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div style="margin-top: 1.5rem; display:flex; gap:0.75rem; flex-wrap:wrap; align-items:center;">
                 <button type="submit"
                         style="padding: 0.7rem 1.5rem; border: 3px solid var(--line); box-shadow: 4px 4px 0 var(--line); background: var(--ink); color: var(--paper); font-weight: 700; font-size: 1rem; cursor: pointer; font-family: inherit;">
                     Save style
+                </button>
+                <button type="button" id="reset-palette-btn"
+                        style="padding: 0.6rem 1.25rem; border: 2px solid var(--line); background: var(--paper); color: var(--ink); font-weight: 700; font-size: 0.95rem; cursor: pointer; font-family: inherit;">
+                    Reset to palette defaults
                 </button>
             </div>
         </form>
@@ -220,6 +257,36 @@ var PALETTES = {
   pastel:{color_background:'300 30% 98%',color_foreground:'270 30% 20%',color_muted:'300 20% 92%',color_muted_foreground:'270 20% 45%',color_primary:'260 60% 70%',color_primary_foreground:'0 0% 100%',color_secondary:'180 50% 65%',color_secondary_foreground:'0 0% 100%',color_accent:'340 65% 70%',color_accent_foreground:'0 0% 100%',color_destructive:'0 65% 65%',color_destructive_foreground:'0 0% 100%',color_background_dark:'270 30% 12%',color_foreground_dark:'300 20% 92%'}
 };
 
+// Preview sync
+var PREVIEW_MAP = {
+  color_background:'--sp-paper',color_foreground:'--sp-ink',
+  color_muted:'--sp-paper-deep',color_muted_foreground:'--sp-ink-soft',
+  color_primary:'--sp-primary',color_primary_foreground:'--sp-primary-fg',
+  color_secondary:'--sp-secondary',color_secondary_foreground:'--sp-secondary-fg',
+  color_accent:'--sp-accent',color_accent_foreground:'--sp-accent-fg'
+};
+var PREVIEW_MAP_DARK = {
+  color_background_dark:'--sp-paper',color_foreground_dark:'--sp-ink'
+};
+var previewMode = 'light';
+function syncPreview(){
+  var p=document.getElementById('style-preview');
+  if(!p)return;
+  var map = previewMode==='dark' ? PREVIEW_MAP_DARK : PREVIEW_MAP;
+  // Always set light vars first as fallback
+  Object.keys(PREVIEW_MAP).forEach(function(col){
+    var v=document.getElementById(col);
+    if(v&&v.value) p.style.setProperty(PREVIEW_MAP[col],'hsl('+v.value+')');
+  });
+  // Overlay dark vars if in dark mode
+  if(previewMode==='dark'){
+    Object.keys(PREVIEW_MAP_DARK).forEach(function(col){
+      var v=document.getElementById(col);
+      if(v&&v.value) p.style.setProperty(PREVIEW_MAP_DARK[col],'hsl('+v.value+')');
+    });
+  }
+}
+
 document.querySelectorAll('.color-swatch').forEach(function(swatch){
   var field=document.getElementById(swatch.dataset.hslTarget);
   if(field&&field.value){var hex=hslToHex(field.value);if(hex)swatch.value=hex;}
@@ -229,6 +296,7 @@ document.querySelectorAll('.color-swatch').forEach(function(swatch){
   swatch.addEventListener('input',function(){
     var field=document.getElementById(swatch.dataset.hslTarget);
     if(field)field.value=hexToHsl(swatch.value);
+    syncPreview();
   });
 });
 
@@ -236,23 +304,40 @@ document.querySelectorAll('.color-hsl-input').forEach(function(input){
   input.addEventListener('input',function(){
     var swatch=document.querySelector('.color-swatch[data-hsl-target="'+input.id+'"]');
     if(swatch&&input.value){var hex=hslToHex(input.value);if(hex)swatch.value=hex;}
+    syncPreview();
   });
 });
 
+function fillPalette(id){
+  var p=PALETTES[id];if(!p)return;
+  Object.keys(p).forEach(function(col){
+    var field=document.getElementById(col);
+    var swatch=document.querySelector('.color-swatch[data-hsl-target="'+col+'"]');
+    if(field)field.value=p[col];
+    if(swatch){var hex=hslToHex(p[col]);if(hex)swatch.value=hex;}
+  });
+  syncPreview();
+}
+
 var paletteSelect=document.querySelector('[data-palette-select]');
 if(paletteSelect){
-  paletteSelect.addEventListener('change',function(){
-    var p=PALETTES[this.value];
-    if(!p)return;
-    Object.keys(p).forEach(function(col){
-      var field=document.getElementById(col);
-      var swatch=document.querySelector('.color-swatch[data-hsl-target="'+col+'"]');
-      if(field)field.value=p[col];
-      if(swatch){var hex=hslToHex(p[col]);if(hex)swatch.value=hex;}
-    });
+  paletteSelect.addEventListener('change',function(){ fillPalette(this.value); });
+}
+
+var resetBtn=document.getElementById('reset-palette-btn');
+if(resetBtn){
+  resetBtn.addEventListener('click',function(){
+    var pal=paletteSelect?paletteSelect.value:'';
+    if(pal)fillPalette(pal);
   });
 }
 
+var lightBtn=document.getElementById('preview-mode-light');
+var darkBtn=document.getElementById('preview-mode-dark');
+if(lightBtn)lightBtn.addEventListener('click',function(){ previewMode='light'; syncPreview(); });
+if(darkBtn)darkBtn.addEventListener('click',function(){ previewMode='dark'; syncPreview(); });
+
+syncPreview();
 })();
 </script>
 <?php require dirname(__DIR__) . '/partials/footer.php'; ?>

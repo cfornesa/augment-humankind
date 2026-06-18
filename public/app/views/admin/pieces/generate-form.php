@@ -67,17 +67,39 @@ ob_start();
             <p style="margin-top: 0.5rem;"><a href="/admin/user-profiles" class="admin-btn">Configure AI Profiles &amp; Keys</a></p>
         </div>
     <?php else: ?>
-        <form method="post" action="/admin/pieces/generate" class="admin-form">
+        <form method="post" action="/admin/pieces/generate" class="admin-form" id="generate-form">
             <div class="field">
                 <label for="profile_id">AI Profile / Vendor &amp; Model</label>
                 <select id="profile_id" name="profile_id" required>
                     <option value="">-- Select Active AI Profile --</option>
                     <?php foreach ($profiles as $prof): ?>
-                        <option value="<?= (int) $prof['id'] ?>" <?= (int) ($selectedProfileId ?? 0) === (int) $prof['id'] ? 'selected' : '' ?>>
+                        <option value="<?= (int) $prof['id'] ?>"
+                                data-capabilities="<?= e($prof['capabilities'] ?? 'text,code') ?>"
+                                <?= (int) ($selectedProfileId ?? 0) === (int) $prof['id'] ? 'selected' : '' ?>>
                             <?= e($prof['profile_name']) ?> (<?= e($prof['vendor']) ?>: <?= e($prof['model']) ?>) &mdash; By <?= e($prof['user_name']) ?>
                         </option>
                     <?php endforeach; ?>
                 </select>
+                <p class="ai-capability-warning" id="code-cap-warning" hidden
+                   style="margin-top:0.5rem;padding:0.5rem 0.75rem;background:rgba(234,179,8,0.12);border:1px solid rgba(234,179,8,0.4);border-radius:4px;font-size:0.875rem;color:#92400e;">
+                    ⚠ This profile may not support code generation. Piece generation may fail.
+                    Consider switching to a profile with <strong>Code generation</strong> capability enabled
+                    under <a href="/admin/ai-settings?tab=profiles" style="color:inherit;">AI Settings → AI Profiles</a>.
+                </p>
+            </div>
+
+            <div class="field">
+                <label for="persona_id">AI Persona <span style="font-weight:400;color:var(--ink-soft);">(optional)</span></label>
+                <select id="persona_id" name="persona_id">
+                    <option value="">None — use raw prompt</option>
+                    <?php foreach ($personas as $p): ?>
+                        <option value="<?= (int) $p['id'] ?>" <?= (int) ($selectedPersonaId ?? 0) === (int) $p['id'] ? 'selected' : '' ?>>
+                            <?= e($p['name']) ?>
+                        </option>
+                    <?php endforeach; ?>
+                    <option value="__new__">+ Create new persona…</option>
+                </select>
+                <small>A persona prepends its system prompt to your creative prompt before sending to the AI.</small>
             </div>
 
             <div class="field">
@@ -102,14 +124,86 @@ ob_start();
             </div>
         </form>
 
+        <!-- Inline persona creation dialog -->
+        <dialog id="persona-dialog" style="padding:1.5rem;border:2px solid var(--line);background:var(--paper);color:var(--ink);max-width:560px;width:100%;">
+            <h2 style="margin-top:0;font-size:1.1rem;">Create AI Persona</h2>
+            <div id="persona-dialog-error" hidden style="padding:0.5rem 0.75rem;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.4);border-radius:4px;margin-bottom:1rem;font-size:0.875rem;color:#dc2626;"></div>
+            <div class="field">
+                <label for="dlg-persona-name">Persona Name</label>
+                <input id="dlg-persona-name" type="text" maxlength="128" placeholder="e.g. Abstract Expressionist">
+            </div>
+            <div class="field">
+                <label for="dlg-persona-prompt">System Prompt</label>
+                <textarea id="dlg-persona-prompt" rows="6" maxlength="4000" style="font-family:monospace;font-size:0.875rem;" placeholder="Write the system-level instruction…"></textarea>
+            </div>
+            <div style="display:flex;gap:0.75rem;margin-top:1rem;">
+                <button type="button" id="dlg-persona-save" class="admin-btn">Create &amp; Select</button>
+                <button type="button" id="dlg-persona-cancel" class="admin-btn admin-btn-ghost">Cancel</button>
+            </div>
+        </dialog>
+
         <script>
-        document.querySelector('.admin-form').addEventListener('submit', function () {
-            var btn = document.getElementById('generate-submit-btn');
-            if (btn) {
-                btn.disabled = true;
-                btn.innerText = 'Generating & Validating (up to 5 attempts, ~10 min max)...';
+        (function () {
+            var profileSel = document.getElementById('profile_id');
+            var personaSel = document.getElementById('persona_id');
+            var codeWarn   = document.getElementById('code-cap-warning');
+            var form       = document.getElementById('generate-form');
+            var btn        = document.getElementById('generate-submit-btn');
+            var dialog     = document.getElementById('persona-dialog');
+
+            function checkCodeCap() {
+                var opt = profileSel.options[profileSel.selectedIndex];
+                var caps = (opt ? opt.dataset.capabilities || '' : '').split(',');
+                codeWarn.hidden = caps.includes('code');
             }
-        });
+            profileSel.addEventListener('change', checkCodeCap);
+            checkCodeCap();
+
+            // Persona dialog trigger
+            personaSel.addEventListener('change', function () {
+                if (this.value === '__new__') {
+                    this.value = '';
+                    dialog.showModal();
+                }
+            });
+            document.getElementById('dlg-persona-cancel').addEventListener('click', function () {
+                dialog.close();
+            });
+            document.getElementById('dlg-persona-save').addEventListener('click', function () {
+                var name   = document.getElementById('dlg-persona-name').value.trim();
+                var prompt = document.getElementById('dlg-persona-prompt').value.trim();
+                var errEl  = document.getElementById('persona-dialog-error');
+                if (!name || !prompt) {
+                    errEl.textContent = 'Both name and system prompt are required.';
+                    errEl.hidden = false;
+                    return;
+                }
+                errEl.hidden = true;
+                var fd = new FormData();
+                fd.append('name', name);
+                fd.append('system_prompt', prompt);
+                fd.append('_format', 'json');
+                fetch('/admin/ai-settings/personas/create', {method:'POST', body:fd,
+                    headers:{'Accept':'application/json'}})
+                    .then(function(r){return r.json();})
+                    .then(function(data){
+                        if (data.error) { errEl.textContent = data.error; errEl.hidden = false; return; }
+                        var opt = document.createElement('option');
+                        opt.value = data.persona.id;
+                        opt.textContent = data.persona.name;
+                        // Insert before "+ Create new persona…"
+                        var newOpt = personaSel.querySelector('[value="__new__"]');
+                        personaSel.insertBefore(opt, newOpt);
+                        personaSel.value = data.persona.id;
+                        dialog.close();
+                    })
+                    .catch(function(){ errEl.textContent = 'Request failed. Please try again.'; errEl.hidden = false; });
+            });
+
+            form.addEventListener('submit', function () {
+                if (btn) { btn.disabled = true; btn.innerText = 'Generating & Validating (up to 5 attempts, ~10 min max)...'; }
+            });
+        })();
         </script>
     <?php endif; ?>
 </div>

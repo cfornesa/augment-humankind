@@ -7,6 +7,9 @@ class MediaAdminController
     public static function index(): void
     {
         admin_check();
+        $nativeAltTextSupported = MediaFile::supportsAltText();
+        $nativeTitleSupported = MediaFile::supportsTitle();
+        $warning = $_GET['warning'] ?? '';
 
         $files = array_map(static function (array $file): array {
             $id = (int) $file['id'];
@@ -18,7 +21,9 @@ class MediaAdminController
                 'source' => 'file',
                 'preview' => $isVideo ? '/media/' . $id : ($isHtml ? '/media/' . $id : '/image/' . $id),
                 'direct_url' => '/media/' . $id,
-                'label' => 'Asset #' . $id,
+                'label' => trim((string) ($file['title'] ?? '')) !== '' ? (string) $file['title'] : ('Asset #' . $id),
+                'alt_text_supported' => MediaFile::supportsAltText(),
+                'title_supported' => MediaFile::supportsTitle(),
             ];
         }, MediaFile::all());
 
@@ -67,6 +72,10 @@ class MediaAdminController
                 'kind' => $kind,
                 'url' => '/media/' . $file['id'],
                 'legacy_url' => $kind === 'image' ? '/image/' . $file['id'] : ($kind === 'iframe' ? '/media/' . $file['id'] : null),
+                'title' => $file['title'] ?? null,
+                'alt_text' => $file['alt_text'] ?? '',
+                'alt_text_supported' => MediaFile::supportsAltText(),
+                'title_supported' => MediaFile::supportsTitle(),
             ];
         }, MediaFile::all());
 
@@ -198,6 +207,24 @@ class MediaAdminController
     {
         admin_check();
         MediaAsset::hardDelete((int) $id);
+        header('Location: /admin/media');
+        exit;
+    }
+
+    public static function updateFile(string $id): void
+    {
+        admin_check();
+        if (!MediaFile::supportsAltText() && !MediaFile::supportsTitle()) {
+            header('Location: /admin/media?warning=' . urlencode('native-media-metadata-unavailable'));
+            exit;
+        }
+        $title = mb_substr(trim((string) ($_POST['title'] ?? '')), 0, 255);
+        $altText = mb_substr(trim((string) ($_POST['alt_text'] ?? '')), 0, 500);
+        MediaFile::updateMetadata(
+            (int) $id,
+            $title !== '' ? $title : null,
+            $altText !== '' ? $altText : null
+        );
         header('Location: /admin/media');
         exit;
     }

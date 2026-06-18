@@ -78,7 +78,7 @@ ob_start();
                         <td class="drag-handle" title="Drag to reorder">&#8597;</td>
                         <td class="cell-thumb" style="width: 70px;">
                             <?php if (!empty($piece['thumbnail_url'])): ?>
-                                <img src="<?= e($piece['thumbnail_url']) ?>" alt="" style="width: 60px; height: 45px; object-fit: cover; border: 1px solid var(--line); display: block;">
+                                <img src="<?= e($piece['thumbnail_url']) ?>" alt="<?= e((string)($piece['thumbnail_alt_text'] ?? $piece['title'] ?? '')) ?>" style="width: 60px; height: 45px; object-fit: cover; border: 1px solid var(--line); display: block;">
                             <?php else: ?>
                                 <div style="width: 60px; height: 45px; border: 1px dashed var(--line); background: var(--paper); display: flex; align-items: center; justify-content: center; font-size: 10px; color: var(--ink-soft);">None</div>
                             <?php endif; ?>

@@ -4,34 +4,94 @@ declare(strict_types=1);
 
 class MediaFile
 {
+    public static function supportsTitle(): bool
+    {
+        return ah_column_exists('media_files', 'title');
+    }
+
+    public static function supportsAltText(): bool
+    {
+        return ah_column_exists('media_files', 'alt_text');
+    }
+
     public static function create(string $data, string $mimeType, ?string $originalName = null): int
     {
         $pdo  = db();
-        $stmt = $pdo->prepare(
-            'INSERT INTO media_files (data, mime_type, byte_size, original_name) VALUES (?, ?, ?, ?)'
-        );
+        $title = null;
+        if ($originalName !== null && $originalName !== '') {
+            $title = pathinfo($originalName, PATHINFO_FILENAME) ?: $originalName;
+        }
+
+        if (self::supportsTitle()) {
+            $stmt = $pdo->prepare(
+                'INSERT INTO media_files (data, mime_type, byte_size, original_name, title) VALUES (?, ?, ?, ?, ?)'
+            );
+        } else {
+            $stmt = $pdo->prepare(
+                'INSERT INTO media_files (data, mime_type, byte_size, original_name) VALUES (?, ?, ?, ?)'
+            );
+        }
         $stmt->bindParam(1, $data, PDO::PARAM_LOB);
         $stmt->bindValue(2, $mimeType);
         $stmt->bindValue(3, mb_strlen($data, '8bit'), PDO::PARAM_INT);
         $stmt->bindValue(4, $originalName ?: null);
+        if (self::supportsTitle()) {
+            $stmt->bindValue(5, $title);
+        }
         $stmt->execute();
         return (int) $pdo->lastInsertId();
     }
 
     public static function all(): array
     {
+        $titleSelect = self::supportsTitle() ? 'title' : 'NULL AS title';
+        $altTextSelect = self::supportsAltText() ? 'alt_text' : 'NULL AS alt_text';
+
         return db()->query(
-            'SELECT id, mime_type, byte_size, original_name, deleted_at, created_at
+            'SELECT id, mime_type, byte_size, original_name, ' . $titleSelect . ', ' . $altTextSelect . ', deleted_at, created_at
              FROM media_files
              WHERE deleted_at IS NULL
              ORDER BY created_at DESC'
         )->fetchAll();
     }
 
+    public static function updateMetadata(int $id, ?string $title, ?string $altText): bool
+    {
+        $sets = [];
+        $params = [];
+
+        if (self::supportsTitle()) {
+            $sets[] = 'title = ?';
+            $params[] = $title;
+        }
+
+        if (self::supportsAltText()) {
+            $sets[] = 'alt_text = ?';
+            $params[] = $altText;
+        }
+
+        if ($sets === []) {
+            return false;
+        }
+
+        $params[] = $id;
+        $stmt = db()->prepare('UPDATE media_files SET ' . implode(', ', $sets) . ' WHERE id = ? AND deleted_at IS NULL');
+        $stmt->execute($params);
+        return true;
+    }
+
+    public static function updateAltText(int $id, ?string $altText): bool
+    {
+        return self::updateMetadata($id, null, $altText);
+    }
+
     public static function trashed(): array
     {
+        $titleSelect = self::supportsTitle() ? 'title' : 'NULL AS title';
+        $altTextSelect = self::supportsAltText() ? 'alt_text' : 'NULL AS alt_text';
+
         return db()->query(
-            'SELECT id, mime_type, byte_size, original_name, deleted_at, created_at
+            'SELECT id, mime_type, byte_size, original_name, ' . $titleSelect . ', ' . $altTextSelect . ', deleted_at, created_at
              FROM media_files
              WHERE deleted_at IS NOT NULL
              ORDER BY deleted_at DESC'
@@ -47,8 +107,10 @@ class MediaFile
 
     public static function find(int $id): array|false
     {
+        $titleSelect = self::supportsTitle() ? 'title' : 'NULL AS title';
+        $altTextSelect = self::supportsAltText() ? 'alt_text' : 'NULL AS alt_text';
         $stmt = db()->prepare(
-            'SELECT id, mime_type, byte_size, original_name, deleted_at, created_at
+            'SELECT id, mime_type, byte_size, original_name, ' . $titleSelect . ', ' . $altTextSelect . ', deleted_at, created_at
              FROM media_files
              WHERE id = ?'
         );
@@ -58,8 +120,10 @@ class MediaFile
 
     public static function getData(int $id): array|false
     {
+        $titleSelect = self::supportsTitle() ? 'title' : 'NULL AS title';
+        $altTextSelect = self::supportsAltText() ? 'alt_text' : 'NULL AS alt_text';
         $stmt = db()->prepare(
-            'SELECT id, mime_type, byte_size, original_name, deleted_at, data
+            'SELECT id, mime_type, byte_size, original_name, ' . $titleSelect . ', ' . $altTextSelect . ', deleted_at, data
              FROM media_files
              WHERE id = ?'
         );

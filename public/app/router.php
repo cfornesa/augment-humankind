@@ -7,6 +7,7 @@ require __DIR__ . '/helpers/oauth.php';
 require __DIR__ . '/helpers/icons.php';
 require __DIR__ . '/helpers/slugify.php';
 require __DIR__ . '/helpers/seo.php';
+require __DIR__ . '/helpers/schema.php';
 require __DIR__ . '/helpers/upload.php';
 require __DIR__ . '/helpers/feed-ingest.php';
 require __DIR__ . '/helpers/encryption.php';
@@ -265,6 +266,7 @@ $adminRoutes = [
     ['GET',  '/admin/media/library',         [MediaAdminController::class, 'library']],
     ['POST', '/admin/media/upload',          [MediaAdminController::class, 'upload']],
     ['POST', '/admin/media/import',          [MediaAdminController::class, 'import']],
+    ['POST', '/admin/media/([0-9]+)/update', [MediaAdminController::class, 'updateFile']],
     ['POST', '/admin/media/([0-9]+)/trash',  [MediaAdminController::class, 'trash']],
     ['POST', '/admin/media/([0-9]+)/destroy',[MediaAdminController::class, 'destroy']],
     ['POST', '/admin/media/asset/([0-9]+)/update',  [MediaAdminController::class, 'assetUpdate']],
@@ -331,6 +333,11 @@ $adminRoutes = [
     ['POST', '/admin/user-profiles/([a-zA-Z0-9_-]+)/edit', [UserProfilesAdminController::class, 'userUpdate']],
     ['GET',  '/admin/ai-settings', [UserProfilesAdminController::class, 'aiSettingsIndex']],
     ['POST', '/admin/ai-settings/vendor', [UserProfilesAdminController::class, 'vendorUpdate']],
+    ['GET',  '/admin/ai-settings/personas/create', [UserProfilesAdminController::class, 'personaCreate']],
+    ['POST', '/admin/ai-settings/personas/create', [UserProfilesAdminController::class, 'personaStore']],
+    ['GET',  '/admin/ai-settings/personas/([0-9]+)/edit', [UserProfilesAdminController::class, 'personaEdit']],
+    ['POST', '/admin/ai-settings/personas/([0-9]+)/edit', [UserProfilesAdminController::class, 'personaUpdate']],
+    ['POST', '/admin/ai-settings/personas/([0-9]+)/delete', [UserProfilesAdminController::class, 'personaDelete']],
     ['GET',  '/admin/user-profiles/settings/create', [UserProfilesAdminController::class, 'settingsCreate']],
     ['POST', '/admin/user-profiles/settings/create', [UserProfilesAdminController::class, 'settingsStore']],
     ['GET',  '/admin/user-profiles/settings/([0-9]+)/edit', [UserProfilesAdminController::class, 'settingsEdit']],

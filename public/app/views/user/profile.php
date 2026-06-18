@@ -2,51 +2,70 @@
 
 declare(strict_types=1);
 
-// Inject user-scoped color overrides scoped per theme mode to prevent dark-mode bleed
+// Export the same CSS tokens the profile shell actually consumes.
 $_ahUserLightMap = [
-    'color_background'       => '--paper',
-    'color_foreground'       => '--ink',
-    'color_muted'            => '--paper-deep',
-    'color_muted_foreground' => '--ink-soft',
-    'color_primary'          => '--green',
-    'color_secondary'        => '--cyan',
-    'color_accent'           => '--orange',
+    'color_background'             => ['--paper', '--white'],
+    'color_foreground'             => ['--ink', '--line'],
+    'color_muted'                  => ['--paper-deep'],
+    'color_muted_foreground'       => ['--ink-soft'],
+    'color_primary'                => ['--green'],
+    'color_primary_foreground'     => ['--green-fg'],
+    'color_secondary'              => ['--cyan'],
+    'color_secondary_foreground'   => ['--cyan-fg'],
+    'color_accent'                 => ['--orange'],
+    'color_accent_foreground'      => ['--orange-fg'],
+    'color_destructive'            => ['--destructive'],
+    'color_destructive_foreground' => ['--destructive-fg'],
 ];
 $_ahUserDarkMap = [
-    'color_background_dark'       => '--paper',
-    'color_foreground_dark'       => '--ink',
-    'color_muted_dark'            => '--paper-deep',
-    'color_muted_foreground_dark' => '--ink-soft',
-    'color_primary_dark'          => '--green',
-    'color_secondary_dark'        => '--cyan',
-    'color_accent_dark'           => '--orange',
+    'color_background_dark'             => ['--paper', '--white'],
+    'color_foreground_dark'             => ['--ink', '--line'],
+    'color_muted_dark'                  => ['--paper-deep'],
+    'color_muted_foreground_dark'       => ['--ink-soft'],
+    'color_primary_dark'                => ['--green'],
+    'color_primary_foreground_dark'     => ['--green-fg'],
+    'color_secondary_dark'              => ['--cyan'],
+    'color_secondary_foreground_dark'   => ['--cyan-fg'],
+    'color_accent_dark'                 => ['--orange'],
+    'color_accent_foreground_dark'      => ['--orange-fg'],
+    'color_destructive_dark'            => ['--destructive'],
+    'color_destructive_foreground_dark' => ['--destructive-fg'],
 ];
 $_ahUserLightVars = [];
-foreach ($_ahUserLightMap as $_col => $_var) {
-    if (!empty($profileUser[$_col])) {
-        $_ahUserLightVars[] = $_var . ':hsl(' . htmlspecialchars((string) $profileUser[$_col], ENT_QUOTES, 'UTF-8') . ')';
+foreach ($_ahUserLightMap as $_col => $_vars) {
+    if (empty($profileUser[$_col])) {
+        continue;
+    }
+
+    $_value = 'hsl(' . htmlspecialchars((string) $profileUser[$_col], ENT_QUOTES, 'UTF-8') . ')';
+    foreach ($_vars as $_var) {
+        $_ahUserLightVars[] = $_var . ':' . $_value;
     }
 }
-$_ahUserDarkVars = [];
-foreach ($_ahUserDarkMap as $_col => $_var) {
-    if (!empty($profileUser[$_col])) {
-        $_ahUserDarkVars[] = $_var . ':hsl(' . htmlspecialchars((string) $profileUser[$_col], ENT_QUOTES, 'UTF-8') . ')';
+$_ahUserDarkVars = $_ahUserLightVars;
+foreach ($_ahUserDarkMap as $_col => $_vars) {
+    if (empty($profileUser[$_col])) {
+        continue;
+    }
+
+    $_value = 'hsl(' . htmlspecialchars((string) $profileUser[$_col], ENT_QUOTES, 'UTF-8') . ')';
+    foreach ($_vars as $_var) {
+        $_ahUserDarkVars[] = $_var . ':' . $_value;
     }
 }
 $extraHeadHtml = '';
 if ($_ahUserLightVars !== []) {
-    $extraHeadHtml .= '<style>:root:not([data-theme="dark"]) .page-user-profile{' . implode(';', $_ahUserLightVars) . '}</style>';
-    $extraHeadHtml .= '<style>@media(prefers-color-scheme:light){:root:not([data-theme="dark"]) .page-user-profile{' . implode(';', $_ahUserLightVars) . '}}</style>';
+    $extraHeadHtml .= '<style>:root:not([data-theme="dark"]) .page-user-profile{background:var(--paper);color:var(--ink);' . implode(';', $_ahUserLightVars) . '}</style>';
 }
 if ($_ahUserDarkVars !== []) {
-    $extraHeadHtml .= '<style>[data-theme="dark"] .page-user-profile{' . implode(';', $_ahUserDarkVars) . '}</style>';
-    $extraHeadHtml .= '<style>@media(prefers-color-scheme:dark){:root:not([data-theme="light"]) .page-user-profile{' . implode(';', $_ahUserDarkVars) . '}}</style>';
+    $extraHeadHtml .= '<style>[data-theme="dark"] .page-user-profile{background:var(--paper);color:var(--ink);' . implode(';', $_ahUserDarkVars) . '}</style>';
+    $extraHeadHtml .= '<style>@media(prefers-color-scheme:dark){:root:not([data-theme="light"]) .page-user-profile{background:var(--paper);color:var(--ink);' . implode(';', $_ahUserDarkVars) . '}}</style>';
 }
-unset($_ahUserLightMap, $_ahUserDarkMap, $_ahUserLightVars, $_ahUserDarkVars, $_col, $_var);
+unset($_ahUserLightMap, $_ahUserDarkMap, $_ahUserLightVars, $_ahUserDarkVars, $_col, $_vars, $_var, $_value);
 
 require dirname(__DIR__) . '/partials/header.php';
 ?>
-<div class="managed-section" style="max-width: 860px; margin: 0 auto; padding: 2rem 1.5rem;">
+<div class="managed-section page-user-profile" style="max-width: 860px; margin: 0 auto; padding: 2rem 1.5rem;">
 
     <header class="user-profile-header" style="display: flex; gap: 1.5rem; align-items: flex-start; margin-bottom: 2.5rem; padding-bottom: 2rem; border-bottom: 3px solid var(--line);">
         <?php if (!empty($profileUser['image'])): ?>
@@ -103,7 +122,7 @@ require dirname(__DIR__) . '/partials/header.php';
             <li>
                 <a href="/pieces/<?= (int) $piece['id'] ?>" style="display: block; text-decoration: none; color: var(--ink);">
                     <?php if (!empty($piece['thumbnail_url'])): ?>
-                        <img src="<?= e($piece['thumbnail_url']) ?>" alt="" loading="lazy" decoding="async"
+                        <img src="<?= e($piece['thumbnail_url']) ?>" alt="<?= e((string)($piece['thumbnail_alt_text'] ?? $piece['title'] ?? '')) ?>" loading="lazy" decoding="async"
                              style="width: 100%; aspect-ratio: 1; object-fit: cover; border: 2px solid var(--line); display: block; margin-bottom: 0.4rem;">
                     <?php else: ?>
                         <div aria-hidden="true" style="width: 100%; aspect-ratio: 1; background: var(--paper-deep); border: 2px solid var(--line); margin-bottom: 0.4rem;"></div>

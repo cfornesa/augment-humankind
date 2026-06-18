@@ -65,12 +65,20 @@ class PiecesAdminController
         )->fetchAll();
 
         $result = array_map(static function (array $profile): array {
+            $capabilityDiagnostics = UserAiVendorSettings::capabilityDiagnostics($profile);
             return [
-                'id' => (int) $profile['id'],
+                'id'           => (int) $profile['id'],
                 'profile_name' => $profile['profile_name'] ?? '',
-                'vendor' => $profile['vendor'] ?? '',
-                'model' => $profile['model'] ?? '',
-                'user_name' => $profile['user_name'] ?? '',
+                'vendor'       => $profile['vendor'] ?? '',
+                'model'        => $profile['model'] ?? '',
+                'user_name'    => $profile['user_name'] ?? '',
+                'capabilities' => $capabilityDiagnostics['capabilities_csv'],
+                'capability_source' => $capabilityDiagnostics['capability_source'],
+                'explicit_capabilities' => $capabilityDiagnostics['explicit_capabilities_csv'],
+                'inferred_capabilities' => $capabilityDiagnostics['inferred_capabilities_csv'],
+                'transport_kind' => $capabilityDiagnostics['transport_kind'],
+                'vision_inferred' => $capabilityDiagnostics['vision_inferred'],
+                'capabilities_schema_supported' => $capabilityDiagnostics['capabilities_schema_supported'],
             ];
         }, $profiles);
 
@@ -85,7 +93,7 @@ class PiecesAdminController
         $error = null;
         $artMedia = Category::all();
         $assignedCategoryIds = [];
-        [$profiles, $preferredProfileId] = self::loadProfilesData();
+        [$profiles, $preferredProfileId, $personas] = self::loadProfilesData();
         require dirname(__DIR__, 2) . '/views/admin/pieces/form.php';
     }
 
@@ -126,7 +134,7 @@ class PiecesAdminController
             $error = $e->getMessage();
             $artMedia = Category::all();
             $assignedCategoryIds = $piece['category_ids'];
-            [$profiles, $preferredProfileId] = self::loadProfilesData();
+            [$profiles, $preferredProfileId, $personas] = self::loadProfilesData();
             require dirname(__DIR__, 2) . '/views/admin/pieces/form.php';
         }
         exit;
@@ -143,7 +151,7 @@ class PiecesAdminController
         $error = null;
         $artMedia = Category::all();
         $assignedCategoryIds = PlatformArtPiece::categoryIds((int) $id);
-        [$profiles, $preferredProfileId] = self::loadProfilesData();
+        [$profiles, $preferredProfileId, $personas] = self::loadProfilesData();
         require dirname(__DIR__, 2) . '/views/admin/pieces/form.php';
     }
 
@@ -200,7 +208,7 @@ class PiecesAdminController
             $error = $e->getMessage();
             $artMedia = Category::all();
             $assignedCategoryIds = $piece['category_ids'];
-            [$profiles, $preferredProfileId] = self::loadProfilesData();
+            [$profiles, $preferredProfileId, $personas] = self::loadProfilesData();
             require dirname(__DIR__, 2) . '/views/admin/pieces/form.php';
         }
         exit;
@@ -346,7 +354,7 @@ class PiecesAdminController
         $profiles = db()->query("SELECT uavs.*, u.name AS user_name FROM user_ai_vendor_settings uavs JOIN users u ON u.id = uavs.user_id WHERE uavs.enabled = 1 ORDER BY uavs.profile_name ASC")->fetchAll();
         $owner = PlatformUser::owner();
         $preferredProfileId = $owner && !empty($owner['preferred_art_piece_profile_id']) ? (int) $owner['preferred_art_piece_profile_id'] : null;
-        return [$profiles, $preferredProfileId];
+        return [$profiles, $preferredProfileId, self::loadPersonas()];
     }
 
     private static function resolvePieceData(): array
@@ -505,6 +513,17 @@ class PiecesAdminController
             'comments_enabled' => (int)(bool) ($piece['comments_enabled'] ?? 0),
         ]));
 
+        // Auto-set thumbnail alt text from the piece's generation prompt (no AI tokens)
+        $piecePrompt = (string) ($piece['prompt'] ?? '');
+        if ($piecePrompt !== '') {
+            try {
+                if (ah_column_exists('art_pieces', 'thumbnail_alt_text')) {
+                    db()->prepare('UPDATE art_pieces SET thumbnail_alt_text = ? WHERE id = ?')
+                        ->execute([mb_substr($piecePrompt, 0, 500), (int) $id]);
+                }
+            } catch (Throwable) {}
+        }
+
         echo json_encode(['ok' => true, 'url' => $url]);
         exit;
     }
@@ -513,10 +532,12 @@ class PiecesAdminController
     {
         admin_check();
         $profiles = db()->query("SELECT uavs.*, u.name AS user_name FROM user_ai_vendor_settings uavs JOIN users u ON u.id = uavs.user_id WHERE uavs.enabled = 1 ORDER BY uavs.profile_name ASC")->fetchAll();
+        $personas = self::loadPersonas();
         $error = null;
         $prompt = '';
         $engine = 'p5';
         $selectedProfileId = null;
+        $selectedPersonaId = null;
         $attemptLogs = null;
 
         // Pre-select owner preferred art piece profile
@@ -528,6 +549,30 @@ class PiecesAdminController
         require dirname(__DIR__, 2) . '/views/admin/pieces/generate-form.php';
     }
 
+    private static function loadPersonas(): array
+    {
+        try {
+            return db()->query('SELECT id, name, system_prompt FROM ai_personas ORDER BY name ASC')->fetchAll();
+        } catch (Throwable) {
+            return [];
+        }
+    }
+
+    private static function findPersonaById(int $personaId): array|false
+    {
+        if ($personaId <= 0) {
+            return false;
+        }
+
+        try {
+            $stmt = db()->prepare('SELECT id, name, system_prompt FROM ai_personas WHERE id = ? LIMIT 1');
+            $stmt->execute([$personaId]);
+            return $stmt->fetch() ?: false;
+        } catch (Throwable) {
+            return false;
+        }
+    }
+
     public static function generate(): void
     {
         set_time_limit(660); // 5 attempts × 2 min + buffer
@@ -535,8 +580,11 @@ class PiecesAdminController
         $prompt = trim($_POST['prompt'] ?? '');
         $engine = trim($_POST['engine'] ?? 'p5');
         $profileId = (int) ($_POST['profile_id'] ?? 0);
+        $personaId = (int) ($_POST['persona_id'] ?? 0);
 
         $profiles = db()->query("SELECT uavs.*, u.name AS user_name FROM user_ai_vendor_settings uavs JOIN users u ON u.id = uavs.user_id WHERE uavs.enabled = 1 ORDER BY uavs.profile_name ASC")->fetchAll();
+        $personas = self::loadPersonas();
+        $selectedPersonaId = $personaId > 0 ? $personaId : null;
 
         try {
             if ($prompt === '') {
@@ -557,6 +605,19 @@ class PiecesAdminController
             }
 
             $apiKey = decrypt_string($keyRow['encrypted_api_key'], ai_encryption_key());
+
+            // Apply persona if selected
+            $persona = null;
+            if ($personaId > 0) {
+                try {
+                    $stmt = db()->prepare('SELECT * FROM ai_personas WHERE id = ? LIMIT 1');
+                    $stmt->execute([$personaId]);
+                    $persona = $stmt->fetch() ?: null;
+                } catch (Throwable) {}
+            }
+            $basePrompt = $persona
+                ? trim($persona['system_prompt']) . "\n\nApply this to the following prompt:\n\n" . $prompt
+                : $prompt;
 
             $aiClient = new \App\Lib\Ai\AiProviderClient($profile['vendor'], $profile['model'], $profile['endpoint_kind'], $apiKey);
 
@@ -585,9 +646,9 @@ class PiecesAdminController
 
                 $systemPrompt = art_piece_generation_system_prompt($engine);
                 if ($attemptCount === 1) {
-                    $userPromptForApi = $prompt;
+                    $userPromptForApi = $basePrompt;
                 } else {
-                    $userPromptForApi = art_piece_repair_prompt($engine, $prompt, $previousRawResponse, $lastError);
+                    $userPromptForApi = art_piece_repair_prompt($engine, $basePrompt, $previousRawResponse, $lastError);
                 }
 
                 $res = $aiClient->generate($systemPrompt, $userPromptForApi);
@@ -647,6 +708,7 @@ class PiecesAdminController
         } catch (Throwable $e) {
             $error = $e->getMessage();
             $selectedProfileId = $profileId;
+            $selectedPersonaId = $personaId > 0 ? $personaId : null;
             require dirname(__DIR__, 2) . '/views/admin/pieces/generate-form.php';
         }
     }
@@ -696,6 +758,16 @@ class PiecesAdminController
                 'description' => trim($_POST['description'] ?? '') ?: null,
             ]);
 
+            // Auto-set thumbnail alt text from the generation prompt (no AI tokens)
+            if ($prompt !== null && $prompt !== '') {
+                try {
+                    if (ah_column_exists('art_pieces', 'thumbnail_alt_text')) {
+                        db()->prepare('UPDATE art_pieces SET thumbnail_alt_text = ? WHERE id = ?')
+                            ->execute([mb_substr($prompt, 0, 500), $pieceId]);
+                    }
+                } catch (Throwable) {}
+            }
+
             $versionId = PlatformArtPieceVersion::create([
                 'art_piece_id' => $pieceId,
                 'version_number' => 1,
@@ -728,6 +800,7 @@ class PiecesAdminController
 
         try {
             $profileId = (int) ($_POST['profile_id'] ?? 0);
+            $personaId = (int) ($_POST['persona_id'] ?? 0);
             $content = trim($_POST['content'] ?? '');
             $mode = $_POST['mode'] ?? 'text';
 
@@ -758,11 +831,16 @@ class PiecesAdminController
 
             $apiKey = decrypt_string($keyRow['encrypted_api_key'], ai_encryption_key());
             $aiClient = new \App\Lib\Ai\AiProviderClient($profile['vendor'], $profile['model'], $profile['endpoint_kind'], $apiKey);
+            $persona = self::findPersonaById($personaId);
 
             if ($mode === 'html') {
-                $systemPrompt = 'You are a helpful writing assistant. Improve the provided HTML text while preserving all HTML tags and structure. Return only the improved HTML with no markdown fences, explanations, or prose.';
+                $systemPrompt = 'You are a writing assistant. Improve the clarity, tone, and flow of the visible text content only. You MUST preserve ALL HTML tags, attributes, iframes, images, videos, figures, and embedded elements exactly as they appear — do not remove, modify, wrap, or reorder any HTML element. Only change the words inside text nodes. Make at least one meaningful wording improvement instead of echoing the draft unchanged. Return only the improved HTML with no markdown fences or explanations.';
             } else {
-                $systemPrompt = 'You are a helpful writing assistant. Improve the provided plain text for clarity, tone, and flow. Return only the improved plain text with no markdown fences, explanations, or prose.';
+                $systemPrompt = 'You are a helpful writing assistant. Improve the provided plain text for clarity, tone, and flow. Make at least one meaningful wording improvement instead of echoing the draft unchanged. Return only the improved plain text with no markdown fences, explanations, or prose.';
+            }
+
+            if ($persona) {
+                $systemPrompt .= "\n\nPersona guidance:\n" . trim((string) $persona['system_prompt']) . "\n\nApply the persona only to tone, voice, and rhetorical framing. Preserve factual meaning and all structural constraints.";
             }
 
             $res = $aiClient->chat($systemPrompt, $content);
@@ -788,7 +866,9 @@ class PiecesAdminController
 
         try {
             $profileId = (int) ($_POST['profile_id'] ?? 0);
+            $personaId = (int) ($_POST['persona_id'] ?? 0);
             $imageUrl = trim($_POST['image_url'] ?? '');
+            $existingAltText = trim((string) ($_POST['existing_alt_text'] ?? ''));
 
             if ($profileId <= 0) {
                 http_response_code(400);
@@ -808,10 +888,25 @@ class PiecesAdminController
                 exit;
             }
 
+            $visionSupport = UserAiVendorSettings::visionSupportStatus($profile);
+            if (!$visionSupport['ok']) {
+                http_response_code(422);
+                echo json_encode([
+                    'code' => $visionSupport['code'],
+                    'error' => $visionSupport['message'],
+                    'diagnostics' => $visionSupport['diagnostics'],
+                ]);
+                exit;
+            }
+
             $keyRow = UserAiVendorKeys::findForUserVendor($profile['user_id'], $profile['vendor']);
             if (!$keyRow) {
                 http_response_code(400);
-                echo json_encode(['error' => 'No API key configured for vendor: ' . $profile['vendor']]);
+                echo json_encode([
+                    'code' => 'missing_api_key',
+                    'error' => 'No API key configured for vendor: ' . $profile['vendor'],
+                    'diagnostics' => $visionSupport['diagnostics'],
+                ]);
                 exit;
             }
 
@@ -819,7 +914,14 @@ class PiecesAdminController
             $blob = null;
             $mimeType = 'image/jpeg';
 
-            if (str_starts_with($imageUrl, '/api/media/')) {
+            if (str_starts_with($imageUrl, '/api/media-assets/')) {
+                $assetId = (int) basename($imageUrl);
+                $asset = MediaAsset::find($assetId);
+                if ($asset && !empty($asset['file_data'])) {
+                    $blob = $asset['file_data'];
+                    $mimeType = $asset['mime_type'] ?: 'image/jpeg';
+                }
+            } elseif (str_starts_with($imageUrl, '/api/media/')) {
                 $filename = basename($imageUrl);
                 $asset = MediaAsset::findByFilename($filename);
                 if ($asset && !empty($asset['file_data'])) {
@@ -844,26 +946,49 @@ class PiecesAdminController
 
             if ($blob === null) {
                 http_response_code(400);
-                echo json_encode(['error' => 'Could not load image data from the provided URL.']);
+                echo json_encode([
+                    'code' => 'image_load_failed',
+                    'error' => 'Could not load image data from the provided URL.',
+                    'diagnostics' => $visionSupport['diagnostics'],
+                ]);
                 exit;
             }
 
             $apiKey = decrypt_string($keyRow['encrypted_api_key'], ai_encryption_key());
             $aiClient = new \App\Lib\Ai\AiProviderClient($profile['vendor'], $profile['model'], $profile['endpoint_kind'], $apiKey);
+            $persona = self::findPersonaById($personaId);
+
+            $describePrompt = 'Write concise, factual alt text for this image. Return only the alt text. Keep it accessible, specific, and under 160 characters when possible.';
+            if ($existingAltText !== '') {
+                $describePrompt .= "\n\nExisting alt text to refine:\n" . $existingAltText;
+            }
+            if ($persona) {
+                $describePrompt .= "\n\nOptional persona guidance:\n" . trim((string) $persona['system_prompt']) . "\n\nUse the persona only if it helps tone or focus, but keep the result factual and accessibility-first.";
+            }
 
             $base64 = base64_encode($blob);
-            $res = $aiClient->describeImage($base64, $mimeType);
+            $res = $aiClient->describeImage($base64, $mimeType, $describePrompt);
             if (!$res['ok']) {
                 http_response_code(502);
-                echo json_encode(['error' => $res['error'] ?? 'AI request failed.']);
+                echo json_encode([
+                    'code' => 'provider_request_failed',
+                    'error' => $res['error'] ?? 'AI request failed.',
+                    'diagnostics' => $visionSupport['diagnostics'],
+                ]);
                 exit;
             }
 
-            echo json_encode(['result' => $res['text']]);
+            echo json_encode([
+                'result' => $res['text'],
+                'diagnostics' => $visionSupport['diagnostics'],
+            ]);
             exit;
         } catch (Throwable $e) {
             http_response_code(500);
-            echo json_encode(['error' => $e->getMessage()]);
+            echo json_encode([
+                'code' => 'unexpected_error',
+                'error' => $e->getMessage(),
+            ]);
             exit;
         }
     }
@@ -879,6 +1004,7 @@ class PiecesAdminController
             $prompt = trim((string) ($input['prompt'] ?? ''));
             $engine = trim((string) ($input['engine'] ?? 'p5'));
             $profileId = (int) ($input['profile_id'] ?? 0);
+            $personaId = (int) ($input['persona_id'] ?? 0);
             $html = (string) ($input['html_code'] ?? '');
             $css = (string) ($input['css_code'] ?? '');
             $js = (string) ($input['generated_code'] ?? '');
@@ -902,6 +1028,7 @@ class PiecesAdminController
 
             $apiKey = decrypt_string($keyRow['encrypted_api_key'], ai_encryption_key());
             $aiClient = new \App\Lib\Ai\AiProviderClient($profile['vendor'], $profile['model'], $profile['endpoint_kind'], $apiKey);
+            $persona = self::findPersonaById($personaId);
 
             $attemptCount = 0;
             $success = false;
@@ -914,6 +1041,9 @@ class PiecesAdminController
             while ($attemptCount < ART_PIECE_MAX_ATTEMPTS) {
                 $attemptCount++;
                 $systemPrompt = art_piece_refine_system_prompt($engine);
+                if ($persona) {
+                    $systemPrompt .= "\n\nPersona guidance:\n" . trim((string) $persona['system_prompt']) . "\n\nUse the persona to influence style and creative direction, but still obey all engine, safety, and output-format requirements.";
+                }
 
                 if ($attemptCount === 1) {
                     $userPromptForApi = art_piece_refine_user_prompt($engine, $prompt, $html, $css, $js);

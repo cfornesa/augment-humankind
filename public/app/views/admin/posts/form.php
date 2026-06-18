@@ -167,11 +167,11 @@ ob_start();
                                 id="pc-<?= $connId ?>"
                                 class="platform-conn-checkbox"
                                 data-platform="<?= $platformName ?>"
-                                <?= $alreadySynced ? 'checked disabled' : '' ?>
+                                <?= $alreadySynced ? 'checked' : '' ?>
                             >
                             <span><?= $platformLabel ?></span>
                             <?php if ($alreadySynced): ?>
-                                <span class="form-hint"> — already published</span>
+                                <span class="form-hint"> — previously published (will republish if checked)</span>
                             <?php endif ?>
                         </label>
                         <div class="platform-draft-row" id="pdr-<?= $connId ?>"

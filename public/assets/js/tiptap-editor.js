@@ -323,6 +323,45 @@ function makeImageWithEditButton() {
         altInput.placeholder = 'Describe this image for screen readers'
         altInput.maxLength = 250
 
+        const aiAltBtn = document.createElement('button')
+        aiAltBtn.type = 'button'
+        aiAltBtn.className = 'admin-btn admin-btn-sm admin-btn-ghost'
+        aiAltBtn.title = 'Generate alt text with AI (requires vision-capable profile)'
+        aiAltBtn.textContent = '✨'
+
+        aiAltBtn.addEventListener('click', e => {
+          e.preventDefault(); e.stopPropagation()
+          const imgSrc = currentNode?.attrs?.src
+          if (!imgSrc) { return }
+          window.openAiProfilePicker(async selection => {
+            if (!selection?.profileId) return
+            aiAltBtn.disabled = true
+            aiAltBtn.textContent = '…'
+            try {
+              const fd = new FormData()
+              fd.append('profile_id', selection.profileId)
+              if (selection.personaId) fd.append('persona_id', selection.personaId)
+              fd.append('image_url', imgSrc)
+              if (altInput.value.trim()) fd.append('existing_alt_text', altInput.value.trim())
+              const res = await fetch('/admin/ai/describe-image', { method: 'POST', body: fd })
+              const data = await res.json()
+              if (data.result) {
+                altInput.value = data.result
+                aiAltBtn.textContent = '✓'
+                setTimeout(() => { aiAltBtn.textContent = '✨'; aiAltBtn.disabled = false }, 1500)
+              } else {
+                alert('Alt text generation failed: ' + (data.error || 'Unknown error'))
+                aiAltBtn.textContent = '✨'
+                aiAltBtn.disabled = false
+              }
+            } catch (err) {
+              alert('Error: ' + err.message)
+              aiAltBtn.textContent = '✨'
+              aiAltBtn.disabled = false
+            }
+          }, { capability: 'vision', title: 'Generate Alt Text with AI', taskKey: 'alt-text' })
+        })
+
         const updateBtn = document.createElement('button')
         updateBtn.type = 'button'
         updateBtn.className = 'admin-btn admin-btn-sm'
@@ -336,6 +375,7 @@ function makeImageWithEditButton() {
 
         row1.appendChild(altLabel)
         row1.appendChild(altInput)
+        row1.appendChild(aiAltBtn)
         row1.appendChild(updateBtn)
         row1.appendChild(closePopoverBtn)
 
@@ -739,29 +779,31 @@ function initTiptap(textarea) {
   bar.appendChild(sep())
 
   // AI Improve Text
-  const improveBtn = icon('✨'); improveBtn.title = 'Improve selected text with AI'
+  const improveBtn = document.createElement('button')
+  improveBtn.type = 'button'
+  improveBtn.className = 'tt-btn tt-ai-btn'
+  improveBtn.textContent = 'AI Improve'
+  improveBtn.title = 'Improve selected text with AI, or the full document when nothing is selected'
   improveBtn.addEventListener('click', () => {
-    const selection = editor.state.selection
-    const from = selection.from
-    const to = selection.to
-    if (from === to) {
-      alert('Select some text first to improve it.')
-      return
-    }
-    const selectedText = editor.state.doc.textBetween(from, to, ' ')
-    window.openAiProfilePicker(async profileId => {
-      if (!profileId) return
+    const contentHtml = editor.getHTML()
+    window.openAiProfilePicker(async selection => {
+      if (!selection?.profileId) return
       improveBtn.disabled = true
       improveBtn.textContent = '...'
       try {
         const fd = new FormData()
-        fd.append('profile_id', profileId)
-        fd.append('content', selectedText)
+        fd.append('profile_id', selection.profileId)
+        if (selection.personaId) fd.append('persona_id', selection.personaId)
+        fd.append('content', contentHtml)
         fd.append('mode', 'html')
         const res = await fetch('/admin/ai/process', { method: 'POST', body: fd })
         const data = await res.json()
         if (data.result) {
-          editor.chain().focus().insertContentAt({ from, to }, data.result).run()
+          if (String(data.result).trim() === String(contentHtml).trim()) {
+            alert('The AI returned the same content without any visible changes. Try a different persona or profile, or revise the prompt context first.')
+          } else {
+            editor.commands.setContent(data.result, false)
+          }
         } else {
           alert('AI improvement failed: ' + (data.error || 'Unknown error'))
         }
@@ -769,9 +811,9 @@ function initTiptap(textarea) {
         alert('Error: ' + e.message)
       } finally {
         improveBtn.disabled = false
-        improveBtn.innerHTML = '✨'
+        improveBtn.textContent = 'AI Improve'
       }
-    })
+    }, { capability: 'text', title: 'Improve Text with AI', taskKey: 'text-improve' })
   })
   bar.appendChild(improveBtn)
   bar.appendChild(sep())
@@ -949,6 +991,41 @@ function initMediaPicker() {
   const urlInput  = document.getElementById('mp-import-url')
   const importBtn = dialog.querySelector('.media-picker-import-btn')
   const importSt  = document.getElementById('mp-import-status')
+  const altAiBtn  = document.getElementById('mp-alt-ai-btn')
+
+  if (altAiBtn) {
+    altAiBtn.addEventListener('click', () => {
+      const imgSrc = selectedUrl
+      if (!imgSrc) return
+      window.openAiProfilePicker(async selection => {
+        if (!selection?.profileId) return
+        altAiBtn.disabled = true
+        altAiBtn.textContent = '…'
+        try {
+          const fd = new FormData()
+          fd.append('profile_id', selection.profileId)
+          if (selection.personaId) fd.append('persona_id', selection.personaId)
+          fd.append('image_url', imgSrc)
+          if (altInput?.value.trim()) fd.append('existing_alt_text', altInput.value.trim())
+          const res = await fetch('/admin/ai/describe-image', { method: 'POST', body: fd })
+          const data = await res.json()
+          if (data.result) {
+            if (altInput) altInput.value = data.result
+            altAiBtn.textContent = '✓'
+            setTimeout(() => { altAiBtn.textContent = '✨'; altAiBtn.disabled = false }, 1500)
+          } else {
+            alert('Alt text generation failed: ' + (data.error || 'Unknown error'))
+            altAiBtn.textContent = '✨'
+            altAiBtn.disabled = false
+          }
+        } catch (err) {
+          alert('Error: ' + err.message)
+          altAiBtn.textContent = '✨'
+          altAiBtn.disabled = false
+        }
+      }, { capability: 'vision', title: 'Generate Alt Text with AI', taskKey: 'alt-text' })
+    })
+  }
 
   let selectedUrl = null
   let selectedAsset = null
@@ -1039,6 +1116,7 @@ function initMediaPicker() {
       selectBtn.disabled = false
       if (altRow && !_libraryMode && currentTab === 'select' && f.kind === 'image') {
         altRow.hidden = false
+        if (altInput) altInput.value = f.alt_text || ''
         altInput?.focus()
       } else if (altRow) {
         altRow.hidden = true
@@ -1067,7 +1145,10 @@ function initMediaPicker() {
       const url = f.legacy_url || f.url || (f.kind === 'image' ? `/image/${f.id}` : `/media/${f.id}`)
       if (_pickerPreselectUrl && url === _pickerPreselectUrl) {
         item.classList.add('selected'); selectedUrl = url; selectedAsset = f; selectBtn.disabled = false
-        if (altRow && !_libraryMode && currentTab === 'select' && f.kind === 'image') altRow.hidden = false
+        if (altRow && !_libraryMode && currentTab === 'select' && f.kind === 'image') {
+          altRow.hidden = false
+          if (altInput) altInput.value = f.alt_text || ''
+        }
       }
     })
     _pickerShown += batch.length
@@ -1365,39 +1446,88 @@ function initIframePicker() {
 
 let _aiProfilePickerCallback = null
 let _aiProfilesLoaded = false
+let _aiProfiles = []
 
 function initAiProfilePicker() {
   const dialog    = document.getElementById('ai-profile-picker-modal')
   if (!dialog) return
 
+  const titleEl   = dialog.querySelector('#ai-profile-picker-title')
   const select    = document.getElementById('ai-profile-picker-select')
+  const personaSelect = document.getElementById('ai-persona-picker-select')
+  const hintEl    = document.getElementById('ai-profile-picker-hint')
   const closeBtn  = dialog.querySelector('.media-picker-close')
   const cancelBtn = dialog.querySelector('.ai-profile-picker-cancel-btn')
   const selectBtn = dialog.querySelector('.ai-profile-picker-select-btn')
+  let capNotice   = null
+  let pickerOptions = {}
 
   async function loadProfiles() {
     select.innerHTML = '<option value="">Loading…</option>'
     selectBtn.disabled = true
     try {
       const res = await fetch('/admin/ai/profiles')
-      const profiles = await res.json()
-      if (!profiles.length) {
-        select.innerHTML = '<option value="">No AI profiles configured</option>'
-        _aiProfilesLoaded = true
-        return
-      }
-      select.innerHTML = ''
-      profiles.forEach(p => {
-        const o = document.createElement('option')
-        o.value = String(p.id)
-        o.textContent = `${p.profile_name} — ${p.vendor}/${p.model} (${p.user_name})`
-        select.appendChild(o)
-      })
-      selectBtn.disabled = false
+      _aiProfiles = await res.json()
       _aiProfilesLoaded = true
     } catch {
       select.innerHTML = '<option value="">Failed to load AI profiles</option>'
     }
+  }
+
+  function readPreferredProfileId(taskKey) {
+    if (taskKey === 'alt-text') return Number(select?.dataset.preferredAltProfileId || 0) || null
+    if (taskKey === 'piece') return Number(select?.dataset.preferredPieceProfileId || 0) || null
+    return Number(select?.dataset.preferredTextProfileId || 0) || null
+  }
+
+  function storageKey(taskKey, field) {
+    return taskKey ? `ah-ai-picker:${taskKey}:${field}` : ''
+  }
+
+  function populateSelect(capFilter) {
+    const profiles = capFilter
+      ? _aiProfiles.filter(p => (p.capabilities || 'text,code').split(',').map(s => s.trim()).includes(capFilter))
+      : _aiProfiles
+    select.innerHTML = ''
+    if (!profiles.length) {
+      select.innerHTML = '<option value="">No matching profiles</option>'
+      selectBtn.disabled = true
+      if (!capNotice) {
+        capNotice = document.createElement('p')
+        capNotice.style.cssText = 'color:#92400e;font-size:0.875rem;padding:0.5rem 0.75rem;background:rgba(234,179,8,0.12);border:1px solid rgba(234,179,8,0.4);border-radius:4px;margin-top:0.5rem;'
+        select.insertAdjacentElement('afterend', capNotice)
+      }
+      capNotice.textContent = capFilter === 'vision'
+        ? '⚠ No AI profiles with vision capability configured. Edit a profile under AI Settings → AI Profiles to enable vision.'
+        : `⚠ No AI profiles with ${capFilter} capability configured.`
+      capNotice.hidden = false
+      return
+    }
+    if (capNotice) capNotice.hidden = true
+    profiles.forEach(p => {
+      const o = document.createElement('option')
+      o.value = String(p.id)
+      o.textContent = `${p.profile_name} — ${p.vendor}/${p.model} (${p.user_name})`
+      select.appendChild(o)
+    })
+    const taskKey = pickerOptions.taskKey || ''
+    const savedProfileId = taskKey ? window.localStorage.getItem(storageKey(taskKey, 'profile')) : null
+    const preferredProfileId = pickerOptions.preferredProfileId || readPreferredProfileId(taskKey)
+    const desiredProfileId = savedProfileId || (preferredProfileId ? String(preferredProfileId) : '')
+    if (desiredProfileId && profiles.some(p => String(p.id) === desiredProfileId)) {
+      select.value = desiredProfileId
+    }
+    if (personaSelect) {
+      const savedPersonaId = taskKey ? window.localStorage.getItem(storageKey(taskKey, 'persona')) : null
+      const preferredPersonaId = pickerOptions.preferredPersonaId ? String(pickerOptions.preferredPersonaId) : ''
+      const desiredPersonaId = savedPersonaId || preferredPersonaId
+      if (desiredPersonaId && [...personaSelect.options].some(option => option.value === desiredPersonaId)) {
+        personaSelect.value = desiredPersonaId
+      } else {
+        personaSelect.value = ''
+      }
+    }
+    selectBtn.disabled = false
   }
 
   function confirmSelection() {
@@ -1405,8 +1535,15 @@ function initAiProfilePicker() {
     const callback = _aiProfilePickerCallback
     _aiProfilePickerCallback = null
     const profileId = select.value
+    const personaId = personaSelect?.value || ''
+    const taskKey = pickerOptions.taskKey || ''
+    if (taskKey) {
+      window.localStorage.setItem(storageKey(taskKey, 'profile'), profileId)
+      if (personaId) window.localStorage.setItem(storageKey(taskKey, 'persona'), personaId)
+      else window.localStorage.removeItem(storageKey(taskKey, 'persona'))
+    }
     dialog.close()
-    callback(profileId)
+    callback({ profileId, personaId })
   }
 
   selectBtn.addEventListener('click', confirmSelection)
@@ -1415,9 +1552,16 @@ function initAiProfilePicker() {
   dialog.addEventListener('click', e => { if (e.target === dialog) dialog.close() })
   dialog.addEventListener('close', () => { _aiProfilePickerCallback = null })
 
-  window.openAiProfilePicker = (callback) => {
+  window.openAiProfilePicker = (callback, opts = {}) => {
     _aiProfilePickerCallback = callback
-    if (!_aiProfilesLoaded) loadProfiles()
+    pickerOptions = opts
+    if (titleEl) titleEl.textContent = opts.title || 'Improve with AI'
+    if (hintEl) {
+      hintEl.textContent = opts.hint || 'Pick the model/profile and optionally layer a persona on top of the task prompt.'
+    }
+    const run = () => populateSelect(opts.capability || null)
+    if (!_aiProfilesLoaded) loadProfiles().then(run)
+    else run()
     dialog.showModal()
   }
 }

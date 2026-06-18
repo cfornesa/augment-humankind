@@ -20,8 +20,84 @@ class UserProfilesAdminController
         $keys = UserAiVendorKeys::all();
         $owner = PlatformUser::owner();
         $profiles = $owner ? UserAiVendorSettings::allForUser((string) $owner['id']) : [];
+        $personas = self::allPersonas();
+        $capabilitiesSchemaSupported = UserAiVendorSettings::supportsCapabilitiesColumn();
+        $personasSchemaSupported = ah_table_exists('ai_personas');
         $tab = $_GET['tab'] ?? 'profiles';
         require dirname(__DIR__, 2) . '/views/admin/ai-settings/index.php';
+    }
+
+    public static function personaCreate(): void
+    {
+        admin_check();
+        $persona = null;
+        $error = null;
+        require dirname(__DIR__, 2) . '/views/admin/ai-settings/persona-form.php';
+    }
+
+    public static function personaStore(): void
+    {
+        admin_check();
+        try {
+            $data = self::resolvePersonaData();
+            $id = self::insertPersona($data);
+            if (self::wantsJson()) {
+                header('Content-Type: application/json');
+                echo json_encode(['ok' => true, 'persona' => ['id' => $id, 'name' => $data['name']]]);
+                exit;
+            }
+            header('Location: /admin/ai-settings?tab=personas');
+        } catch (Throwable $e) {
+            if (self::wantsJson()) {
+                http_response_code(400);
+                header('Content-Type: application/json');
+                echo json_encode(['error' => $e->getMessage()]);
+                exit;
+            }
+            $persona = null;
+            $error = $e->getMessage();
+            require dirname(__DIR__, 2) . '/views/admin/ai-settings/persona-form.php';
+        }
+        exit;
+    }
+
+    public static function personaEdit(string $id): void
+    {
+        admin_check();
+        $persona = self::findPersona((int) $id);
+        if (!$persona) {
+            header('Location: /admin/ai-settings?tab=personas');
+            exit;
+        }
+        $error = null;
+        require dirname(__DIR__, 2) . '/views/admin/ai-settings/persona-form.php';
+    }
+
+    public static function personaUpdate(string $id): void
+    {
+        admin_check();
+        $persona = self::findPersona((int) $id);
+        if (!$persona) {
+            header('Location: /admin/ai-settings?tab=personas');
+            exit;
+        }
+        try {
+            $data = self::resolvePersonaData();
+            self::updatePersona((int) $id, $data);
+            header('Location: /admin/ai-settings?tab=personas');
+        } catch (Throwable $e) {
+            $error = $e->getMessage();
+            require dirname(__DIR__, 2) . '/views/admin/ai-settings/persona-form.php';
+        }
+        exit;
+    }
+
+    public static function personaDelete(string $id): void
+    {
+        admin_check();
+        db()->prepare('DELETE FROM ai_personas WHERE id = ?')->execute([(int) $id]);
+        header('Location: /admin/ai-settings?tab=personas');
+        exit;
     }
 
     public static function userEdit(string $id): void
@@ -255,32 +331,47 @@ class UserProfilesAdminController
 
     private static function updateUser(string $id, array $data): void
     {
-        $stmt = db()->prepare(
-            'UPDATE users SET
-                name = ?, username = ?, email = ?, bio = ?, website = ?,
-                social_links = ?, theme = ?, palette = ?,
-                preferred_art_piece_profile_id = ?,
-                preferred_text_improve_profile_id = ?,
-                preferred_alt_text_profile_id = ?,
-                image = COALESCE(?, image),
-                updated_at = NOW()
-             WHERE id = ?'
-        );
-        $stmt->execute([
+        $sets = [
+            'name = ?',
+            'username = ?',
+            'email = ?',
+            'bio = ?',
+            'website = ?',
+        ];
+        $params = [
             $data['name'],
             $data['username'] ?? null,
             $data['email'] ?? null,
             $data['bio'] ?? null,
             $data['website'] ?? null,
-            $data['social_links'] ?? null,
-            $data['theme'] ?? null,
-            $data['palette'] ?? null,
-            $data['preferred_art_piece_profile_id'] ?? null,
-            $data['preferred_text_improve_profile_id'] ?? null,
-            $data['preferred_alt_text_profile_id'] ?? null,
-            $data['image'] ?? null,
-            $id,
-        ]);
+        ];
+
+        $optionalColumns = [
+            'social_links',
+            'theme',
+            'palette',
+            'preferred_art_piece_profile_id',
+            'preferred_text_improve_profile_id',
+            'preferred_alt_text_profile_id',
+        ];
+        foreach ($optionalColumns as $column) {
+            if (!ah_column_exists('users', $column)) {
+                continue;
+            }
+            $sets[] = $column . ' = ?';
+            $params[] = $data[$column] ?? null;
+        }
+
+        if (array_key_exists('image', $data)) {
+            $sets[] = 'image = COALESCE(?, image)';
+            $params[] = $data['image'] ?? null;
+        }
+
+        $params[] = $id;
+        $stmt = db()->prepare(
+            'UPDATE users SET ' . implode(', ', $sets) . ', updated_at = NOW() WHERE id = ?'
+        );
+        $stmt->execute($params);
     }
 
     private static function resolveUserData(): array
@@ -365,13 +456,20 @@ class UserProfilesAdminController
             throw new InvalidArgumentException('Vendor is required.');
         }
 
+        $capParts = [];
+        if (!empty($_POST['cap_text']))   $capParts[] = 'text';
+        if (!empty($_POST['cap_code']))   $capParts[] = 'code';
+        if (!empty($_POST['cap_vision'])) $capParts[] = 'vision';
+        $capabilities = $capParts !== [] ? implode(',', $capParts) : 'text';
+
         return [
-            'user_id' => $userId,
-            'vendor' => $vendor,
-            'profile_name' => trim($_POST['profile_name'] ?? '') ?: 'Default',
+            'user_id'       => $userId,
+            'vendor'        => $vendor,
+            'profile_name'  => trim($_POST['profile_name'] ?? '') ?: 'Default',
             'endpoint_kind' => trim($_POST['endpoint_kind'] ?? '') ?: null,
-            'enabled' => isset($_POST['enabled']) ? 1 : 0,
-            'model' => trim($_POST['model'] ?? '') ?: null,
+            'enabled'       => isset($_POST['enabled']) ? 1 : 0,
+            'capabilities'  => $capabilities,
+            'model'         => trim($_POST['model'] ?? '') ?: null,
         ];
     }
 
@@ -404,5 +502,61 @@ class UserProfilesAdminController
     private static function aiSettingsPath(string $tab): string
     {
         return '/admin/ai-settings?tab=' . rawurlencode($tab);
+    }
+
+    private static function allPersonas(): array
+    {
+        try {
+            return db()->query('SELECT * FROM ai_personas ORDER BY name ASC')->fetchAll();
+        } catch (Throwable) {
+            return [];
+        }
+    }
+
+    private static function findPersona(int $id): array|false
+    {
+        try {
+            $stmt = db()->prepare('SELECT * FROM ai_personas WHERE id = ? LIMIT 1');
+            $stmt->execute([$id]);
+            return $stmt->fetch() ?: false;
+        } catch (Throwable) {
+            return false;
+        }
+    }
+
+    private static function insertPersona(array $data): int
+    {
+        $owner = PlatformUser::owner();
+        $userId = $owner ? (int) $owner['id'] : 0;
+        $stmt = db()->prepare(
+            'INSERT INTO ai_personas (user_id, name, system_prompt) VALUES (?, ?, ?)'
+        );
+        $stmt->execute([$userId, $data['name'], $data['system_prompt']]);
+        return (int) db()->lastInsertId();
+    }
+
+    private static function updatePersona(int $id, array $data): void
+    {
+        db()->prepare('UPDATE ai_personas SET name = ?, system_prompt = ?, updated_at = NOW() WHERE id = ?')
+            ->execute([$data['name'], $data['system_prompt'], $id]);
+    }
+
+    private static function resolvePersonaData(): array
+    {
+        $name = mb_substr(trim((string) ($_POST['name'] ?? '')), 0, 128);
+        if ($name === '') {
+            throw new InvalidArgumentException('Persona name is required.');
+        }
+        $systemPrompt = mb_substr(trim((string) ($_POST['system_prompt'] ?? '')), 0, 4000);
+        if ($systemPrompt === '') {
+            throw new InvalidArgumentException('System prompt is required.');
+        }
+        return ['name' => $name, 'system_prompt' => $systemPrompt];
+    }
+
+    private static function wantsJson(): bool
+    {
+        return str_contains($_SERVER['HTTP_ACCEPT'] ?? '', 'application/json')
+            || ($_POST['_format'] ?? '') === 'json';
     }
 }

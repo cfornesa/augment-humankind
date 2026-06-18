@@ -49,6 +49,12 @@
 .tt-btn:hover { opacity: 1; border-color: var(--line); }
 .tt-btn.is-active { opacity: 1; color: var(--orange); border-color: var(--line); }
 .tt-btn svg { display: block; }
+.tt-ai-btn {
+    opacity: 1;
+    color: var(--orange);
+    border-color: var(--line);
+    font-weight: 800;
+}
 
 /* Selects / Inputs */
 .tt-select,
@@ -192,7 +198,9 @@
 
 /* IMPORTANT: no display: property here — let the browser hide closed <dialog> natively */
 dialog#media-picker-modal,
-dialog#piece-picker-modal {
+dialog#piece-picker-modal,
+dialog#iframe-picker-modal,
+dialog#ai-profile-picker-modal {
     /* Explicit centering: works even when a parent has transform or overflow */
     position: fixed;
     inset: 0;
@@ -209,13 +217,17 @@ dialog#piece-picker-modal {
 
 /* Only flex when open */
 dialog#media-picker-modal[open],
-dialog#piece-picker-modal[open] {
+dialog#piece-picker-modal[open],
+dialog#iframe-picker-modal[open],
+dialog#ai-profile-picker-modal[open] {
     display: flex;
     flex-direction: column;
 }
 
 dialog#media-picker-modal::backdrop,
-dialog#piece-picker-modal::backdrop {
+dialog#piece-picker-modal::backdrop,
+dialog#iframe-picker-modal::backdrop,
+dialog#ai-profile-picker-modal::backdrop {
     background: rgba(21, 55, 74, 0.55);
 }
 
