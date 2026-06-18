@@ -11,12 +11,15 @@ $bodyClass = $bodyClass ?? 'page-managed';
 $pageDescription = $pageDescription ?? '';
 $ogTitle = $ogTitle ?? $pageTitle;
 $ogDescription = $ogDescription ?? $pageDescription;
+$ogType = $ogType ?? ($path === '/' ? 'website' : 'article');
 $ogImage = $ogImage ?? null;
-$canonicalUrl = $canonicalUrl ?? null;
+$canonicalUrl = $canonicalUrl ?? seo_current_url();
 $extraHeadHtml = $extraHeadHtml ?? '';
 
 // Load site settings for CSS color injection (gracefully skips if table missing)
 $_ahS = (class_exists('SiteSettings') ? SiteSettings::current() : false) ?: [];
+$_ahSiteTitle = trim((string) ($_ahS['site_title'] ?? 'Augment Humankind')) ?: 'Augment Humankind';
+$_ahResolvedOgImage = $ogImage ? (seo_absolute_url($ogImage) ?? $ogImage) : null;
 
 $_ahLightMap = [
     'color_background'             => '--paper',
@@ -80,13 +83,18 @@ unset($_ahLightMap, $_ahDarkMap, $_ahCol, $_ahVar);
     }
     </script>
     <meta name="description" content="<?= e($pageDescription) ?>">
-    <?php if ($canonicalUrl): ?>
-        <link rel="canonical" href="<?= e($canonicalUrl) ?>">
-    <?php endif; ?>
+    <link rel="canonical" href="<?= e($canonicalUrl) ?>">
+    <meta property="og:url" content="<?= e($canonicalUrl) ?>">
+    <meta property="og:type" content="<?= e($ogType) ?>">
+    <meta property="og:site_name" content="<?= e($_ahSiteTitle) ?>">
     <meta property="og:title" content="<?= e($ogTitle) ?>">
     <meta property="og:description" content="<?= e($ogDescription) ?>">
-    <?php if ($ogImage): ?>
-        <meta property="og:image" content="<?= e($ogImage) ?>">
+    <meta name="twitter:card" content="<?= $_ahResolvedOgImage ? 'summary_large_image' : 'summary' ?>">
+    <meta name="twitter:title" content="<?= e($ogTitle) ?>">
+    <meta name="twitter:description" content="<?= e($ogDescription) ?>">
+    <?php if ($_ahResolvedOgImage): ?>
+        <meta property="og:image" content="<?= e($_ahResolvedOgImage) ?>">
+        <meta name="twitter:image" content="<?= e($_ahResolvedOgImage) ?>">
     <?php endif; ?>
     <link rel="stylesheet" href="/assets/styles.css">
     <?php if ($_ahLightVars !== [] || $_ahDarkVars !== []): ?>
@@ -124,23 +132,48 @@ unset($_ahLightMap, $_ahDarkMap, $_ahCol, $_ahVar);
                 ?>
                 <a href="<?= e($href) ?>"<?= isActive($href, $path) ?><?= $target === '_blank' ? ' target="_blank" rel="noopener"' : '' ?>><?= e($label) ?></a>
             <?php endforeach; ?>
-            <?php if (function_exists('user_logged_in') && user_logged_in()): ?>
-                <?php
-                $navUsername    = $_SESSION['user_username'] ?? '';
-                $navDisplayName = $_SESSION['user_display_name'] ?? '';
-                if ($navUsername === '' && function_exists('current_user')) {
-                    $_navU = current_user();
-                    $navUsername    = (string) ($_navU['username'] ?? '');
-                    $navDisplayName = (string) ($_navU['name'] ?? $navUsername);
-                    unset($_navU);
-                }
-                ?>
-                <?php if ($navUsername !== ''): ?>
-                <a href="/user/<?= e($navUsername) ?>" class="user-nav-link" style="font-weight:700;">Profile</a>
-                <?php endif ?>
-                <a href="/user/settings" class="user-nav-link">Settings</a>
-            <?php endif ?>
         </nav>
+        <?php
+        $navUsername = '';
+        $navDisplayName = '';
+        $navUserImage = '';
+        if (function_exists('current_user')) {
+            $_navUser = current_user();
+            $navUserImage = (string) ($_navUser['image'] ?? '');
+            $navUsername = (string) ($_navUser['username'] ?? '') ?: (string) ($_navUser['id'] ?? '');
+            $navDisplayName = (string) ($_navUser['name'] ?? '');
+            unset($_navUser);
+        }
+        $adminMenuItems = function_exists('admin_navigation_ordered_items') ? admin_navigation_ordered_items() : [];
+        $isLoggedIn = function_exists('user_logged_in') && user_logged_in();
+        ?>
+        <details class="account-menu">
+            <summary class="account-menu-trigger" aria-label="<?= $isLoggedIn ? 'Open account menu' : 'Open sign-in menu' ?>">
+                <?php if ($navUserImage !== ''): ?>
+                    <img src="<?= e($navUserImage) ?>" alt="" class="account-menu-avatar">
+                <?php else: ?>
+                    <span class="account-menu-icon" aria-hidden="true">⌾</span>
+                <?php endif ?>
+            </summary>
+            <div class="account-menu-panel">
+                <?php if ($isLoggedIn): ?>
+                    <?php if ($navUsername !== ''): ?>
+                        <a href="/user/<?= e($navUsername) ?>" class="account-menu-link"><?= e($navDisplayName !== '' ? $navDisplayName : 'Profile') ?></a>
+                    <?php endif; ?>
+                    <a href="/user/settings" class="account-menu-link">Settings</a>
+                    <a href="/user/logout" class="account-menu-link">Log out</a>
+                    <?php if (function_exists('admin_identity') && admin_identity()): ?>
+                        <span class="account-menu-divider">Admin</span>
+                        <?php foreach ($adminMenuItems as $adminItem): ?>
+                            <a href="<?= e($adminItem['href']) ?>" class="account-menu-link"><?= e($adminItem['label']) ?></a>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
+                <?php else: ?>
+                    <a href="/user/login?redirect=<?= e(urlencode((string) ($_SERVER['REQUEST_URI'] ?? '/'))) ?>" class="account-menu-link">Log in</a>
+                    <a href="/user/register" class="account-menu-link">Create account</a>
+                <?php endif; ?>
+            </div>
+        </details>
     </header>
 
     <main id="main">

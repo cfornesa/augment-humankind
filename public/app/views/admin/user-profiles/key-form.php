@@ -11,7 +11,7 @@ $key = $key ?? [];
 <div class="admin-container">
     <div class="admin-header-row">
         <h1><?= $isEdit ? 'Edit API Key' : 'Add API Key' ?></h1>
-        <a href="/admin/user-profiles" class="admin-btn admin-btn-ghost">Back</a>
+        <a href="/admin/ai-settings?tab=keys" class="admin-btn admin-btn-ghost">Back</a>
     </div>
 
     <?php if ($error): ?>
@@ -47,7 +47,7 @@ $key = $key ?? [];
         </div>
         <div class="form-actions">
             <button type="submit" class="admin-btn"><?= $isEdit ? 'Update' : 'Add' ?> Key</button>
-            <a href="/admin/user-profiles" class="admin-btn admin-btn-ghost">Cancel</a>
+            <a href="/admin/ai-settings?tab=keys" class="admin-btn admin-btn-ghost">Cancel</a>
         </div>
     </form>
 </div>

@@ -7,7 +7,7 @@ $pageTitle = 'Site Identity';
 ob_start();
 $error = $_GET['error'] ?? null;
 $tab = $_GET['tab'] ?? 'settings';
-if (!in_array($tab, ['settings', 'assets', 'media'])) {
+if (!in_array($tab, ['settings', 'design', 'assets', 'media'], true)) {
     $tab = 'settings';
 }
 ?>
@@ -24,6 +24,7 @@ if (!in_array($tab, ['settings', 'assets', 'media'])) {
 
     <nav class="admin-tabs" aria-label="Site identity tabs">
         <a href="/admin/site-identity?tab=settings" class="admin-tab <?= $tab === 'settings' ? 'active' : '' ?>">Settings</a>
+        <a href="/admin/site-identity?tab=design" class="admin-tab <?= $tab === 'design' ? 'active' : '' ?>">Design</a>
         <a href="/admin/site-identity?tab=assets" class="admin-tab <?= $tab === 'assets' ? 'active' : '' ?>">Assets</a>
         <a href="/admin/site-identity?tab=media" class="admin-tab <?= $tab === 'media' ? 'active' : '' ?>">Media Library</a>
     </nav>
@@ -75,58 +76,71 @@ if (!in_array($tab, ['settings', 'assets', 'media'])) {
                            value="<?= e($settings['cta_href'] ?? '/') ?>">
                 </div>
             </div>
+            <div class="field">
+                <label for="canonical_public_url">Canonical Public URL</label>
+                <input id="canonical_public_url" name="canonical_public_url" type="url" maxlength="255"
+                       value="<?= e($settings['canonical_public_url'] ?? '') ?>"
+                       placeholder="https://augmenthumankind.com">
+                <p class="admin-hint">Used for canonical tags, social cards, and outbound post links when publishing from local environments.</p>
+            </div>
+            <div class="form-actions">
+                <button type="submit" class="admin-btn">Save Settings</button>
+            </div>
+        </form>
+    <?php elseif ($tab === 'design'): ?>
+        <form method="post" action="/admin/site-identity/settings" class="admin-form">
             <div class="field-grid">
                 <div class="field">
-                    <label for="logo_url">Logo (light mode)</label>
-                    <div class="media-field-preview" id="logo-url-preview">
+                    <label for="design_logo_url">Logo (light mode)</label>
+                    <div class="media-field-preview" id="design-logo-url-preview">
                         <?php if (!empty($settings['logo_url'])): ?>
                             <img src="<?= e($settings['logo_url']) ?>" alt="" style="max-height:60px;border:1px solid var(--line);">
                         <?php endif ?>
                     </div>
-                    <input id="logo_url" name="logo_url" type="text" maxlength="2048" readonly
+                    <input id="design_logo_url" name="logo_url" type="text" maxlength="2048" readonly
                            value="<?= e($settings['logo_url'] ?? '') ?>"
                            placeholder="No image selected">
                     <div class="media-field-actions">
                         <button type="button" class="picker-trigger"
-                                data-picker-target="logo_url"
-                                data-picker-preview="logo-url-preview">Choose Image</button>
+                                data-picker-target="design_logo_url"
+                                data-picker-preview="design-logo-url-preview">Choose Image</button>
                         <button type="button" class="admin-btn admin-btn-ghost admin-btn-sm"
-                                data-clear-input="logo_url"
-                                data-clear-preview="logo-url-preview">Clear</button>
+                                data-clear-input="design_logo_url"
+                                data-clear-preview="design-logo-url-preview">Clear</button>
                     </div>
                 </div>
                 <div class="field">
-                    <label for="logo_dark_url">Logo (dark mode)</label>
-                    <div class="media-field-preview" id="logo-dark-url-preview">
+                    <label for="design_logo_dark_url">Logo (dark mode)</label>
+                    <div class="media-field-preview" id="design-logo-dark-url-preview">
                         <?php if (!empty($settings['logo_dark_url'])): ?>
                             <img src="<?= e($settings['logo_dark_url']) ?>" alt="" style="max-height:60px;border:1px solid var(--line);">
                         <?php endif ?>
                     </div>
-                    <input id="logo_dark_url" name="logo_dark_url" type="text" maxlength="2048" readonly
+                    <input id="design_logo_dark_url" name="logo_dark_url" type="text" maxlength="2048" readonly
                            value="<?= e($settings['logo_dark_url'] ?? '') ?>"
                            placeholder="No image selected">
                     <div class="media-field-actions">
                         <button type="button" class="picker-trigger"
-                                data-picker-target="logo_dark_url"
-                                data-picker-preview="logo-dark-url-preview">Choose Image</button>
+                                data-picker-target="design_logo_dark_url"
+                                data-picker-preview="design-logo-dark-url-preview">Choose Image</button>
                         <button type="button" class="admin-btn admin-btn-ghost admin-btn-sm"
-                                data-clear-input="logo_dark_url"
-                                data-clear-preview="logo-dark-url-preview">Clear</button>
+                                data-clear-input="design_logo_dark_url"
+                                data-clear-preview="design-logo-dark-url-preview">Clear</button>
                     </div>
                 </div>
             </div>
             <div class="field-grid">
                 <div class="field">
-                    <label for="logo_layout">Logo Layout</label>
-                    <select id="logo_layout" name="logo_layout">
+                    <label for="design_logo_layout">Logo Layout</label>
+                    <select id="design_logo_layout" name="logo_layout">
                         <option value="text_only" <?= ($settings['logo_layout'] ?? '') === 'text_only' ? 'selected' : '' ?>>Text Only</option>
                         <option value="image" <?= ($settings['logo_layout'] ?? '') === 'image' ? 'selected' : '' ?>>Image</option>
                         <option value="mixed" <?= ($settings['logo_layout'] ?? '') === 'mixed' ? 'selected' : '' ?>>Mixed</option>
                     </select>
                 </div>
                 <div class="field">
-                    <label for="default_theme_mode">Default Theme</label>
-                    <select id="default_theme_mode" name="default_theme_mode">
+                    <label for="design_default_theme_mode">Default Theme</label>
+                    <select id="design_default_theme_mode" name="default_theme_mode">
                         <option value="system" <?= ($settings['default_theme_mode'] ?? '') === 'system' ? 'selected' : '' ?>>System</option>
                         <option value="light" <?= ($settings['default_theme_mode'] ?? '') === 'light' ? 'selected' : '' ?>>Light</option>
                         <option value="dark" <?= ($settings['default_theme_mode'] ?? '') === 'dark' ? 'selected' : '' ?>>Dark</option>
@@ -135,29 +149,17 @@ if (!in_array($tab, ['settings', 'assets', 'media'])) {
             </div>
             <div class="field-grid">
                 <div class="field">
-                    <label for="theme">Layout Theme</label>
-                    <select id="theme" name="theme">
+                    <label for="design_theme">Layout Theme</label>
+                    <select id="design_theme" name="theme">
                         <option value="" <?= ($settings['theme'] ?? '') === '' ? 'selected' : '' ?>>(default)</option>
-                        <?php
-                        $themeOptions = [
-                            'bauhaus'     => 'Bauhaus — Heavy borders, hard shadows, all-caps',
-                            'traditional' => 'Traditional — Serif body, hairline borders',
-                            'minimalist'  => 'Minimalist — No borders, generous whitespace',
-                            'academic'    => 'Academic — Old-style serif, scholarly feel',
-                            'airy'        => 'Airy — Light weights, soft shadows, rounded',
-                            'nature'      => 'Nature — Friendly Nunito sans, soft radius',
-                            'comfort'     => 'Comfort — Quicksand, pillowy radius',
-                            'audacious'   => 'Audacious — Bebas Neue, oversized borders',
-                            'artistic'    => 'Artistic — Caveat handwriting, hand-drawn feel',
-                        ];
-                        foreach ($themeOptions as $val => $label): ?>
-                        <option value="<?= e($val) ?>" <?= ($settings['theme'] ?? '') === $val ? 'selected' : '' ?>><?= e($label) ?></option>
+                        <?php foreach ($themeOptions as $val => $label): ?>
+                            <option value="<?= e($val) ?>" <?= ($settings['theme'] ?? '') === $val ? 'selected' : '' ?>><?= e($label) ?></option>
                         <?php endforeach ?>
                     </select>
                 </div>
                 <div class="field">
-                    <label for="palette">Color Palette</label>
-                    <select id="palette" name="palette" data-palette-select>
+                    <label for="design_palette">Color Palette</label>
+                    <select id="design_palette" name="palette" data-palette-select>
                         <option value="" <?= ($settings['palette'] ?? '') === '' ? 'selected' : '' ?>>(custom — edit fields below)</option>
                         <option value="original" <?= ($settings['palette'] ?? '') === 'original' ? 'selected' : '' ?>>Original — Cream/navy/lime (site default)</option>
                         <option value="bauhaus" <?= ($settings['palette'] ?? '') === 'bauhaus' ? 'selected' : '' ?>>Bauhaus — Red, blue, yellow on black & white</option>
@@ -172,65 +174,53 @@ if (!in_array($tab, ['settings', 'assets', 'media'])) {
                     </select>
                 </div>
             </div>
-            <hr style="margin: 2rem 0; border: 0; border-top: 2px solid var(--line);">
-            <h2 style="margin: 0 0 0.5rem; font-size: 1.1rem;">Colors</h2>
-            <p style="margin: 0 0 1.5rem; font-size: 0.85rem; color: var(--ink-soft);">Select a palette above to auto-fill all fields, or click any swatch to pick a color visually. HSL values can also be typed directly as <code>H S% L%</code>. Leave blank to use the stylesheet default.</p>
-            <?php
-            $colorGroups = [
-                'Light Mode' => [
-                    'color_background'             => 'Background',
-                    'color_foreground'             => 'Foreground / ink',
-                    'color_muted'                  => 'Muted background',
-                    'color_muted_foreground'       => 'Muted foreground',
-                    'color_primary'                => 'Primary',
-                    'color_primary_foreground'     => 'Primary foreground',
-                    'color_secondary'              => 'Secondary',
-                    'color_secondary_foreground'   => 'Secondary foreground',
-                    'color_accent'                 => 'Accent',
-                    'color_accent_foreground'      => 'Accent foreground',
-                    'color_destructive'            => 'Destructive',
-                    'color_destructive_foreground' => 'Destructive foreground',
-                ],
-                'Dark Mode' => [
-                    'color_background_dark'             => 'Background',
-                    'color_foreground_dark'             => 'Foreground / ink',
-                    'color_muted_dark'                  => 'Muted background',
-                    'color_muted_foreground_dark'       => 'Muted foreground',
-                    'color_primary_dark'                => 'Primary',
-                    'color_primary_foreground_dark'     => 'Primary foreground',
-                    'color_secondary_dark'              => 'Secondary',
-                    'color_secondary_foreground_dark'   => 'Secondary foreground',
-                    'color_accent_dark'                 => 'Accent',
-                    'color_accent_foreground_dark'      => 'Accent foreground',
-                    'color_destructive_dark'            => 'Destructive',
-                    'color_destructive_foreground_dark' => 'Destructive foreground',
-                ],
-            ];
-            foreach ($colorGroups as $groupLabel => $cols): ?>
-            <h3 style="margin: 1.5rem 0 0.75rem; font-size: 1rem; border-bottom: 1px solid var(--line); padding-bottom: 0.4rem;"><?= e($groupLabel) ?></h3>
-            <div class="field-grid" style="grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));">
-                <?php foreach ($cols as $col => $label): ?>
-                <div class="field">
-                    <label for="<?= e($col) ?>"><?= e($label) ?></label>
-                    <div style="display:flex;gap:0.4rem;align-items:center;">
-                        <input type="color" class="color-swatch" aria-label="Pick color for <?= e($label) ?>"
-                               data-hsl-target="<?= e($col) ?>" value="#808080"
-                               style="width:2.4rem;height:2.4rem;padding:0.15rem;border:2px solid var(--line);background:var(--paper);cursor:pointer;flex-shrink:0;">
-                        <input id="<?= e($col) ?>" name="<?= e($col) ?>" type="text" maxlength="64"
-                               value="<?= e((string) ($settings[$col] ?? '')) ?>"
-                               placeholder="H S% L%"
-                               class="color-hsl-input"
-                               style="font-family:monospace;flex:1;min-width:0;">
-                    </div>
+            <?php foreach ($colorGroups as $groupLabel => $cols): ?>
+                <h3 style="margin: 1.5rem 0 0.75rem; font-size: 1rem; border-bottom: 1px solid var(--line); padding-bottom: 0.4rem;"><?= e($groupLabel) ?></h3>
+                <div class="field-grid" style="grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));">
+                    <?php foreach ($cols as $col => $label): ?>
+                        <div class="field">
+                            <label for="design_<?= e($col) ?>"><?= e($label) ?></label>
+                            <div style="display:flex;gap:0.4rem;align-items:center;">
+                                <input type="color" class="color-swatch" aria-label="Pick color for <?= e($label) ?>"
+                                       data-hsl-target="design_<?= e($col) ?>" value="#808080"
+                                       style="width:2.4rem;height:2.4rem;padding:0.15rem;border:2px solid var(--line);background:var(--paper);cursor:pointer;flex-shrink:0;">
+                                <input id="design_<?= e($col) ?>" name="<?= e($col) ?>" type="text" maxlength="64"
+                                       value="<?= e((string) ($settings[$col] ?? '')) ?>"
+                                       placeholder="H S% L%"
+                                       class="color-hsl-input"
+                                       style="font-family:monospace;flex:1;min-width:0;">
+                            </div>
+                        </div>
+                    <?php endforeach ?>
                 </div>
-                <?php endforeach ?>
-            </div>
             <?php endforeach ?>
-
             <div class="form-actions">
-                <button type="submit" class="admin-btn">Save Settings</button>
+                <button type="submit" class="admin-btn">Save Design</button>
             </div>
         </form>
+        <section class="nav-admin-board" aria-labelledby="admin-nav-order-heading" style="margin-top:2rem;">
+            <div class="admin-section-head">
+                <div>
+                    <h2 class="admin-subheading" id="admin-nav-order-heading">Admin Navigation Order</h2>
+                    <p class="admin-copy">Drag items into your preferred top-to-bottom order. The desktop sidebar, mobile hamburger menu, dashboard cards, and admin links in the public account menu will stay in sync.</p>
+                </div>
+                <span id="admin-nav-order-status" class="reorder-status" aria-live="polite"></span>
+            </div>
+            <table class="admin-table nav-admin-table">
+                <thead>
+                    <tr><th></th><th>Section</th><th>Purpose</th></tr>
+                </thead>
+                <tbody data-reorder-url="/admin/site-identity/navigation-order" data-reorder-status="admin-nav-order-status">
+                    <?php foreach ($adminNavItems as $item): ?>
+                        <tr data-id="<?= e($item['key']) ?>">
+                            <td class="drag-handle" title="Drag to reorder">&#8597;</td>
+                            <td><strong><?= e($item['label']) ?></strong></td>
+                            <td><?= e($item['description']) ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </section>
     <?php elseif ($tab === 'assets'): ?>
         <h2>Site Assets</h2>
         <form method="post" action="/admin/site-identity/assets" enctype="multipart/form-data" class="admin-form">
@@ -475,10 +465,12 @@ function fillPalette(id){
   var p=PALETTES[id];
   if(!p)return;
   Object.keys(p).forEach(function(col){
-    var field=document.getElementById(col);
-    var swatch=document.querySelector('.color-swatch[data-hsl-target="'+col+'"]');
-    if(field)field.value=p[col];
-    if(swatch){var hex=hslToHex(p[col]);if(hex)swatch.value=hex;}
+    [col,'design_'+col].forEach(function(targetId){
+      var field=document.getElementById(targetId);
+      var swatch=document.querySelector('.color-swatch[data-hsl-target="'+targetId+'"]');
+      if(field)field.value=p[col];
+      if(swatch){var hex=hslToHex(p[col]);if(hex)swatch.value=hex;}
+    });
   });
 }
 

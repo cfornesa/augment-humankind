@@ -13,6 +13,17 @@ class UserProfilesAdminController
         require dirname(__DIR__, 2) . '/views/admin/user-profiles/index.php';
     }
 
+    public static function aiSettingsIndex(): void
+    {
+        admin_check();
+        $settings = UserAiVendorSettings::all();
+        $keys = UserAiVendorKeys::all();
+        $owner = PlatformUser::owner();
+        $profiles = $owner ? UserAiVendorSettings::allForUser((string) $owner['id']) : [];
+        $tab = $_GET['tab'] ?? 'profiles';
+        require dirname(__DIR__, 2) . '/views/admin/ai-settings/index.php';
+    }
+
     public static function userEdit(string $id): void
     {
         admin_check();
@@ -37,6 +48,11 @@ class UserProfilesAdminController
 
         try {
             $data = self::resolveUserData();
+            foreach (['preferred_art_piece_profile_id', 'preferred_text_improve_profile_id', 'preferred_alt_text_profile_id'] as $field) {
+                if (!array_key_exists($field, $_POST)) {
+                    $data[$field] = $user[$field] ?? null;
+                }
+            }
             self::updateUser($id, $data);
             header('Location: /admin/user-profiles');
         } catch (Throwable $e) {
@@ -64,7 +80,7 @@ class UserProfilesAdminController
         try {
             $data = self::resolveSettingsData();
             UserAiVendorSettings::create($data);
-            header('Location: /admin/user-profiles');
+            header('Location: ' . self::aiSettingsPath('profiles'));
         } catch (Throwable $e) {
             $users = self::allUsers();
             $setting = null;
@@ -99,7 +115,7 @@ class UserProfilesAdminController
         try {
             $data = self::resolveSettingsData();
             UserAiVendorSettings::update((int) $id, $data);
-            header('Location: /admin/user-profiles');
+            header('Location: ' . self::aiSettingsPath('profiles'));
         } catch (Throwable $e) {
             $users = self::allUsers();
             $setting = UserAiVendorSettings::find((int) $id);
@@ -113,7 +129,7 @@ class UserProfilesAdminController
     {
         admin_check();
         UserAiVendorSettings::delete((int) $id);
-        header('Location: /admin/user-profiles');
+        header('Location: ' . self::aiSettingsPath('profiles'));
         exit;
     }
 
@@ -133,7 +149,7 @@ class UserProfilesAdminController
         try {
             $data = self::resolveKeyData();
             UserAiVendorKeys::create($data);
-            header('Location: /admin/user-profiles');
+            header('Location: ' . self::aiSettingsPath('keys'));
         } catch (Throwable $e) {
             $users = self::allUsers();
             $key = null;
@@ -168,7 +184,7 @@ class UserProfilesAdminController
         try {
             $data = self::resolveKeyData();
             UserAiVendorKeys::update((int) $id, $data);
-            header('Location: /admin/user-profiles');
+            header('Location: ' . self::aiSettingsPath('keys'));
         } catch (Throwable $e) {
             $users = self::allUsers();
             $key = UserAiVendorKeys::find((int) $id);
@@ -182,7 +198,38 @@ class UserProfilesAdminController
     {
         admin_check();
         UserAiVendorKeys::delete((int) $id);
-        header('Location: /admin/user-profiles');
+        header('Location: ' . self::aiSettingsPath('keys'));
+        exit;
+    }
+
+    public static function vendorUpdate(): void
+    {
+        admin_check();
+        $owner = PlatformUser::owner();
+        if (!$owner) {
+            header('Location: ' . self::aiSettingsPath('vendor') . '&error=' . urlencode('Owner user not found.'));
+            exit;
+        }
+
+        try {
+            self::updateUser((string) $owner['id'], [
+                'name' => $owner['name'] ?? 'Owner',
+                'username' => $owner['username'] ?? null,
+                'email' => $owner['email'] ?? null,
+                'bio' => $owner['bio'] ?? null,
+                'website' => $owner['website'] ?? null,
+                'social_links' => $owner['social_links'] ?? null,
+                'theme' => $owner['theme'] ?? null,
+                'palette' => $owner['palette'] ?? null,
+                'preferred_art_piece_profile_id' => trim($_POST['preferred_art_piece_profile_id'] ?? '') ?: null,
+                'preferred_text_improve_profile_id' => trim($_POST['preferred_text_improve_profile_id'] ?? '') ?: null,
+                'preferred_alt_text_profile_id' => trim($_POST['preferred_alt_text_profile_id'] ?? '') ?: null,
+                'image' => null,
+            ]);
+            header('Location: ' . self::aiSettingsPath('vendor') . '&success=vendor');
+        } catch (Throwable $e) {
+            header('Location: ' . self::aiSettingsPath('vendor') . '&error=' . urlencode($e->getMessage()));
+        }
         exit;
     }
 
@@ -352,5 +399,10 @@ class UserProfilesAdminController
             'vendor' => $vendor,
             'encrypted_api_key' => $encryptedKey,
         ];
+    }
+
+    private static function aiSettingsPath(string $tab): string
+    {
+        return '/admin/ai-settings?tab=' . rawurlencode($tab);
     }
 }

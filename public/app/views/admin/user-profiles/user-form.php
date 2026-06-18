@@ -87,42 +87,7 @@ ob_start();
             </div>
         </div>
 
-        <h2 class="admin-subheading" style="margin-top: 1.5rem;">Preferred AI Profiles</h2>
-        <div class="field-grid">
-            <div class="field">
-                <label for="preferred_art_piece_profile_id">Art Piece Generation</label>
-                <select id="preferred_art_piece_profile_id" name="preferred_art_piece_profile_id">
-                    <option value="">— None —</option>
-                    <?php foreach ($aiProfiles as $p): ?>
-                        <option value="<?= (int) $p['id'] ?>" <?= ((int) ($user['preferred_art_piece_profile_id'] ?? 0) === (int) $p['id']) ? 'selected' : '' ?>>
-                            <?= e($p['profile_name'] ?? 'Default') ?> (<?= e($p['vendor']) ?>)
-                        </option>
-                    <?php endforeach; ?>
-                </select>
-            </div>
-            <div class="field">
-                <label for="preferred_text_improve_profile_id">Text Improvement</label>
-                <select id="preferred_text_improve_profile_id" name="preferred_text_improve_profile_id">
-                    <option value="">— None —</option>
-                    <?php foreach ($aiProfiles as $p): ?>
-                        <option value="<?= (int) $p['id'] ?>" <?= ((int) ($user['preferred_text_improve_profile_id'] ?? 0) === (int) $p['id']) ? 'selected' : '' ?>>
-                            <?= e($p['profile_name'] ?? 'Default') ?> (<?= e($p['vendor']) ?>)
-                        </option>
-                    <?php endforeach; ?>
-                </select>
-            </div>
-            <div class="field">
-                <label for="preferred_alt_text_profile_id">Alt Text Generation</label>
-                <select id="preferred_alt_text_profile_id" name="preferred_alt_text_profile_id">
-                    <option value="">— None —</option>
-                    <?php foreach ($aiProfiles as $p): ?>
-                        <option value="<?= (int) $p['id'] ?>" <?= ((int) ($user['preferred_alt_text_profile_id'] ?? 0) === (int) $p['id']) ? 'selected' : '' ?>>
-                            <?= e($p['profile_name'] ?? 'Default') ?> (<?= e($p['vendor']) ?>)
-                        </option>
-                    <?php endforeach; ?>
-                </select>
-            </div>
-        </div>
+        <p class="admin-hint">Preferred AI vendors are managed from <a href="/admin/ai-settings?tab=vendor">AI Settings → AI Vendor</a>.</p>
 
         <div class="form-actions">
             <button type="submit" class="admin-btn">Update User</button>

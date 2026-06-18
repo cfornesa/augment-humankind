@@ -1,26 +1,7 @@
 <?php
-$currentPath = parse_url($_SERVER['REQUEST_URI'] ?? '/admin', PHP_URL_PATH) ?: '/admin';
+$currentUri = $_SERVER['REQUEST_URI'] ?? '/admin';
 $adminIdentity = admin_identity();
-
-$adminNavItems = [
-    '/admin' => 'Dashboard',
-    '/admin/pages' => 'Pages',
-    '/admin/posts' => 'Posts',
-    '/admin/comments' => 'Comments',
-    '/admin/feed-sources' => 'Feeds',
-    '/admin/site-identity' => 'Identity',
-    '/admin/user-profiles' => 'Users',
-    '/admin/platform-connections' => 'Connections',
-    '/admin/exhibits' => 'Exhibits',
-    '/admin/pieces' => 'Pieces',
-    '/admin/categories' => 'Categories',
-    '/admin/art-media' => 'Art Media',
-    '/admin/exhibit-collections' => 'Exhibit Collections',
-    '/admin/platform-collections' => 'Platform Collections',
-    '/admin/media' => 'Media',
-    '/admin/trash' => 'Trash',
-    '/admin/navigation' => 'Navigation',
-];
+$adminNavItems = function_exists('admin_navigation_ordered_items') ? admin_navigation_ordered_items() : [];
 ?>
 <!doctype html>
 <html lang="en">
@@ -111,31 +92,35 @@ $adminNavItems = [
     <?php endif ?>
 </head>
 <body class="admin-body">
-    <header class="admin-header">
-        <div class="admin-brand">
-            <span class="admin-kicker">Administration</span>
-            <a href="/admin" class="admin-site-link">Augment Humankind</a>
-            <?php if ($adminIdentity): ?>
-                <span class="admin-kicker">Signed in as <?= htmlspecialchars($adminIdentity['display_name'], ENT_QUOTES, 'UTF-8') ?> via <?= htmlspecialchars(ucfirst($adminIdentity['provider']), ENT_QUOTES, 'UTF-8') ?></span>
-            <?php endif ?>
-        </div>
-        <button class="menu-toggle" aria-label="Toggle navigation" aria-expanded="false" aria-controls="admin-nav">
-            <span></span>
-            <span></span>
-            <span></span>
-        </button>
-        <nav class="admin-nav" id="admin-nav" aria-label="Admin navigation">
-            <?php foreach ($adminNavItems as $href => $label): ?>
-                <?php $isActive = $currentPath === $href; ?>
-                <a href="<?= htmlspecialchars($href, ENT_QUOTES, 'UTF-8') ?>" class="<?= $isActive ? 'active' : '' ?>"<?= $isActive ? ' aria-current="page"' : '' ?>><?= htmlspecialchars($label, ENT_QUOTES, 'UTF-8') ?></a>
-            <?php endforeach ?>
-            <a href="/admin/logout" class="admin-logout">Logout</a>
-        </nav>
-    </header>
+    <div class="admin-chrome">
+        <header class="admin-header">
+            <div class="admin-brand">
+                <span class="admin-kicker">Administration</span>
+                <a href="/admin" class="admin-site-link">Augment Humankind</a>
+                <?php if ($adminIdentity): ?>
+                    <span class="admin-kicker">Signed in as <?= htmlspecialchars($adminIdentity['display_name'], ENT_QUOTES, 'UTF-8') ?> via <?= htmlspecialchars(ucfirst($adminIdentity['provider']), ENT_QUOTES, 'UTF-8') ?></span>
+                <?php endif ?>
+            </div>
+            <button class="menu-toggle" aria-label="Toggle navigation" aria-expanded="false" aria-controls="admin-nav">
+                <span></span>
+                <span></span>
+                <span></span>
+            </button>
+            <nav class="admin-nav" id="admin-nav" aria-label="Admin navigation">
+                <?php foreach ($adminNavItems as $item): ?>
+                    <?php $isActive = admin_navigation_is_active($currentUri, (string) $item['href']); ?>
+                    <a href="<?= htmlspecialchars((string) $item['href'], ENT_QUOTES, 'UTF-8') ?>" class="<?= $isActive ? 'active' : '' ?>"<?= $isActive ? ' aria-current="page"' : '' ?>>
+                        <span class="admin-nav-label"><?= htmlspecialchars((string) $item['label'], ENT_QUOTES, 'UTF-8') ?></span>
+                    </a>
+                <?php endforeach ?>
+                <a href="/admin/logout" class="admin-logout">Logout</a>
+            </nav>
+        </header>
 
-    <main class="admin-main">
-        <?= $content ?>
-    </main>
+        <main class="admin-main">
+            <?= $content ?>
+        </main>
+    </div>
 
     <!-- Media Picker Modal -->
     <dialog id="media-picker-modal" aria-labelledby="media-picker-title">

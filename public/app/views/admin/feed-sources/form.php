@@ -20,6 +20,10 @@ $source = $source ?? [];
         </div>
     <?php endif; ?>
 
+    <div class="form-status" role="note">
+        <p><strong>Feed setup flow:</strong> save the feed source here, then return to Feed Sources and run ingest. New items will appear in the review queue for approval or rejection before they become draft posts.</p>
+    </div>
+
     <form method="post" class="admin-form">
         <div class="field">
             <label for="name">Name <span class="required">*</span></label>
@@ -31,15 +35,16 @@ $source = $source ?? [];
             <label for="feed_url">Feed URL <span class="required">*</span></label>
             <input id="feed_url" name="feed_url" type="url" required maxlength="2048"
                    value="<?= e($source['feed_url'] ?? '') ?>">
-            <small>RSS or Atom feed URL.</small>
+            <small>RSS or Atom feed URL. This is the address the ingest step will poll.</small>
         </div>
 
         <div class="field-grid">
-            <div class="field">
-                <label for="site_url">Site URL</label>
-                <input id="site_url" name="site_url" type="url" maxlength="2048"
-                       value="<?= e($source['site_url'] ?? '') ?>">
-            </div>
+                <div class="field">
+                    <label for="site_url">Site URL</label>
+                    <input id="site_url" name="site_url" type="url" maxlength="2048"
+                           value="<?= e($source['site_url'] ?? '') ?>">
+                    <small>The public site URL used for source attribution.</small>
+                </div>
             <div class="field">
                 <label for="cadence">Cadence</label>
                 <select id="cadence" name="cadence">

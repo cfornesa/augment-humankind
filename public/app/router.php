@@ -13,6 +13,8 @@ require __DIR__ . '/helpers/encryption.php';
 require __DIR__ . '/helpers/piece-render.php';
 require __DIR__ . '/helpers/art-piece-generation.php';
 require __DIR__ . '/helpers/navigation.php';
+require __DIR__ . '/helpers/admin-navigation.php';
+require __DIR__ . '/helpers/platform-ui.php';
 require __DIR__ . '/lib/ai/AiProviderClient.php';
 require __DIR__ . '/models/AdminIdentity.php';
 require __DIR__ . '/models/PlatformUser.php';
@@ -171,6 +173,7 @@ $publicRoutes = [
     ['GET',  '/user/auth/google/callback',            [UserAuthController::class, 'oauthCallback']],
     ['GET',  '/user/settings',                        [UserProfileController::class, 'settings']],
     ['POST', '/user/settings/profile',                [UserProfileController::class, 'settingsProfileUpdate']],
+    ['POST', '/user/settings/photo',                  [UserProfileController::class, 'settingsPhotoUpload']],
     ['POST', '/user/settings/style',                  [UserProfileController::class, 'settingsStyleUpdate']],
     ['GET',  '/user/([a-z0-9_-]+)',                   [UserProfileController::class, 'show']],
 ];
@@ -318,6 +321,7 @@ $adminRoutes = [
 
     ['GET',  '/admin/site-identity', [SiteIdentityAdminController::class, 'index']],
     ['POST', '/admin/site-identity/settings', [SiteIdentityAdminController::class, 'settingsUpdate']],
+    ['POST', '/admin/site-identity/navigation-order', [SiteIdentityAdminController::class, 'navigationOrderUpdate']],
     ['POST', '/admin/site-identity/assets', [SiteIdentityAdminController::class, 'assetCreate']],
     ['POST', '/admin/site-identity/assets/([0-9]+)/delete', [SiteIdentityAdminController::class, 'assetDelete']],
     ['POST', '/admin/site-identity/media/([0-9]+)/delete', [SiteIdentityAdminController::class, 'mediaAssetDelete']],
@@ -325,6 +329,8 @@ $adminRoutes = [
     ['GET',  '/admin/user-profiles', [UserProfilesAdminController::class, 'index']],
     ['GET',  '/admin/user-profiles/([a-zA-Z0-9_-]+)/edit', [UserProfilesAdminController::class, 'userEdit']],
     ['POST', '/admin/user-profiles/([a-zA-Z0-9_-]+)/edit', [UserProfilesAdminController::class, 'userUpdate']],
+    ['GET',  '/admin/ai-settings', [UserProfilesAdminController::class, 'aiSettingsIndex']],
+    ['POST', '/admin/ai-settings/vendor', [UserProfilesAdminController::class, 'vendorUpdate']],
     ['GET',  '/admin/user-profiles/settings/create', [UserProfilesAdminController::class, 'settingsCreate']],
     ['POST', '/admin/user-profiles/settings/create', [UserProfilesAdminController::class, 'settingsStore']],
     ['GET',  '/admin/user-profiles/settings/([0-9]+)/edit', [UserProfilesAdminController::class, 'settingsEdit']],

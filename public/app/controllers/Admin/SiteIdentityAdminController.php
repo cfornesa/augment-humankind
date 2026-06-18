@@ -10,6 +10,7 @@ class SiteIdentityAdminController
         $settings = SiteSettings::current() ?: [];
         $assets = SiteAsset::all();
         $mediaAssets = MediaAsset::all();
+        $adminNavItems = function_exists('admin_navigation_ordered_items') ? admin_navigation_ordered_items() : [];
         require dirname(__DIR__, 2) . '/views/admin/site-identity/index.php';
     }
 
@@ -57,6 +58,38 @@ class SiteIdentityAdminController
         exit;
     }
 
+    public static function navigationOrderUpdate(): void
+    {
+        admin_check();
+
+        try {
+            $ids = array_values(array_filter(array_map(
+                'trim',
+                explode(',', (string) ($_POST['ids'] ?? ''))
+            )));
+            $valid = array_column(admin_navigation_registry(), 'key');
+            $ordered = [];
+            foreach ($ids as $id) {
+                if (in_array($id, $valid, true) && !in_array($id, $ordered, true)) {
+                    $ordered[] = $id;
+                }
+            }
+            foreach ($valid as $id) {
+                if (!in_array($id, $ordered, true)) {
+                    $ordered[] = $id;
+                }
+            }
+            self::updateSettings(['admin_nav_order_json' => json_encode($ordered, JSON_THROW_ON_ERROR)]);
+            header('Content-Type: application/json');
+            echo json_encode(['ok' => true]);
+        } catch (Throwable $e) {
+            http_response_code(422);
+            header('Content-Type: application/json');
+            echo json_encode(['ok' => false, 'error' => $e->getMessage()]);
+        }
+        exit;
+    }
+
     private static function resolveSettingsData(): array
     {
         $data = [
@@ -69,6 +102,7 @@ class SiteIdentityAdminController
             'footer_credit' => trim($_POST['footer_credit'] ?? '') ?: '',
             'cta_label' => trim($_POST['cta_label'] ?? '') ?: '',
             'cta_href' => trim($_POST['cta_href'] ?? '') ?: '/',
+            'canonical_public_url' => self::normalizeOptionalUrl($_POST['canonical_public_url'] ?? null),
             'logo_url' => trim($_POST['logo_url'] ?? '') ?: null,
             'logo_dark_url' => trim($_POST['logo_dark_url'] ?? '') ?: null,
             'logo_layout' => trim($_POST['logo_layout'] ?? '') ?: 'text_only',
@@ -113,9 +147,17 @@ class SiteIdentityAdminController
             'site_title', 'hero_heading', 'hero_subheading', 'about_heading',
             'about_body', 'copyright_line', 'footer_credit', 'cta_label',
             'cta_href', 'logo_url', 'logo_dark_url', 'logo_layout', 'default_theme_mode',
-            'theme', 'palette',
+            'theme', 'palette', 'canonical_public_url', 'admin_nav_order_json',
             ...self::colorColumns(),
         ];
+
+        $available = SiteSettings::availableColumns();
+        if ($available !== []) {
+            $fields = array_values(array_filter(
+                $fields,
+                static fn (string $field): bool => in_array($field, $available, true)
+            ));
+        }
 
         $sets = [];
         $params = [];
@@ -123,12 +165,27 @@ class SiteIdentityAdminController
             $sets[] = "$field = ?";
             $params[] = $data[$field] ?? null;
         }
+        if ($sets === []) {
+            throw new RuntimeException('Site settings table is missing the expected editable columns.');
+        }
         $params[] = 1; // id
 
         $stmt = db()->prepare(
             'UPDATE site_settings SET ' . implode(', ', $sets) . ', updated_at = NOW() WHERE id = ?'
         );
         $stmt->execute($params);
+    }
+
+    private static function normalizeOptionalUrl(?string $value): ?string
+    {
+        $clean = trim((string) $value);
+        if ($clean === '') {
+            return null;
+        }
+        if (!filter_var($clean, FILTER_VALIDATE_URL)) {
+            throw new InvalidArgumentException('Canonical Public URL must be a valid absolute URL.');
+        }
+        return rtrim($clean, '/');
     }
 
     private static function resolveAssetData(): array

@@ -17,6 +17,12 @@ class UserProfileController
         $stmt->execute([$username]);
         $profileUser = $stmt->fetch();
 
+        if (!$profileUser && ctype_digit($username)) {
+            $stmt = db()->prepare('SELECT * FROM users WHERE id = ? LIMIT 1');
+            $stmt->execute([$username]);
+            $profileUser = $stmt->fetch();
+        }
+
         if (!$profileUser) {
             http_response_code(404);
             require dirname(__DIR__) . '/views/404.php';
@@ -39,16 +45,23 @@ class UserProfileController
         } catch (Throwable) {}
 
         $pieces = [];
+        $piecesHasMore = false;
         try {
+            $showAllPieces = isset($_GET['show_pieces']) && $_GET['show_pieces'] === 'all';
+            $piecesLimit = $showAllPieces ? 200 : 13;
             $stmt3 = db()->prepare(
                 'SELECT id, title, engine, thumbnail_url
                  FROM art_pieces
                  WHERE owner_user_id = ? AND deleted_at IS NULL
                  ORDER BY created_at DESC
-                 LIMIT 20'
+                 LIMIT ' . $piecesLimit
             );
             $stmt3->execute([$userId]);
             $pieces = $stmt3->fetchAll();
+            if (!$showAllPieces && count($pieces) === 13) {
+                $piecesHasMore = true;
+                $pieces = array_slice($pieces, 0, 12);
+            }
         } catch (Throwable) {}
 
         $comments = [];
@@ -121,6 +134,49 @@ class UserProfileController
         $_SESSION['user_display_name'] = $name;
 
         header('Location: /user/settings?success=profile');
+        exit;
+    }
+
+    public static function settingsPhotoUpload(): void
+    {
+        if (!user_logged_in()) {
+            http_response_code(403);
+            exit;
+        }
+        $user = current_user();
+        if (!$user) {
+            header('Location: /user/login');
+            exit;
+        }
+
+        try {
+            $file = $_FILES['profile_photo'] ?? null;
+            if (!$file || ($file['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) {
+                throw new InvalidArgumentException('No photo file was uploaded.');
+            }
+            $mime = upload_resolve_mime($file, 'Photo');
+            if (!isset(ALLOWED_IMAGE_MIME[$mime])) {
+                throw new RuntimeException('Photo type not permitted. Only JPEG, PNG, GIF, WebP, and AVIF are allowed.');
+            }
+            $blob = file_get_contents((string) $file['tmp_name']);
+            if ($blob === false) {
+                throw new RuntimeException('Could not read uploaded photo.');
+            }
+            $filename = preg_replace('/[^a-zA-Z0-9._-]+/', '-', basename((string) ($file['name'] ?? 'photo.jpg')));
+            $stmt = db()->prepare(
+                'INSERT INTO profile_photo_assets (filename, mime_type, file_data, created_at)
+                 VALUES (?, ?, ?, NOW())'
+            );
+            $stmt->execute([$filename, $mime, $blob]);
+            $imageUrl = '/api/profile-photos/' . $filename;
+
+            $stmt = db()->prepare('UPDATE users SET image = ?, updated_at = NOW() WHERE id = ?');
+            $stmt->execute([$imageUrl, $user['id']]);
+
+            header('Location: /user/settings?success=photo');
+        } catch (Throwable $e) {
+            header('Location: /user/settings?error=' . urlencode($e->getMessage()));
+        }
         exit;
     }
 

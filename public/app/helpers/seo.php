@@ -18,6 +18,16 @@ function seo_excerpt(?string $text, int $limit = 160): ?string
 
 function seo_origin(): string
 {
+    $canonical = class_exists('SiteSettings') ? SiteSettings::canonicalPublicUrl() : null;
+    if ($canonical) {
+        return $canonical;
+    }
+
+    $envPublic = trim((string) ($_ENV['PUBLIC_SITE_URL'] ?? getenv('PUBLIC_SITE_URL') ?: ''));
+    if ($envPublic !== '') {
+        return rtrim($envPublic, '/');
+    }
+
     $https  = !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off';
     $scheme = $https ? 'https' : 'http';
     $host   = $_SERVER['HTTP_HOST'] ?? 'localhost:8000';
@@ -46,6 +56,10 @@ function seo_current_url(): string
 {
     $requestUri = $_SERVER['REQUEST_URI'] ?? '/';
     $path = parse_url($requestUri, PHP_URL_PATH) ?: '/';
+    $query = parse_url($requestUri, PHP_URL_QUERY);
+    if ($query) {
+        $path .= '?' . $query;
+    }
     return seo_absolute_url($path) ?? seo_origin() . '/';
 }
 

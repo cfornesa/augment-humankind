@@ -2,8 +2,8 @@
 
 declare(strict_types=1);
 
-// Inject user-scoped color overrides into <head> via $extraHeadHtml hook
-$_ahUserColorMap = [
+// Inject user-scoped color overrides scoped per theme mode to prevent dark-mode bleed
+$_ahUserLightMap = [
     'color_background'       => '--paper',
     'color_foreground'       => '--ink',
     'color_muted'            => '--paper-deep',
@@ -12,16 +12,37 @@ $_ahUserColorMap = [
     'color_secondary'        => '--cyan',
     'color_accent'           => '--orange',
 ];
-$_ahUserVars = [];
-foreach ($_ahUserColorMap as $_col => $_var) {
+$_ahUserDarkMap = [
+    'color_background_dark'       => '--paper',
+    'color_foreground_dark'       => '--ink',
+    'color_muted_dark'            => '--paper-deep',
+    'color_muted_foreground_dark' => '--ink-soft',
+    'color_primary_dark'          => '--green',
+    'color_secondary_dark'        => '--cyan',
+    'color_accent_dark'           => '--orange',
+];
+$_ahUserLightVars = [];
+foreach ($_ahUserLightMap as $_col => $_var) {
     if (!empty($profileUser[$_col])) {
-        $_ahUserVars[] = $_var . ': hsl(' . htmlspecialchars((string) $profileUser[$_col], ENT_QUOTES, 'UTF-8') . ');';
+        $_ahUserLightVars[] = $_var . ':hsl(' . htmlspecialchars((string) $profileUser[$_col], ENT_QUOTES, 'UTF-8') . ')';
     }
 }
-if ($_ahUserVars !== []) {
-    $extraHeadHtml = '<style>.page-user-profile{' . implode('', $_ahUserVars) . '}</style>';
+$_ahUserDarkVars = [];
+foreach ($_ahUserDarkMap as $_col => $_var) {
+    if (!empty($profileUser[$_col])) {
+        $_ahUserDarkVars[] = $_var . ':hsl(' . htmlspecialchars((string) $profileUser[$_col], ENT_QUOTES, 'UTF-8') . ')';
+    }
 }
-unset($_ahUserColorMap, $_ahUserVars, $_col, $_var);
+$extraHeadHtml = '';
+if ($_ahUserLightVars !== []) {
+    $extraHeadHtml .= '<style>:root:not([data-theme="dark"]) .page-user-profile{' . implode(';', $_ahUserLightVars) . '}</style>';
+    $extraHeadHtml .= '<style>@media(prefers-color-scheme:light){:root:not([data-theme="dark"]) .page-user-profile{' . implode(';', $_ahUserLightVars) . '}}</style>';
+}
+if ($_ahUserDarkVars !== []) {
+    $extraHeadHtml .= '<style>[data-theme="dark"] .page-user-profile{' . implode(';', $_ahUserDarkVars) . '}</style>';
+    $extraHeadHtml .= '<style>@media(prefers-color-scheme:dark){:root:not([data-theme="light"]) .page-user-profile{' . implode(';', $_ahUserDarkVars) . '}}</style>';
+}
+unset($_ahUserLightMap, $_ahUserDarkMap, $_ahUserLightVars, $_ahUserDarkVars, $_col, $_var);
 
 require dirname(__DIR__) . '/partials/header.php';
 ?>
@@ -82,7 +103,8 @@ require dirname(__DIR__) . '/partials/header.php';
             <li>
                 <a href="/pieces/<?= (int) $piece['id'] ?>" style="display: block; text-decoration: none; color: var(--ink);">
                     <?php if (!empty($piece['thumbnail_url'])): ?>
-                        <img src="<?= e($piece['thumbnail_url']) ?>" alt="" style="width: 100%; aspect-ratio: 1; object-fit: cover; border: 2px solid var(--line); display: block; margin-bottom: 0.4rem;">
+                        <img src="<?= e($piece['thumbnail_url']) ?>" alt="" loading="lazy" decoding="async"
+                             style="width: 100%; aspect-ratio: 1; object-fit: cover; border: 2px solid var(--line); display: block; margin-bottom: 0.4rem;">
                     <?php else: ?>
                         <div aria-hidden="true" style="width: 100%; aspect-ratio: 1; background: var(--paper-deep); border: 2px solid var(--line); margin-bottom: 0.4rem;"></div>
                     <?php endif ?>
@@ -91,6 +113,11 @@ require dirname(__DIR__) . '/partials/header.php';
             </li>
             <?php endforeach ?>
         </ul>
+        <?php if (!empty($piecesHasMore)): ?>
+        <p style="margin: 1rem 0 0;">
+            <a href="?show_pieces=all" style="font-weight: 700; color: var(--ink); border-bottom: 2px solid var(--line);">Show all pieces →</a>
+        </p>
+        <?php endif ?>
     </section>
     <?php endif ?>
 

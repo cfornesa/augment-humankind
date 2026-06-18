@@ -26,7 +26,7 @@ $error = $_GET['error'] ?? null;
     <nav class="admin-tabs" aria-label="Feed tabs">
         <a href="/admin/feed-sources?tab=sources" class="admin-tab <?= $tab === 'sources' ? 'active' : '' ?>">Sources</a>
         <a href="/admin/feed-sources?tab=pending" class="admin-tab <?= $tab === 'pending' ? 'active' : '' ?>">
-            Pending
+            Review Queue
             <?php if (!empty($pending)): ?>
                 <span class="badge"><?= count($pending) ?></span>
             <?php endif; ?>
@@ -34,52 +34,43 @@ $error = $_GET['error'] ?? null;
     </nav>
 
     <?php if ($tab === 'sources'): ?>
+        <p class="admin-copy">Feeds follow the same guided pattern as platform connections: connect the source, choose refresh cadence, ingest new items, then approve or reject them in the review queue.</p>
         <?php if (empty($sources)): ?>
             <p>No feed sources yet. <a href="/admin/feed-sources/create">Add the first one</a>.</p>
         <?php else: ?>
-            <table class="admin-table">
-                <thead>
-                    <tr>
-                        <th>Name</th>
-                        <th>Feed URL</th>
-                        <th>Cadence</th>
-                        <th>Status</th>
-                        <th>Last Fetched</th>
-                        <th>Items</th>
-                        <th>Actions</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php foreach ($sources as $source): ?>
-                        <tr>
-                            <td><?= e($source['name'] ?? '') ?></td>
-                            <td><a href="<?= e($source['feed_url'] ?? '') ?>" target="_blank" rel="noopener">Feed</a></td>
-                            <td><?= e($source['cadence'] ?? 'daily') ?></td>
-                            <td>
-                                <span class="status-badge <?= (int) ($source['enabled'] ?? 1) ? 'status-active' : 'status-inactive' ?>">
-                                    <?= (int) ($source['enabled'] ?? 1) ? 'Enabled' : 'Disabled' ?>
-                                </span>
-                            </td>
-                            <td><?= e($source['last_fetched_at'] ?? 'Never') ?></td>
-                            <td><?= (int) ($source['items_imported'] ?? 0) ?></td>
-                            <td>
-                                <form method="post" action="/admin/feed-sources/<?= (int) $source['id'] ?>/ingest" class="inline-form">
-                                    <button type="submit" class="admin-link">Ingest</button>
-                                </form>
-                                <a href="/admin/feed-sources/<?= (int) $source['id'] ?>/edit" class="admin-link">Edit</a>
-                                <form method="post" action="/admin/feed-sources/<?= (int) $source['id'] ?>/delete" class="inline-form" onsubmit="return confirm('Delete this feed source permanently?')">
-                                    <button type="submit" class="admin-link danger">Delete</button>
-                                </form>
-                            </td>
-                        </tr>
-                    <?php endforeach; ?>
-                </tbody>
-            </table>
+            <div class="dashboard-stats">
+                <?php foreach ($sources as $source): ?>
+                    <div class="stat-card" style="gap:0.85rem;">
+                        <div>
+                            <strong><?= e($source['name'] ?? '') ?></strong>
+                            <p class="admin-hint" style="margin:0.35rem 0 0;"><?= e($source['feed_url'] ?? '') ?></p>
+                        </div>
+                        <div class="dashboard-links">
+                            <span class="status-badge <?= (int) ($source['enabled'] ?? 1) ? 'status-active' : 'status-inactive' ?>">
+                                <?= (int) ($source['enabled'] ?? 1) ? 'Enabled' : 'Disabled' ?>
+                            </span>
+                            <span class="admin-hint">Cadence: <?= e($source['cadence'] ?? 'daily') ?></span>
+                        </div>
+                        <p class="admin-hint" style="margin:0;">Last fetched: <?= e($source['last_fetched_at'] ?? 'Never') ?> • Imported items: <?= (int) ($source['items_imported'] ?? 0) ?></p>
+                        <div class="dashboard-links">
+                            <form method="post" action="/admin/feed-sources/<?= (int) $source['id'] ?>/ingest" class="inline-form">
+                                <button type="submit" class="admin-btn">Run Ingest</button>
+                            </form>
+                            <a href="/admin/feed-sources/<?= (int) $source['id'] ?>/edit" class="admin-btn admin-btn-ghost">Edit</a>
+                            <a href="/admin/feed-sources?tab=pending" class="admin-btn admin-btn-ghost">Review Queue</a>
+                            <form method="post" action="/admin/feed-sources/<?= (int) $source['id'] ?>/delete" class="inline-form" onsubmit="return confirm('Delete this feed source permanently?')">
+                                <button type="submit" class="admin-btn admin-btn-ghost">Delete</button>
+                            </form>
+                        </div>
+                    </div>
+                <?php endforeach; ?>
+            </div>
         <?php endif; ?>
     <?php else: ?>
         <?php if (empty($pending)): ?>
-            <p>No pending imports. Run <strong>Ingest</strong> on a feed source to populate this queue.</p>
+            <p>No pending imports. Run <strong>Ingest</strong> on a feed source to populate this review queue.</p>
         <?php else: ?>
+            <p class="admin-copy">Each imported item lands here before it becomes a draft post. Approve what belongs on your site and reject the rest.</p>
             <table class="admin-table">
                 <thead>
                     <tr>

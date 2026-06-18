@@ -13,9 +13,48 @@ require dirname(__DIR__) . '/partials/header.php';
 
     <?php if (isset($_GET['success'])): ?>
         <div role="status" style="margin-bottom: 1.5rem; padding: 0.75rem 1rem; border: 2px solid var(--line); background: #e6f4e6; color: #1a4a1a;">
-            <?= $_GET['success'] === 'profile' ? 'Profile updated.' : 'Style settings saved.' ?>
+            <?php
+            $successMsg = match($_GET['success']) {
+                'profile' => 'Profile updated.',
+                'photo'   => 'Profile photo updated.',
+                default   => 'Style settings saved.',
+            };
+            echo e($successMsg);
+            ?>
         </div>
     <?php endif ?>
+    <?php if (isset($_GET['error'])): ?>
+        <div role="alert" style="margin-bottom: 1.5rem; padding: 0.75rem 1rem; border: 2px solid var(--line); background: #fff1cd; color: #5a3a00;">
+            <?= e((string) $_GET['error']) ?>
+        </div>
+    <?php endif ?>
+
+    <section aria-labelledby="photo-section" style="margin-bottom: 3rem; padding-bottom: 2rem; border-bottom: 3px solid var(--line);">
+        <h2 id="photo-section" style="margin: 0 0 1.25rem; font-size: 1.2rem;">Profile Photo</h2>
+        <div style="display: flex; align-items: center; gap: 1.5rem; margin-bottom: 1.25rem;">
+            <?php if (!empty($user['image'])): ?>
+                <img src="<?= e((string) $user['image']) ?>" alt="Your current profile photo"
+                     style="width: 72px; height: 72px; border-radius: 50%; border: 3px solid var(--line); object-fit: cover; flex-shrink: 0;">
+            <?php else: ?>
+                <div aria-hidden="true"
+                     style="width: 72px; height: 72px; border-radius: 50%; border: 3px solid var(--line); background: var(--paper-deep); flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 2rem; font-weight: 700; color: var(--ink-soft);">
+                    <?= e(mb_strtoupper(mb_substr((string) ($user['name'] ?? $user['username'] ?? '?'), 0, 1))) ?>
+                </div>
+            <?php endif ?>
+            <div style="flex: 1; min-width: 0;">
+                <p style="margin: 0 0 0.5rem; font-size: 0.9rem; color: var(--ink-soft);">JPEG, PNG, GIF, WebP, or AVIF. Max 5 MB.</p>
+                <form method="POST" action="/user/settings/photo" enctype="multipart/form-data"
+                      style="display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center;">
+                    <input type="file" name="profile_photo" id="profile_photo" accept="image/*" required
+                           style="font-family: inherit; font-size: 0.9rem;">
+                    <button type="submit"
+                            style="padding: 0.55rem 1.1rem; border: 3px solid var(--line); box-shadow: 3px 3px 0 var(--line); background: var(--ink); color: var(--paper); font-weight: 700; font-size: 0.9rem; cursor: pointer; font-family: inherit; white-space: nowrap;">
+                        Upload
+                    </button>
+                </form>
+            </div>
+        </div>
+    </section>
 
     <section aria-labelledby="profile-section" style="margin-bottom: 3rem; padding-bottom: 2rem; border-bottom: 3px solid var(--line);">
         <h2 id="profile-section" style="margin: 0 0 1.25rem; font-size: 1.2rem;">Profile</h2>

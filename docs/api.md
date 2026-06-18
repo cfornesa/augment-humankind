@@ -64,6 +64,22 @@ On success, the handler:
 
 No separate success URL is added.
 
+## Public User Routes
+
+- `GET /user/login` — login form (OAuth buttons: GitHub, Google)
+- `GET /user/logout` — ends the current user session and redirects to `/`
+- `GET /user/auth/github/start` — begins GitHub OAuth flow
+- `GET /user/auth/github/callback` — GitHub OAuth callback
+- `GET /user/auth/google/start` — begins Google OAuth flow
+- `GET /user/auth/google/callback` — Google OAuth callback
+- `GET /user/settings` — profile settings page (requires login; redirects to `/user/login?redirect=...` otherwise)
+- `POST /user/settings/profile` — updates the signed-in user's display name, bio, and website
+- `POST /user/settings/photo` — uploads a profile photo for the signed-in user. Accepts a `profile_photo` multipart file (JPEG, PNG, GIF, WebP, or AVIF). Stores the binary in `profile_photo_assets` and sets `users.image` to `/api/profile-photos/{filename}`. Redirects to `/user/settings?success=photo` on success or `?error=...` on failure.
+- `POST /user/settings/style` — updates the signed-in user's palette, theme, and per-mode color overrides
+- `GET /user/[username]` — public profile page for a user. Resolves by `users.username`; falls back to `users.id` lookup if the slug is all digits. Accepts `?show_pieces=all` to display all pieces instead of the default 12.
+
+User photo URLs follow the `/api/profile-photos/[filename]` pattern (served by the platform compatibility API; see below). There is no `/user/register` route — account creation happens through OAuth only.
+
 ## Public Blog and Platform Compatibility Routes
 
 The assimilated platform feed is canonical at:
@@ -470,10 +486,11 @@ stored in the database and is not written to repo files.
 - `POST /admin/feed-sources/approve`
 - `POST /admin/feed-sources/reject`
 
-The feed sources admin lists RSS/Atom sources and a pending-import moderation
-queue. The `ingest` endpoint fetches the feed, parses items, and records unseen
-items as pending imports. The `approve` endpoint converts a pending item into a
-draft blog post. The `reject` endpoint marks it as rejected.
+The feed sources admin is a guided two-surface workflow: **Feed Sources** for
+setup/refresh and **Review Queue** for moderation. The `ingest` endpoint fetches
+the feed, parses items, and records unseen items as pending imports. The
+`approve` endpoint converts a pending item into a draft blog post. The `reject`
+endpoint marks it as rejected.
 
 ### Trash
 
@@ -488,12 +505,15 @@ Supported trash types are artworks, categories, exhibits, posts, comments, piece
 
 - `GET /admin/site-identity`
 - `POST /admin/site-identity/settings`
+- `POST /admin/site-identity/navigation-order`
 - `POST /admin/site-identity/assets`
 - `POST /admin/site-identity/assets/[id]/delete`
 - `POST /admin/site-identity/media/[id]/delete`
 
-The site identity admin is a three-tab surface: Settings (edit `site_settings`),
-Assets (upload `site_assets` by key), and Media Library (browse `media_assets`).
+The site identity admin is a four-tab surface: Settings, Design, Assets, and
+Media Library. `site_settings` now also carries `canonical_public_url` (used
+for canonical links, social cards, and syndication when set) and
+`admin_nav_order_json` (owner-configured admin navigation order).
 
 ### User Profiles
 
@@ -512,8 +532,27 @@ Assets (upload `site_assets` by key), and Media Library (browse `media_assets`).
 - `POST /admin/user-profiles/keys/[id]/edit`
 - `POST /admin/user-profiles/keys/[id]/delete`
 
-The user profiles admin has three tabs: Users (edit profile and photo), AI Settings (vendor
-settings per user), and API Keys (AES-256-GCM encrypted vendor keys).
+The user profiles admin is now user-only: profile editing, photos, and
+per-user preferred AI profile selections remain here.
+
+### AI Settings
+
+- `GET /admin/ai-settings`
+- `GET /admin/ai-settings/profiles/create`
+- `POST /admin/ai-settings/profiles/create`
+- `GET /admin/ai-settings/profiles/[id]/edit`
+- `POST /admin/ai-settings/profiles/[id]/edit`
+- `POST /admin/ai-settings/profiles/[id]/delete`
+- `GET /admin/ai-settings/keys/create`
+- `POST /admin/ai-settings/keys/create`
+- `GET /admin/ai-settings/keys/[id]/edit`
+- `POST /admin/ai-settings/keys/[id]/edit`
+- `POST /admin/ai-settings/keys/[id]/delete`
+- `POST /admin/ai-settings/vendor`
+
+The AI settings admin has three tabs: **AI Profiles**, **API Keys**, and
+**AI Vendor**. The vendor tab controls owner-facing preferred AI profiles for
+art generation, text improvement, and alt-text generation.
 
 The user edit form includes three preferred AI profile selects:
 - **Art Piece Generation** — `preferred_art_piece_profile_id`
@@ -546,10 +585,11 @@ Both endpoints require an authenticated admin session. They use `AiProviderClien
 - `GET /admin/platform-connections/auth/[platform]/callback` — exchanges the OAuth code for tokens and saves/upserts them into `platform_connections`
 - `GET /admin/platform-connections/diagnostics` — shows OAuth credential status, redirect URIs, and endpoint reachability for all supported providers
 
-The platform connections admin manages `platform_connections` (credentials for
-external platforms) and `post_syndications` (links between posts and platform
-connections). The `publish` endpoint syndicates a post to a platform via the
-adapter layer.
+The platform connections admin is a platform-guided setup surface. Operators do
+not edit raw metadata JSON; typed platform forms map to `platform_connections`
+internally. The admin manages outbound credentials plus `post_syndications`
+(links between posts and platform connections). The `publish` endpoint
+syndicates a post to a platform via the adapter layer.
 
 OAuth providers supported: `wordpress-com`, `blogger`, `linkedin`, `facebook`, `instagram`.
 OAuth callbacks encrypt tokens with `encrypt_string()` and save them into `platform_connections`.
@@ -642,4 +682,6 @@ with links to each exhibit's public `/exhibits/[slug]` and
 - `POST /admin/navigation/[id]/target`
 
 The public header uses `navigation_items` when available. It falls back to the
-system navigation if the database or table is unavailable.
+system navigation if the database or table is unavailable. Signed-in account
+actions now live behind a person-menu in the public header; admin users also
+see the ordered admin navigation inside that account surface.

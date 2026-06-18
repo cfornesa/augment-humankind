@@ -1807,3 +1807,102 @@ All four portfolio-type archive pages and the blog lacked functional search, fil
 ### Verification
 - `php -l` passed on all changed PHP files (15 files).
 - Browser verified: `/blog`, `/portfolio/pieces`, `/portfolio/platform-collections`, `/portfolio/exhibits`, `/portfolio/exhibit-collections`, `/pieces`, `/collections`.
+2026-06-17 DECISION Canonical public origin is now centralized for public links, social cards, and syndication. URL resolution order is `site_settings.canonical_public_url`, then `PUBLIC_SITE_URL`, then the request host. Shared SEO output now emits canonical, Open Graph, and Twitter card metadata from that origin so local-authoring flows still publish public-host URLs and featured-image previews.
+2026-06-17 DECISION Admin information architecture now runs through a shared registry that defines stable admin section keys, labels, routes, icons, and visibility rules. The same registry drives the desktop sidebar, mobile hamburger navigation, admin dashboard card order, and admin links exposed to signed-in administrators from the public account menu.
+2026-06-17 DECISION Site owners can now set admin navigation order from `Identity -> Design`, with persistence stored in `site_settings.admin_nav_order_json`. The same design area also becomes the home for visual identity controls, separating site identity from presentation choices.
+2026-06-17 DECISION `Users` is now a user-management surface only. AI configuration moved into a top-level `AI Settings` area with `AI Profiles`, `API Keys`, and `AI Vendor` subtabs, and preferred AI vendor/profile selection now lives there instead of on user forms.
+2026-06-17 DECISION Platform social connections and feed sources now use guided, instruction-first admin surfaces rather than exposing operators to raw JSON or metadata editing. Platform-specific setup requirements, help text, validation, and typed config mapping are defined in code while the existing storage tables remain the persistence layer.
+
+## 2026-06-17 — Blog Post Admin Polish + Syndication Fixes
+
+### Context
+Two sessions of work on the blog post admin: first a feature-parity pass adding section-based editing, a post calendar, inline category creation, and the "Publish to" fieldset; then a polish pass fixing visual and functional regressions discovered via screenshots.
+
+### Phase 2 — Feature Parity (prior session, completed)
+- Added `require __DIR__ . '/models/PostSection.php';` to `router.php` (fixed "Class PostSection not found" fatal).
+- Status select relabeled to "Save as Draft / Publish Now / Schedule".
+- Inline category creation via AJAX at `/admin/blog/categories/create-inline`.
+- "Publish to" fieldset lists enabled platform connections; checked connections are synced on publish.
+- Post calendar at `/admin/posts/calendar` (7-column weekly grid, prev/next week navigation).
+- `BlogPost::publishDuePosts()` called on every admin posts index visit; pending syndications processed automatically.
+- `BlogPost::forDateRange()` added to `BlogPost.php` for calendar queries.
+- `PostSyndication::pendingForPosts()` and `PostSyndication::syncedConnectionIdsForPost()` added to `PlatformConnection.php`.
+- `PlatformConnection::allEnabled()` added.
+- Tiptap editor min-height raised to 280 px in `tiptap.css`.
+
+### Phase 3 — Polish Fixes (this session)
+
+**Fix 1 — "Scheduled for" row always visible**
+Root cause: `.form-row { display: grid; }` in `admin.css` has higher CSS specificity than the UA-stylesheet `[hidden] { display: none; }`. Fix: added `.form-row[hidden] { display: none; }` to `admin.css` and replaced the JS toggle to use `element.style.display` (inline styles always beat author CSS). `syncScheduledRow()` is also called on page load.
+
+**Fix 2 — Unstyled "New category" collapsible**
+Replaced `<details>/<summary>` with a `<button class="admin-btn admin-btn-ghost admin-btn-sm">` + `<div>` toggled via JS, matching the dark admin theme.
+
+**Fix 3 — Per-platform draft text for Bluesky/LinkedIn**
+Each platform connection checkbox in the "Publish to" fieldset now reveals a `<textarea name="platform_texts[platform]">` when checked. `handleSyndication()` merges non-empty values into `SyndicationPayload::$socialPostDrafts` before calling each adapter.
+
+**Fix 4 — Media picker downloads all images on open**
+`loadGrid()` in `tiptap-editor.js` now paginates: stores all fetched items in `_pickerAllItems`, renders the first 48 via `renderPickerBatch()`, and appends a "Load more" button (via `insertAdjacentElement('afterend', ...)` so the button is never inside the CSS grid container).
+
+### Syndication Reliability Fixes
+
+**Problem**: `handleSyndication` was `void` and silently swallowed all API failures — the user had no indication that Bluesky publishing failed.
+
+**Fixes applied**:
+- `handleSyndication` now returns `array` of failure strings (e.g. `"Bluesky: <error message>"`). `postStore()`/`postUpdate()` redirect to `/admin/posts?syndication_error=...` on failure, showing a red banner.
+- `SyndicationPayload::fromPost()` reads `$post['content']` which is always `''` in the section-based system. `handleSyndication` and `processPendingSyndications` now load content from `PostSection::allForPost()` when `contentHtml` is empty, giving link cards a real description.
+- Featured image URLs stored as `/image/123` (relative) are prefixed with `seo_origin()` before publishing so Bluesky/LinkedIn can actually fetch the thumbnail.
+- The platform-connections Syndications tab now shows `error_message` in red for failed records, or a clickable external link for synced records.
+
+## 2026-06-17 — Navigation, Profile Icon, and Profile Page Improvements
+
+### Admin Navigation Breakpoint Consolidation
+
+**Problem (A1–A3):** The hamburger toggle had no base `display:none`, so it rendered at all viewport widths. The 2-column sidebar grid only collapsed at ≤640px while the hamburger fired at ≤860px, causing a 641–860px range where both a sidebar column and a hamburger coexisted simultaneously. The open-nav dropdown used `left: -1rem; width: 100vw` anchored to the admin-header, which overflowed on narrow columns.
+
+**Fixes in `public/assets/admin.css`:**
+- Added `display: none` base rule for `.menu-toggle` before any media queries.
+- Removed the `@media (max-width: 640px)` block entirely; all its grid-collapse and header-layout rules moved into the `@media (max-width: 860px)` block.
+- Dropdown now uses `left: -0.5rem; right: -0.5rem; width: auto; max-width: 100vw` (spanning exactly the admin-chrome width, which has 0.5rem margins at ≤860px) instead of the absolute `100vw` value.
+- Result: at >860px the sidebar renders; at ≤860px a single-column layout renders with only the hamburger as the navigation control. They never coexist.
+
+### Admin Navigation: Feed Consolidation
+
+**`public/app/helpers/admin-navigation.php`:** The registry previously had two top-level entries — `feed_sources` (href `/admin/feed-sources`) and `feed_queue` (href `/admin/feed-sources?tab=pending`). Review Queue is already a tab of the feed sources page, not a distinct page. Removed `feed_queue`; renamed `feed_sources` key to `feed`, label to `"Feed"`, description to `"Connect, manage, and review imported feed items."`, href unchanged at `/admin/feed-sources`.
+
+### Site Identity Tab Cleanup
+
+**`public/app/views/admin/site-identity/index.php`:** The Settings tab contained design artifacts (logo pickers, logo layout select, default theme mode, layout theme, color palette, full color grid) that belonged only in the Design tab. The Design tab also had a duplicate Canonical Public URL field.
+
+- **Settings tab** now contains only content/text fields: `site_title`, `hero_heading`, `hero_subheading`, `about_heading`, `about_body`, `copyright_line`, `footer_credit`, `cta_label`/`cta_href`, and `canonical_public_url`.
+- **Design tab** retains all visual controls (logos, theme selects, palette, colors) and no longer has a Canonical URL field.
+- Removed the duplicate top-of-file `$themeOptions` and `$colorGroups` declarations; they are now only declared inside the Design tab block where they are used.
+
+### Public Header: Account Menu Redesign
+
+**`public/app/views/partials/header.php`:**
+- Moved `<details class="account-menu">` outside `<nav class="site-nav">` so it is never collapsed by the mobile nav hide. It is now a direct child of `<header>` after the nav, always visible.
+- Profile slug defaults to user ID if no username is set: `$navUsername = (string)($_navUser['username'] ?? '') ?: (string)($_navUser['id'] ?? '')`.
+- The `<summary>` trigger conditionally renders a `<img class="account-menu-avatar">` if `$_navUser['image']` is set, falling back to the `⌾` placeholder icon.
+- Added "Create account" link (`/user/register`) for logged-out users alongside the existing "Log in" link.
+
+**`public/assets/styles.css`:**
+- `.account-menu-trigger` made circular: `width: 3.5rem; height: 3.5rem; border-radius: 50%; overflow: hidden; padding: 0`.
+- `.account-menu-avatar` sized to fill and cover the trigger: `width: 100%; height: 100%; object-fit: cover; display: block`.
+- Mobile flex ordering (≤860px): `.menu-toggle { order: 2 }`, `.account-menu { order: 3 }`, `.site-nav { order: 4; width: 100% }` — puts the brand, hamburger, and account icon in the top row; nav wraps below when open.
+
+### User Profile Page
+
+**`public/app/views/user/profile.php`:**
+- **Dark mode color fix:** User color overrides are now scoped per theme mode. Light-mode vars are injected as `:root:not([data-theme="dark"]) .page-user-profile { ... }` (and `@media(prefers-color-scheme:light)`). Dark-mode vars (from `color_*_dark` columns) are injected as `[data-theme="dark"] .page-user-profile { ... }` (and `@media(prefers-color-scheme:dark)`). Previous unscoped injection caused light-palette dark navy colors to appear as text in dark mode, making profile pages unreadable.
+- **Lazy loading:** Added `loading="lazy" decoding="async"` to piece thumbnail `<img>` elements.
+- **Show more:** The pieces section shows at most 12 pieces. If 13 were fetched, a "Show all pieces →" link renders at `?show_pieces=all`.
+
+**`public/app/controllers/UserProfileController.php`:**
+- `show()`: Added user ID fallback — if the username lookup returns no row and the slug is all digits (`ctype_digit()`), a second query looks up by `users.id`. Allows `/user/4` to resolve when no username is set.
+- `show()`: Pieces fetch now uses `LIMIT 13` (or 200 when `?show_pieces=all`). If 13 results are returned, `$piecesHasMore = true` and `$pieces` is sliced to 12.
+- Added `settingsPhotoUpload()`: validates an uploaded image, stores the binary in `profile_photo_assets`, and sets `users.image` to `/api/profile-photos/{filename}`. Redirects to `/user/settings?success=photo` on success or `?error=...` on failure. Mirrors the admin `userPhotoUpload()` handler.
+
+**`public/app/views/user/settings.php`:** Added a photo upload section before the Profile section — shows the current circular avatar (72px) or an initial-letter placeholder, with a `<form method="post" action="/user/settings/photo" enctype="multipart/form-data">` containing a file input.
+
+**`public/app/router.php`:** Added `['POST', '/user/settings/photo', [UserProfileController::class, 'settingsPhotoUpload']]`.

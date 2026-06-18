@@ -137,6 +137,9 @@ class AuthController
         $assetCount     = self::countRows('media_assets', activeOnly: true);
         $feedSourceCount = self::countRows('feed_sources', activeOnly: true);
         $pendingFeeds   = self::countRows('feed_import_items', ["status = 'pending'"]);
+        $userCount      = self::countRows('users');
+        $aiProfileCount = self::countRows('user_ai_vendor_settings');
+        $aiKeyCount     = self::countRows('user_ai_vendor_keys');
 
         $trashCount = array_sum(array_map(
             static fn (string $table): int => self::countDeletedRows($table),

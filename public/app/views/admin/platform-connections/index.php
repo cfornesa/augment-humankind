@@ -10,6 +10,7 @@ if (!in_array($tab, ['connections', 'syndications'], true)) {
     $tab = 'connections';
 }
 $error = $_GET['error'] ?? null;
+$success = $_GET['success'] ?? null;
 ?>
 <div class="admin-container">
     <div class="admin-header-row">
@@ -21,6 +22,11 @@ $error = $_GET['error'] ?? null;
             <p><?= e($error) ?></p>
         </div>
     <?php endif; ?>
+    <?php if ($success === 'oauth'): ?>
+        <div class="form-status" role="status">
+            <p>Connection updated successfully.</p>
+        </div>
+    <?php endif; ?>
 
     <nav class="admin-tabs" aria-label="Platform connection tabs">
         <a href="/admin/platform-connections?tab=connections" class="admin-tab <?= $tab === 'connections' ? 'active' : '' ?>">Connections</a>
@@ -28,32 +34,40 @@ $error = $_GET['error'] ?? null;
     </nav>
 
     <?php if ($tab === 'connections'): ?>
-        <a href="/admin/platform-connections/create" class="admin-btn" style="margin-bottom:1rem;display:inline-block;">Add Connection</a>
-        <?php if (empty($connections)): ?>
-            <p>No platform connections configured. These are the credentials that enable syndication to external platforms.</p>
-        <?php else: ?>
-            <table class="admin-table">
-                <thead>
-                    <tr><th>User</th><th>Platform</th><th>Enabled</th><th>Created</th><th>Actions</th></tr>
-                </thead>
-                <tbody>
-                    <?php foreach ($connections as $c): ?>
-                        <tr>
-                            <td><?= e($c['user_name'] ?? '') ?></td>
-                            <td><?= e($c['platform']) ?></td>
-                            <td><?= (int) ($c['enabled'] ?? 1) ? 'Yes' : 'No' ?></td>
-                            <td><?= e($c['created_at'] ?? '') ?></td>
-                            <td>
-                                <a href="/admin/platform-connections/<?= (int) $c['id'] ?>/edit" class="admin-link">Edit</a>
-                                <form method="post" action="/admin/platform-connections/<?= (int) $c['id'] ?>/delete" class="inline-form" onsubmit="return confirm('Delete this connection?')">
-                                    <button type="submit" class="admin-link danger">Delete</button>
-                                </form>
-                            </td>
-                        </tr>
-                    <?php endforeach; ?>
-                </tbody>
-            </table>
-        <?php endif; ?>
+        <p class="admin-copy">Each platform below uses a guided setup flow with its own instructions, required fields, and connection summary. Raw metadata stays internal.</p>
+        <div class="dashboard-stats">
+            <?php foreach ($platforms as $platformKey => $platform): ?>
+                <?php $connection = $connectionsByPlatform[$platformKey] ?? null; ?>
+                <?php $latest = $latestSyndications[$platformKey] ?? null; ?>
+                <div class="stat-card" style="gap:0.85rem;">
+                    <div>
+                        <strong><?= e($platform['label']) ?></strong>
+                        <p class="admin-hint" style="margin:0.35rem 0 0;"><?= e($platform['setup_instruction']) ?></p>
+                    </div>
+                    <div>
+                        <span class="status-badge <?= $connection && (int) ($connection['enabled'] ?? 1) ? 'status-active' : 'status-inactive' ?>">
+                            <?= $connection ? ((int) ($connection['enabled'] ?? 1) ? 'Connected' : 'Disabled') : 'Not connected' ?>
+                        </span>
+                    </div>
+                    <?php if ($latest): ?>
+                        <p class="admin-hint" style="margin:0;">Latest syndication: <?= e($latest['status'] ?? 'pending') ?><?= !empty($latest['external_url']) ? ' • ' : '' ?><?php if (!empty($latest['external_url'])): ?><a href="<?= e($latest['external_url']) ?>" target="_blank" rel="noopener">open</a><?php endif; ?></p>
+                    <?php endif; ?>
+                    <div class="dashboard-links">
+                        <?php if (($platform['kind'] ?? '') === 'oauth'): ?>
+                            <a href="/admin/platform-connections/auth/<?= e(str_replace('_', '-', $platformKey)) ?>/start" class="admin-btn"><?= $connection ? 'Reconnect' : 'Connect' ?></a>
+                        <?php else: ?>
+                            <a href="<?= $connection ? '/admin/platform-connections/' . (int) $connection['id'] . '/edit' : '/admin/platform-connections/create?platform=' . urlencode($platformKey) ?>" class="admin-btn"><?= $connection ? 'Edit' : 'Set up' ?></a>
+                        <?php endif; ?>
+                        <?php if ($connection): ?>
+                            <form method="post" action="/admin/platform-connections/<?= (int) $connection['id'] ?>/delete" class="inline-form" onsubmit="return confirm('Delete this connection?')">
+                                <button type="submit" class="admin-btn admin-btn-ghost">Disconnect</button>
+                            </form>
+                        <?php endif; ?>
+                        <a href="<?= e($platform['setup_href']) ?>" target="_blank" rel="noopener" class="admin-btn admin-btn-ghost">Instructions</a>
+                    </div>
+                </div>
+            <?php endforeach; ?>
+        </div>
     <?php else: ?>
         <a href="/admin/platform-connections/syndications/create" class="admin-btn" style="margin-bottom:1rem;display:inline-block;">Add Syndication</a>
         <?php if (empty($syndications)): ?>

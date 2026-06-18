@@ -9,6 +9,18 @@ class PlatformConnectionsAdminController
         admin_check();
         $connections = PlatformConnection::all();
         $syndications = PostSyndication::all();
+        $platforms = platform_ui_definitions();
+        $connectionsByPlatform = [];
+        foreach ($connections as $connection) {
+            $connectionsByPlatform[$connection['platform']] = $connection;
+        }
+        $latestSyndications = [];
+        foreach ($syndications as $syndication) {
+            $platform = (string) ($syndication['platform'] ?? '');
+            if ($platform !== '' && !isset($latestSyndications[$platform])) {
+                $latestSyndications[$platform] = $syndication;
+            }
+        }
         require dirname(__DIR__, 2) . '/views/admin/platform-connections/index.php';
     }
 
@@ -18,6 +30,8 @@ class PlatformConnectionsAdminController
         $users = self::allUsers();
         $connection = null;
         $error = null;
+        $platforms = platform_ui_definitions();
+        $selectedPlatform = (string) ($_GET['platform'] ?? '');
         require dirname(__DIR__, 2) . '/views/admin/platform-connections/form.php';
     }
 
@@ -48,6 +62,8 @@ class PlatformConnectionsAdminController
         }
         $users = self::allUsers();
         $error = null;
+        $platforms = platform_ui_definitions();
+        $selectedPlatform = (string) ($connection['platform'] ?? '');
         require dirname(__DIR__, 2) . '/views/admin/platform-connections/form.php';
     }
 
@@ -307,7 +323,7 @@ class PlatformConnectionsAdminController
                 ]);
             }
 
-            header('Location: /admin/platform-connections/' . $connectionId . '/edit?success=oauth');
+            header('Location: /admin/platform-connections?success=oauth&platform=' . urlencode($platform));
             exit;
         } catch (Throwable $e) {
             error_log('[platform-oauth] ' . $platform . ': ' . $e->getMessage());
@@ -409,18 +425,74 @@ class PlatformConnectionsAdminController
         if ($platform === '') {
             throw new InvalidArgumentException('Platform is required.');
         }
-        $metadata = trim($_POST['metadata'] ?? '');
-        if ($metadata !== '' && json_decode($metadata, true) === null && json_last_error() !== JSON_ERROR_NONE) {
-            throw new InvalidArgumentException('Metadata must be valid JSON.');
+        $definition = platform_ui_definition($platform);
+        if ($definition === null) {
+            throw new InvalidArgumentException('Unsupported platform.');
+        }
+
+        $metadata = parse_connection_meta($existing['metadata'] ?? null);
+        $encryptedAccess = $existing['encrypted_access_token'] ?? null;
+        $encryptedRefresh = $existing['encrypted_refresh_token'] ?? null;
+
+        if (($definition['kind'] ?? '') === 'credentials') {
+            switch ($platform) {
+                case 'bluesky':
+                    $handle = trim((string) ($_POST['handle'] ?? ($metadata['handle'] ?? '')));
+                    if ($handle === '') {
+                        throw new InvalidArgumentException('Bluesky handle is required.');
+                    }
+                    $metadata['handle'] = $handle;
+                    $encryptedAccess = self::encryptedTokenFromPost('app_password', $encryptedAccess);
+                    if (!$encryptedAccess) {
+                        throw new InvalidArgumentException('Bluesky App Password is required.');
+                    }
+                    break;
+
+                case 'wordpress_self':
+                    $siteUrl = trim((string) ($_POST['site_url'] ?? ($metadata['siteUrl'] ?? '')));
+                    $username = trim((string) ($_POST['username'] ?? ($metadata['username'] ?? '')));
+                    $appPassword = trim((string) ($_POST['app_password'] ?? ''));
+                    if ($siteUrl === '' || !filter_var($siteUrl, FILTER_VALIDATE_URL)) {
+                        throw new InvalidArgumentException('A valid WordPress site URL is required.');
+                    }
+                    if ($username === '') {
+                        throw new InvalidArgumentException('WordPress username is required.');
+                    }
+                    if ($appPassword !== '') {
+                        $encryptedAccess = encrypt_string(base64_encode($username . ':' . $appPassword), ai_encryption_key());
+                    } elseif (!$encryptedAccess) {
+                        throw new InvalidArgumentException('WordPress Application Password is required.');
+                    }
+                    $metadata['siteUrl'] = rtrim($siteUrl, '/');
+                    $metadata['username'] = $username;
+                    break;
+
+                case 'substack':
+                    $publicationId = trim((string) ($_POST['publication_id'] ?? ($metadata['publicationId'] ?? '')));
+                    $publicationHost = trim((string) ($_POST['publication_host'] ?? ($metadata['publicationHost'] ?? '')));
+                    if ($publicationId === '') {
+                        throw new InvalidArgumentException('Substack publication ID is required.');
+                    }
+                    if ($publicationHost === '') {
+                        throw new InvalidArgumentException('Substack publication host is required.');
+                    }
+                    $encryptedAccess = self::encryptedTokenFromPost('session_cookie', $encryptedAccess);
+                    if (!$encryptedAccess) {
+                        throw new InvalidArgumentException('Substack session cookie is required.');
+                    }
+                    $metadata['publicationId'] = $publicationId;
+                    $metadata['publicationHost'] = $publicationHost;
+                    break;
+            }
         }
 
         return [
             'user_id' => trim($_POST['user_id'] ?? '') ?: null,
             'platform' => $platform,
-            'encrypted_access_token' => self::encryptedTokenFromPost('access_token', $existing['encrypted_access_token'] ?? null),
-            'encrypted_refresh_token' => self::encryptedTokenFromPost('refresh_token', $existing['encrypted_refresh_token'] ?? null),
+            'encrypted_access_token' => $encryptedAccess,
+            'encrypted_refresh_token' => $encryptedRefresh,
             'expires_at' => trim($_POST['expires_at'] ?? '') ?: null,
-            'metadata' => $metadata ?: null,
+            'metadata' => $metadata !== [] ? json_encode($metadata, JSON_THROW_ON_ERROR) : null,
             'enabled' => isset($_POST['enabled']) ? 1 : 0,
         ];
     }
