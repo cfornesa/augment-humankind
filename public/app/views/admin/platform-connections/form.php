@@ -95,10 +95,11 @@ $connection = $connection ?? [];
             <?php endif; ?>
         <?php elseif ($definition && ($definition['kind'] ?? '') === 'oauth'): ?>
             <div class="form-status" role="note">
-                <p>OAuth-based platforms are connected from the overview card so the callback flow can manage tokens safely. Use the button below to start or refresh the connection.</p>
+                <p>OAuth-based platforms are connected from the overview card so the callback flow can manage tokens safely. Configure the provider app credentials first, then start or refresh the connection.</p>
             </div>
             <div class="form-actions">
                 <a href="/admin/platform-connections/auth/<?= e(str_replace('_', '-', $selectedPlatform)) ?>/start" class="admin-btn"><?= $isEdit ? 'Reconnect' : 'Start OAuth' ?></a>
+                <a href="/admin/platform-connections/oauth-apps/<?= e(str_replace('_', '-', $selectedPlatform)) ?>/edit" class="admin-btn admin-btn-ghost">Configure App</a>
                 <a href="/admin/platform-connections/diagnostics" class="admin-btn admin-btn-ghost">Diagnostics</a>
             </div>
         <?php endif; ?>

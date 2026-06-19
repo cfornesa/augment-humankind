@@ -10,12 +10,15 @@ jobs:
     name: Refresh feed sources
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Run feed refresh
+      - name: Trigger PHP feed refresh endpoint
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           PUBLIC_SITE_URL: ${{ secrets.PUBLIC_SITE_URL }}
-        run: bash platform/scripts/scheduled-feed-refresh.sh
+        run: |
+          curl --fail-with-body -sS -X POST \
+            -H "X-Cron-Secret: ${CRON_SECRET}" \
+            -H "Accept: application/json" \
+            "${PUBLIC_SITE_URL%/}/api/cron/refresh-feeds"
 
   publish-posts:
     name: Publish scheduled posts

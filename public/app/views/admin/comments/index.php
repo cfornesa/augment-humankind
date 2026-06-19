@@ -1,5 +1,5 @@
 <?php
-$pageTitle = 'Comments — Augment Humankind Admin';
+$pageTitle = 'Comments — ' . app_site_name() . ' Admin';
 $tab = $tab ?? 'comments';
 
 $tabs = [

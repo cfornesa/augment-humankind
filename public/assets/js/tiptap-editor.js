@@ -236,6 +236,34 @@ const IframeNode = Node.create({
   },
 })
 
+// ─── Custom: Video block ─────────────────────────────────────────────────────
+// Mirrors how images are inserted: src + a description attribute rendered as
+// aria-label (the video equivalent of alt text — never AI-generated from
+// scratch, only refined from text the admin already wrote).
+
+const VideoNode = Node.create({
+  name: 'video',
+  group: 'block',
+  atom: true,
+  addAttributes() {
+    return {
+      src: { default: null },
+      description: {
+        default: null,
+        parseHTML: el => el.getAttribute('aria-label'),
+        renderHTML: attrs => attrs.description ? { 'aria-label': attrs.description } : {},
+      },
+    }
+  },
+  parseHTML() { return [{ tag: 'video[src]' }] },
+  renderHTML({ HTMLAttributes }) {
+    return ['video', { controls: 'true', style: 'max-width:100%;display:block;', ...HTMLAttributes }]
+  },
+  addCommands() {
+    return { setVideo: attrs => ({ commands }) => commands.insertContent({ type: this.name, attrs }) }
+  },
+})
+
 // ─── Custom: Content Card block ──────────────────────────────────────────────
 // Teaches Tiptap about <div class="content-card"> so it survives round-trips
 // between WYSIWYG and HTML source mode without being stripped.
@@ -674,6 +702,7 @@ function initTiptap(textarea) {
       LinkWithTitle,
       ImageWithEditButton,
       IframeNode,
+      VideoNode,
       ContentCardNode,
     ],
     content: textarea.value || '',
@@ -702,7 +731,6 @@ function initTiptap(textarea) {
       },
     },
   })
-
   function setSourceMode(nextMode, options = {}) {
     const { preserveSource = false } = options
     if (sourceMode === nextMode) return
@@ -852,6 +880,15 @@ function initTiptap(textarea) {
   })
   bar.appendChild(imgBtn)
 
+  // Video from library
+  const videoBtn = icon('🎬'); videoBtn.title = 'Insert video from media library'
+  videoBtn.addEventListener('click', () => {
+    window.openMediaPicker(result => {
+      editor.chain().focus().setVideo({ src: result.url, description: result.alt || '' }).run()
+    }, 'select', { mode: 'video' })
+  })
+  bar.appendChild(videoBtn)
+
   // Art piece / collection embed from library
   const pieceBtn = icon('▦'); pieceBtn.title = 'Insert art piece or collection'
   pieceBtn.addEventListener('click', () => {
@@ -976,6 +1013,57 @@ function initMediaPicker() {
   const selectBtn = dialog.querySelector('.media-picker-select-btn')
   const altRow    = document.getElementById('mp-alt-row')
   const altInput  = document.getElementById('mp-alt-input')
+  const altLabel  = altRow?.querySelector('label')
+  const confirmPanel = document.getElementById('mp-panel-confirm')
+  const confirmPreviewHost = document.getElementById('mp-confirm-preview-host')
+  const confirmPreviewImg = document.getElementById('mp-confirm-preview-img')
+  const confirmTitleInput = document.getElementById('mp-confirm-title')
+  const confirmAltInput = document.getElementById('mp-confirm-alt')
+  const confirmAltLabel = document.getElementById('mp-confirm-alt-label')
+  const confirmAltHint = document.getElementById('mp-confirm-alt-hint')
+  const confirmAiBtn = document.getElementById('mp-confirm-ai-btn')
+  const confirmStatus = document.getElementById('mp-confirm-status')
+  const confirmMetaId = document.getElementById('mp-confirm-meta-id')
+  const confirmMetaMime = document.getElementById('mp-confirm-meta-mime')
+  const confirmMetaStatus = document.getElementById('mp-confirm-meta-status')
+  const confirmPosterField = document.getElementById('mp-confirm-poster-field')
+  const confirmPosterUrl = document.getElementById('mp-confirm-poster-url')
+  const confirmPosterChooseBtn = document.getElementById('mp-confirm-poster-choose-btn')
+  const confirmPosterClearBtn = document.getElementById('mp-confirm-poster-clear-btn')
+  const confirmPosterFile = document.getElementById('mp-confirm-poster-file')
+  const confirmPosterStatus = document.getElementById('mp-confirm-poster-status')
+
+  function updateAltRowLabel(kind) {
+    if (!altLabel) return
+    if (kind === 'video') {
+      altLabel.innerHTML = 'Description <em>(describe the video for screen readers — AI can only refine text you write, not watch the video)</em>'
+      if (altInput) altInput.placeholder = 'e.g. A timelapse of a city skyline at sunset'
+    } else {
+      altLabel.innerHTML = 'Alt text <em>(describe the image for screen readers — leave blank if purely decorative)</em>'
+      if (altInput) altInput.placeholder = 'e.g. A cityscape at night with red lanterns'
+    }
+  }
+
+  function updateConfirmAltCopy(kind) {
+    if (!confirmAltLabel || !confirmAltHint || !confirmAltInput) return
+    if (kind === 'video') {
+      confirmAltLabel.textContent = 'Description'
+      confirmAltHint.textContent = 'Write the description that should travel with this video everywhere it is reused. AI can only refine text you write; it cannot watch the video.'
+      confirmAltInput.placeholder = 'Describe this video for screen readers and future reuse.'
+      if (confirmAiBtn) {
+        confirmAiBtn.title = 'Refine description with AI'
+        confirmAiBtn.setAttribute('aria-label', 'Refine description with AI')
+      }
+    } else {
+      confirmAltLabel.textContent = 'Description / Alt Text'
+      confirmAltHint.textContent = 'Write the alt text/description now. The asset will stay draft-only until this text is saved successfully.'
+      confirmAltInput.placeholder = 'Describe this image for screen readers and future reuse.'
+      if (confirmAiBtn) {
+        confirmAiBtn.title = 'Generate description with AI'
+        confirmAiBtn.setAttribute('aria-label', 'Generate description with AI')
+      }
+    }
+  }
 
   const dropzone  = dialog.querySelector('.media-picker-dropzone')
   const fileInput = dialog.querySelector('.media-picker-file-input')
@@ -997,6 +1085,11 @@ function initMediaPicker() {
     altAiBtn.addEventListener('click', () => {
       const imgSrc = selectedUrl
       if (!imgSrc) return
+      const isVideo = selectedAsset?.kind === 'video'
+      if (isVideo && !altInput?.value.trim()) {
+        alert('Write a description first — AI can only refine existing text for video, not invent one.')
+        return
+      }
       window.openAiProfilePicker(async selection => {
         if (!selection?.profileId) return
         altAiBtn.disabled = true
@@ -1005,16 +1098,23 @@ function initMediaPicker() {
           const fd = new FormData()
           fd.append('profile_id', selection.profileId)
           if (selection.personaId) fd.append('persona_id', selection.personaId)
-          fd.append('image_url', imgSrc)
-          if (altInput?.value.trim()) fd.append('existing_alt_text', altInput.value.trim())
-          const res = await fetch('/admin/ai/describe-image', { method: 'POST', body: fd })
+          let res
+          if (isVideo) {
+            fd.append('content', altInput.value.trim())
+            fd.append('mode', 'text')
+            res = await fetch('/admin/ai/process', { method: 'POST', body: fd })
+          } else {
+            fd.append('image_url', imgSrc)
+            if (altInput?.value.trim()) fd.append('existing_alt_text', altInput.value.trim())
+            res = await fetch('/admin/ai/describe-image', { method: 'POST', body: fd })
+          }
           const data = await res.json()
           if (data.result) {
             if (altInput) altInput.value = data.result
             altAiBtn.textContent = '✓'
             setTimeout(() => { altAiBtn.textContent = '✨'; altAiBtn.disabled = false }, 1500)
           } else {
-            alert('Alt text generation failed: ' + (data.error || 'Unknown error'))
+            alert((isVideo ? 'Description refinement' : 'Alt text generation') + ' failed: ' + (data.error || 'Unknown error'))
             altAiBtn.textContent = '✨'
             altAiBtn.disabled = false
           }
@@ -1023,7 +1123,9 @@ function initMediaPicker() {
           altAiBtn.textContent = '✨'
           altAiBtn.disabled = false
         }
-      }, { capability: 'vision', title: 'Generate Alt Text with AI', taskKey: 'alt-text' })
+      }, isVideo
+        ? { title: 'Refine Video Description with AI', taskKey: 'video-description' }
+        : { capability: 'vision', title: 'Generate Alt Text with AI', taskKey: 'alt-text' })
     })
   }
 
@@ -1031,11 +1133,24 @@ function initMediaPicker() {
   let selectedAsset = null
   let currentTab  = 'select'
   let currentMode = 'image'
+  let draftAsset = null
+  let confirmMode = false
+  let posterSelectionMode = false
+  let posterTargetAsset = null
+
+  function setTabsVisible(visible) {
+    tabs.forEach(tab => { tab.hidden = !visible })
+  }
+
+  function setPanelVisibility(tabName) {
+    panels.forEach(panel => { panel.hidden = panel.id !== `mp-panel-${tabName}` })
+  }
 
   function switchTab(tabName) {
+    if (confirmMode) return
     currentTab = tabName
     tabs.forEach(t => { const a = t.dataset.tab === tabName; t.classList.toggle('active', a); t.setAttribute('aria-selected', a ? 'true' : 'false') })
-    panels.forEach(p => { p.hidden = p.id !== `mp-panel-${tabName}` })
+    setPanelVisibility(tabName)
     const onSelect = tabName === 'select' && !_libraryMode
     selectBtn.style.display = onSelect ? '' : 'none'
     if (altRow) altRow.hidden = !(onSelect && selectedUrl)
@@ -1073,6 +1188,161 @@ function initMediaPicker() {
     }
   }
 
+  function clearConfirmPreview() {
+    confirmPreviewHost?.querySelectorAll('video.dynamic-media-preview, iframe.dynamic-media-preview, .media-picker-video-thumb').forEach(node => node.remove())
+    confirmPreviewImg?.classList.add('is-hidden')
+    confirmPreviewImg?.removeAttribute('src')
+    if (confirmPreviewImg) confirmPreviewImg.alt = ''
+  }
+
+  function renderVideoThumb(url) {
+    const shell = document.createElement('div')
+    shell.className = 'media-picker-video-thumb'
+    shell.textContent = url ? 'Poster linked' : 'No poster'
+    return shell
+  }
+
+  function hydrateConfirmPreview(asset) {
+    clearConfirmPreview()
+    if (!confirmPreviewHost) return
+    if (!asset) return
+
+    const isVideo = asset.kind === 'video' || (asset.mime_type || '').startsWith('video/')
+    const isImage = asset.kind === 'image' || (asset.mime_type || '').startsWith('image/')
+    if (isVideo) {
+      const video = document.createElement('video')
+      video.className = 'dynamic-media-preview'
+      video.src = asset.url || `/media/${asset.id}`
+      if (asset.poster_url) video.poster = asset.poster_url
+      video.controls = true
+      video.preload = 'metadata'
+      confirmPreviewHost.appendChild(video)
+      return
+    }
+    if (isImage) {
+      if (confirmPreviewImg) {
+        confirmPreviewImg.classList.remove('is-hidden')
+        confirmPreviewImg.src = asset.legacy_url || asset.url || `/image/${asset.id}`
+        confirmPreviewImg.alt = asset.alt_text || asset.title || 'Media preview'
+      }
+      return
+    }
+    confirmPreviewHost.appendChild(renderVideoThumb(null))
+  }
+
+  function updateConfirmPosterUi() {
+    if (!confirmPosterField || !confirmPosterUrl || !draftAsset) return
+    const isVideo = draftAsset.kind === 'video' || (draftAsset.mime_type || '').startsWith('video/')
+    confirmPosterField.classList.toggle('is-hidden', !isVideo)
+    if (!isVideo) return
+    confirmPosterUrl.value = draftAsset.poster_url || ''
+  }
+
+  function enterConfirmMode(asset) {
+    draftAsset = { ...asset }
+    confirmMode = true
+    if (!posterTargetAsset) {
+      posterSelectionMode = false
+    }
+    setTabsVisible(false)
+    setPanelVisibility('confirm')
+    if (altRow) altRow.hidden = true
+    selectBtn.style.display = ''
+    selectBtn.disabled = false
+    selectBtn.textContent = _pickerCallback ? 'Save & Select' : 'Confirm Asset'
+    if (confirmTitleInput) confirmTitleInput.value = draftAsset.title || ''
+    if (confirmAltInput) confirmAltInput.value = draftAsset.alt_text || ''
+    if (confirmMetaId) confirmMetaId.textContent = draftAsset.id || '—'
+    if (confirmMetaMime) confirmMetaMime.textContent = draftAsset.mime_type || 'Unknown'
+    if (confirmMetaStatus) confirmMetaStatus.textContent = (draftAsset.status || 'draft').toUpperCase()
+    if (confirmStatus) confirmStatus.textContent = ''
+    if (confirmPosterStatus) confirmPosterStatus.textContent = ''
+    updateConfirmAltCopy(draftAsset.kind)
+    updateConfirmPosterUi()
+    hydrateConfirmPreview(draftAsset)
+  }
+
+  function exitConfirmMode(defaultTab = 'select') {
+    confirmMode = false
+    posterSelectionMode = false
+    setTabsVisible(true)
+    draftAsset = null
+    clearConfirmPreview()
+    switchTab(defaultTab)
+    selectBtn.textContent = 'Select Asset'
+  }
+
+  function beginPosterSelection() {
+    if (!draftAsset) return
+    posterTargetAsset = { ...draftAsset }
+    posterSelectionMode = true
+    confirmMode = false
+    setTabsVisible(true)
+    tabs.forEach(tab => {
+      tab.hidden = tab.dataset.tab !== 'select'
+    })
+    currentMode = 'image'
+    selectedUrl = null
+    selectedAsset = null
+    selectBtn.disabled = true
+    selectBtn.style.display = ''
+    selectBtn.textContent = 'Use Poster'
+    setPanelVisibility('select')
+    currentTab = 'select'
+    tabs.forEach(t => {
+      const active = t.dataset.tab === 'select'
+      t.classList.toggle('active', active)
+      t.setAttribute('aria-selected', active ? 'true' : 'false')
+    })
+    loadGrid()
+  }
+
+  function restoreDraftAfterPosterSelection() {
+    if (posterTargetAsset) {
+      draftAsset = { ...posterTargetAsset }
+    }
+    if (!draftAsset) return
+    posterTargetAsset = null
+    setTabsVisible(false)
+    enterConfirmMode(draftAsset)
+  }
+
+  async function persistSelectedAssetMetadata() {
+    if (!selectedAsset || !altInput || !['image', 'video'].includes(selectedAsset.kind || '')) {
+      return true
+    }
+    const nextAlt = altInput.value.trim()
+    const currentAlt = (selectedAsset.alt_text || '').trim()
+    if (nextAlt === currentAlt) return true
+
+    const fd = new FormData()
+    fd.append('ajax', '1')
+    fd.append('alt_text', nextAlt)
+    if (selectedAsset.source === 'asset') {
+      fd.append('title', selectedAsset.title || '')
+      const res = await fetch(`/admin/media/asset/${String(selectedAsset.id).replace(/^asset-/, '')}/update`, { method: 'POST', body: fd, headers: { Accept: 'application/json' } })
+      const data = await res.json()
+      if (!data.ok) {
+        setUploadStatus(data.error || 'Could not save description.', true)
+        return false
+      }
+      selectedAsset = data.asset
+      selectedUrl = data.asset.legacy_url || data.asset.url || selectedUrl
+      return true
+    }
+
+    fd.append('title', selectedAsset.title || '')
+    const res = await fetch(`/admin/media/${selectedAsset.id}/update`, { method: 'POST', body: fd, headers: { Accept: 'application/json' } })
+    const data = await res.json()
+    if (!data.ok) {
+      setUploadStatus(data.error || 'Could not save description.', true)
+      return false
+    }
+    selectedAsset = data.asset
+    selectedUrl = data.asset.legacy_url || data.asset.url || selectedUrl
+    return true
+  }
+
   function renderGridItem(f) {
     const url = f.legacy_url || f.url || (f.kind === 'image' ? `/image/${f.id}` : `/media/${f.id}`)
     const item = document.createElement('div')
@@ -1084,10 +1354,12 @@ function initMediaPicker() {
 
     let media;
     if (f.kind === 'video') {
-      media = document.createElement('video');
-      media.src = f.legacy_url || f.url || `/media/${f.id}`;
-      media.muted = true;
-      media.preload = 'metadata';
+      if (f.poster_url) {
+        media = document.createElement('img');
+        media.src = f.poster_url;
+      } else {
+        media = renderVideoThumb(null);
+      }
     } else if (f.kind === 'iframe') {
       media = document.createElement('div');
       media.className = 'media-picker-iframe-thumb';
@@ -1114,15 +1386,16 @@ function initMediaPicker() {
       selectedUrl = url
       selectedAsset = f
       selectBtn.disabled = false
-      if (altRow && !_libraryMode && currentTab === 'select' && f.kind === 'image') {
+      if (altRow && !_libraryMode && currentTab === 'select' && (f.kind === 'image' || f.kind === 'video')) {
         altRow.hidden = false
+        updateAltRowLabel(f.kind)
         if (altInput) altInput.value = f.alt_text || ''
         altInput?.focus()
       } else if (altRow) {
         altRow.hidden = true
       }
     })
-    item.addEventListener('dblclick', () => { if (!_libraryMode) confirmSelection() })
+    item.addEventListener('dblclick', () => { if (!_libraryMode) void confirmSelection() })
     return item
   }
 
@@ -1145,8 +1418,9 @@ function initMediaPicker() {
       const url = f.legacy_url || f.url || (f.kind === 'image' ? `/image/${f.id}` : `/media/${f.id}`)
       if (_pickerPreselectUrl && url === _pickerPreselectUrl) {
         item.classList.add('selected'); selectedUrl = url; selectedAsset = f; selectBtn.disabled = false
-        if (altRow && !_libraryMode && currentTab === 'select' && f.kind === 'image') {
+        if (altRow && !_libraryMode && currentTab === 'select' && (f.kind === 'image' || f.kind === 'video')) {
           altRow.hidden = false
+          updateAltRowLabel(f.kind)
           if (altInput) altInput.value = f.alt_text || ''
         }
       }
@@ -1175,20 +1449,77 @@ function initMediaPicker() {
     } catch { grid.innerHTML = '<p class="media-picker-empty">Failed to load media library.</p>' }
   }
 
-  function confirmSelection() {
+  async function confirmSelection() {
+    if (confirmMode && draftAsset) {
+      const fd = new FormData()
+      fd.append('title', confirmTitleInput?.value.trim() || '')
+      fd.append('alt_text', confirmAltInput?.value.trim() || '')
+      if (draftAsset.poster_media_file_id) fd.append('poster_media_file_id', String(draftAsset.poster_media_file_id))
+      selectBtn.disabled = true
+      if (confirmStatus) confirmStatus.textContent = 'Saving...'
+      try {
+        const res = await fetch(`/admin/media/${draftAsset.id}/confirm`, { method: 'POST', body: fd, headers: { Accept: 'application/json' } })
+        const data = await res.json()
+        if (!data.ok) {
+          if (confirmStatus) confirmStatus.textContent = data.error || 'Could not confirm the asset.'
+          return
+        }
+        if (posterTargetAsset) {
+          posterTargetAsset.poster_media_file_id = data.asset.id
+          posterTargetAsset.poster_url = data.asset.legacy_url || data.asset.url || ''
+          restoreDraftAfterPosterSelection()
+          return
+        }
+        draftAsset = data.asset
+        if (_pickerCallback) {
+          _pickerCallback({
+            url: data.asset.url,
+            alt: data.asset.alt_text || '',
+            id: data.asset.id || null,
+            kind: data.asset.kind || currentMode,
+            mime_type: data.asset.mime_type || '',
+            legacy_url: data.asset.legacy_url || (data.asset.kind === 'image' ? data.asset.url : null),
+            poster_url: data.asset.poster_url || null,
+          })
+          _pickerCallback = null
+        }
+        dialog.close()
+      } catch (err) {
+        if (confirmStatus) confirmStatus.textContent = 'Could not confirm the asset.'
+      } finally {
+        selectBtn.disabled = false
+      }
+      return
+    }
+
+    if (posterSelectionMode) {
+      if (selectedAsset?.kind !== 'image') return
+      const nextTarget = posterTargetAsset || draftAsset
+      if (!nextTarget) return
+      nextTarget.poster_media_file_id = selectedAsset.id
+      nextTarget.poster_url = selectedAsset.legacy_url || selectedAsset.url || ''
+      posterTargetAsset = nextTarget
+      restoreDraftAfterPosterSelection()
+      return
+    }
+
     if (!selectedUrl || !_pickerCallback) return
+    const persisted = await persistSelectedAssetMetadata()
+    if (!persisted) return
     _pickerCallback({
       url: selectedUrl,
-      alt: altInput?.value.trim() || '',
+      alt: selectedAsset?.alt_text || altInput?.value.trim() || '',
       id: selectedAsset?.id || null,
       kind: selectedAsset?.kind || currentMode,
       mime_type: selectedAsset?.mime_type || selectedAsset?.mime || '',
       legacy_url: selectedAsset?.legacy_url || (selectedAsset?.kind === 'image' ? selectedUrl : null),
+      poster_url: selectedAsset?.poster_url || null,
     })
-    _pickerCallback = null; dialog.close()
+    _pickerCallback = null
+    dialog.close()
   }
 
-  selectBtn.addEventListener('click', confirmSelection)
+  selectBtn.addEventListener('click', () => { void confirmSelection() })
 
   // Upload
   function formatBytes(b) { return b < 1024 ? b + ' B' : b < 1048576 ? (b/1024).toFixed(1) + ' KB' : (b/1048576).toFixed(2) + ' MB' }
@@ -1234,7 +1565,7 @@ function initMediaPicker() {
       const data = await res.json()
       if (!data.ok) { setUploadStatus(data.error || 'Upload failed.', true); return }
       setUploadStatus('Uploaded successfully.'); fileInput.value = ''; clearFileInfo()
-      await loadGrid(data.url); switchTab('select')
+      enterConfirmMode(data.asset)
     } catch { setUploadStatus('Upload failed — check your connection.', true) }
     finally { if (uploadBtn) uploadBtn.disabled = false }
   })
@@ -1250,19 +1581,143 @@ function initMediaPicker() {
       const data = await res.json()
       if (!data.ok) { setImportStatus(data.error || 'Import failed.', true); return }
       setImportStatus('Imported successfully.'); if (urlInput) urlInput.value = ''
-      await loadGrid(data.url); switchTab('select')
+      enterConfirmMode(data.asset)
     } catch { setImportStatus('Import failed — check your connection.', true) }
     finally { if (importBtn) importBtn.disabled = false }
   })
 
-  closeBtn?.addEventListener('click',  () => dialog.close())
-  cancelBtn?.addEventListener('click', () => dialog.close())
-  dialog.addEventListener('click', e => { if (e.target === dialog) dialog.close() })
+  async function discardCurrentDraft() {
+    if (!draftAsset) return
+    const res = await fetch(`/admin/media/${draftAsset.id}/discard`, { method: 'POST', headers: { Accept: 'application/json' } })
+    const data = await res.json()
+    if (!data.ok) {
+      if (confirmStatus) confirmStatus.textContent = data.error || 'Could not discard the draft.'
+      return
+    }
+    draftAsset = null
+    dialog.close()
+  }
+
+  async function requestClose() {
+    if (posterSelectionMode) {
+      restoreDraftAfterPosterSelection()
+      return
+    }
+    if (confirmMode && draftAsset) {
+      const keep = window.confirm('Keep this draft asset for later? Choose Cancel/No to delete it now.')
+      if (keep) {
+        dialog.close()
+      } else {
+        await discardCurrentDraft()
+      }
+      return
+    }
+    dialog.close()
+  }
+
+  closeBtn?.addEventListener('click',  () => { void requestClose() })
+  cancelBtn?.addEventListener('click', () => { void requestClose() })
+  dialog.addEventListener('click', e => { if (e.target === dialog) void requestClose() })
   dialog.addEventListener('close', () => {
     _pickerCallback = null; selectedUrl = null
     if (altRow)  altRow.hidden = true
     if (altInput) altInput.value = ''
+    if (confirmAltInput) confirmAltInput.value = ''
+    if (confirmTitleInput) confirmTitleInput.value = ''
+    if (confirmStatus) confirmStatus.textContent = ''
+    if (confirmPosterStatus) confirmPosterStatus.textContent = ''
+    draftAsset = null
+    confirmMode = false
+    posterSelectionMode = false
+    posterTargetAsset = null
+    setTabsVisible(true)
+    tabs.forEach(tab => {
+      if (tab.dataset.tab === 'import') {
+        tab.hidden = currentMode === 'video'
+      } else {
+        tab.hidden = false
+      }
+    })
+    clearConfirmPreview()
     if (_libraryMode) window.location.reload()
+  })
+
+  confirmPosterChooseBtn?.addEventListener('click', () => {
+    beginPosterSelection()
+  })
+
+  confirmPosterClearBtn?.addEventListener('click', () => {
+    if (!draftAsset) return
+    draftAsset.poster_media_file_id = null
+    draftAsset.poster_url = ''
+    updateConfirmPosterUi()
+    if (confirmPosterStatus) confirmPosterStatus.textContent = ''
+  })
+
+  confirmPosterFile?.addEventListener('change', async () => {
+    if (!confirmPosterFile.files?.length) return
+    const fd = new FormData()
+    fd.append('media_file', confirmPosterFile.files[0])
+    if (confirmPosterStatus) confirmPosterStatus.textContent = 'Uploading poster...'
+    try {
+      const res = await fetch('/admin/media/poster-upload', { method: 'POST', body: fd, headers: { Accept: 'application/json' } })
+      const data = await res.json()
+      if (!data.ok) {
+        if (confirmPosterStatus) confirmPosterStatus.textContent = data.error || 'Poster upload failed.'
+        return
+      }
+      if (draftAsset) {
+        draftAsset.poster_media_file_id = data.asset.id
+        draftAsset.poster_url = data.asset.legacy_url || data.asset.url || ''
+        updateConfirmPosterUi()
+      }
+      if (confirmPosterStatus) confirmPosterStatus.textContent = 'Poster uploaded.'
+    } catch (err) {
+      if (confirmPosterStatus) confirmPosterStatus.textContent = 'Poster upload failed.'
+    } finally {
+      confirmPosterFile.value = ''
+    }
+  })
+
+  confirmAiBtn?.addEventListener('click', () => {
+    if (!draftAsset || !confirmAltInput) return
+    const isVideo = draftAsset.kind === 'video' || (draftAsset.mime_type || '').startsWith('video/')
+    if (isVideo && !confirmAltInput.value.trim()) {
+      if (confirmStatus) confirmStatus.textContent = 'Write a description first — AI can only refine existing text for video.'
+      return
+    }
+    window.openAiProfilePicker(async selection => {
+      if (!selection?.profileId) return
+      confirmAiBtn.disabled = true
+      try {
+        const fd = new FormData()
+        fd.append('profile_id', selection.profileId)
+        if (selection.personaId) fd.append('persona_id', selection.personaId)
+        let res
+        if (isVideo) {
+          fd.append('content', confirmAltInput.value.trim())
+          fd.append('mode', 'text')
+          res = await fetch('/admin/ai/process', { method: 'POST', body: fd })
+        } else {
+          fd.append('image_url', draftAsset.url || `/media/${draftAsset.id}`)
+          if (confirmAltInput.value.trim()) fd.append('existing_alt_text', confirmAltInput.value.trim())
+          res = await fetch('/admin/ai/describe-image', { method: 'POST', body: fd })
+        }
+        const data = await res.json()
+        if (data.result) {
+          confirmAltInput.value = data.result
+          if (confirmStatus) confirmStatus.textContent = isVideo ? 'Description refined. Confirm to save it.' : 'Description generated. Confirm to save it.'
+        } else if (confirmStatus) {
+          confirmStatus.textContent = data.error || 'AI request failed.'
+        }
+      } catch (err) {
+        if (confirmStatus) confirmStatus.textContent = 'AI request failed.'
+      } finally {
+        confirmAiBtn.disabled = false
+      }
+    }, isVideo
+      ? { title: 'Refine Video Description with AI', taskKey: 'video-description' }
+      : { capability: 'vision', title: 'Generate Alt Text with AI', taskKey: 'alt-text' })
   })
 
   window.openMediaPicker = (callback = null, defaultTab = 'select', opts = {}) => {
@@ -1281,8 +1736,16 @@ function initMediaPicker() {
     setUploadStatus(''); setImportStatus('')
     if (altRow)  altRow.hidden = true
     if (altInput) altInput.value = ''
+    if (confirmAltInput) confirmAltInput.value = ''
+    if (confirmTitleInput) confirmTitleInput.value = ''
     clearFileInfo(); if (fileInput) fileInput.value = ''
+    draftAsset = null
+    confirmMode = false
+    posterSelectionMode = false
+    posterTargetAsset = null
+    setTabsVisible(true)
     selectBtn.style.display = _libraryMode ? 'none' : ''
+    selectBtn.textContent = 'Select Asset'
     selectBtn.disabled = true; selectedUrl = null
     switchTab(defaultTab); if (defaultTab === 'select') loadGrid()
     dialog.showModal()

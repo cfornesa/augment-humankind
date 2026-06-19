@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 http_response_code(404);
 
-$pageTitle = 'Not found | Augment Humankind';
+$pageTitle = 'Not found | ' . app_site_name();
 $pageDescription = 'The requested page could not be found.';
 $bodyClass = 'page-404';
 $canonicalUrl = null;

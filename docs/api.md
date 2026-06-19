@@ -436,16 +436,21 @@ returns JSON for picker dialogs.
 - `GET /admin/media/library`
 - `POST /admin/media/upload`
 - `POST /admin/media/import`
+- `POST /admin/media/[id]/confirm`
+- `POST /admin/media/[id]/discard`
+- `POST /admin/media/poster-upload`
 - `POST /admin/media/[id]/trash`
 - `POST /admin/media/[id]/destroy`
-- `POST /admin/media/[id]/update` — updates `alt_text` (max 500 chars) for a native `media_files` record. Redirects to `/admin/media`.
+- `POST /admin/media/[id]/update` — updates title, `alt_text`, and optional `poster_media_file_id` for a native `media_files` record. Redirects to `/admin/media` for normal form posts and returns JSON for AJAX callers.
 - `POST /admin/media/asset/[id]/update`
 - `POST /admin/media/asset/[id]/trash`
 - `POST /admin/media/asset/[id]/destroy`
 
 `/admin/media/library` returns a JSON array for the existing Tiptap/media
 picker. It includes native uploads (`media_files`) plus migrated platform
-media (`media_assets`). Both entry types include `alt_text`:
+media (`media_assets`). Picker responses default to `ready` assets only.
+Native video rows may also include `poster_media_file_id` and `poster_url`.
+Both entry types include `alt_text`:
 
 ```json
 [
@@ -454,7 +459,8 @@ media (`media_assets`). Both entry types include `alt_text`:
     "mime_type": "image/png",
     "url": "/media/123",
     "legacy_url": "/image/123",
-    "kind": "image"
+    "kind": "image",
+    "status": "ready"
   },
   {
     "id": "asset-45",
@@ -472,8 +478,23 @@ avoid colliding with native `media_files` numeric ids, and both `url` and
 streaming route) so the picker resolves them without using `id` to build a
 `/media/{id}` or `/image/{id}` path.
 
-Upload/import success returns the same item fields at the top level. Media is
-stored in the database and is not written to repo files.
+Native uploads/imports now create `draft` `media_files` rows first. The upload
+response returns the created draft payload, and callers are expected to
+complete confirmation via `POST /admin/media/[id]/confirm` before the asset is
+insertable from pickers. `POST /admin/media/[id]/discard` permanently deletes a
+draft asset. `POST /admin/media/poster-upload` is an admin-only helper that
+creates a ready image asset for use as a linked video poster. Media is stored
+in the database and is not written to repo files.
+
+`POST /admin/media/[id]/confirm` validates and persists metadata for a draft
+native upload, including:
+
+- `title` (optional, max 255 chars)
+- `alt_text` (required for confirmation, max 500 chars)
+- `poster_media_file_id` (optional; image assets only, meaningful for videos)
+
+On success, the native asset flips from `status='draft'` to `status='ready'`
+and receives `confirmed_at`.
 
 `POST /admin/media/asset/[id]/update` processes metadata edits (title and alt text) for migrated media assets in the `media_assets` table. `POST /admin/media/asset/[id]/trash` soft-deletes a migrated asset, and `POST /admin/media/asset/[id]/destroy` purges it permanently.
 
@@ -573,11 +594,15 @@ These preferences are automatically pre-selected in the AI generation form when 
 
 ### AI Content Helpers
 
-- `POST /admin/ai/process` — improves the provided text using the selected AI profile. Accepts `profile_id`, `content` (HTML markup or plain text), and `mode` (`html` or `text`). Returns JSON `{result: string}`. When text is selected in TipTap, the selected fragment is serialized as HTML. When no text is selected, the full editor HTML is sent and the entire content is replaced on success. The HTML-mode system prompt explicitly preserves all iframes, images, videos, figures, and HTML attributes — only visible text words are changed.
-- `POST /admin/ai/describe-image` — generates alt text for an image using the selected AI profile. Accepts `profile_id` and `image_url`. Resolves the image binary from `/api/media/{filename}`, `/media/{id}`, or `/image/{id}`. Returns JSON `{result: string}` on success. On configuration failures it now returns a stable `code` plus `error` message and `diagnostics` payload. Current codes include `vision_not_enabled`, `vision_transport_unsupported`, `vision_model_unsupported`, `missing_api_key`, `image_load_failed`, `provider_request_failed`, and `unexpected_error`.
+- `POST /admin/ai/process` — improves the provided text using the selected AI profile. Accepts `profile_id`, `content` (HTML markup or plain text), and `mode` (`html` or `text`). Returns JSON `{result: string}`. When text is selected in TipTap, the selected fragment is serialized as HTML. When no text is selected, the full editor HTML is sent and the entire content is replaced on success. The HTML-mode system prompt explicitly preserves all iframes, images, videos, figures, and HTML attributes — only visible text words are changed. This same endpoint is also used for refine-only video description polishing in the media library and TipTap picker: AI never watches the video, it only improves user-written text in `mode=text`.
+- `POST /admin/ai/describe-image` — generates alt text for an image using the selected AI profile. Accepts `profile_id` and `image_url`, plus optional `existing_alt_text` to refine an existing draft instead of starting from scratch. Resolves the image binary from `/api/media/{filename}`, `/media/{id}`, or `/image/{id}`. Returns JSON `{result: string}` on success. On configuration failures it now returns a stable `code` plus `error` message and `diagnostics` payload. Current codes include `vision_not_enabled`, `vision_transport_unsupported`, `vision_model_unsupported`, `missing_api_key`, `image_load_failed`, `provider_request_failed`, and `unexpected_error`.
 - `GET /admin/ai/profiles` — returns a JSON array of enabled AI vendor profiles for the "Improve with AI" and "Generate Alt Text with AI" picker modals. Each entry includes `id`, `profile_name`, `vendor`, `model`, `user_name`, resolved `capabilities`, and diagnostics fields such as `capability_source`, `explicit_capabilities`, `inferred_capabilities`, `transport_kind`, and `vision_inferred`. The picker filters by the resolved capability set client-side, so schema-missing or stale capability flags can fall back to vendor/model inference instead of producing false negatives.
 
 All three endpoints require an authenticated admin session. They use `AiProviderClient::chat()` and `AiProviderClient::describeImage()` respectively, supporting `chat-completions`, `google-generate-content`, `anthropic-messages`, and `openai-responses` transports.
+
+The AI write/helper endpoints are subject to fixed-window rate limiting. When
+the limit is exceeded they return HTTP `429` with a JSON error payload instead
+of calling the provider.
 
 ### Platform Connections
 
@@ -593,7 +618,7 @@ All three endpoints require an authenticated admin session. They use `AiProvider
 - `POST /admin/platform-connections/publish`
 - `GET /admin/platform-connections/auth/[platform]/start` — redirects to the provider's OAuth consent screen
 - `GET /admin/platform-connections/auth/[platform]/callback` — exchanges the OAuth code for tokens and saves/upserts them into `platform_connections`
-- `GET /admin/platform-connections/diagnostics` — shows OAuth credential status, redirect URIs, and endpoint reachability for all supported providers
+- `GET /admin/platform-connections/diagnostics` — shows OAuth credential status, redirect URIs, and endpoint reachability for the 5 OAuth publishing providers, plus a second non-secret diagnostics table for the 3 credentials-based providers (`wordpress_self`, `substack`, `bluesky`)
 
 The platform connections admin is a platform-guided setup surface. Operators do
 not edit raw metadata JSON; typed platform forms map to `platform_connections`
@@ -602,8 +627,12 @@ internally. The admin manages outbound credentials plus `post_syndications`
 syndicates a post to a platform via the adapter layer.
 
 OAuth providers supported: `wordpress-com`, `blogger`, `linkedin`, `facebook`, `instagram`.
-OAuth callbacks encrypt tokens with `encrypt_string()` and save them into `platform_connections`.
-The diagnostics page tests each provider's token endpoint with a dummy request and reports whether the endpoint is reachable.
+OAuth callbacks encrypt tokens with `encrypt_string()` and save them into
+`platform_connections`. The provider app credentials for those five publishing
+providers are stored in the PHP site's own `platform_oauth_apps` table, not in
+runtime environment variables. The diagnostics page reads configured status from
+that table and tests each provider's token endpoint with a dummy request to
+report reachability without exposing secrets.
 
 ### Syndication Adapters
 
@@ -662,11 +691,44 @@ updates `art_pieces.thumbnail_url`.
 
 `POST /admin/pieces/refine-ai` accepts a JSON body with `prompt`, `engine`, `profile_id`, `html_code`, `css_code`, and `generated_code`. It sends the current code blocks and the refinement instruction to the configured AI vendor, then runs the same 3-attempt validation and repair loop as generation. On success it returns `{success: true, html_code, css_code, generated_code}`; on failure it returns `{success: false, error: "..."}` with HTTP 500. The endpoint is used by the "AI Refine" tab in the piece editor to suggest changes that the admin can inspect, edit, accept, or reject.
 
+`POST /admin/pieces/generate` and `POST /admin/pieces/refine-ai` are both
+rate-limited. A throttled request returns HTTP `429`.
+
 `POST /admin/pieces/[id]/versions/[vid]/set-current` sets the active version code for rendering.
 
 `GET /admin/pieces/library` returns a JSON array of active art pieces
 (`id`, `title`, `engine`, `thumbnail_url`, `status`) for the Tiptap "Insert art
 piece or exhibit" picker.
+
+### Open Graph Images
+
+- `GET /og/posts/[id]`
+
+Returns a generated PNG social card for a published blog post. Missing or
+unpublished posts return `404`. Blog post pages point `og:image` and
+`twitter:image` to this route when a custom post image is not provided.
+
+### Cron Endpoints
+
+- `POST /api/cron/publish-posts`
+- `POST /api/cron/refresh-feeds`
+
+Both cron endpoints require an `X-Cron-Secret` header matching `CRON_SECRET`
+and return JSON summaries. `publish-posts` publishes due scheduled posts and
+processes pending syndications. `refresh-feeds` refreshes due external feed
+sources and reports how many sources/items were processed.
+
+### Rate Limiting
+
+These endpoints now return HTTP `429` when their fixed-window limits are
+exceeded:
+
+- `POST /contact`
+- `POST /admin/ai/process`
+- `POST /admin/ai/describe-image`
+- `POST /admin/pieces/generate`
+- `POST /admin/pieces/refine-ai`
+- admin OAuth login start/callback flow at `/admin/auth/[provider]/*`
 
 ### Platform Exhibits
 

@@ -16,6 +16,7 @@ function loadEnv(string $path): void {
         if ($name === '') continue;
         if (str_starts_with($value, '"') && str_ends_with($value, '"')) $value = substr($value, 1, -1);
         if (str_starts_with($value, "'") && str_ends_with($value, "'")) $value = substr($value, 1, -1);
+        if (($_ENV[$name] ?? getenv($name) ?: '') !== '') continue;
         $_ENV[$name] = $value;
         putenv($name . '=' . $value);
     }

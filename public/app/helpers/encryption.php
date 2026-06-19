@@ -58,7 +58,7 @@ function decrypt_legacy_php_secret(string $ciphertext, string $key): string
     [$iv, $cipher, $tag] = $parts;
     $plaintext = openssl_decrypt($cipher, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv, $tag);
     if ($plaintext === false) {
-        $legacyKey = hash('sha256', (string) ($_ENV['PLATFORM_AI_SETTINGS_ENCRYPTION_KEY'] ?? getenv('PLATFORM_AI_SETTINGS_ENCRYPTION_KEY') ?? ''), true);
+        $legacyKey = hash('sha256', ai_encryption_key_raw_env(), true);
         $plaintext = openssl_decrypt($cipher, 'aes-256-gcm', $legacyKey, OPENSSL_RAW_DATA, $iv, $tag);
     }
     if ($plaintext === false) {
@@ -68,17 +68,42 @@ function decrypt_legacy_php_secret(string $ciphertext, string $key): string
 }
 
 /**
- * Get the configured encryption key from PLATFORM_AI_SETTINGS_ENCRYPTION_KEY.
+ * Reads the AI settings encryption key from the environment. Checks
+ * AI_SETTINGS_ENCRYPTION_KEY first; falls back to the older
+ * PLATFORM_AI_SETTINGS_ENCRYPTION_KEY name so deployments that set it before
+ * the rename keep working without an immediate .env edit. New deployments
+ * should only ever need AI_SETTINGS_ENCRYPTION_KEY — the PLATFORM_ prefix
+ * was misleading since this key is used by this app's own AI vendor key
+ * storage, not just legacy platform migration.
+ */
+function ai_encryption_key_raw_env(): string
+{
+    // getenv() returns false (not null) when unset, so a plain ?? chain
+    // won't fall through correctly — check each source explicitly.
+    foreach (['AI_SETTINGS_ENCRYPTION_KEY', 'PLATFORM_AI_SETTINGS_ENCRYPTION_KEY'] as $name) {
+        $value = $_ENV[$name] ?? null;
+        if (!is_string($value) || $value === '') {
+            $fromGetenv = getenv($name);
+            $value = $fromGetenv !== false ? $fromGetenv : '';
+        }
+        if (is_string($value) && $value !== '') {
+            return $value;
+        }
+    }
+    return '';
+}
+
+/**
+ * Get the configured encryption key from AI_SETTINGS_ENCRYPTION_KEY.
  * Returns a 32-byte key derived from the env value.
  */
 function ai_encryption_key(): string
 {
-    $envKey = $_ENV['PLATFORM_AI_SETTINGS_ENCRYPTION_KEY'] ?? getenv('PLATFORM_AI_SETTINGS_ENCRYPTION_KEY') ?? '';
+    $envKey = trim(ai_encryption_key_raw_env());
     if ($envKey === '') {
-        throw new RuntimeException('PLATFORM_AI_SETTINGS_ENCRYPTION_KEY is not configured.');
+        throw new RuntimeException('AI_SETTINGS_ENCRYPTION_KEY is not configured.');
     }
 
-    $envKey = trim((string) $envKey);
     if (preg_match('/^[0-9a-f]+$/i', $envKey) === 1 && strlen($envKey) % 2 === 0) {
         $candidate = hex2bin($envKey);
         if ($candidate !== false && strlen($candidate) === 32) {
@@ -95,5 +120,5 @@ function ai_encryption_key(): string
         return $envKey;
     }
 
-    throw new RuntimeException('PLATFORM_AI_SETTINGS_ENCRYPTION_KEY must decode to exactly 32 bytes.');
+    throw new RuntimeException('AI_SETTINGS_ENCRYPTION_KEY must decode to exactly 32 bytes.');
 }

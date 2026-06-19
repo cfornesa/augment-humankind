@@ -10,6 +10,7 @@ class PlatformConnectionsAdminController
         $connections = PlatformConnection::all();
         $syndications = PostSyndication::all();
         $platforms = platform_ui_definitions();
+        $oauthAppsByPlatform = PlatformOAuthApp::allByPlatform();
         $connectionsByPlatform = [];
         foreach ($connections as $connection) {
             $connectionsByPlatform[$connection['platform']] = $connection;
@@ -139,6 +140,8 @@ class PlatformConnectionsAdminController
 
         $postId = (int) ($_POST['post_id'] ?? 0);
         $connectionId = (int) ($_POST['connection_id'] ?? 0);
+        $actorId = (int) (admin_identity()['id'] ?? 0);
+        $startedAt = microtime(true);
 
         if ($postId <= 0 || $connectionId <= 0) {
             header('Location: /admin/platform-connections?error=' . urlencode('Post and connection are required'));
@@ -162,7 +165,7 @@ class PlatformConnectionsAdminController
                 throw new Exception("No adapter for platform: {$platform}");
             }
 
-            $siteTitle = 'Augment Humankind';
+            $siteTitle = app_site_name();
             $settings = SiteSettings::current();
             if ($settings && !empty($settings['site_title'])) {
                 $siteTitle = $settings['site_title'];
@@ -181,6 +184,19 @@ class PlatformConnectionsAdminController
                 $connection = PlatformConnection::find($connectionId) ?: $connection;
             }
             $result = $adapter->publish($connection, $payload);
+
+            audit_log_event('syndication_publish', 'syndication_publish', 'success', [
+                'actor_admin_identity_id' => $actorId > 0 ? $actorId : null,
+                'target_type' => 'platform_connection',
+                'target_id' => (string) $connectionId,
+                'http_status' => 302,
+                'metadata' => [
+                    'platform' => $platform,
+                    'post_id' => $postId,
+                    'token_refreshed' => $refresh !== null,
+                    'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+                ],
+            ]);
 
             PostSyndication::recordResult([
                 'post_id' => $postId,
@@ -204,6 +220,17 @@ class PlatformConnectionsAdminController
             } catch (Throwable) {
                 // ignore
             }
+            audit_log_event('syndication_publish', 'syndication_publish', 'error', [
+                'actor_admin_identity_id' => $actorId > 0 ? $actorId : null,
+                'target_type' => 'platform_connection',
+                'target_id' => (string) $connectionId,
+                'http_status' => 302,
+                'metadata' => [
+                    'post_id' => $postId,
+                    'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+                    'error' => $e->getMessage(),
+                ],
+            ]);
             header('Location: /admin/platform-connections?error=' . urlencode($e->getMessage()));
         }
         exit;
@@ -212,31 +239,40 @@ class PlatformConnectionsAdminController
     public static function oauthStart(string $platform): void
     {
         admin_check();
+        $platformKey = platform_oauth_provider_key($platform);
 
         try {
-            $config = platform_oauth_provider_config($platform);
+            $config = platform_oauth_provider_config($platformKey);
             if ($config['client_id'] === '' || $config['client_secret'] === '') {
-                header('Location: /admin/platform-connections?error=' . urlencode('OAuth credentials not configured for ' . $platform));
+                header('Location: /admin/platform-connections?error=' . urlencode('OAuth app credentials are not configured for ' . $platformKey));
                 exit;
             }
 
             $state = bin2hex(random_bytes(16));
             $_SESSION['platform_oauth_state'] = [
-                'platform' => $platform,
+                'platform' => $platformKey,
                 'value' => $state,
+                'blog_url' => $config['blog_url'] ?? null,
             ];
 
             $params = [
                 'client_id' => $config['client_id'],
-                'redirect_uri' => platform_oauth_redirect_uri($platform),
+                'redirect_uri' => platform_oauth_redirect_uri($platformKey),
                 'response_type' => 'code',
                 'scope' => $config['scope'],
                 'state' => $state,
             ];
 
-            if ($platform === 'blogger') {
+            if ($platformKey === 'wordpress_com' && !empty($config['blog_url'])) {
+                $params['blog'] = (string) $config['blog_url'];
+            }
+
+            if ($platformKey === 'blogger') {
                 $params['access_type'] = 'offline';
                 $params['prompt'] = 'consent';
+            }
+            if ($platformKey === 'facebook' || $platformKey === 'instagram') {
+                $params['scope'] = 'pages_manage_posts,pages_read_engagement,instagram_content_publish,instagram_basic';
             }
 
             header('Location: ' . $config['auth_url'] . '?' . http_build_query($params));
@@ -250,9 +286,10 @@ class PlatformConnectionsAdminController
     public static function oauthCallback(string $platform): void
     {
         admin_check();
+        $platformKey = platform_oauth_provider_key($platform);
 
         $state = $_SESSION['platform_oauth_state'] ?? null;
-        if (!is_array($state) || ($state['platform'] ?? null) !== $platform || ($state['value'] ?? '') !== ($_GET['state'] ?? '')) {
+        if (!is_array($state) || ($state['platform'] ?? null) !== $platformKey || ($state['value'] ?? '') !== ($_GET['state'] ?? '')) {
             header('Location: /admin/platform-connections?error=' . urlencode('Invalid or expired OAuth state'));
             exit;
         }
@@ -265,7 +302,7 @@ class PlatformConnectionsAdminController
         }
 
         try {
-            $config = platform_oauth_provider_config($platform);
+            $config = platform_oauth_provider_config($platformKey);
             $tokenResponse = oauth_http_request(
                 'POST',
                 $config['token_url'],
@@ -277,7 +314,7 @@ class PlatformConnectionsAdminController
                     'client_id' => $config['client_id'],
                     'client_secret' => $config['client_secret'],
                     'code' => $code,
-                    'redirect_uri' => platform_oauth_redirect_uri($platform),
+                    'redirect_uri' => platform_oauth_redirect_uri($platformKey),
                     'grant_type' => 'authorization_code',
                 ])
             );
@@ -295,39 +332,28 @@ class PlatformConnectionsAdminController
             $encryptedAccess = encrypt_string($accessToken, ai_encryption_key());
             $encryptedRefresh = $refreshToken !== '' ? encrypt_string($refreshToken, ai_encryption_key()) : null;
 
-            // Find or create connection for this platform
             $owner = PlatformUser::owner();
             $userId = $owner ? $owner['id'] : null;
-            $existing = self::findConnectionByPlatform($platform);
-
-            if ($existing) {
-                PlatformConnection::update((int) $existing['id'], [
-                    'user_id' => $userId,
-                    'platform' => $platform,
-                    'encrypted_access_token' => $encryptedAccess,
-                    'encrypted_refresh_token' => $encryptedRefresh,
-                    'expires_at' => $expiresAt,
-                    'metadata' => $existing['metadata'] ?? null,
-                    'enabled' => 1,
-                ]);
-                $connectionId = $existing['id'];
-            } else {
-                $connectionId = PlatformConnection::create([
-                    'user_id' => $userId,
-                    'platform' => $platform,
-                    'encrypted_access_token' => $encryptedAccess,
-                    'encrypted_refresh_token' => $encryptedRefresh,
-                    'expires_at' => $expiresAt,
-                    'metadata' => null,
-                    'enabled' => 1,
-                ]);
+            if ($userId === null) {
+                throw new RuntimeException('No owner user is available for platform connections.');
             }
 
-            header('Location: /admin/platform-connections?success=oauth&platform=' . urlencode($platform));
+            $connectedPlatforms = self::storeOAuthConnection(
+                $platformKey,
+                $userId,
+                $accessToken,
+                $encryptedAccess,
+                $encryptedRefresh,
+                $expiresAt,
+                $tokenPayload,
+                $state['blog_url'] ?? null
+            );
+
+            header('Location: /admin/platform-connections?success=oauth&platform=' . urlencode(implode(',', $connectedPlatforms)));
             exit;
         } catch (Throwable $e) {
-            error_log('[platform-oauth] ' . $platform . ': ' . $e->getMessage());
-            header('Location: /admin/platform-connections?error=' . urlencode('OAuth failed for ' . $platform . '. ' . $e->getMessage()));
+            error_log('[platform-oauth] ' . $platformKey . ': ' . $e->getMessage());
+            header('Location: /admin/platform-connections?error=' . urlencode('OAuth failed for ' . $platformKey . '. ' . $e->getMessage()));
             exit;
         }
     }
@@ -341,11 +367,15 @@ class PlatformConnectionsAdminController
             try {
                 $config = platform_oauth_provider_config($provider);
                 $hasCredentials = $config['client_id'] !== '' && $config['client_secret'] !== '';
+                $platformKey = platform_oauth_provider_key($provider);
+                $definition = platform_ui_definition($platformKey);
                 $results[$provider] = [
+                    'label' => $definition['label'] ?? ucwords(str_replace(['-', '_'], ' ', $provider)),
                     'configured' => $hasCredentials,
                     'client_id_set' => $config['client_id'] !== '',
                     'client_secret_set' => $config['client_secret'] !== '',
                     'redirect_uri' => platform_oauth_redirect_uri($provider),
+                    'blog_url_set' => !empty($config['blog_url']),
                     'error' => null,
                 ];
 
@@ -384,6 +414,44 @@ class PlatformConnectionsAdminController
                     'endpoint_status' => null,
                 ];
             }
+        }
+
+        $credentialResults = [];
+        foreach (['wordpress_self', 'substack', 'bluesky'] as $platform) {
+            $definition = platform_ui_definition($platform);
+            $connection = self::findConnectionByPlatform($platform);
+            $metadata = $connection ? parse_connection_meta($connection['metadata'] ?? null) : [];
+            $hasCredential = $connection !== false && !empty($connection['encrypted_access_token']);
+
+            $fields = [];
+            switch ($platform) {
+                case 'wordpress_self':
+                    $fields = [
+                        'Site URL' => !empty($metadata['siteUrl']),
+                        'Username' => !empty($metadata['username']),
+                        'App Password' => $hasCredential,
+                    ];
+                    break;
+                case 'substack':
+                    $fields = [
+                        'Publication ID' => !empty($metadata['publicationId']),
+                        'Publication Host' => !empty($metadata['publicationHost']),
+                        'Session Cookie' => $hasCredential,
+                    ];
+                    break;
+                case 'bluesky':
+                    $fields = [
+                        'Handle' => !empty($metadata['handle']),
+                        'App Password' => $hasCredential,
+                    ];
+                    break;
+            }
+
+            $credentialResults[$platform] = [
+                'label' => $definition['label'] ?? ucwords(str_replace(['-', '_'], ' ', $platform)),
+                'fields' => $fields,
+                'configured' => $hasCredential && !in_array(false, $fields, true),
+            ];
         }
 
         $pageTitle = 'Platform Connection Diagnostics';
@@ -494,6 +562,306 @@ class PlatformConnectionsAdminController
             'expires_at' => trim($_POST['expires_at'] ?? '') ?: null,
             'metadata' => $metadata !== [] ? json_encode($metadata, JSON_THROW_ON_ERROR) : null,
             'enabled' => isset($_POST['enabled']) ? 1 : 0,
+        ];
+    }
+
+    public static function oauthAppEdit(string $platform): void
+    {
+        admin_check();
+        $platformKey = platform_oauth_provider_key($platform);
+        $definition = platform_ui_definition($platformKey);
+        if ($definition === null || ($definition['kind'] ?? '') !== 'oauth') {
+            header('Location: /admin/platform-connections?error=' . urlencode('Unsupported OAuth app platform.'));
+            exit;
+        }
+
+        $app = PlatformOAuthApp::findByPlatform($platformKey) ?: ['platform' => $platformKey];
+        $error = null;
+        require dirname(__DIR__, 2) . '/views/admin/platform-connections/oauth-app-form.php';
+    }
+
+    public static function oauthAppUpdate(string $platform): void
+    {
+        admin_check();
+        $platformKey = platform_oauth_provider_key($platform);
+        $definition = platform_ui_definition($platformKey);
+        if ($definition === null || ($definition['kind'] ?? '') !== 'oauth') {
+            header('Location: /admin/platform-connections?error=' . urlencode('Unsupported OAuth app platform.'));
+            exit;
+        }
+
+        $clientId = trim((string) ($_POST['client_id'] ?? ''));
+        $clientSecret = trim((string) ($_POST['client_secret'] ?? ''));
+        $blogUrl = trim((string) ($_POST['blog_url'] ?? ''));
+        $app = PlatformOAuthApp::findByPlatform($platformKey) ?: ['platform' => $platformKey];
+
+        try {
+            if ($blogUrl !== '' && !filter_var($blogUrl, FILTER_VALIDATE_URL)) {
+                throw new InvalidArgumentException('Blog URL must be a valid URL.');
+            }
+            PlatformOAuthApp::upsert(
+                $platformKey,
+                $clientId !== '' ? $clientId : null,
+                $clientSecret !== '' ? $clientSecret : null,
+                $blogUrl !== '' ? rtrim($blogUrl, '/') : null,
+                true
+            );
+            header('Location: /admin/platform-connections?success=oauth_app&platform=' . urlencode($platformKey));
+            exit;
+        } catch (Throwable $e) {
+            $error = $e->getMessage();
+            require dirname(__DIR__, 2) . '/views/admin/platform-connections/oauth-app-form.php';
+            exit;
+        }
+    }
+
+    private static function storeOAuthConnection(
+        string $platformKey,
+        string|int $userId,
+        string $accessToken,
+        string $encryptedAccess,
+        ?string $encryptedRefresh,
+        ?string $expiresAt,
+        array $tokenPayload,
+        ?string $stateBlogUrl
+    ): array {
+        return match ($platformKey) {
+            'wordpress_com' => [self::upsertOAuthConnection(
+                'wordpress_com',
+                $userId,
+                $encryptedAccess,
+                $encryptedRefresh,
+                $expiresAt,
+                self::wordpressComMetadata($accessToken, $tokenPayload)
+            )],
+            'blogger' => [self::upsertOAuthConnection(
+                'blogger',
+                $userId,
+                $encryptedAccess,
+                $encryptedRefresh,
+                $expiresAt,
+                self::bloggerMetadata($accessToken, $stateBlogUrl)
+            )],
+            'linkedin' => [self::upsertOAuthConnection(
+                'linkedin',
+                $userId,
+                $encryptedAccess,
+                $encryptedRefresh,
+                $expiresAt,
+                self::linkedInMetadata($accessToken)
+            )],
+            'facebook', 'instagram' => self::upsertMetaConnections(
+                $userId,
+                $platformKey,
+                $accessToken,
+                $expiresAt,
+                $tokenPayload
+            ),
+            default => throw new RuntimeException('Unsupported platform OAuth provider.'),
+        };
+    }
+
+    private static function upsertOAuthConnection(
+        string $platform,
+        string|int $userId,
+        string $encryptedAccess,
+        ?string $encryptedRefresh,
+        ?string $expiresAt,
+        array $metadata
+    ): string {
+        $existing = self::findConnectionByPlatform($platform);
+        $payload = [
+            'user_id' => $userId,
+            'platform' => $platform,
+            'encrypted_access_token' => $encryptedAccess,
+            'encrypted_refresh_token' => $encryptedRefresh,
+            'expires_at' => $expiresAt,
+            'metadata' => $metadata !== [] ? json_encode($metadata, JSON_THROW_ON_ERROR) : null,
+            'enabled' => 1,
+        ];
+
+        if ($existing) {
+            PlatformConnection::update((int) $existing['id'], $payload);
+        } else {
+            PlatformConnection::create($payload);
+        }
+
+        return $platform;
+    }
+
+    private static function wordpressComMetadata(string $accessToken, array $tokenPayload): array
+    {
+        $blogId = !empty($tokenPayload['blog_id']) ? (string) $tokenPayload['blog_id'] : '';
+        $blogUrl = '';
+
+        if ($blogId === '') {
+            $sitesResponse = oauth_http_request('GET', 'https://public-api.wordpress.com/rest/v1.1/me/sites', [
+                'Authorization' => 'Bearer ' . $accessToken,
+                'Accept' => 'application/json',
+            ]);
+            $sitesPayload = json_decode($sitesResponse['body'], true);
+            $firstSite = is_array($sitesPayload) ? ($sitesPayload['sites'][0] ?? null) : null;
+            if (is_array($firstSite)) {
+                $blogId = (string) ($firstSite['ID'] ?? '');
+                $blogUrl = (string) ($firstSite['URL'] ?? '');
+            }
+        }
+
+        if ($blogId === '') {
+            throw new RuntimeException('WordPress.com OAuth succeeded, but no blog could be determined for this account.');
+        }
+
+        return [
+            'blogId' => $blogId,
+            'blogUrl' => $blogUrl !== '' ? $blogUrl : null,
+        ];
+    }
+
+    private static function bloggerMetadata(string $accessToken, ?string $stateBlogUrl): array
+    {
+        $blogId = '';
+        $blogUrl = trim((string) $stateBlogUrl);
+
+        if ($blogUrl !== '') {
+            $extracted = self::extractBloggerBlogIdFromHtml($blogUrl);
+            if ($extracted !== null) {
+                return $extracted;
+            }
+
+            $byUrlResponse = oauth_http_request(
+                'GET',
+                'https://www.googleapis.com/blogger/v3/blogs/byurl?url=' . rawurlencode($blogUrl),
+                [
+                    'Authorization' => 'Bearer ' . $accessToken,
+                    'Accept' => 'application/json',
+                ]
+            );
+            if ($byUrlResponse['status'] >= 200 && $byUrlResponse['status'] < 300) {
+                $byUrlPayload = json_decode($byUrlResponse['body'], true);
+                $blogId = is_array($byUrlPayload) ? (string) ($byUrlPayload['id'] ?? '') : '';
+                $blogUrl = is_array($byUrlPayload) ? (string) ($byUrlPayload['url'] ?? $blogUrl) : $blogUrl;
+            }
+        }
+
+        if ($blogId === '') {
+            $blogsResponse = oauth_http_request('GET', 'https://www.googleapis.com/blogger/v3/users/self/blogs', [
+                'Authorization' => 'Bearer ' . $accessToken,
+                'Accept' => 'application/json',
+            ]);
+            $blogsPayload = json_decode($blogsResponse['body'], true);
+            $firstBlog = is_array($blogsPayload) ? ($blogsPayload['items'][0] ?? null) : null;
+            if (is_array($firstBlog)) {
+                $blogId = (string) ($firstBlog['id'] ?? '');
+                $blogUrl = (string) ($firstBlog['url'] ?? $blogUrl);
+            }
+        }
+
+        if ($blogId === '') {
+            throw new RuntimeException('Blogger OAuth succeeded, but no blog could be determined for this account.');
+        }
+
+        return [
+            'blogId' => $blogId,
+            'blogUrl' => $blogUrl !== '' ? $blogUrl : null,
+        ];
+    }
+
+    private static function linkedInMetadata(string $accessToken): array
+    {
+        $userResponse = oauth_http_request('GET', 'https://api.linkedin.com/v2/userinfo', [
+            'Authorization' => 'Bearer ' . $accessToken,
+            'Accept' => 'application/json',
+        ]);
+        $userPayload = json_decode($userResponse['body'], true);
+        $personId = is_array($userPayload) ? (string) ($userPayload['sub'] ?? '') : '';
+        if ($personId === '') {
+            throw new RuntimeException('LinkedIn OAuth succeeded, but the member profile could not be loaded.');
+        }
+
+        return [
+            'personId' => $personId,
+            'name' => is_array($userPayload) ? ($userPayload['name'] ?? null) : null,
+        ];
+    }
+
+    private static function upsertMetaConnections(
+        string|int $userId,
+        string $platformKey,
+        string $accessToken,
+        ?string $expiresAt,
+        array $tokenPayload
+    ): array {
+        $config = platform_oauth_provider_config($platformKey);
+        $userToken = $accessToken;
+
+        $exchangeResponse = oauth_http_request(
+            'GET',
+            $config['token_url'] . '?' . http_build_query([
+                'grant_type' => 'fb_exchange_token',
+                'client_id' => $config['client_id'],
+                'client_secret' => $config['client_secret'],
+                'fb_exchange_token' => $accessToken,
+            ]),
+            ['Accept' => 'application/json']
+        );
+        $exchangePayload = json_decode($exchangeResponse['body'], true);
+        if (is_array($exchangePayload) && !empty($exchangePayload['access_token'])) {
+            $userToken = (string) $exchangePayload['access_token'];
+            if (!empty($exchangePayload['expires_in'])) {
+                $expiresAt = date('Y-m-d H:i:s', time() + (int) $exchangePayload['expires_in']);
+            } elseif (!empty($tokenPayload['expires_in'])) {
+                $expiresAt = date('Y-m-d H:i:s', time() + (int) $tokenPayload['expires_in']);
+            }
+        }
+
+        $accountsResponse = oauth_http_request(
+            'GET',
+            'https://graph.facebook.com/v20.0/me/accounts?fields=id,name,access_token,username,instagram_business_account{id,username}&access_token=' . rawurlencode($userToken),
+            ['Accept' => 'application/json']
+        );
+        $accountsPayload = json_decode($accountsResponse['body'], true);
+        $page = is_array($accountsPayload) ? ($accountsPayload['data'][0] ?? null) : null;
+        if (!is_array($page) || empty($page['id']) || empty($page['access_token'])) {
+            throw new RuntimeException('Meta OAuth succeeded, but no managed Facebook Page was available.');
+        }
+
+        $pageAccessToken = (string) $page['access_token'];
+        $encryptedPageAccessToken = encrypt_string($pageAccessToken, ai_encryption_key());
+
+        self::upsertOAuthConnection('facebook', $userId, $encryptedPageAccessToken, null, $expiresAt, [
+            'pageId' => (string) $page['id'],
+            'pageName' => $page['name'] ?? null,
+            'username' => $page['username'] ?? null,
+        ]);
+
+        $connected = ['facebook'];
+        $igAccount = $page['instagram_business_account'] ?? null;
+        if (is_array($igAccount) && !empty($igAccount['id'])) {
+            self::upsertOAuthConnection('instagram', $userId, $encryptedPageAccessToken, null, $expiresAt, [
+                'igUserId' => (string) $igAccount['id'],
+                'igUsername' => $igAccount['username'] ?? null,
+                'linkedPageId' => (string) $page['id'],
+            ]);
+            $connected[] = 'instagram';
+        }
+
+        return $connected;
+    }
+
+    private static function extractBloggerBlogIdFromHtml(string $blogUrl): ?array
+    {
+        $response = @file_get_contents($blogUrl);
+        if (!is_string($response) || $response === '') {
+            return null;
+        }
+
+        if (preg_match('/blogger\.com\/feeds\/(\d+)\/posts\/default/', $response, $matches) !== 1) {
+            return null;
+        }
+
+        return [
+            'blogId' => $matches[1],
+            'blogUrl' => $blogUrl,
         ];
     }
 

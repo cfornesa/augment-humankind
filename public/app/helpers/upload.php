@@ -39,7 +39,7 @@ function upload_resolve_mime(array $file, string $label = 'File'): string
     return $mime;
 }
 
-function upload_media(array $file, array $allowedMimeMap, int $maxBytes, string $label = 'File'): array
+function upload_media(array $file, array $allowedMimeMap, int $maxBytes, string $label = 'File', array $attributes = []): array
 {
     if ($file['error'] !== UPLOAD_ERR_OK) {
         $messages = [
@@ -74,7 +74,7 @@ function upload_media(array $file, array $allowedMimeMap, int $maxBytes, string 
     } catch (\Exception) {
     }
 
-    $id = MediaFile::create($blob, $mime, basename((string) ($file['name'] ?? '')));
+    $id = MediaFile::create($blob, $mime, basename((string) ($file['name'] ?? '')), $attributes);
 
     return [
         'id' => $id,
@@ -84,16 +84,16 @@ function upload_media(array $file, array $allowedMimeMap, int $maxBytes, string 
     ];
 }
 
-function upload_media_auto(array $file): array
+function upload_media_auto(array $file, array $attributes = []): array
 {
     if (($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
-        return upload_media($file, ALLOWED_IMAGE_MIME, 8 * 1024 * 1024, 'File');
+        return upload_media($file, ALLOWED_IMAGE_MIME, 8 * 1024 * 1024, 'File', $attributes);
     }
 
     $mime = upload_resolve_mime($file);
     if (isset(ALLOWED_VIDEO_MIME[$mime])) {
-        return upload_media($file, ALLOWED_VIDEO_MIME, 64 * 1024 * 1024, 'Video');
+        return upload_media($file, ALLOWED_VIDEO_MIME, 64 * 1024 * 1024, 'Video', $attributes);
     }
 
-    return upload_media($file, ALLOWED_IMAGE_MIME, 8 * 1024 * 1024, 'Image');
+    return upload_media($file, ALLOWED_IMAGE_MIME, 8 * 1024 * 1024, 'Image', $attributes);
 }

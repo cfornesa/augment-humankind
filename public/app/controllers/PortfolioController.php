@@ -46,8 +46,8 @@ class PortfolioController
 
         self::renderArchive(
             itemType: 'collections',
-            pageTitle: 'Exhibit Collections | Augment Humankind',
-            pageDescription: 'Browse native exhibit collections from Augment Humankind.',
+            pageTitle: 'Exhibit Collections | ' . app_site_name(),
+            pageDescription: 'Browse native exhibit collections from ' . app_site_name() . '.',
             canonicalPath: '/portfolio/exhibit-collections',
             eyebrow: 'Portfolio',
             heading: 'Exhibit Collections',
@@ -80,8 +80,8 @@ class PortfolioController
 
         self::renderArchive(
             itemType: 'exhibits',
-            pageTitle: 'Portfolio Exhibits | Augment Humankind',
-            pageDescription: 'Browse exhibits from the Augment Humankind portfolio.',
+            pageTitle: 'Portfolio Exhibits | ' . app_site_name(),
+            pageDescription: 'Browse exhibits from the ' . app_site_name() . ' portfolio.',
             canonicalPath: '/portfolio/exhibits',
             eyebrow: 'Portfolio',
             heading: 'Exhibits',
@@ -114,8 +114,8 @@ class PortfolioController
 
         self::renderArchive(
             itemType: 'platform-collections',
-            pageTitle: 'Platform Collections | Augment Humankind',
-            pageDescription: 'Browse migrated platform collections from Augment Humankind.',
+            pageTitle: 'Platform Collections | ' . app_site_name(),
+            pageDescription: 'Browse migrated platform collections from ' . app_site_name() . '.',
             canonicalPath: '/portfolio/platform-collections',
             eyebrow: 'Portfolio',
             heading: 'Platform Collections',
@@ -152,8 +152,8 @@ class PortfolioController
 
         self::renderArchive(
             itemType: 'pieces',
-            pageTitle: 'Portfolio Art Pieces | Augment Humankind',
-            pageDescription: 'Browse generative art pieces from Augment Humankind.',
+            pageTitle: 'Portfolio Art Pieces | ' . app_site_name(),
+            pageDescription: 'Browse generative art pieces from ' . app_site_name() . '.',
             canonicalPath: '/portfolio/pieces',
             eyebrow: 'Portfolio',
             heading: 'Art Pieces',
@@ -174,8 +174,8 @@ class PortfolioController
     {
         self::renderArchive(
             itemType: 'art-media',
-            pageTitle: 'Art Media | Augment Humankind',
-            pageDescription: 'Browse art media terms used to organize pieces within the Augment Humankind portfolio.',
+            pageTitle: 'Art Media | ' . app_site_name(),
+            pageDescription: 'Browse art media terms used to organize pieces within the ' . app_site_name() . ' portfolio.',
             canonicalPath: '/portfolio/art-media',
             eyebrow: 'Portfolio',
             heading: 'Art Media',

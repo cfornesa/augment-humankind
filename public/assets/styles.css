@@ -321,6 +321,25 @@ main > section {
     padding: 0.2rem;
 }
 
+.brand-logo-dark {
+    display: none;
+}
+
+[data-theme="dark"] .brand-logo-light {
+    display: none;
+}
+[data-theme="dark"] .brand-logo-dark {
+    display: block;
+}
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) .brand-logo-light {
+        display: none;
+    }
+    :root:not([data-theme="light"]) .brand-logo-dark {
+        display: block;
+    }
+}
+
 .brand-text {
     max-width: 9rem;
     line-height: 1.05;

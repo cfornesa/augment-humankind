@@ -18,7 +18,10 @@ $extraHeadHtml = $extraHeadHtml ?? '';
 
 // Load site settings for CSS color injection (gracefully skips if table missing)
 $_ahS = (class_exists('SiteSettings') ? SiteSettings::current() : false) ?: [];
-$_ahSiteTitle = trim((string) ($_ahS['site_title'] ?? 'Augment Humankind')) ?: 'Augment Humankind';
+$_ahSiteTitle = app_site_name();
+$_ahLogoLayout = (string) ($_ahS['logo_layout'] ?? 'text_only');
+$_ahLogoUrl = trim((string) ($_ahS['logo_url'] ?? ''));
+$_ahLogoDarkUrl = trim((string) ($_ahS['logo_dark_url'] ?? ''));
 $_ahResolvedOgImage = $ogImage ? (seo_absolute_url($ogImage) ?? $ogImage) : null;
 
 $_ahLightMap = [
@@ -114,9 +117,18 @@ unset($_ahLightMap, $_ahDarkMap, $_ahCol, $_ahVar);
     <a class="skip-link" href="#main">Skip to content</a>
 
     <header class="site-header" aria-label="Site header">
-        <a class="brand" href="/" aria-label="Augment Humankind home">
-            <img src="/assets/friendly-guide.png" alt="" class="brand-mark" aria-hidden="true">
-            <span class="brand-text">Augment Humankind</span>
+        <a class="brand" href="/" aria-label="<?= e($_ahSiteTitle) ?> home">
+            <?php if ($_ahLogoLayout !== 'text_only' && $_ahLogoUrl !== ''): ?>
+                <span class="brand-mark">
+                    <img src="<?= e($_ahLogoUrl) ?>" alt="" class="brand-logo-light" aria-hidden="true">
+                    <?php if ($_ahLogoDarkUrl !== ''): ?>
+                        <img src="<?= e($_ahLogoDarkUrl) ?>" alt="" class="brand-logo-dark" aria-hidden="true">
+                    <?php endif; ?>
+                </span>
+            <?php endif; ?>
+            <?php if ($_ahLogoLayout !== 'image' || $_ahLogoUrl === ''): ?>
+                <span class="brand-text"><?= e($_ahSiteTitle) ?></span>
+            <?php endif; ?>
         </a>
         <button class="menu-toggle" aria-label="Toggle navigation" aria-expanded="false" aria-controls="site-nav">
             <span></span>

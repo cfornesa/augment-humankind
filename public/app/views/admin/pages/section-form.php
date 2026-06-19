@@ -1,7 +1,7 @@
 <?php
 $isEdit = $section !== null;
 $section = $section ?? [];
-$pageTitle = ($isEdit ? 'Edit Section' : 'New Section') . ' — Augment Humankind Admin';
+$pageTitle = ($isEdit ? 'Edit Section' : 'New Section') . ' — ' . app_site_name() . ' Admin';
 $needsEditor = true;
 ob_start();
 ?>

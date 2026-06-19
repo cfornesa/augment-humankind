@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-$pageTitle = ($exhibit['title'] ?: 'Exhibit') . ' | Augment Humankind Portfolio';
+$pageTitle = ($exhibit['title'] ?: 'Exhibit') . ' | ' . app_site_name() . ' Portfolio';
 $pageDescription = seo_excerpt($exhibit['description'] ?? null, 170)
-    ?: trim(($exhibit['year'] ? $exhibit['year'] . ' · ' : '') . 'Exhibit from the Augment Humankind portfolio');
+    ?: trim(($exhibit['year'] ? $exhibit['year'] . ' · ' : '') . 'Exhibit from the ' . app_site_name() . ' portfolio');
 $ogImage = Exhibit::previewImage($exhibit);
 $canonicalUrl = seo_absolute_url('/portfolio/exhibit/' . $exhibit['slug']);
 $bodyClass = bodyClass('portfolio-work');

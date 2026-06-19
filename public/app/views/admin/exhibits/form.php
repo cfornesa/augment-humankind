@@ -1,7 +1,7 @@
 <?php
 $isEdit    = !empty($exhibit['id']);
 $exhibit   = $exhibit ?? ['media_items' => []];
-$pageTitle = ($isEdit ? 'Edit Work' : 'Add Work') . ' — Augment Humankind Admin';
+$pageTitle = ($isEdit ? 'Edit Work' : 'Add Work') . ' — ' . app_site_name() . ' Admin';
 $needsEditor = true;
 $mediaItems = $exhibit['media_items'] ?? [];
 ob_start();

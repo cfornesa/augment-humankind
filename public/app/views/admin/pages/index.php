@@ -1,10 +1,16 @@
 <?php
-$pageTitle = 'Pages — Augment Humankind Admin';
+$pageTitle = 'Pages — ' . app_site_name() . ' Admin';
 $trashedCount = Page::trashedCount();
+$error = $_GET['error'] ?? null;
 ob_start();
 ?>
 <div class="admin-section">
     <span id="reorder-status" class="reorder-status" aria-live="polite"></span>
+    <?php if ($error): ?>
+        <div class="form-status form-status-error" role="alert">
+            <p><?= e($error) ?></p>
+        </div>
+    <?php endif; ?>
     <div class="admin-section-head">
         <h1 class="admin-heading">Pages</h1>
         <div class="admin-actions">
@@ -41,10 +47,14 @@ ob_start();
                         <td><?= !empty($page['show_in_nav']) ? 'Visible' : 'Hidden' ?></td>
                         <td class="admin-actions">
                             <a href="/admin/pages/<?= (int) $page['id'] ?>/edit">Edit</a>
-                            <form method="POST" action="/admin/pages/<?= (int) $page['id'] ?>/delete"
-                                  onsubmit="return confirm('Move this page and all of its sections to the trash?')">
-                                <button type="submit" class="admin-del-btn">Move to Trash</button>
-                            </form>
+                            <?php if (Page::isProtectedSlug($page['slug'])): ?>
+                                <span class="admin-hint">System page</span>
+                            <?php else: ?>
+                                <form method="POST" action="/admin/pages/<?= (int) $page['id'] ?>/delete"
+                                      onsubmit="return confirm('Move this page and all of its sections to the trash?')">
+                                    <button type="submit" class="admin-del-btn">Move to Trash</button>
+                                </form>
+                            <?php endif; ?>
                         </td>
                     </tr>
                 <?php endforeach ?>

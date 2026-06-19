@@ -1,5 +1,5 @@
 <?php
-$pageTitle = 'Recycle Bin — Augment Humankind Admin';
+$pageTitle = 'Recycle Bin — ' . app_site_name() . ' Admin';
 $tab       = $tab ?? 'exhibits';
 
 $tabs = [

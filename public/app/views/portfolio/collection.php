@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-$pageTitle = ($collection['name'] ?: 'Collection') . ' | Augment Humankind Portfolio';
+$pageTitle = ($collection['name'] ?: 'Collection') . ' | ' . app_site_name() . ' Portfolio';
 $pageDescription = seo_excerpt($collection['description'] ?? null, 170)
     ?: 'Exhibits gathered in the ' . ($collection['name'] ?: 'selected') . ' collection.';
 $ogImage = $collection['thumbnail_value'] ?: ($exhibits[0]['thumbnail_value'] ?? null);

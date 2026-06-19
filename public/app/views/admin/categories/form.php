@@ -7,7 +7,7 @@ $taxonomyIndexPath = $taxonomyIndexPath ?? '/admin/categories';
 $taxonomyCreatePath = $taxonomyCreatePath ?? '/admin/categories/create';
 $taxonomyEditBasePath = $taxonomyEditBasePath ?? '/admin/categories';
 $showTaxonomyThumbnail = $showTaxonomyThumbnail ?? true;
-$pageTitle = ($isEdit ? 'Edit ' . $taxonomyLabel : 'New ' . $taxonomyLabel) . ' — Augment Humankind Admin';
+$pageTitle = ($isEdit ? 'Edit ' . $taxonomyLabel : 'New ' . $taxonomyLabel) . ' — ' . app_site_name() . ' Admin';
 $needsEditor = true;
 ob_start();
 ?>

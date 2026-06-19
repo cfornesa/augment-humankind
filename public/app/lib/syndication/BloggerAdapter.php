@@ -51,8 +51,9 @@ class BloggerAdapter implements PlatformAdapter
         }
         $refreshToken = $this->decryptToken($refreshToken);
 
-        $clientId = $_ENV['BLOGGER_GOOGLE_CLIENT_ID'] ?? getenv('BLOGGER_GOOGLE_CLIENT_ID') ?? '';
-        $clientSecret = $_ENV['BLOGGER_GOOGLE_CLIENT_SECRET'] ?? getenv('BLOGGER_GOOGLE_CLIENT_SECRET') ?? '';
+        $credentials = PlatformOAuthApp::decryptedCredentialsForPlatform('blogger');
+        $clientId = $credentials['client_id'] ?? '';
+        $clientSecret = $credentials['client_secret'] ?? '';
 
         if (!$clientId || !$clientSecret) {
             return null;

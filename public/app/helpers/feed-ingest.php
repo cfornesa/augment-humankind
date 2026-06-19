@@ -127,7 +127,7 @@ function fetch_feed(string $url): ?string
     $context = stream_context_create([
         'http' => [
             'method' => 'GET',
-            'header' => "User-Agent: AugmentHumankind/1.0\r\nAccept: application/rss+xml,application/atom+xml,application/xml,text/xml,*/*\r\n",
+            'header' => "User-Agent: PhpCmsFeedFetcher/1.0\r\nAccept: application/rss+xml,application/atom+xml,application/xml,text/xml,*/*\r\n",
             'timeout' => 15,
             'follow_location' => 1,
             'max_redirects' => 3,

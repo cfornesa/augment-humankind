@@ -4,6 +4,11 @@ declare(strict_types=1);
 
 class PageController
 {
+    private static function canPreviewDrafts(): bool
+    {
+        return !empty($_SESSION['admin_identity_id']);
+    }
+
     /**
      * Render a published managed page by slug.
      *
@@ -14,6 +19,14 @@ class PageController
     public static function show(string $slug): bool
     {
         $page = Page::safeFindPublishedBySlug($slug);
+        $isPreview = false;
+        if (!$page && self::canPreviewDrafts()) {
+            $candidate = Page::safeFindBySlug($slug);
+            if ($candidate && ($candidate['status'] ?? 'draft') === 'draft') {
+                $page = $candidate;
+                $isPreview = true;
+            }
+        }
         if (!$page) {
             return false;
         }

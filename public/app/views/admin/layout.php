@@ -24,7 +24,7 @@ if (function_exists('ah_table_exists') && ah_table_exists('ai_personas')) {
     // Apply stored theme before first paint to prevent flash
     (function(){var t=localStorage.getItem('theme');if(t==='dark'||t==='light')document.documentElement.dataset.theme=t;})();
     </script>
-    <title><?= htmlspecialchars($pageTitle ?? 'Admin — Augment Humankind', ENT_QUOTES, 'UTF-8') ?></title>
+    <title><?= htmlspecialchars($pageTitle ?? 'Admin — ' . app_site_name(), ENT_QUOTES, 'UTF-8') ?></title>
     <link rel="stylesheet" href="/assets/styles.css">
     <link rel="stylesheet" href="/assets/admin.css">
     <?php if ($needsEditor ?? false): ?>
@@ -107,10 +107,11 @@ if (function_exists('ah_table_exists') && ah_table_exists('ai_personas')) {
         <header class="admin-header">
             <div class="admin-brand">
                 <span class="admin-kicker">Administration</span>
-                <a href="/admin" class="admin-site-link">Augment Humankind</a>
+                <a href="/admin" class="admin-site-link"><?= htmlspecialchars(app_site_name(), ENT_QUOTES, 'UTF-8') ?></a>
                 <?php if ($adminIdentity): ?>
                     <span class="admin-kicker">Signed in as <?= htmlspecialchars($adminIdentity['display_name'], ENT_QUOTES, 'UTF-8') ?> via <?= htmlspecialchars(ucfirst($adminIdentity['provider']), ENT_QUOTES, 'UTF-8') ?></span>
                 <?php endif ?>
+                <a href="/admin/setup" class="admin-kicker">Setup checklist</a>
             </div>
             <button class="menu-toggle" aria-label="Toggle navigation" aria-expanded="false" aria-controls="admin-nav">
                 <span></span>
@@ -188,6 +189,75 @@ if (function_exists('ah_table_exists') && ah_table_exists('ai_personas')) {
             </div>
             <p class="media-picker-hint">The asset is downloaded and stored in your media library. Max 64 MB.</p>
             <p class="media-picker-status" id="mp-import-status"></p>
+        </div>
+
+        <div class="media-picker-panel" id="mp-panel-confirm" role="tabpanel" hidden>
+            <div class="media-asset-modal-body media-picker-confirm-body">
+                <div class="media-asset-preview-panel">
+                    <div class="media-asset-preview-frame" id="mp-confirm-preview-host">
+                        <img id="mp-confirm-preview-img" class="is-hidden" src="" alt="">
+                    </div>
+
+                    <dl class="media-asset-facts">
+                        <div>
+                            <dt>ID</dt>
+                            <dd id="mp-confirm-meta-id">—</dd>
+                        </div>
+                        <div>
+                            <dt>Type</dt>
+                            <dd id="mp-confirm-meta-mime">—</dd>
+                        </div>
+                        <div>
+                            <dt>Status</dt>
+                            <dd id="mp-confirm-meta-status">Draft</dd>
+                        </div>
+                    </dl>
+                </div>
+
+                <div class="media-asset-edit-panel">
+                    <div class="field">
+                        <label for="mp-confirm-title">Title</label>
+                        <input type="text" id="mp-confirm-title" maxlength="255" class="admin-input">
+                    </div>
+
+                    <div class="field">
+                        <label for="mp-confirm-alt" id="mp-confirm-alt-label">Description / Alt Text</label>
+                        <p class="admin-hint" id="mp-confirm-alt-hint" style="margin:0 0 0.5rem;">This text must be saved before the asset becomes reusable elsewhere.</p>
+                        <div class="media-asset-description-row">
+                            <textarea
+                                id="mp-confirm-alt"
+                                rows="7"
+                                maxlength="500"
+                                class="media-picker-textarea"
+                                placeholder="Describe this asset for accessibility and future reuse."
+                            ></textarea>
+                            <button
+                                type="button"
+                                id="mp-confirm-ai-btn"
+                                class="admin-btn admin-btn-ghost admin-btn-sm media-asset-ai-btn"
+                                title="Generate description with AI"
+                                aria-label="Generate description with AI"
+                            >✨</button>
+                        </div>
+                    </div>
+
+                    <div class="field is-hidden" id="mp-confirm-poster-field">
+                        <label>Video Poster Image <span class="form-hint">(optional)</span></label>
+                        <div class="media-code-input-wrap">
+                            <input type="text" id="mp-confirm-poster-url" readonly placeholder="No poster selected">
+                            <button type="button" class="admin-btn admin-btn-ghost" id="mp-confirm-poster-choose-btn">Choose Poster</button>
+                        </div>
+                        <div class="media-picker-panel-actions">
+                            <label class="admin-btn admin-btn-ghost" for="mp-confirm-poster-file">Upload Poster</label>
+                            <button type="button" class="admin-btn admin-btn-ghost" id="mp-confirm-poster-clear-btn">Clear Poster</button>
+                            <input type="file" id="mp-confirm-poster-file" accept="image/*" hidden>
+                        </div>
+                        <p class="media-picker-status" id="mp-confirm-poster-status" aria-live="polite"></p>
+                    </div>
+
+                    <p class="media-picker-status" id="mp-confirm-status" aria-live="polite"></p>
+                </div>
+            </div>
         </div>
 
         <!-- Alt text field — shown when an image is selected on the Select tab -->

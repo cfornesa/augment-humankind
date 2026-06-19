@@ -64,20 +64,34 @@ function seo_current_url(): string
 }
 
 /**
+ * The site's display name: admin-configured site_title, falling back to
+ * APP_NAME, falling back to "My Site". Used anywhere page titles, the
+ * public header/footer brand, or outbound messages need a site name
+ * without hardcoding one.
+ */
+function app_site_name(): string
+{
+    $settings = class_exists('SiteSettings') ? SiteSettings::current() : false;
+    $title = trim((string) (($settings ?: [])['site_title'] ?? ''));
+    return $title !== '' ? $title : (configValue('APP_NAME') ?: 'My Site');
+}
+
+/**
  * Site title/description for feed scopes, sourced from site_settings with
  * fallback to the existing hardcoded blog defaults.
  */
 function seo_site_meta(): array
 {
     $settings = SiteSettings::current();
-    $title = trim((string) ($settings['site_title'] ?? ''));
     $description = trim((string) ($settings['hero_subheading'] ?? ''));
 
+    $siteName = app_site_name();
+
     return [
-        'title' => $title !== '' ? $title : 'Augment Humankind',
+        'title' => $siteName,
         'description' => $description !== ''
             ? $description
-            : 'Posts, notes, imported feed items, and updates from Augment Humankind.',
+            : 'Posts, notes, imported feed items, and updates from ' . $siteName . '.',
     ];
 }
 
@@ -88,5 +102,5 @@ function seo_author_name(): string
         return (string) $owner['name'];
     }
 
-    return 'Augment Humankind';
+    return configValue('APP_NAME') ?: 'My Site';
 }

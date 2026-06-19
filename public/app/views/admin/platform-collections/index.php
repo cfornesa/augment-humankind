@@ -67,7 +67,7 @@ ob_start();
                         <td class="drag-handle" title="Drag to reorder">&#8597;</td>
                         <td>
                             <?php if (!empty($collection['thumbnail_url'])): ?>
-                                <img src="<?= e($collection['thumbnail_url']) ?>" alt="" style="width: 60px; height: 45px; object-fit: cover;">
+                                <img src="<?= e($collection['thumbnail_url']) ?>" alt="" loading="lazy" style="width: 60px; height: 45px; object-fit: cover;">
                             <?php endif; ?>
                         </td>
                         <td><?= e($collection['name'] ?? 'Untitled Collection') ?></td>
@@ -155,7 +155,7 @@ ob_start();
 
                 // Update row cell thumbnail image
                 if (imgContainer) {
-                    imgContainer.innerHTML = '<img src="' + res.url + '?t=' + Date.now() + '" alt="" style="width: 60px; height: 45px; object-fit: cover; border: 1px solid var(--line); display: block;">';
+                    imgContainer.innerHTML = '<img src="' + res.url + '?t=' + Date.now() + '" alt="" loading="lazy" style="width: 60px; height: 45px; object-fit: cover; border: 1px solid var(--line); display: block;">';
                 }
 
                 btnIndividual.textContent = 'Generated!';

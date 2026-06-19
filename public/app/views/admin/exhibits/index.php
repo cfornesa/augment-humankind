@@ -1,5 +1,5 @@
 <?php
-$pageTitle = 'Exhibits — Augment Humankind Admin';
+$pageTitle = 'Exhibits — ' . app_site_name() . ' Admin';
 
 $q    = $q    ?? '';
 $sort = $sort ?? 'sort_order';

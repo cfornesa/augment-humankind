@@ -167,7 +167,7 @@ export function createKeyboardNavigation(controls, options = {}) {
   const _fwd = new THREE.Vector3();
 
   function update() {
-    if (!controls.enabled || keys.size === 0) return;
+    if (!controls.enabled || keys.size === 0) return false;
     controls.object.getWorldDirection(_fwd);
     const resolvedSpeed = typeof speed === "function" ? speed(controls) : speed;
     const { dx, dy, dz } = computeOrbitKeyboardMotion(_fwd, keys, resolvedSpeed);
@@ -177,13 +177,14 @@ export function createKeyboardNavigation(controls, options = {}) {
     const actualDx = newCamX - controls.object.position.x;
     const actualDy = newCamY - controls.object.position.y;
     const actualDz = newCamZ - controls.object.position.z;
-    if (Math.abs(actualDx) < 1e-6 && Math.abs(actualDy) < 1e-6 && Math.abs(actualDz) < 1e-6) return;
+    if (Math.abs(actualDx) < 1e-6 && Math.abs(actualDy) < 1e-6 && Math.abs(actualDz) < 1e-6) return false;
     controls.object.position.x = newCamX;
     controls.object.position.y = newCamY;
     controls.object.position.z = newCamZ;
     controls.target.x += actualDx;
     controls.target.y += actualDy;
     controls.target.z += actualDz;
+    return true;
   }
 
   function onContainerClick() { container?.focus(); }
@@ -859,9 +860,9 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
   const _orbitTarget = new THREE.Vector3();
 
   let threeAnimFromTarget = null, threeAnimToTarget = null, threeAnimFromCam = null, threeAnimToCam = null, threeAnimStart = 0;
-  let threeDownX = 0, threeDownY = 0, threeDownButton = 0;
   const threeRaycaster = new THREE.Raycaster();
-  const _activePointerIds = new Set();
+  const _pointerState = new Map();
+  let _hadMultiTouchGesture = false;
 
   function saveOrbitState() {
     if (!controls || !state.camera) return;
@@ -935,18 +936,52 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
     controls.enabled = false;
   }
 
+  function activeTouchPointerCount() {
+    let count = 0;
+    _pointerState.forEach(pointer => {
+      if (pointer.pointerType === "touch") count += 1;
+    });
+    return count;
+  }
+
   function onThreePointerDown(e) {
-    _activePointerIds.add(e.pointerId);
-    threeDownButton = e.button;
-    threeDownX = e.clientX;
-    threeDownY = e.clientY;
+    _pointerState.set(e.pointerId, {
+      pointerType: e.pointerType || "mouse",
+      button: e.button,
+      startX: e.clientX,
+      startY: e.clientY,
+      moved: false,
+    });
+    if ((e.pointerType || "mouse") === "touch" && activeTouchPointerCount() > 1) {
+      _hadMultiTouchGesture = true;
+    }
+  }
+
+  function onThreePointerMove(e) {
+    const pointer = _pointerState.get(e.pointerId);
+    if (!pointer) return;
+    if (Math.hypot(e.clientX - pointer.startX, e.clientY - pointer.startY) >= 6) {
+      pointer.moved = true;
+    }
+    if (pointer.pointerType === "touch" && activeTouchPointerCount() > 1) {
+      _hadMultiTouchGesture = true;
+    }
+  }
+
+  function clearThreePointer(e) {
+    const pointer = _pointerState.get(e.pointerId);
+    _pointerState.delete(e.pointerId);
+    if (pointer?.pointerType === "touch" && activeTouchPointerCount() === 0) {
+      _hadMultiTouchGesture = false;
+    }
   }
 
   function onThreePointerUp(e) {
     if (!controls || !state.camera) return;
-    const wasMultiTouch = _activePointerIds.size > 1;
-    _activePointerIds.delete(e.pointerId);
-    if (wasMultiTouch || threeDownButton !== 0 || e.button !== 0 || Math.hypot(e.clientX - threeDownX, e.clientY - threeDownY) >= 6) return;
+    const pointer = _pointerState.get(e.pointerId);
+    const wasMultiTouch = _hadMultiTouchGesture || activeTouchPointerCount() > 1;
+    clearThreePointer(e);
+    if (!pointer || wasMultiTouch || pointer.button !== 0 || e.button !== 0 || pointer.moved) return;
 
     const rect = canvas.getBoundingClientRect();
     threeRaycaster.setFromCamera(
@@ -965,24 +1000,6 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
       hitPoint = planeHit;
     }
     if (hitPoint) moveThreeOrbitTo(hitPoint);
-  }
-
-  function onThreeWheel(e) {
-    if (!controls || !state.camera) return;
-    e.preventDefault();
-    e.stopPropagation();
-    const cameraPosition = state.camera.position;
-    const direction = cameraPosition.clone().sub(controls.target);
-    const currentDistance = direction.length();
-    if (currentDistance < 1e-6) return;
-    const minDistance = controls.minDistance || 0.6;
-    const maxDistance = controls.maxDistance || Math.max(40, currentDistance * 4);
-    const zoomScale = Math.exp(Math.max(-1, Math.min(1, e.deltaY / 600)));
-    const nextDistance = Math.max(minDistance, Math.min(maxDistance, currentDistance * zoomScale));
-    direction.setLength(nextDistance);
-    cameraPosition.copy(controls.target).add(direction);
-    controls.update();
-    saveOrbitState();
   }
 
   function resize() {
@@ -1005,21 +1022,29 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
           state.camera.position.copy(_orbitCamPos);
           controls.target.copy(_orbitTarget);
         }
-        controls.update();
+        let externalMotion = false;
 
         if (threeAnimToTarget && threeAnimFromTarget) {
           const t = Math.min((performance.now() - threeAnimStart) / 350, 1);
           const eased = 1 - (1 - t) ** 3;
           controls.target.lerpVectors(threeAnimFromTarget, threeAnimToTarget, eased);
           state.camera.position.lerpVectors(threeAnimFromCam, threeAnimToCam, eased);
-          controls.update();
+          externalMotion = true;
           if (t >= 1) {
             controls.enabled = true;
             threeAnimFromTarget = threeAnimToTarget = threeAnimFromCam = threeAnimToCam = null;
-            saveOrbitState();
           }
         }
-        keyNav?.update();
+
+        if (keyNav?.update()) {
+          externalMotion = true;
+        }
+
+        // Always let OrbitControls reconcile its internal spherical state *after*
+        // keyboard/click navigation has translated the camera + target together.
+        // This prevents the next pan from reviving an older zoom distance.
+        controls.update();
+
         saveOrbitState();
       }
 
@@ -1122,7 +1147,17 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
     controls = new OrbitControls(state.camera, canvas);
     controls.enableDamping = true;
     controls.enablePan = true;
+    controls.enableRotate = false;
+    controls.screenSpacePanning = true;
+    controls.mouseButtons.LEFT = THREE.MOUSE.PAN;
+    controls.mouseButtons.MIDDLE = THREE.MOUSE.DOLLY;
+    controls.mouseButtons.RIGHT = THREE.MOUSE.PAN;
+    controls.touches.ONE = THREE.TOUCH.PAN;
+    controls.touches.TWO = THREE.TOUCH.DOLLY_PAN;
     controls.minDistance = 0.6;
+    if ("zoomToCursor" in controls) {
+      controls.zoomToCursor = true;
+    }
     const _initDir = new THREE.Vector3();
     state.camera.getWorldDirection(_initDir);
     const initialCamDist = state.camera.position.length();
@@ -1144,12 +1179,30 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
 
     _orbitCamPos.copy(state.camera.position);
     _orbitTarget.copy(controls.target);
+    canvas.style.cursor = "grab";
     canvas.addEventListener("pointerdown", onThreePointerDown);
+    canvas.addEventListener("pointermove", onThreePointerMove);
     canvas.addEventListener("pointerup", onThreePointerUp);
-    canvas.addEventListener("wheel", onThreeWheel, { passive: false, capture: true });
+    canvas.addEventListener("pointercancel", clearThreePointer);
+    canvas.addEventListener("lostpointercapture", clearThreePointer);
 
-    controls.addEventListener("start", () => { isOrbitActive = true; });
-    controls.addEventListener("end", () => { isOrbitActive = false; saveOrbitState(); });
+    const preventNativeGesture = (event) => {
+      if (event.cancelable) event.preventDefault();
+    };
+    canvas.addEventListener("gesturestart", preventNativeGesture);
+    canvas.addEventListener("gesturechange", preventNativeGesture);
+    canvas.addEventListener("gestureend", preventNativeGesture);
+    canvas.addEventListener("touchmove", preventNativeGesture, { passive: false });
+
+    controls.addEventListener("start", () => {
+      isOrbitActive = true;
+      canvas.style.cursor = "grabbing";
+    });
+    controls.addEventListener("end", () => {
+      isOrbitActive = false;
+      canvas.style.cursor = "grab";
+      saveOrbitState();
+    });
 
     frameId = requestAnimationFrame(animateControls);
 
@@ -1163,8 +1216,14 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
       cancelAnimationFrame(frameId);
       controls.dispose();
       canvas.removeEventListener("pointerdown", onThreePointerDown);
+      canvas.removeEventListener("pointermove", onThreePointerMove);
       canvas.removeEventListener("pointerup", onThreePointerUp);
-      canvas.removeEventListener("wheel", onThreeWheel);
+      canvas.removeEventListener("pointercancel", clearThreePointer);
+      canvas.removeEventListener("lostpointercapture", clearThreePointer);
+      canvas.removeEventListener("gesturestart", preventNativeGesture);
+      canvas.removeEventListener("gesturechange", preventNativeGesture);
+      canvas.removeEventListener("gestureend", preventNativeGesture);
+      canvas.removeEventListener("touchmove", preventNativeGesture);
       stopFrameHandles.forEach(stop => stop());
       if (typeof cleanup === "function") cleanup();
       host.remove();

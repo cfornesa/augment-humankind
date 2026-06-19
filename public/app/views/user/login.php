@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-$pageTitle = 'Sign In — Augment Humankind';
+$pageTitle = 'Sign In — ' . app_site_name();
 $redirectParam = $redirect !== '' ? '?redirect=' . urlencode($redirect) : '';
 ?>
 <!doctype html>
@@ -16,9 +16,8 @@ $redirectParam = $redirect !== '' ? '?redirect=' . urlencode($redirect) : '';
 <body class="page-managed">
     <a class="skip-link" href="#main">Skip to content</a>
     <header class="site-header" aria-label="Site header">
-        <a class="brand" href="/" aria-label="Augment Humankind home">
-            <img src="/assets/friendly-guide.png" alt="" class="brand-mark" aria-hidden="true">
-            <span class="brand-text">Augment Humankind</span>
+        <a class="brand" href="/" aria-label="<?= e(app_site_name()) ?> home">
+            <span class="brand-text"><?= e(app_site_name()) ?></span>
         </a>
     </header>
     <main id="main">

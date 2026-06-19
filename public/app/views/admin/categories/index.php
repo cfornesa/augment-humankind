@@ -5,7 +5,7 @@ $taxonomyCreatePath = $taxonomyCreatePath ?? '/admin/categories/create';
 $taxonomyReorderPath = $taxonomyReorderPath ?? '/admin/categories/reorder';
 $taxonomyIndexPath = $taxonomyIndexPath ?? '/admin/categories';
 $taxonomyDeleteMessage = $taxonomyDeleteMessage ?? ('Move this ' . strtolower($taxonomyLabel) . ' to the recycle bin?');
-$pageTitle = $taxonomyPlural . ' — Augment Humankind Admin';
+$pageTitle = $taxonomyPlural . ' — ' . app_site_name() . ' Admin';
 ob_start();
 ?>
 <div class="admin-section">

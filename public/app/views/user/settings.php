@@ -186,7 +186,7 @@ require dirname(__DIR__) . '/partials/header.php';
                 </div>
                 <div id="style-preview" class="style-preview">
                     <div class="sp-header">
-                        <span class="sp-brand">Augment Humankind</span>
+                        <span class="sp-brand"><?= e(app_site_name()) ?></span>
                         <span class="sp-nav-links">Coded Art · Feeds · Categories</span>
                     </div>
                     <div class="sp-body">

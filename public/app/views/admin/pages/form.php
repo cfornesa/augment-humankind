@@ -1,7 +1,7 @@
 <?php
 $isEdit = $page !== null;
 $page = $page ?? [];
-$pageTitle = ($isEdit ? 'Edit Page' : 'New Page') . ' — Augment Humankind Admin';
+$pageTitle = ($isEdit ? 'Edit Page' : 'New Page') . ' — ' . app_site_name() . ' Admin';
 $needsEditor = true;
 ob_start();
 ?>

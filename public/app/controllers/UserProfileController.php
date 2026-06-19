@@ -77,8 +77,8 @@ class UserProfileController
             $comments = $stmt4->fetchAll();
         } catch (Throwable) {}
 
-        $pageTitle = ($profileUser['name'] ?? $username) . ' — Augment Humankind';
-        $pageDescription = $profileUser['bio'] ?? ('Profile page for ' . $username . ' on Augment Humankind.');
+        $pageTitle = ($profileUser['name'] ?? $username) . ' — ' . app_site_name();
+        $pageDescription = $profileUser['bio'] ?? ('Profile page for ' . $username . ' on ' . app_site_name() . '.');
         $bodyClass = 'page-user-profile';
 
         $isOwnProfile = false;
@@ -104,7 +104,7 @@ class UserProfileController
         }
         $error = null;
         $success = null;
-        $pageTitle = 'Profile Settings — Augment Humankind';
+        $pageTitle = 'Profile Settings — ' . app_site_name();
         $bodyClass = 'page-user-settings';
         require dirname(__DIR__) . '/views/user/settings.php';
     }

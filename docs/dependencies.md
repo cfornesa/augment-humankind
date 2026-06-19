@@ -63,7 +63,11 @@
 - **Self-hosting alternative:** N/A — this is already self-hosted (Hostinger
   MySQL or equivalent). No third-party SaaS is introduced.
 - **Required config:** `DB_HOST`, `DB_NAME`, `DB_USER`, `DB_PASS`
-- **Schema:** `schema.sql` at the repository root is the source of truth.
+- **Schema:** No single file is sufficient — `schema.sql` only covers the
+  native portfolio/CMS tables. See README.md's "Setting up a fresh database"
+  section for the full, verified setup order across `schema.sql`, the
+  `migrations/`/`docs/migrations/` SQL files, and two idempotent
+  `scripts/apply-*.php` appliers.
 - **Media storage:** Uploaded/imported admin media is stored in `media_files`
   blobs and served publicly through `/media/[id]` and `/image/[id]`.
 - **Upload limits:** `.htaccess` requests `upload_max_filesize=64M`,
@@ -91,20 +95,48 @@
 - **Target config:** The existing PHP database remains configured with
   `DB_HOST`, `DB_NAME`, `DB_USER`, and `DB_PASS`.
 
-## Platform Assimilation Runtime Configuration
+## AI Settings Encryption Key (Live Runtime, Required For AI Features)
 
-- **Purpose:** Carries platform-derived runtime settings into the PHP app
-  without colliding with current PHP-site settings.
-- **Required where used:** `PLATFORM_AUTH_SECRET`,
-  `PLATFORM_AI_SETTINGS_ENCRYPTION_KEY`, `PLATFORM_ALLOWED_ORIGINS`,
+- **Purpose:** Encrypts/decrypts AI vendor API keys stored in this app's own
+  `user_ai_vendor_settings`/`user_ai_vendor_keys` tables. This is **not**
+  migration-only — `ai_encryption_key()` in
+  `public/app/helpers/encryption.php` reads it on every AI key
+  encrypt/decrypt, so a brand-new site with nothing to migrate still needs
+  it set before configuring any AI vendor profile.
+- **Required config:** `AI_SETTINGS_ENCRYPTION_KEY` — a 32-byte key, given as
+  hex, base64, or a raw 32-byte string. Generate one with
+  `openssl rand -hex 32`.
+- **Legacy name:** `PLATFORM_AI_SETTINGS_ENCRYPTION_KEY` is still read as a
+  fallback if `AI_SETTINGS_ENCRYPTION_KEY` is unset, so already-deployed
+  installs that set the old name keep working. New deployments should only
+  set the new name — the `PLATFORM_` prefix was misleading here, since
+  unlike the rest of this section it isn't migration-tooling-only.
+- **What breaks if unavailable or changed:** AI vendor key encryption/
+  decryption fails; AI text-improvement, alt-text, and piece-generation
+  features become unusable until it's set correctly. Changing the value
+  after keys have already been encrypted makes those existing keys
+  undecryptable — treat it like any other secret key, not a value to
+  rotate casually.
+
+## Platform Migration-Only Runtime Configuration
+
+- **Purpose:** Carries platform-derived runtime settings used **only** by
+  the one-time legacy-platform migration tooling
+  (`scripts/migrate-platform-to-php.php` and related scripts). Confirmed via
+  full-tree search: none of these are referenced anywhere in `public/app` —
+  a new site with no legacy platform to migrate from does not need any of
+  them and can omit them entirely from `.env`.
+- **Vars:** `PLATFORM_AUTH_SECRET`, `PLATFORM_ALLOWED_ORIGINS`,
   `PLATFORM_PUBLIC_SITE_URL`, `PLATFORM_CRON_SECRET`,
   `PLATFORM_GITHUB_ID`, `PLATFORM_GITHUB_SECRET`,
-  `PLATFORM_GOOGLE_CLIENT_ID`, and `PLATFORM_GOOGLE_CLIENT_SECRET`.
-- **What breaks if unavailable or changed:** The related assimilated feature
-  is disabled or cannot complete: owner/member auth, cron-protected feed
-  refresh, AI key decryption, or platform OAuth callback display.
-- **Self-hosting alternative:** These are app-owned environment variables; no
-  hosted service is introduced by the prefix change itself.
+  `PLATFORM_GOOGLE_CLIENT_ID`, `PLATFORM_GOOGLE_CLIENT_SECRET`,
+  `PLATFORM_GH_TOKEN`, `PLATFORM_PORT`, and the `PLATFORM_DB_*` source
+  database connection vars (see "Platform Source MySQL Database" above).
+- **What breaks if unavailable or changed:** Nothing for normal site
+  operation. Only the migration scripts themselves stop working, and those
+  are only relevant before `platform/` is deleted.
+- **Self-hosting alternative:** N/A — these are migration-tooling
+  configuration, not a hosted service.
 
 ## GitHub OAuth (Admin Login)
 
@@ -202,8 +234,8 @@
 - **Self-hosting alternative:** Do not syndicate automatically; use exported
   feeds or manual copy/paste into each service.
 - **Required config:** Service credentials are stored per connection in the
-  current PHP database and encrypted with
-  `PLATFORM_AI_SETTINGS_ENCRYPTION_KEY` semantics.
+  current PHP database and encrypted with `AI_SETTINGS_ENCRYPTION_KEY`
+  semantics (AES-256-GCM, same key/derivation as AI vendor keys).
 - **Testing rule:** Use mocked service responses. Do not use live credentials
   or perform real posts during route, migration, or deletion-readiness checks.
 
@@ -211,14 +243,9 @@
 
 - **Purpose:** Interactive OAuth authentication for WordPress.com, Blogger, LinkedIn, Facebook, and Instagram connections.
 - **Data sent off-domain:** The browser is redirected to the provider's OAuth consent screen; the server exchanges the returned code for an access token and refresh token with the provider's token endpoint.
-- **What breaks if unavailable or changed:** OAuth-based credential acquisition fails. Manually entered credentials in the connection form remain available as a fallback.
-- **Self-hosting alternative:** Continue using the manual credential entry form in `/admin/platform-connections/create` and `/admin/platform-connections/[id]/edit`.
-- **Required config:**
-  - WordPress.com: `WORDPRESS_COM_CLIENT_ID`, `WORDPRESS_COM_CLIENT_SECRET`
-  - Blogger: `BLOGGER_GOOGLE_CLIENT_ID`, `BLOGGER_GOOGLE_CLIENT_SECRET`
-  - LinkedIn: `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`
-  - Facebook: `FACEBOOK_CLIENT_ID`, `FACEBOOK_CLIENT_SECRET`
-  - Instagram: `INSTAGRAM_CLIENT_ID`, `INSTAGRAM_CLIENT_SECRET` (falls back to Facebook credentials if not set)
+- **What breaks if unavailable or changed:** OAuth-based credential acquisition fails for the affected platform. Existing saved connections remain stored locally.
+- **Self-hosting alternative:** Continue using credential types that do not require provider OAuth apps (for example Bluesky app passwords, Substack session cookies, or WordPress application passwords).
+- **Required config:** Provider app credentials are stored in the PHP site's own `platform_oauth_apps` table through `/admin/platform-connections`, not in environment variables.
 - **Callback URLs to register:** `https://augmenthumankind.com/admin/platform-connections/auth/{platform}/callback` where `{platform}` is one of `wordpress-com`, `blogger`, `linkedin`, `facebook`, `instagram`.
 
 ## Piece Renderer CDN Runtimes
@@ -246,5 +273,4 @@
 - **Data sent off-domain:** User-provided creative prompts and system instructions (for the target engine) are sent to the selected vendor API along with the decrypted API key for authorization.
 - **What breaks if unavailable or changed:** AI piece generation and version repair via affected profiles will fail (already-saved pieces/versions are stored locally and are unaffected).
 - **Self-hosting alternative:** Configure a local proxy endpoint (e.g. Ollama) running self-hosted models as a custom vendor profile in the database.
-- **Required config:** API keys are stored in `user_ai_vendor_keys.encrypted_api_key`, encrypted/decrypted via AES-256-GCM using `PLATFORM_AI_SETTINGS_ENCRYPTION_KEY`. Vendor settings are configured in `user_ai_vendor_settings`.
-
+- **Required config:** API keys are stored in `user_ai_vendor_keys.encrypted_api_key`, encrypted/decrypted via AES-256-GCM using `AI_SETTINGS_ENCRYPTION_KEY`. Vendor settings are configured in `user_ai_vendor_settings`.

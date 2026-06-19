@@ -334,7 +334,7 @@ class BlogAdminController
                 return $failures;
             }
             $settings = SiteSettings::current();
-            $siteTitle = $settings['site_title'] ?? 'Augment Humankind';
+            $siteTitle = $settings['site_title'] ?? app_site_name();
             $canonicalUrl = seo_absolute_url('/blog/posts/' . $postId) ?? '';
             $payload = SyndicationPayload::fromPost($post, $canonicalUrl, $siteTitle);
 
@@ -371,6 +371,7 @@ class BlogAdminController
                 if (!$adapter) {
                     continue;
                 }
+                $startedAt = microtime(true);
                 try {
                     $refresh = $adapter->refreshToken($connection);
                     if ($refresh) {
@@ -391,6 +392,18 @@ class BlogAdminController
                         'status'                 => 'synced',
                         'synced_at'              => date('Y-m-d H:i:s'),
                     ]);
+                    audit_log_event('syndication_publish', 'syndication_publish', 'success', [
+                        'actor_admin_identity_id' => (int) (admin_identity()['id'] ?? 0) ?: null,
+                        'target_type' => 'platform_connection',
+                        'target_id' => (string) $cid,
+                        'http_status' => 200,
+                        'metadata' => [
+                            'platform' => $connection['platform'] ?? '',
+                            'post_id' => $postId,
+                            'token_refreshed' => $refresh !== null,
+                            'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+                        ],
+                    ]);
                 } catch (Throwable $e) {
                     $platformLabel = ucfirst($connection['platform'] ?? 'unknown');
                     $failures[] = $platformLabel . ': ' . $e->getMessage();
@@ -399,6 +412,18 @@ class BlogAdminController
                         'platform_connection_id' => $cid,
                         'status'                 => 'failed',
                         'error_message'          => $e->getMessage(),
+                    ]);
+                    audit_log_event('syndication_publish', 'syndication_publish', 'error', [
+                        'actor_admin_identity_id' => (int) (admin_identity()['id'] ?? 0) ?: null,
+                        'target_type' => 'platform_connection',
+                        'target_id' => (string) $cid,
+                        'http_status' => 500,
+                        'metadata' => [
+                            'platform' => $connection['platform'] ?? '',
+                            'post_id' => $postId,
+                            'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+                            'error' => $e->getMessage(),
+                        ],
                     ]);
                 }
             }
@@ -427,7 +452,7 @@ class BlogAdminController
 
         $postCache = [];
         $settings = SiteSettings::current();
-        $siteTitle = $settings['site_title'] ?? 'Augment Humankind';
+        $siteTitle = $settings['site_title'] ?? app_site_name();
 
         foreach ($pending as $record) {
             $postId = (int) $record['post_id'];
@@ -449,6 +474,7 @@ class BlogAdminController
             if (!$adapter) {
                 continue;
             }
+            $startedAt = microtime(true);
 
             $canonicalUrl = seo_absolute_url('/blog/posts/' . $postId) ?? '';
             $payload = SyndicationPayload::fromPost($post, $canonicalUrl, $siteTitle);
@@ -482,12 +508,34 @@ class BlogAdminController
                     'status'                 => 'synced',
                     'synced_at'              => date('Y-m-d H:i:s'),
                 ]);
+                audit_log_event('syndication_publish', 'syndication_publish', 'success', [
+                    'target_type' => 'platform_connection',
+                    'target_id' => (string) $cid,
+                    'http_status' => 200,
+                    'metadata' => [
+                        'platform' => $connection['platform'] ?? '',
+                        'post_id' => $postId,
+                        'token_refreshed' => $refresh !== null,
+                        'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+                    ],
+                ]);
             } catch (Throwable $e) {
                 PostSyndication::recordResult([
                     'post_id'               => $postId,
                     'platform_connection_id' => $cid,
                     'status'                 => 'failed',
                     'error_message'          => $e->getMessage(),
+                ]);
+                audit_log_event('syndication_publish', 'syndication_publish', 'error', [
+                    'target_type' => 'platform_connection',
+                    'target_id' => (string) $cid,
+                    'http_status' => 500,
+                    'metadata' => [
+                        'platform' => $connection['platform'] ?? '',
+                        'post_id' => $postId,
+                        'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+                        'error' => $e->getMessage(),
+                    ],
                 ]);
             }
         }

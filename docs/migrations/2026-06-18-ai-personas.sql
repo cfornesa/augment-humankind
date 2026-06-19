@@ -32,32 +32,13 @@ ALTER TABLE media_files
     ADD COLUMN title VARCHAR(255) NULL DEFAULT NULL AFTER original_name,
     ADD COLUMN alt_text VARCHAR(500) NULL DEFAULT NULL;
 
--- Add per-user profile theme and palette metadata.
-ALTER TABLE users
-    ADD COLUMN theme VARCHAR(32) NULL DEFAULT NULL
-    AFTER image,
-    ADD COLUMN palette VARCHAR(32) NULL DEFAULT NULL
-    AFTER theme;
-
--- Add per-user public profile color tokens.
-ALTER TABLE users
-    ADD COLUMN color_background VARCHAR(64) NULL DEFAULT NULL AFTER palette,
-    ADD COLUMN color_foreground VARCHAR(64) NULL DEFAULT NULL AFTER color_background,
-    ADD COLUMN color_muted VARCHAR(64) NULL DEFAULT NULL AFTER color_foreground,
-    ADD COLUMN color_muted_foreground VARCHAR(64) NULL DEFAULT NULL AFTER color_muted,
-    ADD COLUMN color_primary VARCHAR(64) NULL DEFAULT NULL AFTER color_muted_foreground,
-    ADD COLUMN color_primary_foreground VARCHAR(64) NULL DEFAULT NULL AFTER color_primary,
-    ADD COLUMN color_secondary VARCHAR(64) NULL DEFAULT NULL AFTER color_primary_foreground,
-    ADD COLUMN color_secondary_foreground VARCHAR(64) NULL DEFAULT NULL AFTER color_secondary,
-    ADD COLUMN color_accent VARCHAR(64) NULL DEFAULT NULL AFTER color_secondary_foreground,
-    ADD COLUMN color_accent_foreground VARCHAR(64) NULL DEFAULT NULL AFTER color_accent,
-    ADD COLUMN color_destructive VARCHAR(64) NULL DEFAULT NULL AFTER color_accent_foreground,
-    ADD COLUMN color_destructive_foreground VARCHAR(64) NULL DEFAULT NULL AFTER color_destructive,
-    ADD COLUMN color_background_dark VARCHAR(64) NULL DEFAULT NULL AFTER color_destructive_foreground,
-    ADD COLUMN color_foreground_dark VARCHAR(64) NULL DEFAULT NULL AFTER color_background_dark;
-
--- Add preferred AI profile selections for admin surfaces.
-ALTER TABLE users
-    ADD COLUMN preferred_art_piece_profile_id INT NULL DEFAULT NULL AFTER color_foreground_dark,
-    ADD COLUMN preferred_text_improve_profile_id INT NULL DEFAULT NULL AFTER preferred_art_piece_profile_id,
-    ADD COLUMN preferred_alt_text_profile_id INT NULL DEFAULT NULL AFTER preferred_text_improve_profile_id;
+-- NOTE: users.theme, users.palette, the users.color_* tokens, and the
+-- users.preferred_*_profile_id columns are NOT added here. They're part of
+-- the base `users` table definition in
+-- migrations/2026-06-14-platform-assimilation.sql as of 2026-06-18 (verified
+-- against a fresh install — adding them again here would fail with
+-- "Duplicate column name"). If you're patching an existing database created
+-- from an older copy of that migration that predates those columns, add them
+-- by hand first, or re-run the current migrations/2026-06-14-platform-assimilation.sql
+-- (its ALTER statements are not idempotent either — check column existence
+-- before re-running against a database that already has them).

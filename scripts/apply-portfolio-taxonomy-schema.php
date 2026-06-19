@@ -81,8 +81,15 @@ function loadEnv(string $path): void
             continue;
         }
 
-        $_ENV[$name] = $value;
-        putenv($name . '=' . $value);
+        // Never let a .env file override a variable already set in the
+        // process environment (e.g. exported by the caller for a test run)
+        // — a prior version of this function overwrote unconditionally,
+        // which could silently redirect a script meant for one database
+        // onto whatever .env happens to be on disk.
+        if (($_ENV[$name] ?? getenv($name) ?: '') === '') {
+            $_ENV[$name] = $value;
+            putenv($name . '=' . $value);
+        }
     }
 }
 

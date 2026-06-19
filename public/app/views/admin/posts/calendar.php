@@ -1,5 +1,5 @@
 <?php
-$pageTitle = 'Posts Calendar — Augment Humankind Admin';
+$pageTitle = 'Posts Calendar — ' . app_site_name() . ' Admin';
 
 $days = [];
 for ($i = 0; $i < 7; $i++) {

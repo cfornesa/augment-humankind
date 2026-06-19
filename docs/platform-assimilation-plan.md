@@ -57,9 +57,13 @@ Tracking rule: after completing each task in each phase, mark the task as
   4C-4H reordered — see the Phase 4 roadmap below.
 - Done — Round 3: Piece Edit Reconciliation (Metadata/HTML/CSS/JS tabs + 4 engines) and Media Asset CRUD Parity (full metadata update and soft/hard delete wired to /admin/media and /admin/trash).
 - Done — Round 4: AI-driven piece generation with multi-vendor LLM client support, Creative prompts sandboxed preview editor, and auto-repair retry loops.
-- Needs Repair — Round 5: Immersive/VR Gallery Overhaul core routes/renderers
-  exist, but manual browser testing found deletion-blocking post embed, lazy
-  loader, VR link, and exhibit-surfacing defects.
+- Done — Round 5: Immersive/VR Gallery Overhaul. Re-verified 2026-06-18: the
+  post-embed, lazy-loader, VR-link, and collection-surfacing defects flagged
+  during manual browser testing on 2026-06-15 were checked directly against
+  current code and are fixed (this entry and the "Needs Repair" one below
+  predate that day's `platform_exhibits`→`platform_collections` rename and
+  were never updated afterward — see `docs/platform-gap-analysis.md`
+  "Verified Fixed 2026-06-18" for the per-item evidence).
 - Done — Platform Gap Analysis Rectification. Implemented all major and minor gaps identified in `docs/platform-gap-analysis.md`:
   - AI Content Helpers: `POST /admin/ai/process` (text improvement) and `POST /admin/ai/describe-image` (alt-text generation) with `AiProviderClient::chat()` and `describeImage()` support for all transport kinds. Tiptap toolbar integration with "Improve Text" button. Media library AI Alt Text generator for images.
   - Platform OAuth Callbacks: `GET /admin/platform-connections/auth/{platform}/start` and `GET /admin/platform-connections/auth/{platform}/callback` for WordPress.com, Blogger, LinkedIn, Facebook, and Instagram. OAuth callback exchanges codes, encrypts tokens, and saves/upserts them into `platform_connections`. Diagnostics page at `/admin/platform-connections/diagnostics` with endpoint reachability tests and setup checklist.
@@ -69,11 +73,12 @@ Tracking rule: after completing each task in each phase, mark the task as
 - Done — Admin dashboard schema compatibility fix. Dashboard aggregate counts
   now check table/column existence before applying soft-delete filters, so
   `/admin` does not crash when a table such as `reactions` lacks `deleted_at`.
-- Needs Repair — Manual browser parity pass. Post-embedded pieces/exhibits do
-  not reliably load, embed VR links can hit 404, TipTap lacks a dedicated
-  art-piece/exhibit picker, generic insertion prompts need accessible modal
-  replacements, and migrated platform exhibits need to surface in expected
-  public/editor/admin views.
+- Done — Manual browser parity pass. Re-verified 2026-06-18: post-embedded
+  pieces/collections load reliably, embed VR links resolve correctly,
+  TipTap's "Pieces/Collections" picker exists and is wired
+  (`initPiecePicker()` in `tiptap-editor.js`), no `window.prompt()` calls
+  remain anywhere in `public/`, and migrated platform collections surface at
+  `/collections`, `/admin/platform-collections`, and the TipTap picker.
 
 ## Phase 1 — Foundation And Data Safety
 
@@ -199,11 +204,16 @@ gallery + confirmation when that sub-phase is reached.
   hardened platform connection token storage for newly saved credentials; and
   added `--verify-only` plus resume-skip behavior to the platform migration
   script.
-- Needs Repair — Deletion readiness checks. Adapter mock tests, feed approval
-  functional tests, retention checks, and no-`platform/` runtime dependency
-  review are covered by the deletion-readiness verifier, but manual
-  browser/admin testing found post embed, VR, editor insertion, and exhibit
-  surfacing defects that must be fixed before deleting `platform/`.
+- Done — Deletion readiness checks (app-code parity). Adapter mock tests,
+  feed approval functional tests, retention checks, and post
+  embed/VR/editor-insertion/collection-surfacing defects flagged by manual
+  browser/admin testing are all re-verified fixed as of 2026-06-18. **Still
+  open at the infrastructure level:** the deletion-readiness verifier's
+  "no-`platform/` runtime dependency" check only covers PHP application
+  code — it doesn't catch that `.github/workflows/scheduled-tasks.yml` still
+  calls a `platform/` shell script for feed refresh. That's a real,
+  separate blocker on deletion, tracked in the CMS-shell remediation plan's
+  Phase F, not a parity gap in the PHP app itself.
 - Done — Deletion-readiness verifier. Added
   `scripts/check-platform-deletion-readiness.php` with static, DB retention,
   rollback-only feed approval, rollback-only syndication, piece renderer, and

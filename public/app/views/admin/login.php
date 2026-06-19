@@ -1,5 +1,5 @@
 <?php
-$pageTitle = 'Admin Login — Augment Humankind';
+$pageTitle = 'Admin Login — ' . app_site_name();
 ?>
 <!doctype html>
 <html lang="en">
@@ -22,6 +22,7 @@ $pageTitle = 'Admin Login — Augment Humankind';
                     'state' => 'The login session expired or the callback state was invalid.',
                     'denied' => 'That account is not approved for admin access.',
                     'provider' => 'This sign-in provider is not configured yet.',
+                    'rate_limit' => 'Too many admin sign-in attempts. Please wait and try again.',
                     default => 'Sign-in could not be completed.',
                 };
                 ?>

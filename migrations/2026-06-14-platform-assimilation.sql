@@ -5,34 +5,34 @@
 SET NAMES utf8mb4;
 
 ALTER TABLE categories
-  ADD COLUMN IF NOT EXISTS category_scope VARCHAR(32) NOT NULL DEFAULT 'portfolio',
-  ADD COLUMN IF NOT EXISTS platform_source_id INT NULL,
-  ADD COLUMN IF NOT EXISTS platform_original_slug VARCHAR(191) NULL,
-  ADD COLUMN IF NOT EXISTS platform_created_at DATETIME(3) NULL,
-  ADD COLUMN IF NOT EXISTS platform_updated_at DATETIME(3) NULL,
-  ADD COLUMN IF NOT EXISTS created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-  ADD COLUMN IF NOT EXISTS updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
-  ADD INDEX IF NOT EXISTS idx_categories_scope (category_scope),
-  ADD UNIQUE KEY IF NOT EXISTS uniq_categories_platform_source (category_scope, platform_source_id);
+  ADD COLUMN category_scope VARCHAR(32) NOT NULL DEFAULT 'portfolio',
+  ADD COLUMN platform_source_id INT NULL,
+  ADD COLUMN platform_original_slug VARCHAR(191) NULL,
+  ADD COLUMN platform_created_at DATETIME(3) NULL,
+  ADD COLUMN platform_updated_at DATETIME(3) NULL,
+  ADD COLUMN created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  ADD COLUMN updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  ADD INDEX idx_categories_scope (category_scope),
+  ADD UNIQUE KEY uniq_categories_platform_source (category_scope, platform_source_id);
 
 UPDATE categories SET category_scope = 'portfolio' WHERE category_scope = '';
 
 ALTER TABLE pages
-  ADD COLUMN IF NOT EXISTS platform_source_id INT NULL,
-  ADD COLUMN IF NOT EXISTS platform_original_slug VARCHAR(96) NULL,
-  ADD COLUMN IF NOT EXISTS content_format VARCHAR(16) NOT NULL DEFAULT 'html',
-  ADD COLUMN IF NOT EXISTS content_text TEXT NULL,
-  ADD COLUMN IF NOT EXISTS author_user_id VARCHAR(191) NULL,
-  ADD COLUMN IF NOT EXISTS platform_created_at DATETIME(3) NULL,
-  ADD COLUMN IF NOT EXISTS platform_updated_at DATETIME(3) NULL,
-  ADD UNIQUE KEY IF NOT EXISTS uniq_pages_platform_source (platform_source_id);
+  ADD COLUMN platform_source_id INT NULL,
+  ADD COLUMN platform_original_slug VARCHAR(96) NULL,
+  ADD COLUMN content_format VARCHAR(16) NOT NULL DEFAULT 'html',
+  ADD COLUMN content_text TEXT NULL,
+  ADD COLUMN author_user_id VARCHAR(191) NULL,
+  ADD COLUMN platform_created_at DATETIME(3) NULL,
+  ADD COLUMN platform_updated_at DATETIME(3) NULL,
+  ADD UNIQUE KEY uniq_pages_platform_source (platform_source_id);
 
 ALTER TABLE navigation_items
-  ADD COLUMN IF NOT EXISTS platform_source_id INT NULL,
-  ADD COLUMN IF NOT EXISTS platform_original_url VARCHAR(2048) NULL,
-  ADD COLUMN IF NOT EXISTS platform_kind VARCHAR(32) NULL,
-  ADD COLUMN IF NOT EXISTS open_in_new_tab TINYINT(1) NOT NULL DEFAULT 0,
-  ADD UNIQUE KEY IF NOT EXISTS uniq_navigation_platform_source (platform_source_id);
+  ADD COLUMN platform_source_id INT NULL,
+  ADD COLUMN platform_original_url VARCHAR(2048) NULL,
+  ADD COLUMN platform_kind VARCHAR(32) NULL,
+  ADD COLUMN open_in_new_tab TINYINT(1) NOT NULL DEFAULT 0,
+  ADD UNIQUE KEY uniq_navigation_platform_source (platform_source_id);
 
 CREATE TABLE IF NOT EXISTS users (
   id VARCHAR(191) NOT NULL PRIMARY KEY,

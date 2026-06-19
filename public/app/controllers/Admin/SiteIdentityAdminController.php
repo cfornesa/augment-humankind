@@ -11,19 +11,72 @@ class SiteIdentityAdminController
         $assets = SiteAsset::all();
         $mediaAssets = MediaAsset::all();
         $adminNavItems = function_exists('admin_navigation_ordered_items') ? admin_navigation_ordered_items() : [];
+        $themeOptions = self::themeOptions();
+        $colorGroups = self::colorGroups();
         require dirname(__DIR__, 2) . '/views/admin/site-identity/index.php';
+    }
+
+    private static function themeOptions(): array
+    {
+        return [
+            'bauhaus'     => 'Bauhaus — Heavy borders, hard shadows, all-caps',
+            'traditional' => 'Traditional — Serif body, hairline borders',
+            'minimalist'  => 'Minimalist — No borders, generous whitespace',
+            'academic'    => 'Academic — Old-style serif, scholarly feel',
+            'airy'        => 'Airy — Light weights, soft shadows, rounded',
+            'nature'      => 'Nature — Friendly Nunito sans, soft radius',
+            'comfort'     => 'Comfort — Quicksand, pillowy radius',
+            'audacious'   => 'Audacious — Bebas Neue, oversized borders',
+            'artistic'    => 'Artistic — Caveat handwriting, hand-drawn feel',
+        ];
+    }
+
+    private static function colorGroups(): array
+    {
+        return [
+            'Light Mode' => [
+                'color_background'             => 'Background',
+                'color_foreground'             => 'Foreground / ink',
+                'color_muted'                  => 'Muted background',
+                'color_muted_foreground'       => 'Muted foreground',
+                'color_primary'                => 'Primary',
+                'color_primary_foreground'     => 'Primary foreground',
+                'color_secondary'              => 'Secondary',
+                'color_secondary_foreground'   => 'Secondary foreground',
+                'color_accent'                 => 'Accent',
+                'color_accent_foreground'      => 'Accent foreground',
+                'color_destructive'            => 'Destructive',
+                'color_destructive_foreground' => 'Destructive foreground',
+            ],
+            'Dark Mode' => [
+                'color_background_dark'             => 'Background',
+                'color_foreground_dark'             => 'Foreground / ink',
+                'color_muted_dark'                  => 'Muted background',
+                'color_muted_foreground_dark'       => 'Muted foreground',
+                'color_primary_dark'                => 'Primary',
+                'color_primary_foreground_dark'     => 'Primary foreground',
+                'color_secondary_dark'              => 'Secondary',
+                'color_secondary_foreground_dark'   => 'Secondary foreground',
+                'color_accent_dark'                 => 'Accent',
+                'color_accent_foreground_dark'      => 'Accent foreground',
+                'color_destructive_dark'            => 'Destructive',
+                'color_destructive_foreground_dark' => 'Destructive foreground',
+            ],
+        ];
     }
 
     public static function settingsUpdate(): void
     {
         admin_check();
 
+        $tab = in_array($_POST['tab'] ?? '', ['settings', 'design'], true) ? $_POST['tab'] : 'settings';
+
         try {
             $data = self::resolveSettingsData();
             self::updateSettings($data);
-            header('Location: /admin/site-identity');
+            header('Location: /admin/site-identity?tab=' . urlencode($tab));
         } catch (Throwable $e) {
-            header('Location: /admin/site-identity?error=' . urlencode($e->getMessage()));
+            header('Location: /admin/site-identity?tab=' . urlencode($tab) . '&error=' . urlencode($e->getMessage()));
         }
         exit;
     }
@@ -90,29 +143,62 @@ class SiteIdentityAdminController
         exit;
     }
 
+    /**
+     * Settings and Design are separate <form> elements that both POST here.
+     * Only resolve a field if its key was actually submitted — otherwise a
+     * Design save (which has no site_title/hero_heading/etc. inputs) would
+     * wipe every Settings field back to its default, and vice versa.
+     */
     private static function resolveSettingsData(): array
     {
-        $data = [
-            'site_title' => trim($_POST['site_title'] ?? '') ?: 'Augment Humankind',
-            'hero_heading' => trim($_POST['hero_heading'] ?? '') ?: '',
-            'hero_subheading' => trim($_POST['hero_subheading'] ?? '') ?: '',
-            'about_heading' => trim($_POST['about_heading'] ?? '') ?: '',
-            'about_body' => trim($_POST['about_body'] ?? '') ?: '',
-            'copyright_line' => trim($_POST['copyright_line'] ?? '') ?: '',
-            'footer_credit' => trim($_POST['footer_credit'] ?? '') ?: '',
-            'cta_label' => trim($_POST['cta_label'] ?? '') ?: '',
-            'cta_href' => trim($_POST['cta_href'] ?? '') ?: '/',
-            'canonical_public_url' => self::normalizeOptionalUrl($_POST['canonical_public_url'] ?? null),
-            'logo_url' => trim($_POST['logo_url'] ?? '') ?: null,
-            'logo_dark_url' => trim($_POST['logo_dark_url'] ?? '') ?: null,
-            'logo_layout' => trim($_POST['logo_layout'] ?? '') ?: 'text_only',
-            'default_theme_mode' => trim($_POST['default_theme_mode'] ?? '') ?: 'system',
-            'theme'   => mb_substr(trim($_POST['theme'] ?? ''), 0, 32) ?: null,
-            'palette' => mb_substr(trim($_POST['palette'] ?? ''), 0, 32) ?: null,
+        $data = [];
+
+        $textFieldDefaults = [
+            'site_title' => 'My Site',
+            'hero_heading' => '',
+            'hero_subheading' => '',
+            'about_heading' => '',
+            'about_body' => '',
+            'copyright_line' => '',
+            'footer_credit' => '',
+            'cta_label' => '',
         ];
+        foreach ($textFieldDefaults as $field => $default) {
+            if (array_key_exists($field, $_POST)) {
+                $data[$field] = trim((string) $_POST[$field]) ?: $default;
+            }
+        }
+
+        if (array_key_exists('cta_href', $_POST)) {
+            $data['cta_href'] = trim((string) $_POST['cta_href']) ?: '/';
+        }
+        if (array_key_exists('canonical_public_url', $_POST)) {
+            $data['canonical_public_url'] = self::normalizeOptionalUrl($_POST['canonical_public_url'] ?? null);
+        }
+        if (array_key_exists('logo_url', $_POST)) {
+            $data['logo_url'] = trim((string) $_POST['logo_url']) ?: null;
+        }
+        if (array_key_exists('logo_dark_url', $_POST)) {
+            $data['logo_dark_url'] = trim((string) $_POST['logo_dark_url']) ?: null;
+        }
+        if (array_key_exists('logo_layout', $_POST)) {
+            $data['logo_layout'] = trim((string) $_POST['logo_layout']) ?: 'text_only';
+        }
+        if (array_key_exists('default_theme_mode', $_POST)) {
+            $data['default_theme_mode'] = trim((string) $_POST['default_theme_mode']) ?: 'system';
+        }
+        if (array_key_exists('theme', $_POST)) {
+            $data['theme'] = mb_substr(trim((string) $_POST['theme']), 0, 32) ?: null;
+        }
+        if (array_key_exists('palette', $_POST)) {
+            $data['palette'] = mb_substr(trim((string) $_POST['palette']), 0, 32) ?: null;
+        }
 
         foreach (self::colorColumns() as $col) {
-            $val = trim($_POST[$col] ?? '');
+            if (!array_key_exists($col, $_POST)) {
+                continue;
+            }
+            $val = trim((string) $_POST[$col]);
             // Accept "H S% L%" or bare "H S L" — reject anything else to prevent injection
             if ($val !== '' && !preg_match('/^[\d.]+\s+[\d.]+%?\s+[\d.]+%?$/', $val)) {
                 $val = '';
@@ -141,9 +227,15 @@ class SiteIdentityAdminController
         ];
     }
 
+    /**
+     * Only writes columns actually present in $data. Settings, Design, and
+     * navigationOrderUpdate() each submit a different subset of this row's
+     * columns — never overwrite a column the caller didn't pass, or every
+     * partial save (e.g. just admin_nav_order_json) wipes the rest of the row.
+     */
     private static function updateSettings(array $data): void
     {
-        $fields = [
+        $allFields = [
             'site_title', 'hero_heading', 'hero_subheading', 'about_heading',
             'about_body', 'copyright_line', 'footer_credit', 'cta_label',
             'cta_href', 'logo_url', 'logo_dark_url', 'logo_layout', 'default_theme_mode',
@@ -152,21 +244,54 @@ class SiteIdentityAdminController
         ];
 
         $available = SiteSettings::availableColumns();
-        if ($available !== []) {
-            $fields = array_values(array_filter(
-                $fields,
-                static fn (string $field): bool => in_array($field, $available, true)
-            ));
+        if ($available === []) {
+            throw new RuntimeException('Site settings table is missing the expected editable columns.');
+        }
+
+        $columnFields = array_values(array_filter(
+            $allFields,
+            static fn (string $field): bool => in_array($field, $available, true)
+        ));
+        if ($columnFields === []) {
+            throw new RuntimeException('Site settings table is missing the expected editable columns.');
+        }
+
+        $fieldsToUpdate = array_values(array_filter(
+            $columnFields,
+            static fn (string $field): bool => array_key_exists($field, $data)
+        ));
+
+        $fallbackPayload = [];
+        foreach ($allFields as $field) {
+            if (!in_array($field, $available, true) && $field !== 'settings_json' && array_key_exists($field, $data)) {
+                $fallbackPayload[$field] = $data[$field];
+            }
+        }
+
+        if ($fallbackPayload !== [] && in_array('settings_json', $available, true)) {
+            $existing = SiteSettings::current() ?: [];
+            $jsonState = json_decode((string) ($existing['settings_json'] ?? ''), true);
+            if (!is_array($jsonState)) {
+                $jsonState = [];
+            }
+            foreach ($fallbackPayload as $field => $value) {
+                $jsonState[$field] = $value;
+            }
+            $data['settings_json'] = json_encode($jsonState, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            if (!in_array('settings_json', $fieldsToUpdate, true)) {
+                $fieldsToUpdate[] = 'settings_json';
+            }
+        }
+
+        if ($fieldsToUpdate === []) {
+            return;
         }
 
         $sets = [];
         $params = [];
-        foreach ($fields as $field) {
+        foreach ($fieldsToUpdate as $field) {
             $sets[] = "$field = ?";
             $params[] = $data[$field] ?? null;
-        }
-        if ($sets === []) {
-            throw new RuntimeException('Site settings table is missing the expected editable columns.');
         }
         $params[] = 1; // id
 

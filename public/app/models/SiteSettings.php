@@ -6,6 +6,16 @@ class SiteSettings
 {
     private static ?array $columnCache = null;
 
+    private static function decodeSettingsJson(?string $raw): array
+    {
+        $raw = trim((string) $raw);
+        if ($raw === '') {
+            return [];
+        }
+        $decoded = json_decode($raw, true);
+        return is_array($decoded) ? $decoded : [];
+    }
+
     public static function current(): array|false
     {
         if (!self::tableExists()) {
@@ -13,7 +23,27 @@ class SiteSettings
         }
 
         try {
-            return db()->query('SELECT * FROM site_settings WHERE id = 1 LIMIT 1')->fetch();
+            $row = db()->query('SELECT * FROM site_settings WHERE id = 1 LIMIT 1')->fetch();
+            if (!is_array($row)) {
+                return false;
+            }
+            $fallback = self::decodeSettingsJson($row['settings_json'] ?? null);
+            if ($fallback === []) {
+                return $row;
+            }
+
+            $available = self::availableColumns();
+            foreach ($fallback as $key => $value) {
+                if (!is_string($key)) {
+                    continue;
+                }
+                $columnExists = in_array($key, $available, true);
+                $currentValue = $row[$key] ?? null;
+                if (!$columnExists || $currentValue === null || $currentValue === '') {
+                    $row[$key] = $value;
+                }
+            }
+            return $row;
         } catch (Throwable) {
             return false;
         }

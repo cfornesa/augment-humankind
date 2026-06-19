@@ -11,6 +11,8 @@ function piece_render_document(array $piece, array $version): string
     $code = (string) ($version['generated_code'] ?? '');
     $jsonCode = json_encode($code, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     $jsonEngine = json_encode($engine);
+    $jsonHtml = json_encode($html, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    $jsonCss = json_encode($css, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 
     return <<<HTML
 <!DOCTYPE html>
@@ -42,6 +44,8 @@ canvas{display:block;width:100%;height:100%;}
 <script>
 const PIECE_ENGINE = {$jsonEngine};
 const PIECE_CODE = {$jsonCode};
+const PIECE_HTML_CODE = {$jsonHtml};
+const PIECE_CSS_CODE = {$jsonCss};
 function showPieceError(error) {
   const el = document.getElementById('piece-error');
   if (!el) return;
@@ -118,160 +122,9 @@ function bootC2() {
 }
 async function bootThree() {
   try {
-    const mod = await import('https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js');
-    const { OrbitControls } = await import('https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js');
-    window.THREE = mod;
-    runPieceCode();
-    if (typeof window.sketch !== 'function') return;
-    const canvas = findCanvas('scene');
-    canvas.style.cssText = 'display:block;width:100%;height:100%;';
-    sizeCanvas(canvas);
-    const state = { scene: null, camera: null, renderer: null };
-    let controls = null;
-    let rafIds = [];
-    const instrumentedThree = { ...mod };
-    instrumentedThree.Scene = class extends mod.Scene {
-      constructor() { super(); state.scene = this; }
-    };
-    instrumentedThree.PerspectiveCamera = class extends mod.PerspectiveCamera {
-      constructor(...args) { super(...args); state.camera = this; }
-    };
-    instrumentedThree.WebGLRenderer = class extends mod.WebGLRenderer {
-      constructor(params) {
-        super({ ...(params || {}), canvas });
-        state.renderer = this;
-        const _origSetSize = this.setSize.bind(this);
-        this.setSize = (w, h) => _origSetSize(w, h, false);
-        const _origRender = this.render.bind(this);
-        this.render = (sc, cam) => {
-          if (sc) state.scene = sc;
-          if (cam) state.camera = cam;
-          return _origRender(sc, cam);
-        };
-      }
-    };
-    const width = canvas.width || window.innerWidth || 1280;
-    const height = canvas.height || window.innerHeight || 720;
-    function autoFit() {
-      if (!state.scene || !state.camera) return;
-      const box = new mod.Box3();
-      state.scene.traverse((obj) => {
-        if (obj.isHelper || obj.isLight || obj.isCamera) return;
-        if (obj.isPoints) return;
-        if (obj.material) {
-          const mat = obj.material;
-          if (mat.side === 1 || (Array.isArray(mat) && mat.some(m => m.side === 1))) return;
-        }
-        const name = (obj.name || '').toLowerCase();
-        if (name.includes('sky') || name.includes('background') || name.includes('env') || name.includes('floor') || name.includes('ground') || name.includes('grid') || name.includes('dome') || name.includes('space') || name.includes('star')) return;
-        if ((obj.isMesh || obj.isLine || obj.isSprite) && obj.geometry) {
-          obj.geometry.computeBoundingBox?.();
-          if (obj.geometry.boundingBox) {
-            const worldBox = obj.geometry.boundingBox.clone().applyMatrix4(obj.matrixWorld);
-            const worldSize = new mod.Vector3();
-            worldBox.getSize(worldSize);
-            if (worldSize.x >= 30 || worldSize.y >= 30 || worldSize.z >= 30) return;
-            if (obj.geometry.type === 'PlaneGeometry' || obj.geometry.type === 'PlaneBufferGeometry') {
-              if (worldSize.x >= 15 || worldSize.y >= 15 || worldSize.z >= 15) return;
-            }
-            box.union(worldBox);
-          }
-        }
-      });
-      if (box.isEmpty()) return;
-      const center = new mod.Vector3(); box.getCenter(center);
-      const size = new mod.Vector3();   box.getSize(size);
-      if (state.camera.position.lengthSq() > 0.01) {
-        if (controls) { controls.target.copy(center); controls.update(); }
-        return;
-      }
-      const maxDim = Math.max(size.x, size.y, size.z) || 1;
-      const fov = state.camera.fov * (Math.PI / 180);
-      const dist = Math.abs(maxDim / 2 / Math.tan(fov / 2)) * 0.63;
-      state.camera.position.set(center.x + dist, center.y + dist * 0.4, center.z + dist);
-      state.camera.lookAt(center);
-      state.camera.updateMatrixWorld(true);
-      if (controls) { controls.target.copy(center); controls.update(); }
-    }
-    function ensureFallbackLighting() {
-      if (!state.scene?.traverse) return;
-      let hasRealLight = false;
-      let hasFallback = false;
-      const fallbacks = [];
-      state.scene.traverse((obj) => {
-        if (!obj.isLight) return;
-        if (obj.name?.startsWith('__viewer_fallback_')) { hasFallback = true; fallbacks.push(obj); }
-        else hasRealLight = true;
-      });
-      if (hasRealLight) {
-        fallbacks.forEach((obj) => state.scene.remove(obj));
-        return;
-      }
-      if (hasFallback) return;
-      const amb = new mod.AmbientLight(0xffffff, 0.7);
-      amb.name = '__viewer_fallback_ambient__';
-      state.scene.add(amb);
-      const dir = new mod.DirectionalLight(0xffffff, 0.8);
-      dir.position.set(5, 10, 7.5);
-      dir.name = '__viewer_fallback_dir__';
-      state.scene.add(dir);
-    }
-    function startFrame(handler) {
-      let count = 0;
-      function tick() {
-        count++;
-        try { handler(count); } catch (error) { showPieceError(error); return; }
-        if (count === 15) autoFit();
-        const id = requestAnimationFrame(tick);
-        rafIds.push(id);
-      }
-      const id = requestAnimationFrame(tick);
-      rafIds.push(id);
-      return () => { rafIds.forEach((rafId) => cancelAnimationFrame(rafId)); rafIds = []; };
-    }
-    window.THREE = instrumentedThree;
-    window.sketch({ THREE: instrumentedThree, canvas, startFrame, width, height, size: { width, height }, OrbitControls });
-    ensureFallbackLighting();
-    autoFit();
-
-    if (state.camera && state.renderer) {
-      controls = new OrbitControls(state.camera, canvas);
-      controls.enableDamping = true;
-      controls.enablePan = true;
-      const camDir = new mod.Vector3();
-      state.camera.getWorldDirection(camDir);
-      const camLen = state.camera.position.length();
-      controls.target.copy(state.camera.position).addScaledVector(camDir, Math.max(camLen * 0.8, 3));
-      autoFit();
-      controls.update();
-
-      let consecutiveErrors = 0;
-      const animateControls = () => {
-        const id = requestAnimationFrame(animateControls);
-        rafIds.push(id);
-        try {
-          ensureFallbackLighting();
-          controls.update();
-          state.renderer.render(state.scene, state.camera);
-          consecutiveErrors = 0;
-        } catch (renderError) {
-          consecutiveErrors++;
-          if (consecutiveErrors === 1) showPieceError(renderError);
-          if (consecutiveErrors >= 5) cancelAnimationFrame(id);
-        }
-      };
-      animateControls();
-    }
-
-    window.addEventListener('resize', () => {
-      sizeCanvas(canvas);
-      if (state.renderer && state.camera) {
-        state.camera.aspect = canvas.width / canvas.height;
-        state.camera.updateProjectionMatrix();
-        state.renderer.setSize(canvas.width, canvas.height, false);
-      }
-    });
-
+    const { mountThreeImmersivePiece } = await import('/assets/js/immersive-gallery.js');
+    const stageEl = document.getElementById('runtime-root') || document.body;
+    mountThreeImmersivePiece(stageEl, PIECE_CODE, PIECE_HTML_CODE, PIECE_CSS_CODE, showPieceError);
     window.parent.postMessage({ type: 'sketch-status', valid: true }, '*');
   } catch (error) {
     showPieceError(error);

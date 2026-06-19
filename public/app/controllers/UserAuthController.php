@@ -277,7 +277,7 @@ class UserAuthController
             $userResponse = oauth_http_request('GET', $config['user_url'], [
                 'Accept' => 'application/vnd.github+json',
                 'Authorization' => 'Bearer ' . $accessToken,
-                'User-Agent' => 'AugmentHumankindOAuth/1.0',
+                'User-Agent' => 'PhpCmsOAuth/1.0',
             ]);
             $user = json_decode($userResponse['body'], true);
             if (!is_array($user) || empty($user['id']) || empty($user['login'])) {
@@ -289,7 +289,7 @@ class UserAuthController
                 $emailResponse = oauth_http_request('GET', $config['emails_url'], [
                     'Accept' => 'application/vnd.github+json',
                     'Authorization' => 'Bearer ' . $accessToken,
-                    'User-Agent' => 'AugmentHumankindOAuth/1.0',
+                    'User-Agent' => 'PhpCmsOAuth/1.0',
                 ]);
                 $emails = json_decode($emailResponse['body'], true);
                 if (is_array($emails)) {

@@ -11,6 +11,37 @@ class Page
         'sign-up', 'users',
     ];
 
+    /** The only two pages that can never be deleted — their slugs carry the
+     * mandatory Hero/CTA and About top sections rendered in managed_page.php. */
+    public const PROTECTED_SLUGS = ['home', 'about'];
+
+    public static function isProtectedSlug(string $slug): bool
+    {
+        return in_array($slug, self::PROTECTED_SLUGS, true);
+    }
+
+    /** Idempotent, self-healing: ensures the About system page exists.
+     * Home is assumed to already exist (seeded by earlier migrations). */
+    public static function ensureSystemPages(): void
+    {
+        if (self::findBySlug('about') === false) {
+            self::create([
+                'title' => 'About',
+                'slug' => 'about',
+                'status' => 'published',
+                'template' => 'standard',
+                'nav_label' => null,
+                'show_in_nav' => false,
+                'meta_title' => null,
+                'meta_description' => null,
+                'og_title' => null,
+                'og_description' => null,
+                'og_image' => null,
+                'sort_order' => 0,
+            ]);
+        }
+    }
+
     public static function all(): array
     {
         return db()->query(
@@ -53,6 +84,15 @@ class Page
     {
         try {
             return self::findPublishedBySlug($slug);
+        } catch (Throwable) {
+            return false;
+        }
+    }
+
+    public static function safeFindBySlug(string $slug): array|false
+    {
+        try {
+            return self::findBySlug($slug);
         } catch (Throwable) {
             return false;
         }
@@ -139,14 +179,24 @@ class Page
 
     public static function softDelete(int $id): void
     {
+        self::guardAgainstDeletingProtected($id);
         $stmt = db()->prepare('UPDATE pages SET deleted_at = NOW() WHERE id = ?');
         $stmt->execute([$id]);
     }
 
     public static function hardDelete(int $id): void
     {
+        self::guardAgainstDeletingProtected($id);
         $stmt = db()->prepare('DELETE FROM pages WHERE id = ?');
         $stmt->execute([$id]);
+    }
+
+    private static function guardAgainstDeletingProtected(int $id): void
+    {
+        $page = self::find($id);
+        if ($page && self::isProtectedSlug((string) $page['slug'])) {
+            throw new InvalidArgumentException('The Home and About pages cannot be deleted.');
+        }
     }
 
     public static function restore(int $id): void

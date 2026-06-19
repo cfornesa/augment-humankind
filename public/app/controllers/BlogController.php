@@ -20,8 +20,8 @@ class BlogController
         }
         $activeCat = $cat;
         $posts = BlogPost::published(25, 0, $sort, $cat, $q);
-        $pageTitle = 'Blog | Augment Humankind';
-        $pageDescription = 'Posts, notes, imported feed items, and updates from Augment Humankind.';
+        $pageTitle = 'Blog | ' . app_site_name();
+        $pageDescription = 'Posts, notes, imported feed items, and updates from ' . app_site_name() . '.';
         $bodyClass = 'page-blog';
         $canonicalUrl = seo_absolute_url('/blog');
         require dirname(__DIR__) . '/views/blog/index.php';
@@ -35,12 +35,14 @@ class BlogController
             self::notFound();
         }
 
-        $pageTitle = (($post['title'] ?? '') ?: 'Post') . ' | Augment Humankind';
+        $pageTitle = (($post['title'] ?? '') ?: 'Post') . ' | ' . app_site_name();
         $pageDescription = seo_excerpt($post['content_text'] ?? $post['content'] ?? '', 160)
-            ?? 'A post from Augment Humankind.';
+            ?? 'A post from ' . app_site_name() . '.';
         $bodyClass = 'page-blog-post';
         $canonicalUrl = seo_absolute_url('/blog/posts/' . (int) $post['id']);
-        $ogImage = $post['featured_image_url'] ?? null;
+        $ogImage = !empty($post['featured_image_url'])
+            ? (string) $post['featured_image_url']
+            : '/og/posts/' . (int) $post['id'];
         $comments = Comment::commentsFor('post', (int) $post['id']);
         $postSections = PostSection::allForPost((int) $post['id']);
         require dirname(__DIR__) . '/views/blog/show.php';
@@ -49,8 +51,8 @@ class BlogController
     public static function categories(): void
     {
         $categories = BlogCategory::all();
-        $pageTitle = 'Blog Categories | Augment Humankind';
-        $pageDescription = 'Browse Augment Humankind blog categories.';
+        $pageTitle = 'Blog Categories | ' . app_site_name();
+        $pageDescription = 'Browse ' . app_site_name() . ' blog categories.';
         $bodyClass = 'page-blog-categories';
         $canonicalUrl = seo_absolute_url('/blog/categories');
         require dirname(__DIR__) . '/views/blog/categories.php';
@@ -65,7 +67,7 @@ class BlogController
         }
 
         $posts = BlogPost::byCategory($slug);
-        $pageTitle = $category['name'] . ' | Blog | Augment Humankind';
+        $pageTitle = $category['name'] . ' | Blog | ' . app_site_name();
         $pageDescription = seo_excerpt($category['description'] ?? '', 160)
             ?? ('Posts in ' . $category['name'] . '.');
         $bodyClass = 'page-blog-category';
@@ -122,7 +124,7 @@ class BlogController
             }
         }
 
-        $pageTitle = 'Search | Augment Humankind';
+        $pageTitle = 'Search | ' . app_site_name();
         $pageDescription = 'Search across posts, pieces, collections, exhibits, and pages.';
         $bodyClass = 'page-search';
         $canonicalUrl = seo_absolute_url('/search');
@@ -223,8 +225,8 @@ class BlogController
     public static function feeds(): void
     {
         refresh_due_feeds();
-        $pageTitle = 'Feeds | Augment Humankind';
-        $pageDescription = 'Subscribe to Augment Humankind feeds.';
+        $pageTitle = 'Feeds | ' . app_site_name();
+        $pageDescription = 'Subscribe to ' . app_site_name() . ' feeds.';
         $bodyClass = 'page-blog-feeds';
         $canonicalUrl = seo_absolute_url('/blog/feeds');
         require dirname(__DIR__) . '/views/blog/feeds.php';

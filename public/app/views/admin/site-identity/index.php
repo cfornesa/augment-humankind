@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 $pageTitle = 'Site Identity';
+$needsEditor = true;
 
 ob_start();
 $error = $_GET['error'] ?? null;
@@ -31,15 +32,17 @@ if (!in_array($tab, ['settings', 'design', 'assets', 'media'], true)) {
 
     <?php if ($tab === 'settings'): ?>
         <form method="post" action="/admin/site-identity/settings" class="admin-form">
+            <input type="hidden" name="tab" value="settings">
             <div class="field">
                 <label for="site_title">Site Title</label>
                 <input id="site_title" name="site_title" type="text" maxlength="255"
-                       value="<?= e($settings['site_title'] ?? 'Augment Humankind') ?>">
+                       value="<?= e($settings['site_title'] ?? app_site_name()) ?>">
             </div>
             <div class="field">
                 <label for="hero_heading">Hero Heading</label>
                 <input id="hero_heading" name="hero_heading" type="text" maxlength="255"
                        value="<?= e($settings['hero_heading'] ?? '') ?>">
+                <p class="admin-hint">Rendered as the top section of the Home page, above its other content.</p>
             </div>
             <div class="field">
                 <label for="hero_subheading">Hero Subheading</label>
@@ -49,6 +52,7 @@ if (!in_array($tab, ['settings', 'design', 'assets', 'media'], true)) {
                 <label for="about_heading">About Heading</label>
                 <input id="about_heading" name="about_heading" type="text" maxlength="255"
                        value="<?= e($settings['about_heading'] ?? '') ?>">
+                <p class="admin-hint">Rendered as the top section of the About page, above its other content.</p>
             </div>
             <div class="field">
                 <label for="about_body">About Body</label>
@@ -74,13 +78,14 @@ if (!in_array($tab, ['settings', 'design', 'assets', 'media'], true)) {
                     <label for="cta_href">CTA URL</label>
                     <input id="cta_href" name="cta_href" type="text" maxlength="2048"
                            value="<?= e($settings['cta_href'] ?? '/') ?>">
+                    <p class="admin-hint">Any link — a relative path like <code>/contact</code> or a full external URL.</p>
                 </div>
             </div>
             <div class="field">
                 <label for="canonical_public_url">Canonical Public URL</label>
                 <input id="canonical_public_url" name="canonical_public_url" type="url" maxlength="255"
                        value="<?= e($settings['canonical_public_url'] ?? '') ?>"
-                       placeholder="https://augmenthumankind.com">
+                       placeholder="https://example.com">
                 <p class="admin-hint">Used for canonical tags, social cards, and outbound post links when publishing from local environments.</p>
             </div>
             <div class="form-actions">
@@ -89,6 +94,7 @@ if (!in_array($tab, ['settings', 'design', 'assets', 'media'], true)) {
         </form>
     <?php elseif ($tab === 'design'): ?>
         <form method="post" action="/admin/site-identity/settings" class="admin-form">
+            <input type="hidden" name="tab" value="design">
             <div class="field-grid">
                 <div class="field">
                     <label for="design_logo_url">Logo (light mode)</label>

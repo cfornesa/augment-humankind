@@ -239,7 +239,23 @@ function uuid(): string
     return vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($bytes), 4));
 }
 
+function migrated_platform_oauth_ciphertext(?string $ciphertext): ?string
+{
+    $ciphertext = trim((string) $ciphertext);
+    if ($ciphertext === '') {
+        return null;
+    }
+
+    try {
+        decrypt_string($ciphertext, ai_encryption_key());
+        return $ciphertext;
+    } catch (Throwable) {
+        return null;
+    }
+}
+
 Env::load(dirname(__DIR__) . '/.env');
+require_once dirname(__DIR__) . '/public/app/helpers/encryption.php';
 
 $execute = in_array('--execute', $argv, true);
 $verifyOnly = in_array('--verify-only', $argv, true);
@@ -836,11 +852,24 @@ try {
             $report['skipped']['platform_oauth_apps'] = ($report['skipped']['platform_oauth_apps'] ?? 0) + 1;
             continue;
         }
+
+        $encryptedClientId = migrated_platform_oauth_ciphertext($row['encrypted_client_id'] ?? null);
+        $encryptedClientSecret = migrated_platform_oauth_ciphertext($row['encrypted_client_secret'] ?? null);
+        if (
+            trim((string) ($row['encrypted_client_id'] ?? '')) !== ''
+            && trim((string) ($row['encrypted_client_secret'] ?? '')) !== ''
+            && ($encryptedClientId === null || $encryptedClientSecret === null)
+        ) {
+            $report['notes'][] = 'Platform OAuth app credentials for ' . (string) $row['platform'] . ' were malformed in the source DB and imported as empty placeholders.';
+            $encryptedClientId = null;
+            $encryptedClientSecret = null;
+        }
+
         $targetId = $target->insertIgnore('platform_oauth_apps', [
             'platform_source_id' => $row['id'],
             'platform' => $row['platform'],
-            'encrypted_client_id' => $row['encrypted_client_id'] ?? null,
-            'encrypted_client_secret' => $row['encrypted_client_secret'] ?? null,
+            'encrypted_client_id' => $encryptedClientId,
+            'encrypted_client_secret' => $encryptedClientSecret,
             'blog_url' => $row['blog_url'] ?? null,
             'created_at' => $row['created_at'] ?? null,
             'updated_at' => $row['updated_at'] ?? null,

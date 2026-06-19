@@ -1,7 +1,13 @@
 # Platform Gap Analysis: Node.js vs. PHP Application
 
-Status: updated after manual browser testing exposed post embed, VR, editor,
-and exhibit parity gaps.
+Status: reconciled 2026-06-18. This doc and `docs/platform-route-matrix.md`
+had drifted out of sync with the codebase — both were last edited in commit
+`0ff7093` (2026-06-15), the same day `platform_exhibits`/`/exhibits` were
+renamed to `platform_collections`/`/collections` (see DECISIONS.md
+2026-06-15 "Pure Scheme Rename"). Every route/table name below has been
+corrected to match current code, and every previously-claimed "Needs Repair"
+item has been re-verified against the actual router, controllers, and JS —
+all five are confirmed fixed (see "Verified Fixed 2026-06-18" below).
 
 This document compares the legacy Node.js platform (`api-server` plus the
 `microblog` React SPA) with the assimilated no-framework PHP application. It
@@ -59,32 +65,40 @@ Repaired 2026-06-15 (closes prior "Remaining Work" items 1-6 plus VR metadata
 parity):
 
 - Done: `scripts/repair-platform-embed-links.php` normalizes absolute-URL
-  iframe embeds for `/embed/pieces/*`, `/immersive/exhibits/*`, and
+  iframe embeds for `/embed/pieces/*`, `/immersive/collections/*`, and
   `/immersive/images/*` to relative paths and reports orphaned references.
   `public/embed.js`'s `CreatrExhibitWall` now has a defensive
-  `/api/exhibits/{slug}` fetch-check so a missing exhibit no longer leaves the
-  lazy placeholder stuck.
+  `/api/collections/{slug}` fetch-check so a missing collection no longer
+  leaves the lazy placeholder stuck.
 - Done: `/immersive/pieces/{id}`, `/immersive/images/{encodedRef}`, and
-  `/immersive/exhibits/{slug}` now show the same amount/type of metadata as
-  the legacy platform (About this piece, fixed image description sentence,
-  Artist Statement / Biography / Works detail cards).
-- Done: new public `/exhibits` and `/exhibits/{slug}` routes list and detail
-  migrated `platform_exhibits` rows, linking to their
-  `/immersive/exhibits/{slug}` VR presentation.
+  `/immersive/collections/{slug}` now show the same amount/type of metadata
+  as the legacy platform (About this piece, fixed image description
+  sentence, Artist Statement / Biography / Works detail cards).
+- Done: new public `/collections` and `/collections/{slug}` routes list and
+  detail migrated `platform_collections` rows, linking to their
+  `/immersive/collections/{slug}` VR presentation. (`/immersive/exhibits/{slug}`
+  is a 301 redirect alias to `/immersive/collections/{slug}`, kept for legacy
+  links — see `ImmersiveController::redirectCollection()`. There is no public
+  `/exhibits` route — that name was never actually built; only the
+  `/immersive/exhibits/{slug}` redirect alias exists.)
 - Done: new `GET /admin/pieces/library` JSON endpoint and a TipTap "Insert art
-  piece or exhibit" picker (Pieces/Exhibits tabs) insert canonical
-  `/embed/pieces/{id}` and `/immersive/exhibits/{slug}` iframes using current
-  PHP IDs.
-- Done: new read-only `/admin/platform-exhibits` (+`/library`) admin listing
-  surfaces migrated exhibits alongside the existing native
-  `/admin/exhibits` ("Artwork exhibits") feature.
+  piece or exhibit" picker (Pieces/Collections tabs) insert canonical
+  `/embed/pieces/{id}` and `/immersive/collections/{slug}` iframes using
+  current PHP IDs.
+- Done: new read-only `/admin/platform-collections` (+`/library`) admin
+  listing surfaces migrated collections alongside the existing native
+  `/admin/exhibits` ("Artwork exhibits") feature — these are unrelated
+  features that happen to share the word "exhibit": `/admin/exhibits` is the
+  native portfolio model, `/admin/platform-collections` is migrated platform
+  data.
 - Done: both remaining `window.prompt()` flows in the TipTap editor (iframe
   embed, "Improve with AI" profile selection) are replaced with accessible
   `<dialog>`-based pickers.
 - Done: `readiness_check_post_embeds()` now scans `posts`/`page_sections`
-  content for `/embed/pieces/*`, `/immersive/exhibits/*`, and
+  content for `/embed/pieces/*`, `/immersive/collections/*`, and
   `/immersive/images/*` references, failing on absolute legacy URLs or
-  orphaned piece/exhibit/media targets, and HTTP-checks every reference found.
+  orphaned piece/collection/media targets, and HTTP-checks every reference
+  found.
 
 ## Architecture Comparison
 
@@ -108,7 +122,7 @@ parity):
 | `/embed/posts/{id}` | Done | Added PHP embeddable post view for published posts. |
 | `/embed/pieces/{id}` and `/embed/pieces/{id}/data` | Done | `scripts/repair-platform-embed-links.php` normalizes legacy/absolute embed URLs to relative `/embed/pieces/{id}` paths using current PHP IDs; readiness's `readiness_check_post_embeds()` verifies every reference resolves and loads. |
 | `/immersive/pieces/{id}` | Done | VR hrefs from `public/embed.js` resolve against current PHP piece IDs after the embed-link repair; the view also now shows an "About this piece" section matching the legacy platform's metadata. |
-| `/immersive/exhibits/{slug}` | Done | Migrated `platform_exhibits` rows are surfaced via `/exhibits`, `/exhibits/{slug}`, `/admin/platform-exhibits`, and the TipTap exhibit picker. The view now shows Artist Statement, Biography, and per-item Works detail cards matching the legacy platform. |
+| `/immersive/collections/{slug}` (`/immersive/exhibits/{slug}` 301s here) | Done | Migrated `platform_collections` rows are surfaced via `/collections`, `/collections/{slug}`, `/admin/platform-collections`, and the TipTap "Pieces/Collections" picker. The view now shows Artist Statement, Biography, and per-item Works detail cards matching the legacy platform. |
 | `/immersive/images/{encodedRef}` | Done | Added PHP compatibility route and lazy embed upgrade. |
 | `/api/feeds`, `/api/posts`, `/api/categories`, `/api/p/*` | Done | Read-only PHP compatibility APIs. |
 | `/api/art-pieces`, `/api/exhibits` | Done | Read-only PHP compatibility APIs. |
@@ -129,23 +143,73 @@ parity):
 | AI settings/keys | Done | Keys decrypt with configured encryption key; no reinsertion required when readiness passes. |
 | platform connections/syndication | Done | New tokens are encrypted; adapters support mock/readiness verification and upsert recording. |
 | art pieces/versions | Done | `GET /admin/pieces/library` plus a TipTap "Insert art piece or exhibit" picker modal (thumbnails, engine badges) insert `/embed/pieces/{id}` iframes using current PHP IDs. |
-| exhibits/memberships | Done | Migrated exhibits are surfaced at `/exhibits`, `/admin/platform-exhibits`, and the TipTap exhibit picker tab (`GET /admin/platform-exhibits/library`). |
+| collections/memberships (migrated platform exhibits) | Done | Migrated collections are surfaced at `/collections`, `/admin/platform-collections`, and the TipTap picker's Collections tab (`GET /admin/platform-collections/library`). |
 | mobile-accessible embed/link insertion prompts | Done | Both remaining `window.prompt()` flows (iframe embed, AI-profile selection for "Improve with AI") are replaced with `<dialog>`-based pickers following the media-picker pattern. |
 | React command palette and live charts | Intentionally replaced | SSR admin metrics replace charting; no `cmdk` dependency is carried forward. |
 
-## Remaining Work
+## Verified Fixed 2026-06-18
 
-All previously identified gap items, including the `abstract-studies` exhibit embed discrepancy, have been fully resolved and verified.
+Re-checked all 5 items `docs/platform-route-matrix.md` had marked "Needs
+Repair" directly against current code (router, controllers, JS), independent
+of any earlier doc claims:
 
-The `posts.id=9` ("Exhibit A") iframe originally embedded the external exhibit `https://platform.creatrweb.com/immersive/exhibits/abstract-studies?embed=1`. Rather than hardcoding exceptions or leaving it as an orphan, we implemented a robust schema-driven solution:
-1. Added an `iframe_code` column to the `platform_exhibits` table in both `migrations/2026-06-14-platform-assimilation.sql` and the idempotent schema applicator `scripts/apply-platform-assimilation-schema.php`.
-2. Created a database record in `platform_exhibits` for the `abstract-studies` slug, storing its external iframe code in the `iframe_code` field.
-3. Normalized the iframe embed in Post #9 (`posts.id=9`) to point to the relative URL `/immersive/exhibits/abstract-studies?embed=1`.
-4. Updated `ImmersiveController::exhibit()` and the public `/exhibits/{slug}` view (`public/app/views/exhibits/show.php`) to detect `iframe_code` and render it directly.
-5. Updated `public/embed.js` (`CreatrExhibitWall`) to fetch the JSON from `/api/exhibits/{slug}` and directly render `iframe_code` within the shadow DOM if present, avoiding double iframe nesting.
-6. Removed all url-based hardcoding exceptions from both `scripts/repair-platform-embed-links.php` and `scripts/check-platform-deletion-readiness.php`.
+1. **Post-embedded pieces/exhibits stuck at lazy placeholders** — REPAIRED.
+   `public/embed.js`'s `CreatrArtPiece.loadAndRender()` fetches
+   `/embed/pieces/{id}/data` and falls back to a visible error state on
+   failure; `CreatrExhibitWall.connectedCallback()` fetches
+   `/api/collections/{slug}` and replaces the placeholder with rendered
+   `iframe_code`, a live iframe, or an explicit "no longer available"
+   message. No silent-stuck-placeholder path exists.
+2. **VR links 404ing** — REPAIRED. `embed.js` builds piece VR links directly
+   from the same `id` returned by the data endpoint; `router.php` registers
+   `/immersive/pieces/([0-9]+)` and 404s only when the piece genuinely
+   doesn't exist. Collection VR links are emitted as
+   `/immersive/collections/{slug}` directly (never the legacy redirect
+   alias), and that route resolves against current `platform_collections`
+   rows.
+3. **TipTap missing an art-piece/exhibit picker** — REPAIRED. `GET
+   /admin/pieces/library` and `GET /admin/platform-collections/library`
+   back a two-tab ("Pieces"/"Collections") `<dialog>` picker
+   (`tiptap-editor.js`, `initPiecePicker()`), wired to the toolbar and
+   inserting canonical `/embed/pieces/{id}` / `/immersive/collections/{slug}`
+   iframes.
+4. **`window.prompt()` flows needing accessible replacements** — REPAIRED.
+   Zero `window.prompt(` calls remain anywhere in `public/`. Both flows use
+   `<dialog>`-based pickers (`#iframe-picker-modal`, `#ai-profile-picker-modal`).
+5. **Migrated exhibits not surfacing in expected views** — REPAIRED, under
+   the `/collections` name rather than the `/exhibits` name this doc
+   previously (incorrectly) claimed. `/collections`, `/collections/{slug}`,
+   `/admin/platform-collections`, `/admin/platform-collections/library`, and
+   the TipTap picker's Collections tab are all wired and confirmed present in
+   `router.php` and their respective controllers/views.
 
-There are no deletion-blocking items remaining. The application is fully deletion-ready.
+The `abstract-studies` orphan fix (the one real content-data gap from the
+prior pass) also survived the exhibits→collections rename intact: `iframe_code`
+is present on `platform_collections` (`migrations/2026-06-14-platform-assimilation.sql:459`),
+read/written by `PlatformCollection.php`, rendered by
+`ImmersiveController::collection()` and `views/collections/show.php`, and
+fetched by `embed.js`'s `CreatrExhibitWall` — confirmed by direct grep across
+the codebase, not just by reading prior doc claims.
+
+There are no deletion-blocking items remaining in the PHP application's own
+route/feature parity. The platform/ folder itself has not yet been deleted —
+see "Outstanding Before Deletion" below for what's left.
+
+## Outstanding Before Deletion
+
+These are not parity gaps in the PHP app; they're administrative/operational
+items that must be resolved before `platform/` can actually be removed:
+
+- `.github/workflows/scheduled-tasks.yml`'s feed-refresh job still calls
+  `platform/scripts/scheduled-feed-refresh.sh`, which posts to the **Node.js**
+  server's `/api/feed-sources/refresh` — a live runtime dependency on
+  `platform/` that contradicts "deletion-ready." This needs a PHP-side
+  replacement before deletion (tracked in the CMS-shell remediation plan,
+  Phase F).
+- Unconfirmed whether `docs/migrations/2026-06-18-ai-personas.sql` and a
+  re-run of `scripts/migrate-thumbnails-to-db.php --execute` have actually
+  been applied to the live Hostinger production database (these are
+  standing reminders in DECISIONS.md with no later confirmation entry).
 
 To verify one last time:
 
@@ -164,7 +228,7 @@ To verify one last time:
 3. Manually browse representative public/admin pages, including `/blog`,
    `/pieces`, `/embed/posts/1`, `/embed/pieces/1`, `/immersive/pieces/1`,
    a real `/immersive/images/{encodedRef}` URL, a real
-   `/immersive/exhibits/{slug}` URL, and `/admin`.
+   `/immersive/collections/{slug}` URL, and `/admin`.
 
 4. Only after the readiness command and manual browser/admin checks pass,
    manually delete `platform/`.

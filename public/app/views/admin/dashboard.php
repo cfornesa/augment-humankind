@@ -1,5 +1,5 @@
 <?php
-$pageTitle = 'Dashboard — Augment Humankind Admin';
+$pageTitle = 'Dashboard — ' . app_site_name() . ' Admin';
 ob_start();
 ?>
 <div class="admin-section">

@@ -577,6 +577,7 @@ class PiecesAdminController
     {
         set_time_limit(660); // 5 attempts × 2 min + buffer
         admin_check();
+        $startedAt = microtime(true);
         $prompt = trim($_POST['prompt'] ?? '');
         $engine = trim($_POST['engine'] ?? 'p5');
         $profileId = (int) ($_POST['profile_id'] ?? 0);
@@ -585,6 +586,16 @@ class PiecesAdminController
         $profiles = db()->query("SELECT uavs.*, u.name AS user_name FROM user_ai_vendor_settings uavs JOIN users u ON u.id = uavs.user_id WHERE uavs.enabled = 1 ORDER BY uavs.profile_name ASC")->fetchAll();
         $personas = self::loadPersonas();
         $selectedPersonaId = $personaId > 0 ? $personaId : null;
+        $actorId = (int) (admin_identity()['id'] ?? 0);
+        $limit = rate_limit_consume('ai_generate_piece', rate_limit_subject_for_scope('ai_generate_piece', $actorId > 0 ? $actorId : null));
+        if (!$limit['allowed']) {
+            self::renderRateLimitedHtml(
+                (int) $limit['retry_after'],
+                'Too many AI generation requests. Please wait a few minutes and try again.',
+                $profileId,
+                $personaId
+            );
+        }
 
         try {
             if ($prompt === '') {
@@ -703,9 +714,32 @@ class PiecesAdminController
             }
 
             // Render preview
+            audit_log_event('ai_request', 'ai_generate_piece', 'success', [
+                'actor_admin_identity_id' => $actorId > 0 ? $actorId : null,
+                'http_status' => 200,
+                'metadata' => [
+                    'profile_id' => $profileId,
+                    'vendor' => $profile['vendor'] ?? '',
+                    'model' => $profile['model'] ?? '',
+                    'endpoint_kind' => $profile['endpoint_kind'] ?? '',
+                    'engine' => $engine,
+                    'attempt_count' => $attemptCount,
+                    'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+                ],
+            ]);
             require dirname(__DIR__, 2) . '/views/admin/pieces/generate-preview.php';
 
         } catch (Throwable $e) {
+            audit_log_event('ai_request', 'ai_generate_piece', 'error', [
+                'actor_admin_identity_id' => $actorId > 0 ? $actorId : null,
+                'http_status' => 500,
+                'metadata' => [
+                    'profile_id' => $profileId,
+                    'engine' => $engine,
+                    'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+                    'error' => $e->getMessage(),
+                ],
+            ]);
             $error = $e->getMessage();
             $selectedProfileId = $profileId;
             $selectedPersonaId = $personaId > 0 ? $personaId : null;
@@ -797,6 +831,12 @@ class PiecesAdminController
     {
         admin_check();
         header('Content-Type: application/json; charset=utf-8');
+        $startedAt = microtime(true);
+        $actorId = (int) (admin_identity()['id'] ?? 0);
+        $limit = rate_limit_consume('ai_process_text', rate_limit_subject_for_scope('ai_process_text', $actorId > 0 ? $actorId : null));
+        if (!$limit['allowed']) {
+            self::emitRateLimitedJson('ai_process_text', (int) $limit['retry_after'], $actorId);
+        }
 
         try {
             $profileId = (int) ($_POST['profile_id'] ?? 0);
@@ -845,14 +885,45 @@ class PiecesAdminController
 
             $res = $aiClient->chat($systemPrompt, $content);
             if (!$res['ok']) {
+                audit_log_event('ai_request', 'ai_process_text', 'provider_error', [
+                    'actor_admin_identity_id' => $actorId > 0 ? $actorId : null,
+                    'http_status' => 502,
+                    'metadata' => [
+                        'profile_id' => $profileId,
+                        'vendor' => $profile['vendor'] ?? '',
+                        'model' => $profile['model'] ?? '',
+                        'endpoint_kind' => $profile['endpoint_kind'] ?? '',
+                        'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+                        'error' => $res['error'] ?? 'AI request failed.',
+                    ],
+                ]);
                 http_response_code(502);
                 echo json_encode(['error' => $res['error'] ?? 'AI request failed.']);
                 exit;
             }
 
+            audit_log_event('ai_request', 'ai_process_text', 'success', [
+                'actor_admin_identity_id' => $actorId > 0 ? $actorId : null,
+                'http_status' => 200,
+                'metadata' => [
+                    'profile_id' => $profileId,
+                    'vendor' => $profile['vendor'] ?? '',
+                    'model' => $profile['model'] ?? '',
+                    'endpoint_kind' => $profile['endpoint_kind'] ?? '',
+                    'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+                ],
+            ]);
             echo json_encode(['result' => $res['text']]);
             exit;
         } catch (Throwable $e) {
+            audit_log_event('ai_request', 'ai_process_text', 'error', [
+                'actor_admin_identity_id' => $actorId > 0 ? $actorId : null,
+                'http_status' => 500,
+                'metadata' => [
+                    'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+                    'error' => $e->getMessage(),
+                ],
+            ]);
             http_response_code(500);
             echo json_encode(['error' => $e->getMessage()]);
             exit;
@@ -863,6 +934,12 @@ class PiecesAdminController
     {
         admin_check();
         header('Content-Type: application/json; charset=utf-8');
+        $startedAt = microtime(true);
+        $actorId = (int) (admin_identity()['id'] ?? 0);
+        $limit = rate_limit_consume('ai_describe_image', rate_limit_subject_for_scope('ai_describe_image', $actorId > 0 ? $actorId : null));
+        if (!$limit['allowed']) {
+            self::emitRateLimitedJson('ai_describe_image', (int) $limit['retry_after'], $actorId);
+        }
 
         try {
             $profileId = (int) ($_POST['profile_id'] ?? 0);
@@ -969,6 +1046,18 @@ class PiecesAdminController
             $base64 = base64_encode($blob);
             $res = $aiClient->describeImage($base64, $mimeType, $describePrompt);
             if (!$res['ok']) {
+                audit_log_event('ai_request', 'ai_describe_image', 'provider_error', [
+                    'actor_admin_identity_id' => $actorId > 0 ? $actorId : null,
+                    'http_status' => 502,
+                    'metadata' => [
+                        'profile_id' => $profileId,
+                        'vendor' => $profile['vendor'] ?? '',
+                        'model' => $profile['model'] ?? '',
+                        'endpoint_kind' => $profile['endpoint_kind'] ?? '',
+                        'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+                        'error' => $res['error'] ?? 'AI request failed.',
+                    ],
+                ]);
                 http_response_code(502);
                 echo json_encode([
                     'code' => 'provider_request_failed',
@@ -978,12 +1067,31 @@ class PiecesAdminController
                 exit;
             }
 
+            audit_log_event('ai_request', 'ai_describe_image', 'success', [
+                'actor_admin_identity_id' => $actorId > 0 ? $actorId : null,
+                'http_status' => 200,
+                'metadata' => [
+                    'profile_id' => $profileId,
+                    'vendor' => $profile['vendor'] ?? '',
+                    'model' => $profile['model'] ?? '',
+                    'endpoint_kind' => $profile['endpoint_kind'] ?? '',
+                    'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+                ],
+            ]);
             echo json_encode([
                 'result' => $res['text'],
                 'diagnostics' => $visionSupport['diagnostics'],
             ]);
             exit;
         } catch (Throwable $e) {
+            audit_log_event('ai_request', 'ai_describe_image', 'error', [
+                'actor_admin_identity_id' => $actorId > 0 ? $actorId : null,
+                'http_status' => 500,
+                'metadata' => [
+                    'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+                    'error' => $e->getMessage(),
+                ],
+            ]);
             http_response_code(500);
             echo json_encode([
                 'code' => 'unexpected_error',
@@ -998,6 +1106,12 @@ class PiecesAdminController
         set_time_limit(660); // 5 attempts × 2 min + buffer
         admin_check();
         header('Content-Type: application/json; charset=utf-8');
+        $startedAt = microtime(true);
+        $actorId = (int) (admin_identity()['id'] ?? 0);
+        $limit = rate_limit_consume('ai_refine_piece', rate_limit_subject_for_scope('ai_refine_piece', $actorId > 0 ? $actorId : null));
+        if (!$limit['allowed']) {
+            self::emitRateLimitedJson('ai_refine_piece', (int) $limit['retry_after'], $actorId);
+        }
 
         try {
             $input = json_decode(file_get_contents('php://input'), true) ?? [];
@@ -1115,9 +1229,30 @@ class PiecesAdminController
                 'css_code' => $cssCode,
                 'generated_code' => $generatedCode,
             ]);
+            audit_log_event('ai_request', 'ai_refine_piece', 'success', [
+                'actor_admin_identity_id' => $actorId > 0 ? $actorId : null,
+                'http_status' => 200,
+                'metadata' => [
+                    'profile_id' => $profileId,
+                    'vendor' => $profile['vendor'] ?? '',
+                    'model' => $profile['model'] ?? '',
+                    'endpoint_kind' => $profile['endpoint_kind'] ?? '',
+                    'engine' => $engine,
+                    'attempt_count' => $attemptCount,
+                    'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+                ],
+            ]);
             exit;
 
         } catch (Throwable $e) {
+            audit_log_event('ai_request', 'ai_refine_piece', 'error', [
+                'actor_admin_identity_id' => $actorId > 0 ? $actorId : null,
+                'http_status' => 500,
+                'metadata' => [
+                    'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+                    'error' => $e->getMessage(),
+                ],
+            ]);
             http_response_code(500);
             echo json_encode([
                 'success' => false,
@@ -1125,5 +1260,34 @@ class PiecesAdminController
             ]);
             exit;
         }
+    }
+
+    private static function emitRateLimitedJson(string $scope, int $retryAfter, int $actorId): void
+    {
+        audit_log_event('ai_request', $scope, 'throttled', [
+            'actor_admin_identity_id' => $actorId > 0 ? $actorId : null,
+            'http_status' => 429,
+            'metadata' => ['retry_after' => $retryAfter],
+        ]);
+        http_response_code(429);
+        header('Retry-After: ' . $retryAfter);
+        echo json_encode(['error' => 'Too many requests. Please wait and try again.']);
+        exit;
+    }
+
+    private static function renderRateLimitedHtml(int $retryAfter, string $message, int $profileId, int $personaId): void
+    {
+        http_response_code(429);
+        header('Retry-After: ' . $retryAfter);
+        $profiles = db()->query("SELECT uavs.*, u.name AS user_name FROM user_ai_vendor_settings uavs JOIN users u ON u.id = uavs.user_id WHERE uavs.enabled = 1 ORDER BY uavs.profile_name ASC")->fetchAll();
+        $personas = self::loadPersonas();
+        $prompt = trim((string) ($_POST['prompt'] ?? ''));
+        $engine = trim((string) ($_POST['engine'] ?? 'p5'));
+        $error = $message;
+        $selectedProfileId = $profileId > 0 ? $profileId : null;
+        $selectedPersonaId = $personaId > 0 ? $personaId : null;
+        $attemptLogs = null;
+        require dirname(__DIR__, 2) . '/views/admin/pieces/generate-form.php';
+        exit;
     }
 }

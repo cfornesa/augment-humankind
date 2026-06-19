@@ -1,5 +1,5 @@
 <?php
-$pageTitle = 'Navigation — Augment Humankind Admin';
+$pageTitle = 'Navigation — ' . app_site_name() . ' Admin';
 $bodyClass = 'admin-body';
 ob_start();
 ?>

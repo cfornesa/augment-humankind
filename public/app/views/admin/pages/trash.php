@@ -1,5 +1,5 @@
 <?php
-$pageTitle = 'Deleted Pages — Augment Humankind Admin';
+$pageTitle = 'Deleted Pages — ' . app_site_name() . ' Admin';
 ob_start();
 ?>
 <div class="admin-section">

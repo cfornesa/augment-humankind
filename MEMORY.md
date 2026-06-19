@@ -107,3 +107,24 @@ or rejection. -->
 2026-06-17 NOTE `SyndicationPayload::fromPost()` reads `$post['content']` which is always `''` in the section system. Callers must populate `$payload->contentHtml` from `PostSection::allForPost()`. Relative image paths (`/image/123`) must be prefixed with `seo_origin()` before passing to external APIs.
 
 2026-06-17 DECISION Syndication failures are now surfaced: `handleSyndication()` returns a failures array; `postStore()`/`postUpdate()` show a `?syndication_error=` banner on `/admin/posts`. The Syndications tab in Platform Connections shows `error_message` in red.
+
+2026-06-18 DECISION Platform publishing OAuth app credentials for the PHP shell are DB-only, and malformed migrated provider app rows should be normalized to empty placeholders rather than preserved as undecryptable ciphertext.
+
+2026-06-18 CORRECTION Exact session-row parity between the legacy platform DB and the live PHP DB is not a stable deletion-readiness invariant after cutover; session drift should be treated as operational state, not migration failure.
+
+2026-06-19 DECISION Native media uploads/imports are draft-first: `media_files.status` governs readiness, editor/slide pickers only insert `ready` assets, and video posters are linked image assets via `poster_media_file_id`.
+Picker and Media Library confirmation must persist `media_files.alt_text` before any image/video asset is considered reusable.
+
+2026-06-19 DECISION The shared Three.js runtime must reconcile OrbitControls after keyboard/click translation so drag/pan preserves the current zoom distance; only wheel/pinch is allowed to change zoom.
+
+2026-06-19 DECISION Managed pages in `draft` are public-404/private-preview: guests should not see them at their public URLs, while signed-in admins may preview them with an explicit draft notice.
+
+2026-06-19 DECISION `site_settings.settings_json` is the compatibility fallback for editable settings like `canonical_public_url` when a dedicated column is missing, so the admin UI never silently drops saved values.
+
+2026-06-19 CORRECTION Any save handler shared by multiple tabs/forms on one DB row must only update fields present in that request's `$_POST` — never rebuild the full row with defaults — or saving one tab silently wipes another's data.
+Bit twice in Site Identity: first the logo (Settings vs. Design tabs), then all Settings-tab text (site title, hero/about copy, CTA, copyright). Fixed at the single `updateSettings()` chokepoint in `SiteIdentityAdminController`.
+
+2026-06-19 CORRECTION `public/index.php`'s static/managed-page route and `app/router.php`'s MVC route load different helper sets — always check both load `helpers/auth.php` and `helpers/admin-navigation.php` when adding anything that depends on `current_user()`/admin nav.
+Missing requires on the static route made `function_exists()` guards silently behave as logged-out, which is how the nav avatar bug happened — same session showed it working on `/blog` but not `/`.
+
+2026-06-19 DECISION Home and About are the only two protected "system pages" (`Page::PROTECTED_SLUGS`) — undeletable, each auto-seeded/self-healing, each rendering a mandatory top section (Home: Hero+CTA, About: heading+body) from existing `site_settings` fields before normal Pages-CMS sections.

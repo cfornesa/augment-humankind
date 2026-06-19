@@ -72,8 +72,9 @@ class WordPressComAdapter implements PlatformAdapter
         }
         $refreshToken = $this->decryptToken($refreshToken);
 
-        $clientId = $_ENV['WORDPRESS_COM_CLIENT_ID'] ?? getenv('WORDPRESS_COM_CLIENT_ID') ?? '';
-        $clientSecret = $_ENV['WORDPRESS_COM_CLIENT_SECRET'] ?? getenv('WORDPRESS_COM_CLIENT_SECRET') ?? '';
+        $credentials = PlatformOAuthApp::decryptedCredentialsForPlatform('wordpress_com');
+        $clientId = $credentials['client_id'] ?? '';
+        $clientSecret = $credentials['client_secret'] ?? '';
 
         if (!$clientId || !$clientSecret) {
             return null;

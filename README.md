@@ -1,21 +1,20 @@
-# Augment Humankind
+# PHP CMS Shell
 
-A small no-framework PHP site for `augmenthumankind.com`.
+A no-framework PHP application — blog, portfolio/gallery, generative art
+pieces, immersive/VR piece and collection rendering, AI-assisted content
+tools, and multi-platform syndication — designed to be deployable to any
+host by filling out `.env` (see `env.example`) and running the database
+setup below. No code changes should be required to point an existing
+deployment's database at a new host, or to stand up a brand-new site.
 
-## Direction
+## This Deployment
 
-Augment Humankind is a mission-first AI consulting practice for nontechnical
-teams. The v1 site uses a Fieldguide position: practical, candid, and visibly
-friendly, with `Friendly Guide.png` serving as the primary mascot signal.
-
-The business promise is disciplined augmentation: help teams use AI to extend
-their capabilities without overclaiming what a one-person practice can deliver.
-
-## Services
-
-- **AI Strategy Fieldguide** — clarify useful AI opportunities before adopting tools.
-- **Workflow Prototype Build** — build one focused, maintainable AI-assisted workflow.
-- **Team Capability Transfer** — help teams keep using AI well through playbooks, examples, and guided practice.
+This particular checkout is currently configured for `augmenthumankind.com`,
+a small AI-consulting practice. That business identity lives in the
+database (`site_settings`, managed `pages`) and `.env` — not in application
+code — so a fresh deployment of this same codebase starts from generic
+placeholder content (see "Setting up a fresh database" below) rather than
+this instance's content.
 
 ## Routes
 
@@ -38,15 +37,17 @@ their capabilities without overclaiming what a one-person practice can deliver.
 - `/media/[id]` and `/image/[id]` — public blob-serving routes for stored media
 - `/blog` — canonical public blog feed
 - `/blog/posts/[id]` — public blog post detail page
+- `/og/posts/[id]` — generated PNG social card for a published blog post
 - `/blog/categories` and `/blog/category/[slug]` — public blog category index and detail pages
 - `/blog/feeds` — catalog page of RSS, Atom, JSON, and mf2 feeds
 - `/search` — public blog post search
 - `/pieces` — public gallery listing of generative art pieces
 - `/pieces/[id]` — public render page of a generative art piece
+- `/collections` and `/collections/[slug]` — public archive/detail for migrated platform art collections
 - `/embed/pieces/[id]` — public embeddable HTML of a generative art piece
 - `/embed/pieces/[id]/data` — public JSON feed of art piece parameters and source code
 - `/immersive/pieces/[id]` — public 3D full-immersion stage or gallery room framing
-- `/immersive/exhibits/[slug]` — public progressive rendering exhibit wall
+- `/immersive/collections/[slug]` — public progressive rendering collection wall (`/immersive/exhibits/[slug]` 301-redirects here for legacy links)
 - `/feeds/mf2` — mf2 JSON format feed export
 
 Admin routes are flat and protected by OAuth login:
@@ -69,6 +70,11 @@ Admin routes are flat and protected by OAuth login:
 - `/admin/ai/describe-image` — AI alt-text generation endpoint (used by the media library)
 - `/admin/trash` — trash bins for soft-deleted content
 - `/admin/navigation` — custom menu headers registry
+
+Cron endpoints:
+
+- `POST /api/cron/publish-posts` — publishes due scheduled posts
+- `POST /api/cron/refresh-feeds` — refreshes due external feed sources
 
 ## Portfolio Notes
 
@@ -94,16 +100,20 @@ or `/media/{id}`. The `public/uploads/` path is gitignored.
 The FTP deploy action may also create `.ftp-deploy-sync-state-public.json` in
 the document root. That file is deploy metadata, not part of the app.
 
-If an old Hostinger Website Builder site still appears at `/`, confirm the
-domain is assigned to the PHP hosting document root (`public_html`) rather than
-Website Builder, then purge any Hostinger/cache/CDN layer. The app's
-`.htaccess` sets `DirectoryIndex index.php`, so the PHP mission homepage should
-serve from the root once the domain points at `public_html`.
+**Hostinger note:** if an old Hostinger Website Builder site still appears at
+`/`, confirm the domain is assigned to the PHP hosting document root
+(`public_html`) rather than Website Builder, then purge any Hostinger/cache/
+CDN layer. The app's `.htaccess` sets `DirectoryIndex index.php`, so the
+homepage should serve from the root once the domain points at `public_html`.
+This step is specific to Hostinger's product split between Website Builder
+and PHP hosting — other hosts don't have this concern.
 
 ## Contact Form Configuration
 
-The `/contact` form uses Google reCAPTCHA v3 and Hostinger SMTP. Create a
-protected `.env` file in the deployed document root using `env.example` as the
+The `/contact` form uses Google reCAPTCHA v3 and standard SMTP — any
+provider works (Gmail, AWS SES, Mailgun, Hostinger, etc.), since
+`SMTP_USERNAME` does not need to match `SMTP_FROM_EMAIL`. Create a protected
+`.env` file in the deployed document root using `env.example` as the
 template.
 
 Required values:
@@ -111,13 +121,12 @@ Required values:
 - `RECAPTCHA_SITE_KEY`
 - `RECAPTCHA_SECRET_KEY`
 - `RECAPTCHA_MIN_SCORE`
-- `SMTP_HOST` — use `smtp.hostinger.com`
-- `SMTP_PORT` — use `465` with `smtps`, or `587` with `starttls`
-- `SMTP_ENCRYPTION` — use `smtps` or `starttls`
-- `SMTP_USERNAME` — use the Hostinger mailbox address
+- `SMTP_HOST` — your SMTP provider's hostname
+- `SMTP_PORT` — typically `465` with `smtps`, or `587` with `starttls`
+- `SMTP_ENCRYPTION` — `smtps` or `starttls`
+- `SMTP_USERNAME`
 - `SMTP_PASSWORD`
-- `SMTP_FROM_EMAIL` — use the same verified Hostinger mailbox address as
-  `SMTP_USERNAME`
+- `SMTP_FROM_EMAIL` — must be a verified sender address for your SMTP provider
 - `SMTP_FROM_NAME`
 - `CONTACT_TO_EMAIL` — the inbox that receives form submissions; it can be the
   same address as `SMTP_FROM_EMAIL`
@@ -129,14 +138,13 @@ Use the generated site key for `RECAPTCHA_SITE_KEY` and the generated secret
 key for `RECAPTCHA_SECRET_KEY`. If you want to test the complete browser flow
 locally, include your local test host in the reCAPTCHA domain settings.
 
-The contact form only sends outbound email through SMTP. IMAP settings such as
-`imap.hostinger.com` are for email apps that need to read the mailbox and are
-not used by this site.
+The contact form only sends outbound email through SMTP — IMAP settings are
+never used by this app.
 
 ## Database Configuration
 
-Portfolio, media library, managed pages, OAuth identities, and navigation are
-stored in MySQL. `schema.sql` is the source of truth for the tables.
+Everything except the static mission/contact pages — blog, portfolio,
+managed pages, admin, auth, AI features — is stored in MySQL.
 
 Required values:
 
@@ -149,25 +157,66 @@ The public mission and contact routes still have safe static behavior if the
 database is unavailable. Managed pages, `/portfolio/*`, and `/admin/*` require
 the database.
 
+### Setting up a fresh database
+
+`schema.sql` alone is **not** sufficient — it only covers the native
+portfolio/CMS tables and has a forward dependency (`post_sections` → `posts`)
+on a table created later in the sequence. Apply these files, against an
+empty database, in exactly this order (verified end-to-end against a fresh
+MySQL 9 database with zero errors):
+
+```sh
+mysql -h "$DB_HOST" -u "$DB_USER" -p "$DB_NAME" < schema.sql
+mysql -h "$DB_HOST" -u "$DB_USER" -p "$DB_NAME" < migrations/2026-06-14-platform-assimilation.sql
+mysql -h "$DB_HOST" -u "$DB_USER" -p "$DB_NAME" < migrations/2026-06-15-comments-polymorphic.sql
+mysql -h "$DB_HOST" -u "$DB_USER" -p "$DB_NAME" < docs/migrations/2026-06-17-admin-ia-and-canonical-origin.sql
+mysql -h "$DB_HOST" -u "$DB_USER" -p "$DB_NAME" < docs/migrations/2026-06-18-ai-personas.sql
+mysql -h "$DB_HOST" -u "$DB_USER" -p "$DB_NAME" < docs/migrations/2026-06-18-operational-hardening.sql
+mysql -h "$DB_HOST" -u "$DB_USER" -p "$DB_NAME" < docs/migrations/2026-06-19-media-draft-confirm.sql
+mysql -h "$DB_HOST" -u "$DB_USER" -p "$DB_NAME" < scripts/add-post-sections-table.sql
+php scripts/apply-portfolio-taxonomy-schema.php
+php scripts/apply-portfolio-ordering-schema.php
+```
+
+None of the `.sql` files in this list are safe to re-run against a database
+that already has their columns (plain MySQL doesn't support
+`ADD COLUMN IF NOT EXISTS`) — run each exactly once on a fresh database. The
+two `apply-*.php` scripts at the end *are* idempotent and safe to re-run.
+
+The remaining files in `scripts/*.sql` (`add-wrapper-class-column.sql`,
+`add-exhibit-content-slide.sql`) and `scripts/migrate-home-nav-label.sql` are
+**not** part of fresh-install setup — their columns already live in
+`schema.sql` for new installs, and the nav-label script is a one-off content
+fixup for this instance's pre-existing data. They only matter when patching
+an older, already-deployed database that predates those columns. Likewise,
+`seed_homepage.sql` and `seed_phase2_pages.sql` are optional example content
+for `/`, `/services`, and `/notes`, not required schema — without them, those
+routes fall back to generic placeholder copy until you create real pages
+from the admin Pages screen.
+
 ## Media Uploads
 
 The admin media picker accepts images and videos and stores them in
-`media_files` as blobs. `public/.htaccess` sets these shared-hosting upload
-limits:
+`media_files` as blobs. New native uploads now land as `draft` assets until
+their metadata is confirmed; only `ready` assets are insertable from editor
+pickers. Video assets can optionally link a poster image asset for thumbnail
+views. `public/.htaccess` sets these shared-hosting upload limits:
 
 - `upload_max_filesize=64M`
 - `post_max_size=72M`
 - `max_execution_time=120`
 - `max_input_time=120`
 
-If Hostinger returns a 500 after deployment, remove those `php_value` lines from
-`.htaccess` and set the same limits in Hostinger's PHP settings instead.
+If your host returns a 500 after deployment because it rejects `php_value`
+directives in `.htaccess` (this happens on some shared hosts, Hostinger
+included), remove those lines from `.htaccess` and set the same limits in
+your host's PHP settings panel instead.
 
 ### Production Verification
 
-After deployment and `.env` setup:
+After deployment and `.env` setup (substitute your real domain below):
 
-1. Confirm `https://augmenthumankind.com/contact` loads the form with an
+1. Confirm `https://yourdomain.com/contact` loads the form with an
    enabled submit button.
 2. Submit an incomplete form and confirm inline validation errors appear.
 3. Submit a complete test inquiry and confirm the page stays on `/contact`
@@ -175,12 +224,12 @@ After deployment and `.env` setup:
 4. Confirm the message arrives at `CONTACT_TO_EMAIL`.
 5. Confirm the delivered message uses the configured `SMTP_FROM_EMAIL` as
    `From` and the submitter email as `Reply-To`.
-6. Confirm direct requests to `https://augmenthumankind.com/.env` and
-   `https://augmenthumankind.com/vendor/autoload.php` are denied.
+6. Confirm direct requests to `https://yourdomain.com/.env` and
+   `https://yourdomain.com/vendor/autoload.php` are denied.
 
 If a complete inquiry fails, check the reCAPTCHA admin console for the domain,
-action name `contact_submit`, and score; then check Hostinger SMTP host, port,
-encryption, username, password, and verified sender settings.
+action name `contact_submit`, and score; then check your SMTP provider's host,
+port, encryption, username, password, and verified sender settings.
 
 You can check the local configuration shape without sending email or printing
 secrets:
@@ -232,9 +281,9 @@ Set these under **Settings → Secrets and variables → Actions**:
 | Secret | Description |
 |---|---|
 | `CRON_SECRET` | A random secret used to authenticate cron requests. Generate one with `openssl rand -hex 32`. |
-| `PUBLIC_SITE_URL` | The fully-qualified origin of the deployed site, e.g. `https://augmenthumankind.com`. No trailing slash. |
+| `PUBLIC_SITE_URL` | The fully-qualified origin of the deployed site, e.g. `https://yourdomain.com`. No trailing slash. |
 
-### Required Hostinger `.env` value
+### Required `.env` value on the deployed site
 
 The PHP app's `POST /api/cron/publish-posts` endpoint validates the same `X-Cron-Secret` header. Add the matching value to the deployed `.env`:
 
@@ -251,9 +300,12 @@ In addition to the cron job, `refresh_due_feeds()` fires on two page loads so fe
 
 Each enabled feed source is checked against its `next_fetch_at` cadence; only overdue sources make an outbound HTTP request.
 
-## One-Time Migration (on first Hostinger deploy)
+## One-Time Migration (legacy platform data only)
 
-After the first deploy, SSH into Hostinger and run:
+Only relevant if you migrated data from the legacy platform per
+`docs/platform-assimilation-plan.md` — a brand-new site with no migrated
+art pieces/collections has nothing for this script to do. After the first
+deploy following a migration, SSH into your host and run:
 
 ```sh
 php scripts/migrate-thumbnails-to-db.php --execute

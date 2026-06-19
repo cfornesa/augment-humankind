@@ -50,7 +50,7 @@ class PiecesController
             exit;
         }
 
-        $pageTitle = 'Art Pieces | Augment Humankind';
+        $pageTitle = 'Art Pieces | ' . app_site_name();
         $pageDescription = 'Generative art pieces and creative experiments.';
         $bodyClass = 'page-pieces';
         $canonicalUrl = seo_absolute_url('/pieces');
@@ -64,9 +64,9 @@ class PiecesController
             self::notFound();
         }
 
-        $pageTitle = (($piece['title'] ?? '') ?: 'Art Piece') . ' | Augment Humankind';
+        $pageTitle = (($piece['title'] ?? '') ?: 'Art Piece') . ' | ' . app_site_name();
         $pageDescription = seo_excerpt($piece['description'] ?? '', 160)
-            ?? 'A generative art piece from Augment Humankind.';
+            ?? 'A generative art piece from ' . app_site_name() . '.';
         $bodyClass = 'page-piece';
         $canonicalUrl = seo_absolute_url('/pieces/' . $id);
         $ogImage = $piece['thumbnail_url'] ?? null;

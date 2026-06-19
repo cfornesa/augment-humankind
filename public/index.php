@@ -10,6 +10,47 @@ if (session_status() !== PHP_SESSION_ACTIVE) {
 
 require_once __DIR__ . '/vendor/autoload.php';
 
+set_exception_handler(static function (Throwable $e): void {
+    error_log((string) $e);
+
+    $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
+    $isApiRequest = str_starts_with($path, '/api/');
+
+    http_response_code(500);
+
+    if ($e instanceof PDOException && !$isApiRequest) {
+        header('Content-Type: text/html; charset=utf-8');
+        echo '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+            . '<title>Site not configured</title></head><body style="font-family:system-ui,sans-serif;'
+            . 'max-width:640px;margin:4rem auto;line-height:1.6;padding:0 1.5rem;">'
+            . '<h1>This site isn\'t configured yet</h1>'
+            . '<p>The database connection failed. If you\'re setting up a new deployment, check that '
+            . '<code>DB_HOST</code>, <code>DB_NAME</code>, <code>DB_USER</code>, and <code>DB_PASS</code> '
+            . 'are set correctly in your <code>.env</code> file, and that the database has been created '
+            . 'from the setup sequence documented in README.md.</p>'
+            . '</body></html>';
+        return;
+    }
+
+    if ($isApiRequest) {
+        header('Content-Type: application/json');
+        echo json_encode([
+            'error' => $e instanceof PDOException
+                ? 'Site not configured.'
+                : 'Internal server error.',
+        ]);
+        return;
+    }
+
+    header('Content-Type: text/html; charset=utf-8');
+    echo '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+        . '<title>Server error</title></head><body style="font-family:system-ui,sans-serif;'
+        . 'max-width:640px;margin:4rem auto;line-height:1.6;padding:0 1.5rem;">'
+        . '<h1>Something went wrong</h1>'
+        . '<p>The request could not be completed. Please try again in a moment.</p>'
+        . '</body></html>';
+});
+
 $routes = [
     '/' => 'home',
     '/services' => 'services',
@@ -36,6 +77,31 @@ $path = rtrim($path, '/') ?: '/';
 loadEnvFile(__DIR__ . '/.env');
 loadEnvFile(dirname(__DIR__) . '/.env');
 
+require_once __DIR__ . '/app/bootstrap.php';
+require_once __DIR__ . '/app/helpers/schema.php';
+require_once __DIR__ . '/app/helpers/seo.php';
+require_once __DIR__ . '/app/helpers/audit-log.php';
+require_once __DIR__ . '/app/helpers/rate-limit.php';
+require_once __DIR__ . '/app/helpers/auth.php';
+require_once __DIR__ . '/app/helpers/admin-navigation.php';
+require_once __DIR__ . '/app/models/AdminIdentity.php';
+require_once __DIR__ . '/app/models/SiteSettings.php';
+require_once __DIR__ . '/app/helpers/bootstrap_state.php';
+
+$bootstrapExempt = $path === '/admin' || str_starts_with($path, '/admin/')
+    || str_starts_with($path, '/api/')
+    || str_starts_with($path, '/embed/')
+    || str_starts_with($path, '/immersive/')
+    || str_starts_with($path, '/assets/')
+    || str_starts_with($path, '/vendor/');
+
+if (!$bootstrapExempt && !site_bootstrap_complete()) {
+    http_response_code(503);
+    header('Retry-After: 300');
+    require __DIR__ . '/app/views/setup_gate.php';
+    exit;
+}
+
 if ($path === '/portfolio' || str_starts_with($path, '/portfolio/')
     || $path === '/pieces' || str_starts_with($path, '/pieces/')
     || $path === '/collections' || str_starts_with($path, '/collections/')
@@ -43,6 +109,7 @@ if ($path === '/portfolio' || str_starts_with($path, '/portfolio/')
     || str_starts_with($path, '/immersive/')
     || str_starts_with($path, '/api/')
     || $path === '/blog' || str_starts_with($path, '/blog/')
+    || str_starts_with($path, '/og/')
     || $path === '/search'
     || $path === '/feeds'
     || str_starts_with($path, '/posts/')
@@ -70,12 +137,18 @@ if ($page === 'home' || $page === 'services' || $page === 'notes') {
 if ($managedSlug !== null) {
     require_once __DIR__ . '/app/bootstrap.php';
     require_once __DIR__ . '/app/helpers/seo.php';
+    require_once __DIR__ . '/app/models/SiteSettings.php';
     require_once __DIR__ . '/app/models/Page.php';
     require_once __DIR__ . '/app/models/PageSection.php';
     require_once __DIR__ . '/app/controllers/PageController.php';
 
     if (PageController::show($managedSlug)) {
         exit;
+    }
+
+    if (Page::safeFindBySlug($managedSlug)) {
+        http_response_code(404);
+        $page = '404';
     }
 }
 
@@ -84,8 +157,12 @@ if ($page === null) {
     $page = '404';
 }
 
-$siteName = 'Augment Humankind';
-$contactEmail = 'contact@augmenthumankind.com';
+require_once __DIR__ . '/app/config/database.php';
+require_once __DIR__ . '/app/models/SiteSettings.php';
+$siteSettings = SiteSettings::current() ?: [];
+$siteName = trim((string) ($siteSettings['site_title'] ?? '')) !== ''
+    ? trim((string) $siteSettings['site_title'])
+    : (configValue('APP_NAME') ?: 'My Site');
 $inquiryTypes = [
     'collaboration' => 'Collaboration',
     'hiring' => 'Hiring',
@@ -108,63 +185,50 @@ loadEnvFile(dirname(__DIR__) . '/.env');
 
 $pageMeta = [
     'home' => [
-        'title' => 'Augment Humankind | AI fieldguides for nontechnical teams',
-        'description' => 'A mission-first AI consulting practice helping nontechnical teams use AI to extend their capabilities.',
+        'title' => $siteName,
+        'description' => 'Welcome to ' . $siteName . '.',
     ],
     'services' => [
-        'title' => 'Services | Augment Humankind',
-        'description' => 'Three focused AI consulting services for nontechnical teams: strategy, prototype builds, and capability transfer.',
+        'title' => 'Services | ' . $siteName,
+        'description' => 'An overview of what ' . $siteName . ' offers.',
     ],
     'notes' => [
-        'title' => 'Field Notes | Augment Humankind',
-        'description' => 'Learning notes and practical observations from building useful AI workflows.',
+        'title' => 'Notes | ' . $siteName,
+        'description' => 'Notes and updates from ' . $siteName . '.',
     ],
     'contact' => [
-        'title' => 'Contact | Augment Humankind',
-        'description' => 'Start a focused conversation about AI strategy, prototype builds, or team capability transfer.',
+        'title' => 'Contact | ' . $siteName,
+        'description' => 'Get in touch with ' . $siteName . '.',
     ],
     '404' => [
-        'title' => 'Page not found | Augment Humankind',
+        'title' => 'Page not found | ' . $siteName,
         'description' => 'The requested page could not be found.',
     ],
 ];
 
+// Placeholder services shown only when no managed "/services" page exists
+// in the database yet. Replace via the admin pages editor.
 $services = [
     [
         'number' => '01',
-        'name' => 'AI Strategy Fieldguide',
-        'summary' => 'A short engagement for nontechnical teams that need clarity before adopting new AI tools.',
-        'bestFor' => 'Teams with curiosity, scattered ideas, and no shared map yet.',
-        'deliverables' => [
-            'Opportunity map',
-            'Use-case shortlist',
-            'Risk boundaries',
-            'Practical adoption roadmap',
-        ],
+        'name' => 'Service One',
+        'summary' => 'Describe your first service or offering here.',
+        'bestFor' => 'Describe who this is best for.',
+        'deliverables' => ['Deliverable one', 'Deliverable two'],
     ],
     [
         'number' => '02',
-        'name' => 'Workflow Prototype Build',
-        'summary' => 'A focused build around one useful workflow, kept small enough to test and maintain.',
-        'bestFor' => 'Teams that have one clear problem and need a working first version.',
-        'deliverables' => [
-            'Lightweight prototype',
-            'Workflow documentation',
-            'Handoff notes',
-            'Maintainability guidance',
-        ],
+        'name' => 'Service Two',
+        'summary' => 'Describe your second service or offering here.',
+        'bestFor' => 'Describe who this is best for.',
+        'deliverables' => ['Deliverable one', 'Deliverable two'],
     ],
     [
         'number' => '03',
-        'name' => 'Team Capability Transfer',
-        'summary' => 'Guided practice that helps people keep using AI well after the first strategy or build engagement.',
-        'bestFor' => 'Teams that need confidence, shared norms, and repeatable habits.',
-        'deliverables' => [
-            'Team playbooks',
-            'Prompt and workflow examples',
-            'Office-hour style guidance',
-            'Learning paths informed by public resources',
-        ],
+        'name' => 'Service Three',
+        'summary' => 'Describe your third service or offering here.',
+        'bestFor' => 'Describe who this is best for.',
+        'deliverables' => ['Deliverable one', 'Deliverable two'],
     ],
 ];
 
@@ -339,26 +403,15 @@ function smtpConfiguration(array &$errors): array
         }
     }
 
-    $host = strtolower($config['SMTP_HOST']);
     $encryption = strtolower($config['SMTP_ENCRYPTION']);
     $port = (int) $config['SMTP_PORT'];
 
-    if ($host !== 'smtp.hostinger.com') {
-        $errors[] = 'The contact form email configuration is incomplete.';
-        return [];
-    }
-
-    if (!filter_var($config['SMTP_USERNAME'], FILTER_VALIDATE_EMAIL)) {
-        $errors[] = 'The contact form email configuration is incomplete.';
-        return [];
-    }
-
+    // SMTP_USERNAME is intentionally not required to look like an email
+    // address or to match SMTP_FROM_EMAIL: many providers (AWS SES, Mailgun,
+    // SendGrid) issue opaque API-style usernames distinct from the From
+    // address. Only SMTP_FROM_EMAIL, which actually appears in the message,
+    // needs to be a valid address.
     if (!filter_var($config['SMTP_FROM_EMAIL'], FILTER_VALIDATE_EMAIL)) {
-        $errors[] = 'The contact form email configuration is incomplete.';
-        return [];
-    }
-
-    if (strcasecmp($config['SMTP_USERNAME'], $config['SMTP_FROM_EMAIL']) !== 0) {
         $errors[] = 'The contact form email configuration is incomplete.';
         return [];
     }
@@ -414,9 +467,10 @@ function sendContactEmail(array $values, array $inquiryTypes, array &$errors): b
         $mail->setFrom($config['SMTP_FROM_EMAIL'], $config['SMTP_FROM_NAME']);
         $mail->addAddress($config['CONTACT_TO_EMAIL']);
         $mail->addReplyTo($values['email'], $values['name']);
-        $mail->Subject = 'Augment Humankind inquiry: ' . ($inquiryTypes[$values['inquiry_type']] ?? 'Other');
+        $siteNameForEmail = configValue('APP_NAME') ?: 'Site';
+        $mail->Subject = $siteNameForEmail . ' inquiry: ' . ($inquiryTypes[$values['inquiry_type']] ?? 'Other');
         $mail->Body = implode("\n", [
-            'New Augment Humankind inquiry',
+            'New ' . $siteNameForEmail . ' inquiry',
             '',
             'Received: ' . gmdate('Y-m-d H:i:s') . ' UTC',
             'Name: ' . $values['name'],
@@ -480,6 +534,13 @@ if ($page === 'contact') {
     csrfToken();
 
     if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST') {
+        $limit = rate_limit_consume('contact_submit', rate_limit_subject_for_scope('contact_submit'));
+        if (!$limit['allowed']) {
+            http_response_code(429);
+            header('Retry-After: ' . $limit['retry_after']);
+            $contactErrors[] = 'Too many inquiries were submitted from this browser. Please wait a while and try again.';
+        }
+
         validateContactForm($contactValues, $inquiryTypes, $contactErrors);
 
         if ($contactErrors === []) {
@@ -519,9 +580,8 @@ if ($page === 'contact') {
     <a class="skip-link" href="#main">Skip to content</a>
 
     <header class="site-header" aria-label="Site header">
-        <a class="brand" href="/" aria-label="Augment Humankind home">
-            <img src="/assets/friendly-guide.png" alt="" class="brand-mark" aria-hidden="true">
-            <span class="brand-text">Augment Humankind</span>
+        <a class="brand" href="/" aria-label="<?= e($siteName) ?> home">
+            <span class="brand-text"><?= e($siteName) ?></span>
         </a>
         <nav class="site-nav" aria-label="Primary navigation">
             <?php foreach ($navigationItems as $item): ?>
@@ -539,30 +599,26 @@ if ($page === 'contact') {
         <?php if ($page === 'home'): ?>
             <section class="hero section-grid" aria-labelledby="hero-title">
                 <div class="hero-copy">
-                    <p class="eyebrow">AI fieldguides for nontechnical teams</p>
-                    <h1 id="hero-title">Augment Humankind</h1>
-                    <p class="hero-statement">Helping people and teams use AI to extend what they can already do, not replace the judgment that makes their work matter.</p>
+                    <p class="eyebrow">Welcome</p>
+                    <h1 id="hero-title"><?= e($siteName) ?></h1>
+                    <p class="hero-statement">This is a starter homepage. Replace this content from the admin pages editor, or set a site title from the admin Site Identity screen (or the <code>APP_NAME</code> env var) and your managed pages will take over this content entirely.</p>
                     <div class="hero-actions" aria-label="Primary actions">
                         <a class="button button-primary" href="/services">Explore services</a>
                         <a class="button button-secondary" href="/contact">Start a conversation</a>
                     </div>
                 </div>
-                <div class="guide-panel" aria-label="Friendly guide illustration">
-                    <img src="/assets/friendly-guide.png" alt="A friendly robot guide holding a bright idea light bulb.">
-                    <p>The guide is friendly. The work is practical.</p>
-                </div>
             </section>
 
             <section class="mission-band" aria-labelledby="mission-title">
-                <p class="eyebrow">Mission</p>
-                <h2 id="mission-title">AI should make people more capable, not more dependent.</h2>
-                <p>Augment Humankind is being built as a solo AI consulting practice for teams that need useful adoption, clear strategy, and practical workflows without enterprise theatre.</p>
+                <p class="eyebrow">About</p>
+                <h2 id="mission-title">Tell visitors what this site is for.</h2>
+                <p>This paragraph is placeholder copy shown only when no managed home page exists in the database yet. Edit it from the admin Pages screen once your site is configured.</p>
             </section>
 
             <section class="service-preview" aria-labelledby="service-preview-title">
                 <div class="section-heading">
-                    <p class="eyebrow">Three ways in</p>
-                    <h2 id="service-preview-title">Start with clarity, build one useful thing, then transfer the capability.</h2>
+                    <p class="eyebrow">What you offer</p>
+                    <h2 id="service-preview-title">Summarize your services here.</h2>
                 </div>
                 <div class="service-strip">
                     <?php foreach ($services as $service): ?>
@@ -573,25 +629,13 @@ if ($page === 'contact') {
                         </article>
                     <?php endforeach; ?>
                 </div>
-                <a class="text-link" href="/services">See the full service fieldguide</a>
-            </section>
-
-            <section class="proof-grid" aria-labelledby="method-title">
-                <div>
-                    <p class="eyebrow">Operating method</p>
-                    <h2 id="method-title">Small promises, visible learning, practical transfer.</h2>
-                </div>
-                <ul class="method-list">
-                    <li><strong>Bounded engagements.</strong> Work is shaped so a one-person practice can deliver it without pretending to be a large agency.</li>
-                    <li><strong>Human review.</strong> AI-generated prose, analysis, and artifacts are treated as drafts until a person owns the final judgment.</li>
-                    <li><strong>Open learning path.</strong> Capability grows through active study and practice, including public resources such as IBM SkillsBuild, Coursera, and DataCamp.</li>
-                </ul>
+                <a class="text-link" href="/services">See the full services page</a>
             </section>
         <?php elseif ($page === 'services'): ?>
             <section class="page-hero" aria-labelledby="services-title">
                 <p class="eyebrow">Services</p>
-                <h1 id="services-title">Three focused offers for teams that want AI to become usable.</h1>
-                <p>Each service is narrow enough for a solo consultant to deliver well and concrete enough for nontechnical teams to understand what happens next.</p>
+                <h1 id="services-title">Placeholder services page.</h1>
+                <p>Replace this with your real offerings from the admin pages editor.</p>
             </section>
 
             <section class="services-detail" aria-label="Service offerings">
@@ -616,33 +660,29 @@ if ($page === 'contact') {
             </section>
 
             <section class="callout" aria-labelledby="service-boundary-title">
-                <h2 id="service-boundary-title">What this is not</h2>
-                <p>This is not a promise to automate everything, replace staff, or drop a tool into a team without changing the surrounding work. The offer is disciplined augmentation: identify where AI helps, build only what is useful, and teach the team how to keep judgment in the loop.</p>
-                <a class="button button-primary" href="/contact">Discuss a focused project</a>
+                <h2 id="service-boundary-title">Set expectations</h2>
+                <p>Use this section to clarify what visitors should and shouldn't expect from working with you.</p>
+                <a class="button button-primary" href="/contact">Discuss a project</a>
             </section>
         <?php elseif ($page === 'notes'): ?>
             <section class="page-hero notes-hero" aria-labelledby="notes-title">
-                <p class="eyebrow">Field Notes</p>
-                <h1 id="notes-title">A learning journal for practical AI work.</h1>
-                <p>This section will hold short notes from active study, client-safe patterns, workflow experiments, and resources that sharpen the practice.</p>
+                <p class="eyebrow">Notes</p>
+                <h1 id="notes-title">Placeholder notes page.</h1>
+                <p>This section will hold short notes, updates, or a journal. Replace this content from the admin pages editor.</p>
             </section>
 
             <section class="notes-empty" aria-labelledby="first-notes-title">
                 <div class="note-card">
-                    <p class="eyebrow">Opening soon</p>
-                    <h2 id="first-notes-title">The first notes will be small on purpose.</h2>
-                    <p>Expect field observations rather than thought-leader essays: what worked, what failed, what nontechnical teams found confusing, and which resources helped translate AI into daily work.</p>
-                </div>
-                <div class="note-card note-card-accent">
-                    <h2>Learning sources in view</h2>
-                    <p>IBM SkillsBuild, Coursera, DataCamp, product documentation, and hands-on prototypes can all inform the practice. Specific certificates or course completions will only be named after they are true.</p>
+                    <p class="eyebrow">Coming soon</p>
+                    <h2 id="first-notes-title">Your first note goes here.</h2>
+                    <p>Replace this placeholder once you've configured your site's content.</p>
                 </div>
             </section>
         <?php elseif ($page === 'contact'): ?>
             <section class="page-hero contact-hero" aria-labelledby="contact-title">
                 <p class="eyebrow">Contact</p>
-                <h1 id="contact-title">Start with the team, not the tool.</h1>
-                <p>Send a focused note about the collaboration, project, or AI strategy question you want to explore.</p>
+                <h1 id="contact-title">Get in touch.</h1>
+                <p>Send a note using the form below.</p>
             </section>
 
             <section class="contact-layout" aria-labelledby="contact-form-title">
@@ -655,7 +695,7 @@ if ($page === 'contact') {
                     <?php if ($contactSuccess): ?>
                         <div id="form-success" class="form-status form-status-success" role="status" aria-live="polite">
                             <h3>Message sent.</h3>
-                            <p>Thanks for reaching out. I will review your note and respond if the inquiry is a fit.</p>
+                            <p>Thanks for reaching out. We'll review your note and respond if it's a fit.</p>
                         </div>
                     <?php endif; ?>
 
@@ -736,18 +776,18 @@ if ($page === 'contact') {
         <?php else: ?>
             <section class="page-hero" aria-labelledby="missing-title">
                 <p class="eyebrow">404</p>
-                <h1 id="missing-title">This field note is not on the map.</h1>
+                <h1 id="missing-title">Page not found.</h1>
                 <p>The page may have moved, or the address may be incorrect.</p>
-                <a class="button button-primary" href="/">Return to the mission</a>
+                <a class="button button-primary" href="/">Return home</a>
             </section>
         <?php endif; ?>
     </main>
 
     <footer class="site-footer">
-        <p>&copy; <?= date('Y') ?> Augment Humankind. Built as a small, practical AI fieldguide.</p>
+        <p>&copy; <?= date('Y') ?> <?= e($siteName) ?></p>
         <nav aria-label="Footer navigation">
-            <a href="/services">Services</a>
-            <a href="/notes">Field Notes</a>
+            <a href="/">Home</a>
+            <a href="/portfolio">Portfolio</a>
             <a href="/blog">Blog</a>
             <a href="/contact">Contact</a>
         </nav>

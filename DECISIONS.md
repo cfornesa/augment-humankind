@@ -2079,3 +2079,615 @@ Both **`public/app/views/user/settings.php`** and **`public/app/views/admin/site
 
 - The shared AI profile picker now supports choosing both an AI profile and an optional AI persona for text improvement, image alt-text generation, and piece-generation/refinement workflows.
 - Media-library alt-text generation and TipTap improvement flows now consume the same profile/persona selection model instead of assuming a single profile-only choice.
+
+## 2026-06-18 — Doc Staleness Root-Caused; CMS-Shell Remediation Plan Started
+
+### Root Cause Of The Gap-Analysis/Route-Matrix Contradiction
+
+The user flagged an apparent contradiction: `docs/platform-gap-analysis.md`
+claimed "fully deletion-ready, no deletion-blocking items remaining" while
+`docs/platform-route-matrix.md` and `docs/platform-assimilation-plan.md`
+still marked several items "Needs Repair." Three parallel investigations
+(a full DECISIONS.md audit, direct code ground-truthing of each "Needs
+Repair" claim, and a manual `iframe_code` grep) found the real cause:
+**documentation staleness, not a code defect.** All three docs were last
+touched in commit `0ff7093` (2026-06-15), the same day
+`platform_exhibits`/`/exhibits` were renamed to `platform_collections`/
+`/collections` across the entire codebase (model, controller, routes,
+views, admin nav). Neither doc was updated after that rename, so both ended
+up describing a route surface that no longer exists, and the "Needs Repair"
+snapshot specifically predated the same-day fix that closed it.
+
+Re-verified directly against current code (router.php, controllers, JS),
+independent of any prior doc claims: all 5 previously-claimed defects are
+fixed — post-embedded pieces/collections load with visible error states on
+failure (no stuck placeholders), VR links resolve correctly, TipTap has a
+working "Pieces/Collections" `<dialog>` picker, zero `window.prompt()` calls
+remain anywhere in `public/`, and migrated collections surface consistently
+at `/collections` and `/admin/platform-collections`. The `abstract-studies`
+`iframe_code` special-case also survived the rename intact (confirmed via
+grep: `PlatformCollection.php`, `ImmersiveController::collection()`,
+`views/collections/show.php`, `embed.js`).
+
+`docs/platform-gap-analysis.md`, `docs/platform-route-matrix.md`, and
+`docs/platform-assimilation-plan.md` have been rewritten to use the real
+`/collections`-based names throughout and to mark these items Done with
+file-level evidence. `CONSTRAINTS.md` got the two missing `STATUS:` lines
+(platform DB read-only constraint, site-wide sign-in constraint) — both
+were already functionally implemented, just never closed out in that file.
+
+### Genuinely Open Items Surfaced (not doc staleness — real open items)
+
+- `.github/workflows/scheduled-tasks.yml`'s feed-refresh job still calls
+  `platform/scripts/scheduled-feed-refresh.sh`, which posts to the **Node**
+  server. This is a real, current runtime dependency on `platform/` that
+  blocks deletion — not fixed by the doc reconciliation above. Tracked as
+  Phase F of the CMS-shell remediation plan (below).
+- Unconfirmed whether `docs/migrations/2026-06-18-ai-personas.sql` was ever
+  run against the live Hostinger production database, and whether
+  `scripts/migrate-thumbnails-to-db.php --execute` was re-run there after
+  the most recent deploy. Both are standing reminders from earlier
+  DECISIONS.md entries with no later confirmation entry. Can't be verified
+  from this repo alone — needs the site owner to confirm.
+
+### CMS-Shell Remediation Plan (approved, work in progress)
+
+Independent of the doc-staleness issue, the user asked for a gap analysis
+of what's needed to turn this app into a reusable single-tenant white-label
+CMS shell (deployable to any host/domain via env vars alone, with the
+ability for an existing deployment's database to reconnect after a
+hosting/domain change with no code edits) plus a final push on `platform/`
+deletion. Three parallel research agents found real portability blockers:
+a hard `smtp.hostinger.com`-only check in `index.php`'s `smtpConfiguration()`
+that rejects every other SMTP provider; hardcoded `'Augment Humankind'`
+site name/contact email burned into `index.php` (separate from the DB-driven
+`site_settings`, which is the right pattern); `schema.sql` alone cannot
+stand up a fresh database (missing `users`, `posts`, `site_settings`, and
+more, which only exist across several `migrations/*.sql`/`docs/migrations/*.sql`
+files) despite README/`docs/dependencies.md` claiming it's "the source of
+truth"; no friendly handling of missing/bad `DB_*` env vars (raw
+`PDOException` fatal); and `PLATFORM_AI_SETTINGS_ENCRYPTION_KEY` is
+misleadingly named — it's read live at runtime for the PHP app's own AI
+vendor key storage, not just migration tooling. The deprecated Node app
+also turned out to already have a first-run setup-wizard/bootstrap-gate
+system (`site_bootstrap_state`, an admin checklist, a 503 "site setup in
+progress" gate) that was never ported and directly answers the "new user
+can use it immediately" goal.
+
+User decisions on scope: single-tenant white-label shell (not multi-tenant
+SaaS); full port of the Node bootstrap-wizard architecture; include basic
+rate limiting and structured logging with secret redaction (both
+implementable with no new Composer dependencies); include GD-based Open
+Graph image generation; explicitly skip the Medium.com syndication adapter
+for now (tracked as a separate future item, not implemented in this pass —
+the Node app itself never finished wiring Medium either); finish
+`platform/` deletion as part of this work, gated on an explicit final
+sign-off before the actual `rm -rf platform/` (Rule 5/Rule 3 territory).
+Full plan recorded in the session's plan-mode artifact; phases: (A) doc
+reconciliation [this entry], (B) critical portability fixes, (C) setup
+wizard, (D) rate limiting + logging, (E) OG image generation, (F) finish
+platform deletion.
+
+## 2026-06-18 — Safety Incident: Accidental Production Connection During Local Testing; Schema Bugs Found And Fixed
+
+### What happened
+
+While validating Phase B's "consolidate database setup" work, a local
+throwaway MySQL database was used to empirically test the fresh-install
+schema sequence end to end (schema.sql + migrations + the
+`scripts/apply-*-schema.php` idempotent appliers) rather than just reading
+the files. `scripts/apply-portfolio-taxonomy-schema.php` has its own local
+`loadEnv()` helper that, unlike every other script in `scripts/`,
+unconditionally overwrote already-set environment variables from whatever
+`.env` it found on disk instead of preferring variables already set in the
+process environment. Because of that, when it was run with test-database
+variables exported for the local throwaway DB, it loaded the real
+production `DB_*` credentials from the repo's actual `.env` instead and
+connected to the live production database — not the intended local test
+target.
+
+### Impact (verified, not assumed)
+
+The only statement that executed there was a conditional
+`UPDATE categories SET category_scope = 'portfolio' WHERE category_scope IS
+NULL OR category_scope = ''`. A read-only check immediately after
+confirmed zero rows matched: all 6 production `categories` rows already had
+a non-empty `category_scope`, and the most recently-updated row's
+`updated_at` (02:25:50) was ~19 hours older than the live DB clock
+(21:09:37) at check time — proof no row was touched. No table was created,
+no row was inserted. The user was informed transparently as soon as this
+was discovered, asked to choose how to proceed, and chose to verify
+production state before continuing (done, confirmed clean).
+
+### Root cause fixed
+
+The same unconditional-overwrite bug was found and fixed in four files
+(swept across all of `scripts/*.php` after the first instance was found):
+`scripts/apply-portfolio-taxonomy-schema.php`,
+`scripts/apply-collection-thumbnail-schema.php`,
+`scripts/check-platform-deletion-readiness.php`, and
+`scripts/verify-platform-assimilation.php` (the last two are read-only
+today, fixed for defense in depth). All now use the same
+already-set-wins-over-.env precedence guard
+(`if (($_ENV[$name] ?? getenv($name) ?: '') !== '') continue;`) that
+`scripts/apply-platform-assimilation-schema.php`,
+`scripts/apply-portfolio-ordering-schema.php`,
+`scripts/apply-ai-media-profile-schema.php`, `scripts/run-sql.php`,
+`scripts/migrate-thumbnails-to-db.php`, and `scripts/migrate-platform-to-php.php`
+already had. Full sweep of every `scripts/*.php` file defining its own env
+loader confirmed these were the only four with the bug.
+
+### Real schema bugs found and fixed via this testing (genuine value from the incident)
+
+Testing against a real local MySQL 9.6 instance (standard MySQL, not
+MariaDB) surfaced bugs no amount of reading would have caught with
+certainty:
+
+- `migrations/2026-06-14-platform-assimilation.sql` used
+  `ADD COLUMN IF NOT EXISTS` / `ADD INDEX IF NOT EXISTS` /
+  `ADD UNIQUE KEY IF NOT EXISTS` (22 occurrences) — syntax MariaDB supports
+  but standard MySQL rejects outright. This is the same class of bug
+  DECISIONS.md already fixed once in the AI-personas migration; it was
+  still present in the core assimilation migration. Fixed by removing
+  `IF NOT EXISTS` from all ALTER clauses (CREATE TABLE IF NOT EXISTS is
+  unaffected — that form is valid standard SQL).
+- Same bug in `scripts/add-exhibit-content-slide.sql` and
+  `scripts/add-wrapper-class-column.sql` — fixed the same way.
+- `schema.sql` defined `post_sections` with a foreign key on `posts`, but
+  `posts` only exists after the platform-assimilation migration runs —
+  meaning `schema.sql` alone could not even apply cleanly against a fresh
+  database, despite README/`docs/dependencies.md` calling it "the source of
+  truth." Removed `post_sections` from `schema.sql` (it already correctly
+  lives in `scripts/add-post-sections-table.sql`, which now runs later in
+  the documented order, after `posts` exists).
+- `docs/migrations/2026-06-18-ai-personas.sql`'s `users` table ALTER block
+  (theme, palette, color_* tokens, preferred_*_profile_id columns) is now
+  fully redundant — those columns are already part of the base `users`
+  table definition in `migrations/2026-06-14-platform-assimilation.sql`.
+  Running both against a fresh database fails with "Duplicate column name."
+  Removed the redundant block from the AI-personas migration with an
+  explanatory note; the genuinely-new pieces in that file (the
+  `ai_personas` table, `user_ai_vendor_settings.capabilities`,
+  `art_pieces.thumbnail_alt_text`, `media_files.title`/`alt_text`) are
+  unaffected and still apply cleanly.
+- Confirmed via the idempotent appliers that `scripts/add-wrapper-class-column.sql`
+  and `scripts/add-exhibit-content-slide.sql` are now no-ops for fresh
+  installs (their columns already live in `schema.sql`) — they remain
+  useful only for catching up older, already-deployed databases.
+- Confirmed `scripts/apply-portfolio-ordering-schema.php` adds real,
+  currently-missing `sort_order` columns to `platform_collections` and
+  `art_pieces` that no `.sql` migration file covers, and
+  `scripts/apply-portfolio-taxonomy-schema.php` creates the `art_piece_categories`
+  table that the current `Category`/`PlatformArtPiece` models depend on but
+  that no `.sql` migration file creates either — both are genuinely required
+  for a fresh install, not just legacy catch-up.
+
+The verified, working fresh-install order is now: `schema.sql` →
+`migrations/2026-06-14-platform-assimilation.sql` →
+`migrations/2026-06-15-comments-polymorphic.sql` →
+`docs/migrations/2026-06-17-admin-ia-and-canonical-origin.sql` →
+`docs/migrations/2026-06-18-ai-personas.sql` →
+`scripts/add-post-sections-table.sql` →
+`scripts/apply-portfolio-taxonomy-schema.php` →
+`scripts/apply-portfolio-ordering-schema.php`. This was run start-to-finish
+against a fresh local MySQL 9.6 database with zero errors after the fixes
+above. README.md and `docs/dependencies.md` are being updated to document
+this as the real setup path instead of the previous false "schema.sql is
+the source of truth" claim.
+
+## 2026-06-18 — Phase B Complete: CMS-Shell Portability Fixes
+
+All of Phase B from the CMS-shell remediation plan landed:
+
+- `smtpConfiguration()` no longer hard-rejects every SMTP host but
+  `smtp.hostinger.com`; `SMTP_USERNAME` no longer needs to equal
+  `SMTP_FROM_EMAIL` (some providers issue opaque API-style usernames).
+- Added `app_site_name()` to `helpers/seo.php`: site_settings.site_title →
+  `APP_NAME` env → "My Site". Used it everywhere a business name was
+  previously hardcoded.
+- **Bigger than originally scoped:** a full-tree grep found 40 files — not
+  just `index.php`'s dormant static fallback — hardcoding "Augment
+  Humankind" in page titles, meta descriptions, the public header/footer
+  brand, the admin layout brand link, login pages, and the style-preview
+  mockup. All converted to `app_site_name()`. This surfaced a real,
+  previously-existing production inconsistency: `site_settings.site_title`
+  is actually "AH Studio", but the hardcoded header/footer/title-suffix
+  strings always showed "Augment Humankind" regardless — only the
+  `og:site_name` meta tag was reading the real value. Fixed for good by
+  routing everything through one function.
+- Wired the previously-unused `logo_url`/`logo_dark_url`/`logo_layout`
+  admin Site Identity fields into the public header (`partials/header.php`)
+  — they were configurable in `/admin/site-identity` but never actually
+  rendered anywhere before this. Light/dark logo swap via
+  `[data-theme]`/`prefers-color-scheme` CSS, added to `assets/styles.css`.
+- Fixed a real bug surfaced while testing the above: `models/SiteSettings.php`
+  was required by `router.php` (covering `/blog`, `/admin`, `/portfolio`,
+  etc.) and by the new static-fallback code in `index.php`, but **not** by
+  the managed-page success path (`/`, `/services`, `/notes` when a
+  published DB page exists) — so `app_site_name()` silently fell back to
+  "My Site" on the homepage while correctly showing "AH Studio" on `/blog`.
+  Fixed by requiring it in that code path too. Caught by manually diffing
+  rendered HTML from a real local dev server against the live database
+  content, not by reading the code.
+- Generic outbound `User-Agent` strings (`PhpCmsOAuth/1.0`,
+  `PhpCmsAdminOAuth/1.0`, `PhpCmsFeedFetcher/1.0`) replacing
+  `AugmentHumankind*` ones in `UserAuthController.php`,
+  `Admin/AuthController.php`, `helpers/feed-ingest.php`.
+- `SiteIdentityAdminController`'s blank-`site_title` fallback changed from
+  `'Augment Humankind'` to `'My Site'`.
+- Added `set_exception_handler()` in `index.php` that renders a friendly
+  "this site isn't configured yet" page for uncaught `PDOException`s
+  instead of a raw fatal — verified with a real local server pointed at a
+  nonexistent database: `/portfolio` (no per-controller DB-failure
+  handling) now shows the friendly page; `/blog` and `/contact` (which
+  already degrade gracefully) are unaffected.
+- `env.example` rewritten into three sections (new-site-required,
+  optional/feature-gated, legacy-migration-only) and reconciled against an
+  exhaustive grep of every env var actually read anywhere in `public/` —
+  found and added several previously-undocumented vars
+  (`WORDPRESS_COM_CLIENT_ID/SECRET`, `BLOGGER_GOOGLE_CLIENT_ID/SECRET`,
+  `LINKEDIN_CLIENT_ID/SECRET`, `FACEBOOK_CLIENT_ID/SECRET`,
+  `INSTAGRAM_CLIENT_ID/SECRET`, `CRON_SECRET`, `DB_PORT`, `DB_SSL`,
+  `SITE_TITLE` — the last one is a narrow, pre-existing OpenRouter
+  attribution header var, deliberately distinct from the new `APP_NAME`).
+- `PLATFORM_AI_SETTINGS_ENCRYPTION_KEY` renamed to
+  `AI_SETTINGS_ENCRYPTION_KEY` in `helpers/encryption.php`, with the old
+  name kept as a fallback read so already-deployed installs that set it
+  keep working without an immediate `.env` edit.
+- README.md rewritten: generic CMS-shell framing up top, "This Deployment"
+  callout for the augmenthumankind.com-specific instance, fixed several
+  stale route names (`/exhibits`→`/collections`), and Hostinger-specific
+  instructions reframed as one example among several rather than the only
+  path.
+
+### Safety note
+
+A safety incident occurred during this phase's testing (accidental
+production DB connection via a script env-loading bug, zero actual impact)
+— see the separate "Safety Incident" entry above for full detail. The root
+cause (4 scripts with an unconditional `.env`-overrides-process-env bug)
+was fixed as part of this same work.
+
+## 2026-06-18 — Phase C In Progress: First-Run Setup Wizard
+
+Added `public/app/helpers/bootstrap_state.php`:
+`site_bootstrap_complete()` treats the site as set up once at least one
+active row exists in `admin_identities` (the clearest available signal
+that OAuth + the allowlist were configured correctly), failing open (never
+blocks) on any DB error. `site_bootstrap_checklist()` backs a future
+`/admin/setup` screen.
+
+Wired a gate into `public/index.php`: while bootstrap is incomplete, every
+public route except `/admin/*`, `/api/*`, `/embed/*`, `/immersive/*`,
+`/assets/*`, `/vendor/*` returns HTTP 503 with a friendly
+"Site setup in progress" page (`views/setup_gate.php`) and a sign-in CTA.
+
+**Two real regressions found and fixed while testing this empirically**
+(against an isolated throwaway database, not production):
+
+1. The new gate-check code in `index.php` pre-requires
+   `helpers/schema.php`, `helpers/seo.php`, and `models/SiteSettings.php`
+   for every request. `router.php` already required those same files —
+   but with plain `require`, not `require_once`. Once both ran in the same
+   request, every router-dispatched route (everything except the
+   gate-exempt paths reached before dispatch) fataled with "Cannot
+   redeclare function." Fixed by converting all 67 top-level `require`
+   statements in `router.php` to `require_once` — strictly safer with no
+   behavior change otherwise, and closes off this whole class of bug for
+   any future code that pre-loads a router-required file.
+2. `ai_encryption_key_raw_env()` (added in the Phase B encryption-key
+   rename) used `$_ENV[$name] ?? getenv($name) ?? ''` to fall back from
+   `AI_SETTINGS_ENCRYPTION_KEY` to the legacy `PLATFORM_AI_SETTINGS_ENCRYPTION_KEY`
+   name. Bug: `getenv()` returns `false`, not `null`, when a variable is
+   unset, so `??` never falls through to the legacy name — the function
+   silently returned `''` whenever only the legacy name was set (true for
+   the actual deployed `.env`), breaking AI key decryption entirely. Caught
+   by re-running `scripts/check-platform-deletion-readiness.php` against
+   the live-configured database as a regression check after the gate work
+   — "AI vendor keys: Could not decrypt key ids 1-7" and "Rollback
+   syndication mocks: AI_SETTINGS_ENCRYPTION_KEY is not configured" both
+   failed. Fixed by checking `getenv() !== false` explicitly per key name
+   instead of chaining `??`. Re-ran readiness after the fix: both now pass
+   (7 keys decrypt correctly).
+
+Readiness script's remaining 2 failures (`platform-ui.php`'s Facebook docs
+URL containing the substring "platform/"; `apply-ai-media-profile-schema.php`/
+`migrate-user-styles.php` referencing `PLATFORM_DB_NAME` in their own
+source/target-DB safety check) are confirmed pre-existing false positives
+in the readiness script's naive string matching — `git diff` shows neither
+file touched by this session's work.
+
+Remaining for Phase C: the `/admin/setup` checklist screen
+(`site_bootstrap_checklist()` already returns the data; needs a controller
+method + route + view).
+
+## 2026-06-18 — Phase D-F Repair Outcome
+
+### Live Data Repairs
+- Verified the migrated LinkedIn `platform_oauth_apps` row was already malformed in the legacy platform DB and had been copied exactly into the PHP DB; neither copy could be decrypted with the shared `AI_SETTINGS_ENCRYPTION_KEY`.
+- Normalized the PHP DB copy to an empty placeholder row (`encrypted_client_id` / `encrypted_client_secret` set `NULL`) so the CMS shell reflects truthfully that LinkedIn app credentials are not configured, instead of carrying unusable ciphertext.
+- Preserved the active LinkedIn platform connection row; current publishing paths rely on the stored access token and metadata, not the app-credential row.
+
+### Readiness Semantics
+- `sessions` retention is now treated as drift-sensitive operational state rather than a hard parity invariant. Source and target session tables continue changing independently after cutover, so lower target row counts are warnings unless the target table is empty.
+- `platform_oauth_apps` readiness now distinguishes usable, empty, and malformed rows. Empty or reconfiguration-needed rows warn instead of failing, so deletion readiness reflects runtime truth rather than inherited legacy corruption.
+
+### Verification
+- Updated `scripts/migrate-platform-to-php.php` so future migrations import malformed platform OAuth app credentials as empty placeholders rather than reintroducing broken ciphertext into the PHP DB.
+- Re-ran `php scripts/check-platform-deletion-readiness.php --base-url=http://127.0.0.1:8080` with a temporary process-only `CRON_SECRET`; result is now `PASS` with warnings for session drift and LinkedIn being not configured.
+
+## 2026-06-18 — Phase G: Piece Embed Parity, LinkedIn Credential Safety, Diagnostics Tab, Manual Audit Completion
+
+### P5.js Black-Screen Bug — Root Cause and Fix
+- Root cause: `/embed/pieces/{id}` (`piece-render.php`) correctly sizes P5 canvases because P5 there runs in its own page/iframe window matched to the container, so the sketch's `createCanvas(windowWidth, windowHeight)` resolves correctly. `public/embed.js`'s `upgradeIframes()` replaced TipTap's plain iframe with a `<creatr-art-piece>` Shadow DOM custom element that re-implemented each engine's bootstrap *inline in the top-level page*, so P5's `windowWidth`/`windowHeight` resolved to the full browser viewport instead of the small embed box, producing a black canvas. C2.js/Three.js avoided this because they explicitly read `container.clientWidth/clientHeight`; SVG has no sizing concern.
+- Fix (consolidation, chosen over a narrower P5-only patch after presenting both options): `CreatrArtPiece.renderPiece()` in `public/embed.js` now mounts an `<iframe src="/embed/pieces/{id}">` — the same canonical document the direct embed view uses — inside its existing lazy-load/VR-button chrome, instead of re-fetching piece code and re-running engine-specific bootstrap client-side. Removed ~250 lines of duplicated per-engine logic (`loadScript()`, `ensureImportMap()`, and the P5/C2/Three/SVG branches in `renderPiece()`).
+- Verified with Playwright (via `npx playwright`) against the real running dev server: screenshotted `/blog/posts/1` (pieces 14 p5, 15 three, 16 c2) and an isolated test harness (pieces 14 p5, 9 three, 10 c2, 30 svg). All four engines now render their actual content instead of black/blank through the post-embedded path. One apparent "still black" result (piece 9, three.js) turned out to be a headless-Chromium-without-GPU rendering limitation, reproduced identically on the unrelated, unchanged direct `/embed/pieces/9` baseline — not a regression from this fix; a real-browser screenshot of `/blog/posts/1` (with actual GPU) confirmed three.js renders correctly too.
+
+### LinkedIn Ciphertext Corruption — Root Cause Confirmed, Safeguard Added
+- Confirmed via `scripts/migrate-platform-to-php.php` (`migrated_platform_oauth_ciphertext()`) that the LinkedIn row was already undecryptable in the legacy Node platform's own database *before* migration — most likely encrypted there under a different/older key — and the PHP migration script copied it faithfully, then correctly detected the failure and normalized it (per the Phase D-F entry above). This was not a PHP-side bug.
+- Added a round-trip encrypt-then-decrypt check to `PlatformOAuthApp::upsert()` (`public/app/models/PlatformOAuthApp.php`): any future save whose ciphertext can't be immediately verified against the value just submitted now throws and surfaces as a normal form error (the controller already catches `Throwable` generically), instead of being stored silently.
+- Verified with an isolated throwaway DB row (`__roundtrip_test__`, not a real provider, deleted after): a normal save round-trips and decrypts correctly (no false positive on legitimate saves); a row deliberately re-encrypted under a different key reproduces the exact historical LinkedIn symptom — `decryptedCredentialsForPlatform()` returns `null`, reported as "not configured" rather than crashing. Noted limitation: the new guard defends against `encrypt_string()` producing output that can't be decrypted with the *same* key in the *same* call (e.g. a crypto/extension bug) — it cannot detect a key that changes between when a row is written and when it's read later, which was the actual mechanism of the historical incident; nothing short of never rotating/losing the encryption key can fully prevent that class of failure.
+
+### Diagnostics Tab Added
+- `PlatformConnectionsAdminController::diagnostics()` and its view already existed, were DB-backed, and never exposed decrypted secrets — they just weren't linked from the tab nav. Added a third "Diagnostics" tab to `views/admin/platform-connections/index.php` and a matching three-tab nav to `views/admin/platform-connections/diagnostics.php`. No route/controller changes. Verified `php -l` clean and that both pages still correctly return `302` when unauthenticated (no auth regression); full visual confirmation needs a real admin browser session.
+
+### Screenshot Mismatch — No Bug Found
+- `platform-ui.php`'s `platform_ui_definitions()` defines `wordpress_com` before `wordpress_self`, so WordPress.com is a fully supported, rendered provider card. The screenshot that appeared to be missing it was almost certainly scrolled past it, not evidence of a missing feature. No code change made.
+
+### Manual Audit Checklist Items 6-9 — Completed
+- Ran a second, isolated local server (`CRON_SECRET=... php -S 127.0.0.1:8099 -t public public/index.php`) against the same dev DB, without touching the user's primary running server on port 8080.
+- Item 6: `POST /api/cron/refresh-feeds` returns `200` with `sources_processed`/`items_imported` JSON for a valid secret, `401` for wrong/missing.
+- Item 7: `POST /api/cron/publish-posts` returns `200` with `posts_published`/`ids` JSON for a valid secret, `401` otherwise — unchanged.
+- Item 8: queried `request_rate_limits` and `audit_log_events` directly (read-only) — rows present for `contact_submit` and `admin_oauth_start` (from the user's earlier manual tests), plus cron success/unauthorized events from this session's own tests; scanned every `metadata_json` value for unredacted secret-shaped content and found none.
+- Item 9: `scripts/check-platform-deletion-readiness.php --base-url=http://127.0.0.1:8099` returned `Platform deletion readiness: PASS` with exactly the two expected warnings (session-row drift, LinkedIn not configured).
+- Items 4 and 5 remain pending: they require a real LinkedIn developer app and a real authenticated admin browser session, both outside what an agent can do, and OAuth provider config changes require explicit human sign-off per AGENTS.md Rule 3 regardless.
+
+## 2026-06-18 — Phase H — Rendering / Diagnostics / Media Cleanup
+
+### Three.js Embed Rendering
+- `public/app/helpers/piece-render.php` now uses the shared
+  `mountThreeImmersivePiece()` module bootstrap from
+  `public/assets/js/immersive-gallery.js` for Three.js embed/post rendering
+  instead of the old duplicated camera/bootstrap path.
+- This removes the weaker hardcoded autofit logic from the embed renderer and
+  keeps future Three.js runtime fixes centralized in the shared immersive
+  module.
+
+### Diagnostics Coverage
+- `PlatformConnectionsAdminController::diagnostics()` and
+  `views/admin/platform-connections/diagnostics.php` now present all 8
+  supported publishing providers on one page.
+- OAuth diagnostics remain in the existing table for the 5 OAuth providers.
+- Added a second credentials-based diagnostics table for `wordpress_self`,
+  `substack`, and `bluesky`, showing only field-presence booleans and overall
+  configuration readiness, never raw secrets.
+
+### Accidental `abstract-studies` Platform Collection
+- Verified via a read-only target-DB check that post 9 already stores the
+  direct external iframe URL
+  `https://platform.creatrweb.com/immersive/exhibits/abstract-studies?embed=1`
+  in `posts.content`.
+- Verified `post_sections` contains no `abstract-studies` references.
+- Verified `platform_collections` contains neither `id = 6` nor slug
+  `abstract-studies`.
+- Result: the desired cleanup state was already live, so this session did not
+  need to mutate the database further.
+
+### Video Description / Media UX
+- TipTap now treats video as a first-class inserted node via `setVideo()`.
+- Inserted video descriptions are stored as `aria-label` on `<video>` rather
+  than as visible captions.
+- The media picker now prompts for descriptions on video selection just as it
+  already did for image alt text.
+- AI behavior for video remains refine-only: user-written text is sent through
+  `POST /admin/ai/process` in `mode=text`; `POST /admin/ai/describe-image`
+  remains image-only, with optional `existing_alt_text` refinement.
+- `/admin/media` now presents one unified grid with client-side
+  `All / Images / Videos / Embeds` filtering and video-aware description copy.
+
+### Admin Thumbnail Lazy Loading and Cleanup
+- Added `loading="lazy"` to platform-collection and piece admin thumbnails in
+  both server-rendered markup and JS-regenerated thumbnail HTML.
+- Removed the temporary TipTap test hook
+  `window.__TEMP_TEST_HOOK_editor` from `public/assets/js/tiptap-editor.js`.
+- Deleted transient test files `public/_tiptap_video_test.html` and
+  `/tmp/_tiptap_video_check.js`.
+
+### Local Upload Limit Verification
+- Confirmed the active local PHP CLI/dev runtime is Homebrew PHP 8.5.5, loading
+  `/opt/homebrew/etc/php/8.5/php.ini` plus
+  `/opt/homebrew/etc/php/8.5/conf.d/99-local-uploads.ini`.
+- Confirmed current local limits are already above the app's intended video cap:
+  `upload_max_filesize=80M`, `post_max_size=96M`, `memory_limit=128M`.
+- Noted deployment target is PHP 8.3; no PHP 8.5-specific syntax was added in
+  this remediation pass.
+
+## 2026-06-18 — Phase H Rectification Pass
+
+### `abstract-studies` Residual Embed Bug — Root Cause Corrected
+- Read-only target-DB inspection showed post 9 was already storing a plain
+  external iframe in `post_sections.content`:
+  `https://platform.creatrweb.com/immersive/exhibits/abstract-studies?embed=1`.
+  `posts.content` is empty for the section-based post system, so the earlier
+  "posts.content fixed" assumption was incomplete.
+- The remaining bug was in `public/embed.js`: `upgradeIframes()` upgraded any
+  iframe whose `src` merely contained `/immersive/exhibits/` or
+  `/immersive/collections/`, even when the iframe was cross-origin. That
+  caused post 9's external embed to be reinterpreted as a local
+  `creatr-exhibit-wall`, which then fetched `/api/collections/abstract-studies`
+  and rendered the "is no longer available" placeholder when no local record
+  existed.
+- Fixed by parsing iframe URLs and only upgrading same-origin immersive piece,
+  collection/exhibit, and immersive-image embeds. Cross-origin iframe embeds
+  now remain plain iframe embeds, which is the intended generic TipTap/slide
+  behavior.
+
+### Three.js Interaction Contract — Centralized on Pan/Zoom/Move
+- Updated `mountThreeImmersivePiece()` in
+  `public/assets/js/immersive-gallery.js`, which is already the shared
+  runtime for direct `/embed/pieces/*`, post-embedded Three.js pieces, and
+  immersive piece views.
+- Replaced the mixed OrbitControls/custom-wheel interaction with a single
+  pan-first contract:
+  left-mouse drag pans, wheel zooms, one-finger touch pans, two-finger touch
+  dolly+pans, and click/tap-to-move remains available for low-movement
+  activations.
+- Added pointer-state tracking so click/tap navigation only fires on genuine
+  taps/clicks rather than after drags or multi-touch gestures, and added
+  native gesture suppression hooks (`gesturestart/change/end`, non-passive
+  `touchmove`) to improve Safari-on-iPhone behavior.
+
+### Existing Video Inclusion — Current Local Data Blocker
+- Audited the target DB paths that drive the current media/editor UX:
+  `media_files`, migrated `media_assets`, and `exhibit_media_items`.
+- Found zero video assets in the active target DB (`media_files` had no
+  `video/*` rows or video filename extensions; `media_assets` likewise had no
+  video rows; `exhibit_media_items` was empty). A quick source/platform DB
+  check also found no video MIME rows in the platform `media_assets` table.
+- Result: the current picker/library code paths already accept video assets,
+  but this local environment does not currently contain an existing stored
+  video asset to re-select and verify end-to-end. Treat "existing video
+  inclusion" as still pending real verification data, not as a proven UI-only
+  bug.
+
+### Verification Notes
+- JS syntax checks passed for `public/embed.js` and
+  `public/assets/js/immersive-gallery.js` via `node --check` on temporary
+  `.mjs` copies.
+- Shell-level HTTP smoke checks against `http://127.0.0.1:8080/...` could not
+  run in this session because the expected local dev server was not reachable
+  from the shell at verification time, so the final behavioral confirmation
+  still requires a live browser reload/session.
+
+## 2026-06-19 — Locked Three.js Camera State + Confirmed Media Uploads
+
+### Three.js Locked Zoom State
+- Kept the pan-first shared runtime in
+  `public/assets/js/immersive-gallery.js`, but corrected the remaining state
+  bug where keyboard movement could leave OrbitControls with stale spherical
+  data and the next drag/pan would appear to zoom back out.
+- `createKeyboardNavigation().update()` now returns whether it actually moved
+  the camera, and `mountThreeImmersivePiece()` now applies keyboard/click
+  translations before calling `controls.update()`, so OrbitControls
+  reconciles against the current camera/target pair before any subsequent
+  drag begins.
+- Result: keyboard movement, click-to-move, and drag pan now preserve the
+  current zoom distance; only wheel/pinch changes zoom.
+
+### Media Draft-Confirm Workflow
+- Extended native `media_files` to support durable upload state and linked
+  video posters via `status`, `poster_media_file_id`, and `confirmed_at`
+  (see `schema.sql` and
+  `docs/migrations/2026-06-19-media-draft-confirm.sql`).
+- `POST /admin/media/upload` and `POST /admin/media/import` now create draft
+  native assets, `POST /admin/media/{id}/confirm` persists metadata and flips
+  them to ready, and `POST /admin/media/{id}/discard` deletes abandoned
+  drafts. `docs/api.md` now documents the contract.
+- Picker flows in `public/assets/js/tiptap-editor.js` now open directly into
+  a confirmation step after upload/import, keep typed description text in the
+  form when save fails, and only return persisted ready assets to editor
+  insertion callbacks.
+
+### Video Posters and Media Library Behavior
+- `/admin/media` now treats video posters as first-class linked image assets:
+  the full editor supports choosing, uploading, clearing, and saving a poster
+  for native video rows.
+- Thumbnail/grid contexts no longer mount `<video>` elements for browsing.
+  Video cards now render from the linked poster image when present, or a
+  neutral blank placeholder when none is set; actual video playback is
+  confined to the full preview/editor surface.
+- Draft assets are visible in `/admin/media` with a Draft badge and can be
+  confirmed or discarded from the larger editor. Canceling the editor on a
+  draft now prompts whether to keep or delete it.
+
+### Metadata Persistence Safety
+- The previous picker/library behavior could display typed image/video
+  description text without guaranteeing that it had been written to
+  `media_files.alt_text` first.
+- Media picker confirmation and Media Library editing now POST metadata
+  explicitly, keep dialogs open on save failure, preserve the typed text in
+  the form, and only insert ready assets using the persisted database value.
+
+### Verification
+- `php -l public/app/views/admin/media.php` — clean.
+- `php -l public/app/controllers/Admin/MediaController.php` — clean.
+- `php -l public/app/models/MediaFile.php` — clean.
+- `node --check` on temporary `.mjs` copies of
+  `public/assets/js/tiptap-editor.js` and
+  `public/assets/js/immersive-gallery.js` — clean.
+- Live browser verification is still required for the final acceptance checks
+  (real local server behavior, actual upload/confirm/discard UX, and manual
+  Three.js feel on target devices).
+
+## 2026-06-19 — Draft Page Preview + Site Settings Persistence Follow-up
+
+### Canonical URL Persistence
+- `SiteIdentityAdminController::updateSettings()` previously filtered updates
+  strictly to physical `site_settings` columns, which meant
+  `canonical_public_url` could be silently dropped when the dedicated column
+  was absent even though the form appeared to save successfully.
+- Fixed by using `site_settings.settings_json` as a compatibility fallback for
+  editable settings fields that are not present as first-class columns. The
+  `SiteSettings::current()` reader now merges those JSON-backed values back
+  into the live settings array.
+
+### Draft Managed Pages
+- The public shell in `public/index.php` previously fell back to the built-in
+  placeholder `/services` and `/notes` pages whenever `PageController::show()`
+  returned false. Because `show()` only rendered published pages, draft
+  managed pages still leaked public placeholder content and never behaved as
+  true drafts.
+- Fixed by splitting the states explicitly:
+  published pages render normally, draft pages render only for signed-in admins
+  with a visible preview notice, and guests now get a real 404 when a managed
+  page exists but is still draft.
+
+### Footer Navigation
+- The public footer is now intentionally fixed to `Home`, `Portfolio`, `Blog`,
+  and `Contact`, matching the product rule stated during this session rather
+  than inheriting placeholder `Services`/`Field Notes` links.
+
+### Poster Selection Reliability
+- The poster-selection flow inside `tiptap-editor.js` could lose its parent
+  draft/video context when a brand-new poster image was uploaded from inside
+  the nested picker, causing the confirmed poster asset to close the dialog
+  instead of returning and binding to the video being edited.
+- Fixed by preserving the poster target state across the nested upload/confirm
+  subflow and restoring that state before applying the selected poster.
+- The Media Library’s full editor now auto-persists poster changes for ready
+  native video assets as soon as a poster is chosen or uploaded, instead of
+  claiming success while leaving the linked poster unresolved.
+
+### Verification
+- `php -l public/app/models/SiteSettings.php` — clean.
+- `php -l public/app/controllers/Admin/SiteIdentityAdminController.php` — clean.
+- `php -l public/app/models/Page.php` — clean.
+- `php -l public/app/controllers/PageController.php` — clean.
+- `php -l public/app/views/managed_page.php` — clean.
+- `php -l public/app/views/admin/media.php` — clean.
+- `php -l public/index.php` — clean.
+- `node --check` on a temporary `.mjs` copy of `public/assets/js/tiptap-editor.js` — clean.
+
+## 2026-06-19 — Media Poster Persistence, Nav Avatar, Site Identity Stabilization, Home/About System Pages
+
+### Context
+Two consecutive bug-fix passes against live user reports, each verified against the live Hostinger DB (`u276695328_augmentart`) rather than guessed from code alone.
+
+### Pass 1: Media Poster, Redundant Upload Button, Design Tab Warnings, Nav Avatar
+- **Media poster silently failing to save:** `docs/migrations/2026-06-19-media-draft-confirm.sql` (adds `status`/`poster_media_file_id`/`confirmed_at` to `media_files`) had been written but never applied — no `scripts/apply-*-schema.php` companion existed for it, unlike every sibling migration. `MediaFile::supportsPosterMediaFileId()` returned false, so `updatePoster()` silently no-opped while the UI reported success regardless. Added `scripts/apply-media-draft-confirm-schema.php`, ran it against the live DB, and hardened `MediaController::updateFile()`/`confirmFile()` to return a real error instead of false success when the column is unavailable.
+- **Redundant "Upload Poster" button:** removed from the Media Library asset modal (`media.php`) only — its "Choose Poster" already opens the shared picker with Select/Upload/Import tabs. Left the Tiptap draft-confirm dialog's own Upload Poster button alone: that picker deliberately restricts to Select-only during poster selection (`beginPosterSelection()`), so its upload button is the only upload path there, not a duplicate — the shared `/admin/media/poster-upload` endpoint/`uploadPoster()` controller method is still required by that surface and was restored after an initial overcorrection.
+- **Site Identity Design tab broken (`$colorGroups`/`$themeOptions` undefined warnings):** commit `89f54b1` moved Logo/Theme/Palette/Colors from the Settings tab into a new Design tab but dropped the inline array definitions without relocating them to the controller. Restored both as `SiteIdentityAdminController::themeOptions()`/`colorGroups()`.
+- **Site Identity "logo lost":** confirmed via direct DB query as genuine pre-existing data loss (`logo_url`/`logo_dark_url` were `NULL`), not a render bug — nothing to recover, no prior value existed anywhere (including `settings_json`).
+- **Nav avatar not showing the owner's photo:** root cause was that `public/index.php`'s static/managed-page route (serving `/`, `/services`, `/notes`, and the catch-all `/{slug}`) never required `helpers/auth.php`/`helpers/admin-navigation.php`/`models/AdminIdentity.php`, unlike `app/router.php` (serving `/admin`, `/blog`, `/user`, etc.). `current_user()`/`user_logged_in()` didn't exist on that code path, so `header.php`'s `function_exists()` guards silently rendered logged-out. Added the missing requires to `public/index.php`. Confirmed live: the same session showed the avatar correctly on `/blog` but not on `/` before the fix, and on both after.
+
+### Pass 2: Settings/Design Cross-Tab Data Loss, Picker, Theme/Palette, Home/About System Pages
+- **Severe incident — saving the Design tab wiped all Settings-tab content (site title, hero/about copy, CTA, copyright):** Settings and Design are separate `<form>`s posting to the same `/admin/site-identity/settings` endpoint. `SiteIdentityAdminController::updateSettings()` rebuilt and overwrote *every* `site_settings` column on every save using hardcoded defaults for any field absent from the submitted form — this is also what had silently wiped the logo earlier in Pass 1, and would have wiped `admin_nav_order_json` on every nav-reorder partial save too. Rewrote `resolveSettingsData()`/`updateSettings()` so only fields actually present in `$_POST` are ever written; verified live three ways (Design-only save, Settings-only save, nav-reorder partial save) with no cross-wipe.
+- **Recovery:** the wiped Settings text was not recoverable from this DB (the action isn't audit-logged), but was found intact in the read-only legacy platform database from the 2026-06-14 migration snapshot and restored with the user's explicit confirmation: site title, hero heading/subheading, about heading/body, copyright line, footer credit, CTA label. `cta_href` was left at `/` rather than the platform's `/users/@...` link, which doesn't resolve in this app. Flagged to the user that this snapshot won't reflect any edits made between 6/14 and 6/19.
+- **"Choose Image" picker doing nothing on the Design tab:** `site-identity/index.php` never set `$needsEditor = true`, so `tiptap-editor.js` (which defines `window.openMediaPicker` and wires up `.picker-trigger` listeners) never loaded, unlike every other admin form using the same picker pattern. One-line fix.
+- **Layout Theme/Color Palette appearing to revert after save:** investigated as a suspected save/read bug, but live reproduction (full-fidelity POST replica + immediate independent DB read + fresh GET render) proved the save and read logic were always correct. The actual cause was that `settingsUpdate()` redirected to `/admin/site-identity` with no `?tab=`, defaulting to the Settings tab (which has no theme/palette UI at all) — bouncing the user away from where they'd see their saved choice, consistent with the reported symptom. Fixed by carrying `tab=design`/`tab=settings` through a hidden form field and redirect.
+- **CTA URL:** confirmed via code read that `cta_href` already accepts any relative path or external URL with no host restriction (unlike `canonical_public_url`, which intentionally requires an absolute URL for SEO/canonical purposes) — no code change, added a clarifying hint instead.
+- **Home and About are now protected "system pages":** per explicit user requirement, only these two pages can never be deleted. Implemented via `Page::PROTECTED_SLUGS = ['home', 'about']` (slug-based, no schema change) guarding `softDelete()`/`hardDelete()`; `Page::ensureSystemPages()` self-heals by creating the `about` page row the first time `/admin/pages` loads if it's missing. `PagesController::delete()`/`hardDelete()`/`trashEmpty()` now catch the guard's exception and surface it via a new `?error=` banner on the admin pages list, which also hides the delete control entirely for these two rows. `managed_page.php` now renders a mandatory top section before the normal Pages-CMS section loop: Home gets Hero heading → subheading → CTA button (sourced from existing `site_settings.hero_*`/`cta_*` columns); About gets About heading → body (sourced from `site_settings.about_*`) — each hides itself gracefully when empty, and neither leaks onto any other page. Reuses the legacy `.hero`/`.mission-band`/`.button` CSS already present in `styles.css`. The pre-existing hidden external nav link labeled "About" (→ `https://about.fornesusart.com/`) was deliberately left untouched as a separate, out-of-scope navigation decision.
+
+### Verification
+- `php -l` clean across every changed/new file in both passes.
+- Live round-trips against the production DB (read-only checks plus the one intentional schema-apply write) for: poster save/reload, Design-tab warnings, nav avatar parity between `/blog` and `/`, Settings/Design cross-tab independence, picker dialog presence, theme/palette persistence, and Home/About delete rejection plus correct public rendering on `/` and the new `/about` (with no leakage onto `/services` or `/blog`).

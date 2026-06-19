@@ -44,7 +44,7 @@ class CollectionsController
             exit;
         }
 
-        $pageTitle = 'Collections | Augment Humankind';
+        $pageTitle = 'Collections | ' . app_site_name();
         $pageDescription = 'Curated collections of generative art pieces and images.';
         $bodyClass = 'page-collections';
         $canonicalUrl = seo_absolute_url('/collections');
@@ -60,9 +60,9 @@ class CollectionsController
 
         $items = self::hydrateItems($collection['items'] ?? []);
 
-        $pageTitle = (($collection['name'] ?? '') ?: 'Collection') . ' | Augment Humankind';
+        $pageTitle = (($collection['name'] ?? '') ?: 'Collection') . ' | ' . app_site_name();
         $pageDescription = seo_excerpt($collection['description'] ?? '', 160)
-            ?? 'A curated collection from Augment Humankind.';
+            ?? 'A curated collection from ' . app_site_name() . '.';
         $bodyClass = 'page-collection';
         $canonicalUrl = seo_absolute_url('/collections/' . $slug);
 

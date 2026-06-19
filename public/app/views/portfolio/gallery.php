@@ -2,8 +2,8 @@
 
 declare(strict_types=1);
 
-$pageTitle = 'Portfolio Gallery | Augment Humankind';
-$pageDescription = 'Browse exhibits, exhibit collections, platform collections, and generative pieces from the Augment Humankind portfolio.';
+$pageTitle = 'Portfolio Gallery | ' . app_site_name();
+$pageDescription = 'Browse exhibits, exhibit collections, platform collections, and generative pieces from the ' . app_site_name() . ' portfolio.';
 $ogImage = $collections[0]['preview_image'] ?? ($exhibits[0]['preview_image'] ?? null);
 $canonicalUrl = seo_absolute_url('/portfolio');
 $bodyClass = bodyClass('portfolio-gallery');

@@ -23,14 +23,21 @@ CREATE TABLE admin_identities (
 );
 
 CREATE TABLE media_files (
-    id            INT AUTO_INCREMENT PRIMARY KEY,
-    data          LONGBLOB NULL,
-    mime_type     VARCHAR(50) NULL,
-    byte_size     INT NULL,
-    original_name VARCHAR(255) NULL,
-    deleted_at    TIMESTAMP NULL DEFAULT NULL,
-    created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_deleted (deleted_at)
+    id                   INT AUTO_INCREMENT PRIMARY KEY,
+    data                 LONGBLOB NULL,
+    mime_type            VARCHAR(50) NULL,
+    byte_size            INT NULL,
+    original_name        VARCHAR(255) NULL,
+    title                VARCHAR(255) NULL,
+    alt_text             VARCHAR(500) NULL,
+    status               ENUM('draft', 'ready') NOT NULL DEFAULT 'ready',
+    poster_media_file_id INT NULL,
+    confirmed_at         DATETIME NULL,
+    deleted_at           TIMESTAMP NULL DEFAULT NULL,
+    created_at           TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_deleted (deleted_at),
+    INDEX idx_media_files_status (status),
+    INDEX idx_media_files_poster (poster_media_file_id)
 );
 
 CREATE TABLE categories (
@@ -138,16 +145,10 @@ CREATE TABLE page_sections (
     FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE
 );
 
-CREATE TABLE post_sections (
-    id            INT           NOT NULL AUTO_INCREMENT PRIMARY KEY,
-    post_id       INT           NOT NULL,
-    heading       VARCHAR(255)  NULL DEFAULT NULL,
-    content       TEXT          NOT NULL,
-    wrapper_class VARCHAR(100)  NULL DEFAULT NULL,
-    sort_order    INT           NOT NULL DEFAULT 0,
-    created_at    TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE
-);
+-- post_sections is NOT defined here: it has a foreign key on posts, which
+-- only exists after migrations/2026-06-14-platform-assimilation.sql runs.
+-- See scripts/add-post-sections-table.sql, applied later in the setup order
+-- documented in README.md.
 
 CREATE TABLE navigation_items (
     id          INT AUTO_INCREMENT PRIMARY KEY,

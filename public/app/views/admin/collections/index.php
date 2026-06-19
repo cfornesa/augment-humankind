@@ -5,7 +5,7 @@ $collectionCreatePath  = $collectionCreatePath  ?? '/admin/collections/create';
 $collectionReorderPath = $collectionReorderPath ?? '/admin/collections/reorder';
 $collectionIndexPath   = $collectionIndexPath   ?? '/admin/collections';
 $collectionDeleteMessage = $collectionDeleteMessage ?? ('Move this ' . strtolower($collectionLabel) . ' to the recycle bin?');
-$pageTitle = $collectionPlural . ' — Augment Humankind Admin';
+$pageTitle = $collectionPlural . ' — ' . app_site_name() . ' Admin';
 
 $q    = $q    ?? '';
 $sort = $sort ?? 'sort_order';

@@ -22,8 +22,28 @@ class AuthController
     public static function oauthStart(): void
     {
         $provider = self::requestedProvider();
+        $subjectHash = rate_limit_subject_for_scope('admin_oauth_start');
+        $limit = rate_limit_consume('admin_oauth_start', $subjectHash);
+        if (!$limit['allowed']) {
+            audit_log_event('admin_oauth', 'admin_oauth_start', 'throttled', [
+                'subject_hash' => $subjectHash,
+                'http_status' => 429,
+                'metadata' => [
+                    'provider' => $provider,
+                    'retry_after' => $limit['retry_after'],
+                    'request_count' => $limit['request_count'],
+                ],
+            ]);
+            self::renderRateLimited((int) $limit['retry_after']);
+        }
+
         $config = oauth_provider_config($provider);
         if ($config['client_id'] === '' || $config['client_secret'] === '') {
+            audit_log_event('admin_oauth', 'admin_oauth_start', 'provider_unconfigured', [
+                'subject_hash' => $subjectHash,
+                'http_status' => 302,
+                'metadata' => ['provider' => $provider],
+            ]);
             header('Location: /admin/login?error=provider');
             exit;
         }
@@ -54,9 +74,29 @@ class AuthController
     public static function oauthCallback(): void
     {
         $provider = self::requestedProvider();
+        $subjectHash = rate_limit_subject_for_scope('admin_oauth_callback');
+        $limit = rate_limit_consume('admin_oauth_callback', $subjectHash);
+        if (!$limit['allowed']) {
+            audit_log_event('admin_oauth', 'admin_oauth_callback', 'throttled', [
+                'subject_hash' => $subjectHash,
+                'http_status' => 429,
+                'metadata' => [
+                    'provider' => $provider,
+                    'retry_after' => $limit['retry_after'],
+                    'request_count' => $limit['request_count'],
+                ],
+            ]);
+            self::renderRateLimited((int) $limit['retry_after']);
+        }
+
         $state = $_SESSION['oauth_state'] ?? null;
 
         if (!is_array($state) || ($state['provider'] ?? null) !== $provider || ($state['value'] ?? '') !== ($_GET['state'] ?? '')) {
+            audit_log_event('admin_oauth', 'admin_oauth_callback', 'invalid_state', [
+                'subject_hash' => $subjectHash,
+                'http_status' => 302,
+                'metadata' => ['provider' => $provider],
+            ]);
             header('Location: /admin/login?error=state');
             exit;
         }
@@ -64,6 +104,11 @@ class AuthController
 
         $code = trim((string) ($_GET['code'] ?? ''));
         if ($code === '') {
+            audit_log_event('admin_oauth', 'admin_oauth_callback', 'missing_code', [
+                'subject_hash' => $subjectHash,
+                'http_status' => 302,
+                'metadata' => ['provider' => $provider],
+            ]);
             header('Location: /admin/login?error=oauth');
             exit;
         }
@@ -71,6 +116,11 @@ class AuthController
         try {
             $profile = self::fetchOauthProfile($provider, $code);
             if (!oauth_allowed_identity($provider, $profile)) {
+                audit_log_event('admin_oauth', 'admin_oauth_callback', 'denied', [
+                    'subject_hash' => $subjectHash,
+                    'http_status' => 302,
+                    'metadata' => ['provider' => $provider],
+                ]);
                 header('Location: /admin/login?error=denied');
                 exit;
             }
@@ -92,10 +142,24 @@ class AuthController
             }
 
             admin_login_identity($identity);
+            audit_log_event('admin_oauth', 'admin_oauth_callback', 'success', [
+                'actor_admin_identity_id' => (int) $identity['id'],
+                'subject_hash' => $subjectHash,
+                'http_status' => 302,
+                'metadata' => ['provider' => $provider],
+            ]);
             header('Location: /admin');
             exit;
         } catch (Throwable $e) {
             error_log('[admin-oauth] ' . $provider . ': ' . $e->getMessage());
+            audit_log_event('admin_oauth', 'admin_oauth_callback', 'error', [
+                'subject_hash' => $subjectHash,
+                'http_status' => 302,
+                'metadata' => [
+                    'provider' => $provider,
+                    'error' => $e->getMessage(),
+                ],
+            ]);
 
             $query = 'error=oauth';
             if (oauth_is_local_request()) {
@@ -105,6 +169,16 @@ class AuthController
             header('Location: /admin/login?' . $query);
             exit;
         }
+    }
+
+    private static function renderRateLimited(int $retryAfter): void
+    {
+        http_response_code(429);
+        header('Retry-After: ' . $retryAfter);
+        $error = 'rate_limit';
+        $detail = 'Too many admin sign-in attempts. Please wait about ' . max(1, (int) ceil($retryAfter / 60)) . ' minute(s) and try again.';
+        require dirname(__DIR__, 2) . '/views/admin/login.php';
+        exit;
     }
 
     public static function logout(): void
@@ -158,6 +232,13 @@ class AuthController
         ));
 
         require dirname(__DIR__, 2) . '/views/admin/dashboard.php';
+    }
+
+    public static function setup(): void
+    {
+        admin_check();
+        $checklist = function_exists('site_bootstrap_checklist') ? site_bootstrap_checklist() : [];
+        require dirname(__DIR__, 2) . '/views/admin/setup.php';
     }
 
     private static function countRows(string $table, array $where = [], bool $activeOnly = false): int
@@ -316,7 +397,7 @@ class AuthController
             $userResponse = oauth_http_request('GET', $config['user_url'], [
                 'Accept' => 'application/vnd.github+json',
                 'Authorization' => 'Bearer ' . $accessToken,
-                'User-Agent' => 'AugmentHumankindAdminOAuth/1.0',
+                'User-Agent' => 'PhpCmsAdminOAuth/1.0',
             ]);
             $user = json_decode($userResponse['body'], true);
             if (!is_array($user) || empty($user['id']) || empty($user['login'])) {
@@ -328,7 +409,7 @@ class AuthController
                 $emailResponse = oauth_http_request('GET', $config['emails_url'], [
                     'Accept' => 'application/vnd.github+json',
                     'Authorization' => 'Bearer ' . $accessToken,
-                    'User-Agent' => 'AugmentHumankindAdminOAuth/1.0',
+                    'User-Agent' => 'PhpCmsAdminOAuth/1.0',
                 ]);
                 $emails = json_decode($emailResponse['body'], true);
                 if (is_array($emails)) {

@@ -1,30 +1,6 @@
 (function() {
   if (customElements.get("creatr-art-piece")) return;
 
-  function loadScript(src) {
-    return new Promise((resolve, reject) => {
-      let script = document.querySelector(`script[src="${src}"]`);
-      if (script) {
-        if (script.dataset.loaded === "true") {
-          resolve();
-        } else {
-          script.addEventListener("load", () => resolve());
-          script.addEventListener("error", () => reject(new Error("Failed to load script " + src)));
-        }
-        return;
-      }
-      script = document.createElement("script");
-      script.src = src;
-      script.dataset.loaded = "false";
-      script.addEventListener("load", () => {
-        script.dataset.loaded = "true";
-        resolve();
-      });
-      script.addEventListener("error", () => reject(new Error("Failed to load script " + src)));
-      document.head.appendChild(script);
-    });
-  }
-
   function escapeHtml(value) {
     return String(value)
       .replace(/&/g, "&amp;")
@@ -34,17 +10,11 @@
       .replace(/'/g, "&#039;");
   }
 
-  function ensureImportMap() {
-    let map = document.querySelector('script[type="importmap"]');
-    if (!map) {
-      map = document.createElement('script');
-      map.type = 'importmap';
-      map.textContent = JSON.stringify({
-        imports: {
-          three: "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
-        }
-      });
-      document.head.appendChild(map);
+  function parseEmbedUrl(src) {
+    try {
+      return new URL(src, window.location.origin);
+    } catch (e) {
+      return null;
     }
   }
 
@@ -167,11 +137,12 @@
     }
 
     async renderPiece(data) {
-      ensureImportMap();
-      const { engine, generatedCode, htmlCode, cssCode, title, id } = data;
+      const { title, id } = data;
       const version = this.getAttribute("version");
-      const defaultContainerId = engine === "three" ? "container" : "canvas-container";
-      const immersiveHref = `/immersive/pieces/${id}${version ? `?version=${version}&returnTo=${encodeURIComponent(window.location.pathname + window.location.search)}` : `?returnTo=${encodeURIComponent(window.location.pathname + window.location.search)}`}`;
+      const origin = this.getAttribute("origin") || window.location.origin;
+      const returnTo = encodeURIComponent(window.location.pathname + window.location.search);
+      const immersiveHref = `/immersive/pieces/${id}?${version ? `version=${version}&` : ""}returnTo=${returnTo}`;
+      const embedSrc = `${origin}/embed/pieces/${id}${version ? `?version=${version}` : ""}`;
 
       this.shadowRoot.innerHTML = `
         <style>
@@ -199,14 +170,11 @@
             position: relative;
             overflow: hidden;
           }
-          #${defaultContainerId} {
-            width: 100%;
-            height: 100%;
-          }
-          canvas {
+          iframe {
             display: block;
             width: 100%;
             height: 100%;
+            border: 0;
           }
           .vr-btn {
             position: absolute;
@@ -243,10 +211,9 @@
             stroke-linejoin: round;
             margin-right: 6px;
           }
-          ${cssCode || ""}
         </style>
         <div id="stage-container">
-          ${htmlCode || `<div id="${defaultContainerId}"></div>`}
+          <iframe src="${escapeHtml(embedSrc)}" title="${escapeHtml(title || "Art piece")}" loading="lazy" sandbox="allow-scripts allow-same-origin"></iframe>
           <a href="${immersiveHref}" class="vr-btn" target="_parent">
             <svg viewBox="0 0 24 24">
               <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
@@ -257,249 +224,6 @@
           </a>
         </div>
       `;
-
-      const container = this.shadowRoot.getElementById("stage-container");
-
-      function resolveSketchFactory(code) {
-        const prev = window.sketch;
-        try {
-          try {
-            const expression = new Function(`return (${code})`)();
-            if (typeof expression === "function") return expression;
-          } catch(e) {}
-          window.sketch = undefined;
-          new Function(code)();
-          if (typeof window.sketch === "function") return window.sketch;
-          throw new Error("Sketch function not found");
-        } finally {
-          window.sketch = prev;
-        }
-      }
-
-      if (engine === "p5") {
-        await loadScript(`https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js`);
-        const p5Container = this.shadowRoot.getElementById("canvas-container");
-        const sketch = resolveSketchFactory(generatedCode);
-        const p5Instance = new window.p5(sketch, p5Container);
-        this.cleanup = () => {
-          try { p5Instance.remove(); } catch(e) {}
-        };
-      } else if (engine === "c2") {
-        await loadScript(`https://cdn.jsdelivr.net/npm/c2.js@1.0.9/dist/c2.min.js`);
-        const c2Container = this.shadowRoot.getElementById("canvas-container") || container;
-        let canvas = c2Container.querySelector("canvas");
-        if (!canvas) {
-          canvas = document.createElement("canvas");
-          c2Container.appendChild(canvas);
-        }
-        canvas.style.display = "block";
-        canvas.width = c2Container.clientWidth || 800;
-        canvas.height = c2Container.clientHeight || 450;
-
-        let rafId = 0;
-        const stopFrame = () => cancelAnimationFrame(rafId);
-        const startFrame = (handler) => {
-          let count = 0;
-          const tick = () => {
-            count++;
-            handler(count);
-            rafId = requestAnimationFrame(tick);
-          };
-          rafId = requestAnimationFrame(tick);
-          return stopFrame;
-        };
-
-        const sketch = resolveSketchFactory(generatedCode);
-        sketch({ c2: window.c2, canvas, startFrame });
-
-        const handleResize = () => {
-          if (canvas && c2Container) {
-            canvas.width = c2Container.clientWidth;
-            canvas.height = c2Container.clientHeight;
-          }
-        };
-        window.addEventListener("resize", handleResize);
-
-        this.cleanup = () => {
-          window.removeEventListener("resize", handleResize);
-          stopFrame();
-        };
-      } else if (engine === "three") {
-        const THREE = await import("https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js");
-        const threeContainer = this.shadowRoot.getElementById("container") || container;
-        let canvas = threeContainer.querySelector("canvas");
-        if (!canvas) {
-          canvas = document.createElement("canvas");
-          threeContainer.appendChild(canvas);
-        }
-        canvas.style.cssText = "display:block;width:100%;height:100%;";
-        // Force layout so clientWidth/clientHeight are non-zero before sketch runs
-        threeContainer.getBoundingClientRect();
-        const _cw = threeContainer.clientWidth || 800;
-        const _ch = threeContainer.clientHeight || 450;
-        canvas.width = _cw;
-        canvas.height = _ch;
-
-        const state = { scene: null, camera: null, renderer: null };
-        let controls = null;
-        let rafIds = [];
-
-        function autoFit() {
-          if (!state.scene || !state.camera) return;
-          const box = new THREE.Box3();
-          state.scene.traverse((obj) => {
-            if (obj.isHelper || obj.isLight || obj.isCamera) return;
-            if (obj.isPoints) return;
-            if (obj.material) {
-              const mat = obj.material;
-              if (mat.side === 1 || (Array.isArray(mat) && mat.some(m => m.side === 1))) return;
-            }
-            const name = (obj.name || '').toLowerCase();
-            if (name.includes('sky') || name.includes('background') || name.includes('env') || name.includes('floor') || name.includes('ground') || name.includes('grid') || name.includes('dome') || name.includes('space') || name.includes('star')) return;
-            if ((obj.isMesh || obj.isLine || obj.isSprite) && obj.geometry) {
-              obj.geometry.computeBoundingBox?.();
-              if (obj.geometry.boundingBox) {
-                const worldBox = obj.geometry.boundingBox.clone().applyMatrix4(obj.matrixWorld);
-                const worldSize = new THREE.Vector3();
-                worldBox.getSize(worldSize);
-                if (worldSize.x >= 30 || worldSize.y >= 30 || worldSize.z >= 30) return;
-                if (obj.geometry.type === 'PlaneGeometry' || obj.geometry.type === 'PlaneBufferGeometry') {
-                  if (worldSize.x >= 15 || worldSize.y >= 15 || worldSize.z >= 15) return;
-                }
-                box.union(worldBox);
-              }
-            }
-          });
-          if (box.isEmpty()) return;
-          const center = new THREE.Vector3(); box.getCenter(center);
-          const size = new THREE.Vector3();   box.getSize(size);
-          const maxDim = Math.max(size.x, size.y, size.z) || 1;
-          const fov = state.camera.fov * (Math.PI / 180);
-          const dist = Math.abs(maxDim / 2 / Math.tan(fov / 2)) * 2.2;
-          state.camera.position.set(center.x + dist, center.y + dist * 0.4, center.z + dist);
-          state.camera.lookAt(center);
-          state.camera.updateMatrixWorld(true);
-          if (controls) { controls.target.copy(center); controls.update(); }
-        }
-
-        function ensureFallbackLighting() {
-          if (!state.scene?.traverse) return;
-          let hasRealLight = false;
-          let hasFallback = false;
-          const fallbacks = [];
-          state.scene.traverse((obj) => {
-            if (!obj.isLight) return;
-            if (obj.name?.startsWith('__viewer_fallback_')) { hasFallback = true; fallbacks.push(obj); }
-            else hasRealLight = true;
-          });
-          if (hasRealLight) {
-            fallbacks.forEach((obj) => state.scene.remove(obj));
-            return;
-          }
-          if (hasFallback) return;
-          const amb = new THREE.AmbientLight(0xffffff, 0.7);
-          amb.name = '__viewer_fallback_ambient__';
-          state.scene.add(amb);
-          const dir = new THREE.DirectionalLight(0xffffff, 0.8);
-          dir.position.set(5, 10, 7.5);
-          dir.name = '__viewer_fallback_dir__';
-          state.scene.add(dir);
-        }
-
-        function startFrame(handler) {
-          let count = 0;
-          function tick() {
-            count++;
-            handler(count);
-            if (count === 15) autoFit();
-            const id = requestAnimationFrame(tick);
-            rafIds.push(id);
-          }
-          const id = requestAnimationFrame(tick);
-          rafIds.push(id);
-          return () => { rafIds.forEach(cancelAnimationFrame); rafIds = []; };
-        }
-
-        const instrumentedThree = { ...THREE };
-        instrumentedThree.Scene = class extends THREE.Scene {
-          constructor() { super(); state.scene = this; }
-        };
-        instrumentedThree.PerspectiveCamera = class extends THREE.PerspectiveCamera {
-          constructor(...args) { super(...args); state.camera = this; }
-        };
-        instrumentedThree.WebGLRenderer = class extends THREE.WebGLRenderer {
-          constructor(params) {
-            super({ ...(params || {}), canvas });
-            state.renderer = this;
-            const _origSetSize = this.setSize.bind(this);
-            this.setSize = (w, h) => _origSetSize(w, h, false);
-            const _origRender = this.render.bind(this);
-            this.render = (sc, cam) => {
-              if (sc) state.scene = sc;
-              if (cam) state.camera = cam;
-              return _origRender(sc, cam);
-            };
-          }
-        };
-
-        const { OrbitControls } = await import("https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js");
-
-        const sketch = resolveSketchFactory(generatedCode);
-        sketch({ THREE: instrumentedThree, canvas, startFrame });
-
-        if (state.camera && canvas) {
-          controls = new OrbitControls(state.camera, canvas);
-          controls.enableDamping = true;
-          controls.enablePan = true;
-          const _camDir = new THREE.Vector3();
-          state.camera.getWorldDirection(_camDir);
-          const _camLen = state.camera.position.length();
-          controls.target
-            .copy(state.camera.position)
-            .addScaledVector(_camDir, Math.max(_camLen * 0.8, 3));
-          autoFit();
-          controls.update();
-
-          const animateControls = () => {
-            const id = requestAnimationFrame(animateControls);
-            rafIds.push(id);
-            ensureFallbackLighting();
-            controls.update();
-            if (state.renderer && state.scene && state.camera)
-              state.renderer.render(state.scene, state.camera);
-          };
-          animateControls();
-        }
-
-        const handleResize = () => {
-          if (state.renderer && state.camera && canvas && threeContainer) {
-            const width = threeContainer.clientWidth;
-            const height = threeContainer.clientHeight;
-            state.camera.aspect = width / height;
-            state.camera.updateProjectionMatrix();
-            state.renderer.setSize(width, height);
-          }
-        };
-        window.addEventListener("resize", handleResize);
-        // Run once immediately so the drawing buffer matches the container
-        handleResize();
-
-        this.cleanup = () => {
-          window.removeEventListener("resize", handleResize);
-          rafIds.forEach(cancelAnimationFrame);
-          controls?.dispose();
-          state.renderer?.dispose();
-        };
-      } else if (engine === "svg") {
-        const svgEl = this.shadowRoot.querySelector("svg");
-        if (svgEl) {
-          window.svgRoot = svgEl;
-        }
-        const sketch = resolveSketchFactory(generatedCode);
-        if (typeof sketch === "function") {
-          try { sketch(); } catch (_) {}
-        }
-      }
 
       this.isRendered = true;
     }
@@ -791,9 +515,11 @@
     const iframes = document.querySelectorAll("iframe");
     iframes.forEach(iframe => {
       const src = iframe.getAttribute("src") || "";
+      const parsed = parseEmbedUrl(src);
+      const isSameOrigin = parsed ? parsed.origin === window.location.origin : false;
       
       // Check for piece embeds
-      if (src.includes("/embed/pieces/")) {
+      if (isSameOrigin && parsed?.pathname.includes("/embed/pieces/")) {
         const meta = extractPieceEmbedMeta(src);
         if (meta) {
           const piece = document.createElement("creatr-art-piece");
@@ -809,8 +535,8 @@
       }
       
       // Check for exhibit embeds
-      else if (src.includes("/immersive/exhibits/") || src.includes("/immersive/collections/")) {
-        const match = src.match(/\/immersive\/(?:exhibits|collections)\/([^/?#]+)/);
+      else if (isSameOrigin && (parsed?.pathname.includes("/immersive/exhibits/") || parsed?.pathname.includes("/immersive/collections/"))) {
+        const match = parsed.pathname.match(/\/immersive\/(?:exhibits|collections)\/([^/?#]+)/);
         if (match) {
           const slug = match[1];
           const title = iframe.getAttribute("title") || `Exhibit: ${slug}`;
@@ -830,8 +556,8 @@
       }
 
       // Check for immersive image embeds
-      else if (src.includes("/immersive/images/")) {
-        const match = src.match(/\/immersive\/images\/([^/?#]+)/);
+      else if (isSameOrigin && parsed?.pathname.includes("/immersive/images/")) {
+        const match = parsed.pathname.match(/\/immersive\/images\/([^/?#]+)/);
         if (match) {
           const image = document.createElement("creatr-immersive-image");
           image.setAttribute("ref", match[1]);

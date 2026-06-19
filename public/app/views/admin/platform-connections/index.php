@@ -11,6 +11,7 @@ if (!in_array($tab, ['connections', 'syndications'], true)) {
 }
 $error = $_GET['error'] ?? null;
 $success = $_GET['success'] ?? null;
+$successPlatform = $_GET['platform'] ?? null;
 ?>
 <div class="admin-container">
     <div class="admin-header-row">
@@ -27,10 +28,16 @@ $success = $_GET['success'] ?? null;
             <p>Connection updated successfully.</p>
         </div>
     <?php endif; ?>
+    <?php if ($success === 'oauth_app'): ?>
+        <div class="form-status" role="status">
+            <p>OAuth app credentials saved for <?= e((string) $successPlatform) ?>.</p>
+        </div>
+    <?php endif; ?>
 
     <nav class="admin-tabs" aria-label="Platform connection tabs">
         <a href="/admin/platform-connections?tab=connections" class="admin-tab <?= $tab === 'connections' ? 'active' : '' ?>">Connections</a>
         <a href="/admin/platform-connections?tab=syndications" class="admin-tab <?= $tab === 'syndications' ? 'active' : '' ?>">Syndications</a>
+        <a href="/admin/platform-connections/diagnostics" class="admin-tab">Diagnostics</a>
     </nav>
 
     <?php if ($tab === 'connections'): ?>
@@ -39,6 +46,8 @@ $success = $_GET['success'] ?? null;
             <?php foreach ($platforms as $platformKey => $platform): ?>
                 <?php $connection = $connectionsByPlatform[$platformKey] ?? null; ?>
                 <?php $latest = $latestSyndications[$platformKey] ?? null; ?>
+                <?php $oauthApp = $oauthAppsByPlatform[$platformKey] ?? null; ?>
+                <?php $oauthConfigured = PlatformOAuthApp::hasConfiguredSecrets($platformKey); ?>
                 <div class="stat-card" style="gap:0.85rem;">
                     <div>
                         <strong><?= e($platform['label']) ?></strong>
@@ -52,9 +61,20 @@ $success = $_GET['success'] ?? null;
                     <?php if ($latest): ?>
                         <p class="admin-hint" style="margin:0;">Latest syndication: <?= e($latest['status'] ?? 'pending') ?><?= !empty($latest['external_url']) ? ' • ' : '' ?><?php if (!empty($latest['external_url'])): ?><a href="<?= e($latest['external_url']) ?>" target="_blank" rel="noopener">open</a><?php endif; ?></p>
                     <?php endif; ?>
+                    <?php if (($platform['kind'] ?? '') === 'oauth'): ?>
+                        <p class="admin-hint" style="margin:0;">
+                            OAuth app:
+                            <span class="status-badge <?= $oauthConfigured ? 'status-active' : 'status-draft' ?>">
+                                <?= $oauthConfigured ? 'Configured' : 'Not configured' ?>
+                            </span>
+                        </p>
+                    <?php endif; ?>
                     <div class="dashboard-links">
                         <?php if (($platform['kind'] ?? '') === 'oauth'): ?>
-                            <a href="/admin/platform-connections/auth/<?= e(str_replace('_', '-', $platformKey)) ?>/start" class="admin-btn"><?= $connection ? 'Reconnect' : 'Connect' ?></a>
+                            <a href="/admin/platform-connections/oauth-apps/<?= e(str_replace('_', '-', $platformKey)) ?>/edit" class="admin-btn admin-btn-ghost">Configure App</a>
+                            <?php if ($oauthConfigured): ?>
+                                <a href="/admin/platform-connections/auth/<?= e(str_replace('_', '-', $platformKey)) ?>/start" class="admin-btn"><?= $connection ? 'Reconnect' : 'Connect' ?></a>
+                            <?php endif; ?>
                         <?php else: ?>
                             <a href="<?= $connection ? '/admin/platform-connections/' . (int) $connection['id'] . '/edit' : '/admin/platform-connections/create?platform=' . urlencode($platformKey) ?>" class="admin-btn"><?= $connection ? 'Edit' : 'Set up' ?></a>
                         <?php endif; ?>

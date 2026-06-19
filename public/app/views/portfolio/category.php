@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-$pageTitle = ($category['name'] ?: 'Art Medium') . ' | Augment Humankind Portfolio';
+$pageTitle = ($category['name'] ?: 'Art Medium') . ' | ' . app_site_name() . ' Portfolio';
 $pageDescription = seo_excerpt($category['description'] ?? null, 170)
     ?: 'Pieces collected under the ' . ($category['name'] ?: 'selected') . ' art-medium term.';
 $ogImage = $category['thumbnail_value'] ?: ($pieces[0]['thumbnail_url'] ?? null);

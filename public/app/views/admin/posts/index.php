@@ -1,5 +1,5 @@
 <?php
-$pageTitle = 'Posts — Augment Humankind Admin';
+$pageTitle = 'Posts — ' . app_site_name() . ' Admin';
 $status = $status ?? null;
 
 $statusTabs = [

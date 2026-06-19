@@ -2,75 +2,80 @@
 
 declare(strict_types=1);
 
-require __DIR__ . '/helpers/auth.php';
-require __DIR__ . '/helpers/oauth.php';
-require __DIR__ . '/helpers/icons.php';
-require __DIR__ . '/helpers/slugify.php';
-require __DIR__ . '/helpers/seo.php';
-require __DIR__ . '/helpers/schema.php';
-require __DIR__ . '/helpers/upload.php';
-require __DIR__ . '/helpers/feed-ingest.php';
-require __DIR__ . '/helpers/encryption.php';
-require __DIR__ . '/helpers/piece-render.php';
-require __DIR__ . '/helpers/art-piece-generation.php';
-require __DIR__ . '/helpers/navigation.php';
-require __DIR__ . '/helpers/admin-navigation.php';
-require __DIR__ . '/helpers/platform-ui.php';
-require __DIR__ . '/lib/ai/AiProviderClient.php';
-require __DIR__ . '/models/AdminIdentity.php';
-require __DIR__ . '/models/PlatformUser.php';
-require __DIR__ . '/models/Page.php';
-require __DIR__ . '/models/PageSection.php';
-require __DIR__ . '/models/PostSection.php';
-require __DIR__ . '/models/SiteSettings.php';
-require __DIR__ . '/models/Category.php';
-require __DIR__ . '/models/Exhibit.php';
-require __DIR__ . '/models/Collection.php';
-require __DIR__ . '/models/MediaFile.php';
-require __DIR__ . '/models/NavigationItem.php';
-require __DIR__ . '/models/BlogCategory.php';
-require __DIR__ . '/models/BlogPost.php';
-require __DIR__ . '/models/Comment.php';
-require __DIR__ . '/models/Reaction.php';
-require __DIR__ . '/models/ExhibitMediaItem.php';
-require __DIR__ . '/models/PlatformArtPiece.php';
-require __DIR__ . '/models/PlatformArtPieceVersion.php';
-require __DIR__ . '/models/FeedSource.php';
-require __DIR__ . '/models/SiteAsset.php';
-require __DIR__ . '/models/MediaAsset.php';
-require __DIR__ . '/models/UserAiSettings.php';
-require __DIR__ . '/models/PlatformConnection.php';
-require __DIR__ . '/models/PlatformCollection.php';
-require __DIR__ . '/controllers/Admin/AuthController.php';
-require __DIR__ . '/controllers/UserAuthController.php';
-require __DIR__ . '/controllers/UserProfileController.php';
-require __DIR__ . '/controllers/Admin/PagesController.php';
-require __DIR__ . '/controllers/Admin/PortfolioController.php';
-require __DIR__ . '/controllers/Admin/BlogAdminController.php';
-require __DIR__ . '/controllers/Admin/BlogCategoriesAdminController.php';
-require __DIR__ . '/controllers/Admin/MediaController.php';
-require __DIR__ . '/controllers/Admin/TrashController.php';
-require __DIR__ . '/controllers/Admin/NavigationController.php';
-require __DIR__ . '/controllers/Admin/FeedSourcesAdminController.php';
-require __DIR__ . '/controllers/Admin/SiteIdentityAdminController.php';
-require __DIR__ . '/controllers/Admin/UserProfilesAdminController.php';
-require __DIR__ . '/lib/syndication/AdapterFactory.php';
-require __DIR__ . '/controllers/Admin/PlatformConnectionsAdminController.php';
-require __DIR__ . '/controllers/Admin/PiecesAdminController.php';
-require __DIR__ . '/controllers/Admin/PlatformCollectionsAdminController.php';
-require __DIR__ . '/controllers/MediaServeController.php';
-require __DIR__ . '/controllers/PortfolioController.php';
-require __DIR__ . '/controllers/PiecesController.php';
-require __DIR__ . '/controllers/CollectionsController.php';
-require __DIR__ . '/controllers/EmbedController.php';
-require __DIR__ . '/controllers/ImmersiveController.php';
-require __DIR__ . '/controllers/ApiController.php';
-require __DIR__ . '/controllers/BlogController.php';
-require __DIR__ . '/controllers/CommentController.php';
-require __DIR__ . '/controllers/PageController.php';
-require __DIR__ . '/controllers/CronController.php';
+require_once __DIR__ . '/helpers/auth.php';
+require_once __DIR__ . '/helpers/oauth.php';
+require_once __DIR__ . '/helpers/icons.php';
+require_once __DIR__ . '/helpers/slugify.php';
+require_once __DIR__ . '/helpers/seo.php';
+require_once __DIR__ . '/helpers/schema.php';
+require_once __DIR__ . '/helpers/upload.php';
+require_once __DIR__ . '/helpers/feed-ingest.php';
+require_once __DIR__ . '/helpers/encryption.php';
+require_once __DIR__ . '/helpers/audit-log.php';
+require_once __DIR__ . '/helpers/rate-limit.php';
+require_once __DIR__ . '/helpers/piece-render.php';
+require_once __DIR__ . '/helpers/art-piece-generation.php';
+require_once __DIR__ . '/helpers/navigation.php';
+require_once __DIR__ . '/helpers/admin-navigation.php';
+require_once __DIR__ . '/helpers/platform-ui.php';
+require_once __DIR__ . '/lib/ai/AiProviderClient.php';
+require_once __DIR__ . '/models/AdminIdentity.php';
+require_once __DIR__ . '/models/PlatformUser.php';
+require_once __DIR__ . '/models/Page.php';
+require_once __DIR__ . '/models/PageSection.php';
+require_once __DIR__ . '/models/PostSection.php';
+require_once __DIR__ . '/models/SiteSettings.php';
+require_once __DIR__ . '/models/Category.php';
+require_once __DIR__ . '/models/Exhibit.php';
+require_once __DIR__ . '/models/Collection.php';
+require_once __DIR__ . '/models/MediaFile.php';
+require_once __DIR__ . '/models/NavigationItem.php';
+require_once __DIR__ . '/models/BlogCategory.php';
+require_once __DIR__ . '/models/BlogPost.php';
+require_once __DIR__ . '/models/Comment.php';
+require_once __DIR__ . '/models/Reaction.php';
+require_once __DIR__ . '/models/ExhibitMediaItem.php';
+require_once __DIR__ . '/models/PlatformArtPiece.php';
+require_once __DIR__ . '/models/PlatformArtPieceVersion.php';
+require_once __DIR__ . '/models/FeedSource.php';
+require_once __DIR__ . '/models/SiteAsset.php';
+require_once __DIR__ . '/models/MediaAsset.php';
+require_once __DIR__ . '/models/UserAiSettings.php';
+require_once __DIR__ . '/models/PlatformConnection.php';
+require_once __DIR__ . '/models/PlatformOAuthApp.php';
+require_once __DIR__ . '/models/PlatformCollection.php';
+require_once __DIR__ . '/controllers/Admin/AuthController.php';
+require_once __DIR__ . '/controllers/UserAuthController.php';
+require_once __DIR__ . '/controllers/UserProfileController.php';
+require_once __DIR__ . '/controllers/Admin/PagesController.php';
+require_once __DIR__ . '/controllers/Admin/PortfolioController.php';
+require_once __DIR__ . '/controllers/Admin/BlogAdminController.php';
+require_once __DIR__ . '/controllers/Admin/BlogCategoriesAdminController.php';
+require_once __DIR__ . '/controllers/Admin/MediaController.php';
+require_once __DIR__ . '/controllers/Admin/TrashController.php';
+require_once __DIR__ . '/controllers/Admin/NavigationController.php';
+require_once __DIR__ . '/controllers/Admin/FeedSourcesAdminController.php';
+require_once __DIR__ . '/controllers/Admin/SiteIdentityAdminController.php';
+require_once __DIR__ . '/controllers/Admin/UserProfilesAdminController.php';
+require_once __DIR__ . '/lib/syndication/AdapterFactory.php';
+require_once __DIR__ . '/controllers/Admin/PlatformConnectionsAdminController.php';
+require_once __DIR__ . '/controllers/Admin/PiecesAdminController.php';
+require_once __DIR__ . '/controllers/Admin/PlatformCollectionsAdminController.php';
+require_once __DIR__ . '/controllers/MediaServeController.php';
+require_once __DIR__ . '/controllers/PortfolioController.php';
+require_once __DIR__ . '/controllers/PiecesController.php';
+require_once __DIR__ . '/controllers/CollectionsController.php';
+require_once __DIR__ . '/controllers/EmbedController.php';
+require_once __DIR__ . '/controllers/ImmersiveController.php';
+require_once __DIR__ . '/controllers/ApiController.php';
+require_once __DIR__ . '/controllers/BlogController.php';
+require_once __DIR__ . '/controllers/CommentController.php';
+require_once __DIR__ . '/controllers/OgController.php';
+require_once __DIR__ . '/controllers/PageController.php';
+require_once __DIR__ . '/controllers/CronController.php';
 
 $publicRoutes = [
+    ['GET',  '/og/posts/([0-9]+)',                          [OgController::class, 'postImage']],
     ['GET',  '/blog',                                        [BlogController::class, 'index']],
     ['GET',  '/blog/posts/([0-9]+)',                        [BlogController::class, 'show']],
     ['GET',  '/blog/categories',                            [BlogController::class, 'categories']],
@@ -164,6 +169,7 @@ $publicRoutes = [
     ['GET', '/api/profile-photos/([^/]+)',          [ApiController::class, 'profilePhoto']],
     ['GET',  '/api/runtimes/(.+)',                   [ApiController::class, 'runtimeAsset']],
     ['POST', '/api/cron/publish-posts',              [CronController::class, 'publishPosts']],
+    ['POST', '/api/cron/refresh-feeds',              [CronController::class, 'refreshFeeds']],
 
     // Public user auth — fixed paths MUST precede the catch-all /user/([a-z0-9_-]+)
     ['GET',  '/user/login',                           [UserAuthController::class, 'loginForm']],
@@ -181,6 +187,7 @@ $publicRoutes = [
 
 $adminRoutes = [
     ['GET',  '/admin',                      [AuthController::class, 'dashboard']],
+    ['GET',  '/admin/setup',                [AuthController::class, 'setup']],
     ['GET',  '/admin/login',                [AuthController::class, 'loginForm']],
     ['GET',  '/admin/auth/github/start',    [AuthController::class, 'oauthStart']],
     ['GET',  '/admin/auth/github/callback', [AuthController::class, 'oauthCallback']],
@@ -266,6 +273,9 @@ $adminRoutes = [
     ['GET',  '/admin/media/library',         [MediaAdminController::class, 'library']],
     ['POST', '/admin/media/upload',          [MediaAdminController::class, 'upload']],
     ['POST', '/admin/media/import',          [MediaAdminController::class, 'import']],
+    ['POST', '/admin/media/poster-upload',   [MediaAdminController::class, 'uploadPoster']],
+    ['POST', '/admin/media/([0-9]+)/confirm',[MediaAdminController::class, 'confirmFile']],
+    ['POST', '/admin/media/([0-9]+)/discard',[MediaAdminController::class, 'discardDraft']],
     ['POST', '/admin/media/([0-9]+)/update', [MediaAdminController::class, 'updateFile']],
     ['POST', '/admin/media/([0-9]+)/trash',  [MediaAdminController::class, 'trash']],
     ['POST', '/admin/media/([0-9]+)/destroy',[MediaAdminController::class, 'destroy']],
@@ -362,6 +372,8 @@ $adminRoutes = [
     ['GET',  '/admin/platform-connections/auth/([a-z-]+)/start',    [PlatformConnectionsAdminController::class, 'oauthStart']],
     ['GET',  '/admin/platform-connections/auth/([a-z-]+)/callback', [PlatformConnectionsAdminController::class, 'oauthCallback']],
     ['GET',  '/admin/platform-connections/diagnostics', [PlatformConnectionsAdminController::class, 'diagnostics']],
+    ['GET',  '/admin/platform-connections/oauth-apps/([a-z-]+)/edit', [PlatformConnectionsAdminController::class, 'oauthAppEdit']],
+    ['POST', '/admin/platform-connections/oauth-apps/([a-z-]+)/edit', [PlatformConnectionsAdminController::class, 'oauthAppUpdate']],
 
     ['POST', '/admin/ai/process', [PiecesAdminController::class, 'aiProcessText']],
     ['POST', '/admin/ai/describe-image', [PiecesAdminController::class, 'aiDescribeImage']],

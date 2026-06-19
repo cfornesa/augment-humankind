@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 $isEdit = $collection !== null;
 $collection = $collection ?? [];
-$pageTitle = ($isEdit ? 'Edit Platform Collection' : 'New Platform Collection') . ' — Augment Humankind Admin';
+$pageTitle = ($isEdit ? 'Edit Platform Collection' : 'New Platform Collection') . ' — ' . app_site_name() . ' Admin';
 
 function isItemAssigned(string $type, int $id, array $assigned): bool {
     foreach ($assigned as $item) {

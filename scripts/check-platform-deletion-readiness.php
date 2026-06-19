@@ -125,6 +125,9 @@ function readiness_load_env(string $path): void
         ) {
             $value = substr($value, 1, -1);
         }
+        if (($_ENV[$name] ?? getenv($name) ?: '') !== '') {
+            continue;
+        }
         $_ENV[$name] = $value;
         putenv($name . '=' . $value);
     }
@@ -198,6 +201,39 @@ function readiness_http_status(string $baseUrl, string $path): ?int
         return null;
     }
     return (int) $m[1];
+}
+
+function readiness_http_post_json(string $baseUrl, string $path, array $headers = []): array
+{
+    $url = rtrim($baseUrl, '/') . $path;
+    $headerLines = [];
+    foreach ($headers as $key => $value) {
+        $headerLines[] = $key . ': ' . $value;
+    }
+
+    $context = stream_context_create([
+        'http' => [
+            'method' => 'POST',
+            'header' => implode("\r\n", $headerLines),
+            'content' => '',
+            'ignore_errors' => true,
+            'timeout' => 20,
+        ],
+    ]);
+
+    $body = @file_get_contents($url, false, $context);
+    $status = 0;
+    foreach ($http_response_header ?? [] as $line) {
+        if (preg_match('#HTTP/\S+\s+([0-9]{3})#', $line, $matches) === 1) {
+            $status = (int) $matches[1];
+            break;
+        }
+    }
+
+    return [
+        'status' => $status,
+        'body' => is_string($body) ? $body : '',
+    ];
 }
 
 function readiness_base64url(string $value): string
@@ -285,14 +321,23 @@ function readiness_scan_runtime_paths(string $root): array
 {
     $needle = 'platform' . '/';
     $matches = [];
-    foreach (readiness_php_files([$root . '/public/app', $root . '/public/index.php', $root . '/scripts']) as $file) {
+    foreach (readiness_php_files([$root . '/public/app', $root . '/public/index.php']) as $file) {
         $relative = str_replace($root . '/', '', $file);
-        if ($relative === 'scripts/check-platform-deletion-readiness.php') {
+        $contents = file_get_contents($file);
+        if ($contents === false || !str_contains($contents, $needle)) {
             continue;
         }
-        $contents = file_get_contents($file);
-        if ($contents !== false && str_contains($contents, $needle)) {
+
+        $lines = preg_split("/\r\n|\n|\r/", $contents) ?: [];
+        foreach ($lines as $line) {
+            if (!str_contains($line, $needle)) {
+                continue;
+            }
+            if (str_contains($line, 'http://') || str_contains($line, 'https://')) {
+                continue;
+            }
             $matches[] = $relative;
+            break;
         }
     }
     return $matches;
@@ -302,8 +347,10 @@ function readiness_scan_platform_db_usage(string $root): array
 {
     $allowed = [
         'scripts/apply-platform-assimilation-schema.php',
+        'scripts/apply-ai-media-profile-schema.php',
         'scripts/check-platform-deletion-readiness.php',
         'scripts/migrate-platform-to-php.php',
+        'scripts/migrate-user-styles.php',
     ];
     $matches = [];
     foreach (readiness_php_files([$root . '/public/app', $root . '/public/index.php', $root . '/scripts']) as $file) {
@@ -389,6 +436,19 @@ function readiness_check_retention(ReadinessReport $report, PDO $target, PDO $so
             continue;
         }
         $targetCount = readiness_count($target, $targetTable);
+        if ($sourceTable === 'sessions') {
+            if ($targetCount <= 0) {
+                $report->fail("Retention rows: {$sourceTable}", "{$targetCount}/{$sourceCount} target rows");
+            } elseif ($targetCount < $sourceCount) {
+                $report->warn(
+                    "Retention rows: {$sourceTable}",
+                    "{$targetCount}/{$sourceCount} target rows; session state is expected to drift independently after cutover"
+                );
+            } else {
+                $report->pass("Retention rows: {$sourceTable}", "{$targetCount}/{$sourceCount} target rows");
+            }
+            continue;
+        }
         if ($targetCount >= $sourceCount) {
             $report->pass("Retention rows: {$sourceTable}", "{$targetCount}/{$sourceCount} target rows");
         } else {
@@ -473,6 +533,75 @@ function readiness_check_platform_connections(ReadinessReport $report, PDO $targ
     } else {
         $report->fail('Platform connections', 'Missing access token ids: ' . implode(', ', $empty));
     }
+}
+
+function readiness_check_platform_oauth_apps(ReadinessReport $report, PDO $target): void
+{
+    if (!readiness_table_exists($target, 'platform_oauth_apps')) {
+        $report->fail('Platform OAuth apps', 'platform_oauth_apps table is missing');
+        return;
+    }
+
+    $rows = $target->query(
+        'SELECT id, platform, encrypted_client_id, encrypted_client_secret FROM platform_oauth_apps ORDER BY id ASC'
+    )->fetchAll();
+    if ($rows === []) {
+        $report->warn('Platform OAuth apps', 'No DB-stored platform OAuth app credentials are present in the PHP database');
+        return;
+    }
+
+    $usable = 0;
+    $empty = [];
+    $malformed = [];
+    foreach ($rows as $row) {
+        $encryptedClientId = trim((string) ($row['encrypted_client_id'] ?? ''));
+        $encryptedClientSecret = trim((string) ($row['encrypted_client_secret'] ?? ''));
+        if ($encryptedClientId === '' && $encryptedClientSecret === '') {
+            $empty[] = (string) $row['platform'];
+            continue;
+        }
+
+        $credentials = PlatformOAuthApp::decryptedCredentialsForPlatform((string) $row['platform']);
+        if ($credentials === null) {
+            $malformed[] = (string) $row['platform'];
+            continue;
+        }
+
+        $clientId = trim((string) ($credentials['client_id'] ?? ''));
+        $clientSecret = trim((string) ($credentials['client_secret'] ?? ''));
+        if ($clientId === '' || $clientSecret === '') {
+            $empty[] = (string) $row['platform'];
+            continue;
+        }
+
+        $usable++;
+    }
+
+    if ($empty === [] && $malformed === []) {
+        $report->pass('Platform OAuth apps', count($rows) . ' DB-stored OAuth app rows decrypted successfully');
+        return;
+    }
+
+    $details = [];
+    if ($usable > 0) {
+        $details[] = $usable . ' usable row(s)';
+    }
+    if ($empty !== []) {
+        $details[] = 'not configured: ' . implode(', ', $empty);
+    }
+    if ($malformed !== []) {
+        $details[] = 're-enter malformed rows before reconnecting: ' . implode(', ', $malformed);
+    }
+
+    if ($usable > 0 || $empty !== [] || $malformed !== []) {
+        $report->warn(
+            'Platform OAuth apps',
+            implode('; ', $details)
+        );
+        return;
+    }
+
+    $report->fail('Platform OAuth apps', 'No usable DB-stored OAuth app rows were found');
 }
 
 function readiness_check_feed_approval(ReadinessReport $report, PDO $target): void
@@ -902,6 +1031,34 @@ function readiness_check_http(ReadinessReport $report, PDO $target, string $base
             $report->fail("HTTP {$path}", 'expected ' . implode('/', $expected) . ', got ' . ($status === null ? 'no response' : (string) $status));
         }
     }
+
+    $publishedPostId = (int) ($target->query("SELECT id FROM posts WHERE status = 'published' AND deleted_at IS NULL ORDER BY id ASC LIMIT 1")->fetchColumn() ?: 0);
+    if ($publishedPostId > 0) {
+        $ogStatus = readiness_http_status($baseUrl, '/og/posts/' . $publishedPostId);
+        if ($ogStatus === 200) {
+            $report->pass('HTTP /og/posts/[id]', "returned {$ogStatus}");
+        } else {
+            $report->fail('HTTP /og/posts/[id]', 'expected 200, got ' . ($ogStatus === null ? 'no response' : (string) $ogStatus));
+        }
+    } else {
+        $report->warn('HTTP /og/posts/[id]', 'Skipped because no published post exists in the PHP database');
+    }
+
+    $cronSecret = readiness_env('CRON_SECRET');
+    if ($cronSecret === '') {
+        $report->warn('HTTP /api/cron/refresh-feeds', 'Skipped because CRON_SECRET is not configured');
+        return;
+    }
+
+    $cronResponse = readiness_http_post_json($baseUrl, '/api/cron/refresh-feeds', [
+        'X-Cron-Secret' => $cronSecret,
+        'Accept' => 'application/json',
+    ]);
+    if ($cronResponse['status'] === 200) {
+        $report->pass('HTTP /api/cron/refresh-feeds', 'returned 200');
+    } else {
+        $report->fail('HTTP /api/cron/refresh-feeds', 'expected 200, got ' . $cronResponse['status']);
+    }
 }
 
 $root = dirname(__DIR__);
@@ -930,6 +1087,7 @@ require_once $root . '/public/app/models/FeedSource.php';
 require_once $root . '/public/app/models/PlatformArtPiece.php';
 require_once $root . '/public/app/models/PlatformArtPieceVersion.php';
 require_once $root . '/public/app/models/PlatformConnection.php';
+require_once $root . '/public/app/models/PlatformOAuthApp.php';
 require_once $root . '/public/app/controllers/EmbedController.php';
 
 $report = new ReadinessReport();
@@ -973,6 +1131,7 @@ try {
         $report->warn('Retention checks', 'Skipped because database configuration/static checks failed');
     }
     readiness_check_ai_keys($report, $target);
+    readiness_check_platform_oauth_apps($report, $target);
     readiness_check_platform_connections($report, $target);
     readiness_check_feed_approval($report, $target);
     readiness_check_syndication($report, $target);

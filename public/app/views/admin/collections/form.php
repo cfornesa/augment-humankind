@@ -6,7 +6,7 @@ $collectionPlural = $collectionPlural ?? 'Collections';
 $collectionIndexPath = $collectionIndexPath ?? '/admin/collections';
 $collectionCreatePath = $collectionCreatePath ?? '/admin/collections/create';
 $collectionEditBasePath = $collectionEditBasePath ?? '/admin/collections';
-$pageTitle = ($isEdit ? 'Edit ' . $collectionLabel : 'New ' . $collectionLabel) . ' — Augment Humankind Admin';
+$pageTitle = ($isEdit ? 'Edit ' . $collectionLabel : 'New ' . $collectionLabel) . ' — ' . app_site_name() . ' Admin';
 $needsEditor = true;
 ob_start();
 ?>

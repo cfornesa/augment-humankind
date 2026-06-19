@@ -7,6 +7,7 @@ class PagesController
     public static function index(): void
     {
         admin_check();
+        Page::ensureSystemPages();
         $pages = Page::all();
         require dirname(__DIR__, 2) . '/views/admin/pages/index.php';
     }
@@ -76,8 +77,12 @@ class PagesController
     public static function delete(string $id): void
     {
         admin_check();
-        Page::softDelete((int) $id);
-        header('Location: /admin/pages');
+        try {
+            Page::softDelete((int) $id);
+            header('Location: /admin/pages');
+        } catch (Throwable $e) {
+            header('Location: /admin/pages?error=' . urlencode($e->getMessage()));
+        }
         exit;
     }
 
@@ -99,8 +104,12 @@ class PagesController
     public static function hardDelete(string $id): void
     {
         admin_check();
-        Page::hardDelete((int) $id);
-        header('Location: /admin/pages/trash');
+        try {
+            Page::hardDelete((int) $id);
+            header('Location: /admin/pages/trash');
+        } catch (Throwable $e) {
+            header('Location: /admin/pages/trash?error=' . urlencode($e->getMessage()));
+        }
         exit;
     }
 
@@ -108,7 +117,13 @@ class PagesController
     {
         admin_check();
         foreach (Page::trashed() as $page) {
-            Page::hardDelete((int) $page['id']);
+            try {
+                Page::hardDelete((int) $page['id']);
+            } catch (Throwable) {
+                // Protected pages should never reach the trash, but skip
+                // rather than abort the whole bulk-empty if one ever does.
+                continue;
+            }
         }
         header('Location: /admin/pages/trash');
         exit;

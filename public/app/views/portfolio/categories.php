@@ -2,8 +2,8 @@
 
 declare(strict_types=1);
 
-$pageTitle = 'Art Media | Augment Humankind Portfolio';
-$pageDescription = 'Explore the art media that organize pieces within the Augment Humankind portfolio.';
+$pageTitle = 'Art Media | ' . app_site_name() . ' Portfolio';
+$pageDescription = 'Explore the art media that organize pieces within the ' . app_site_name() . ' portfolio.';
 $ogImage = $categories[0]['thumbnail_value'] ?? null;
 $canonicalUrl = seo_absolute_url('/portfolio/art-media');
 $bodyClass = bodyClass('portfolio-categories');
