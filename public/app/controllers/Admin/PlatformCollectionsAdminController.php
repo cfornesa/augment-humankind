@@ -68,6 +68,7 @@ class PlatformCollectionsAdminController
         }
 
         try {
+            $sortOrder = isset($_POST['sort_order']) ? max(0, (int) $_POST['sort_order'] - 1) : 0;
             $id = PlatformCollection::create([
                 'name' => $name,
                 'slug' => self::uniqueSlug($slug, null),
@@ -79,6 +80,7 @@ class PlatformCollectionsAdminController
                 'iframe_code' => trim($_POST['iframe_code'] ?? '') ?: null,
                 'comments_enabled' => isset($_POST['comments_enabled']) ? 1 : 0,
             ]);
+            reorder_shift_position($id, $sortOrder, 'platform_collections');
 
             $items = self::resolveSelectedItems();
             PlatformCollection::syncItems($id, $items);
@@ -138,6 +140,7 @@ class PlatformCollectionsAdminController
         }
 
         try {
+            $sortOrder = isset($_POST['sort_order']) ? max(0, (int) $_POST['sort_order'] - 1) : ($existing['sort_order'] ?? 0);
             $newSlug = self::uniqueSlug($slug, (int) $id);
             PlatformCollection::update((int) $id, [
                 'name' => $name,
@@ -152,6 +155,7 @@ class PlatformCollectionsAdminController
                 'comments_enabled' => isset($_POST['comments_enabled']) ? 1 : 0,
                 'thumbnail_url' => trim($_POST['thumbnail_url'] ?? '') ?: ($existing['thumbnail_url'] ?? null),
             ]);
+            reorder_shift_position((int) $id, $sortOrder, 'platform_collections');
 
             $items = self::resolveSelectedItems();
             PlatformCollection::syncItems((int) $id, $items);

@@ -105,6 +105,9 @@ class PiecesAdminController
             $data = self::resolvePieceData();
             $pieceId = PlatformArtPiece::create($data);
             PlatformArtPiece::syncCategories($pieceId, $data['category_ids']);
+            if ($data['sort_order'] !== null) {
+                reorder_shift_position($pieceId, $data['sort_order'], 'art_pieces');
+            }
 
             $code = self::resolveVersionCodeFromPost();
             if (self::hasAnyVersionCode($code)) {
@@ -166,8 +169,10 @@ class PiecesAdminController
 
         try {
             $data = self::resolvePieceData();
+            $sortOrder = $data['sort_order'] ?? ($existing['sort_order'] ?? 0);
             $data['sort_order'] = (int) ($existing['sort_order'] ?? 0);
             PlatformArtPiece::update((int) $id, $data);
+            reorder_shift_position((int) $id, $sortOrder, 'art_pieces');
             PlatformArtPiece::syncCategories((int) $id, $data['category_ids']);
 
             $code = self::resolveVersionCodeFromPost();
@@ -381,7 +386,7 @@ class PiecesAdminController
             'status' => $status,
             'thumbnail_url' => trim($_POST['thumbnail_url'] ?? '') ?: null,
             'description' => trim($_POST['description'] ?? '') ?: null,
-            'sort_order' => isset($_POST['sort_order']) ? (int) $_POST['sort_order'] : null,
+            'sort_order' => isset($_POST['sort_order']) ? max(0, (int) $_POST['sort_order'] - 1) : null,
             'comments_enabled' => isset($_POST['comments_enabled']) ? 1 : 0,
             'category_ids' => array_map('intval', $_POST['category_ids'] ?? []),
         ];

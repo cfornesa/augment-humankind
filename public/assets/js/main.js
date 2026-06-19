@@ -9,12 +9,17 @@ document.querySelectorAll('tbody[data-reorder-url]').forEach(tbody => {
         row.setAttribute('draggable', 'true');
 
         row.addEventListener('dragstart', e => {
+            if (window.innerWidth <= 1024) {
+                e.preventDefault();
+                return;
+            }
             dragging = row;
             row.classList.add('drag-active');
             e.dataTransfer.effectAllowed = 'move';
         });
 
         row.addEventListener('dragend', () => {
+            if (window.innerWidth <= 1024) return;
             row.classList.remove('drag-active');
             tbody.querySelectorAll('tr').forEach(r => r.classList.remove('drag-over'));
             dragging = null;
@@ -40,6 +45,7 @@ document.querySelectorAll('tbody[data-reorder-url]').forEach(tbody => {
         });
 
         row.addEventListener('dragover', e => {
+            if (window.innerWidth <= 1024) return;
             e.preventDefault();
             if (!dragging || dragging === row) return;
             const rect = row.getBoundingClientRect();
@@ -48,11 +54,15 @@ document.querySelectorAll('tbody[data-reorder-url]').forEach(tbody => {
         });
 
         row.addEventListener('dragenter', e => {
+            if (window.innerWidth <= 1024) return;
             e.preventDefault();
             if (row !== dragging) row.classList.add('drag-over');
         });
 
-        row.addEventListener('dragleave', () => row.classList.remove('drag-over'));
+        row.addEventListener('dragleave', () => {
+            if (window.innerWidth <= 1024) return;
+            row.classList.remove('drag-over');
+        });
     });
 });
 

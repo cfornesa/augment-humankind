@@ -65,16 +65,16 @@ ob_start();
                 <?php foreach ($collections as $collection): ?>
                     <tr data-id="<?= (int) $collection['id'] ?>" data-slug="<?= e($collection['slug'] ?? '') ?>">
                         <td class="drag-handle" title="Drag to reorder">&#8597;</td>
-                        <td>
+                        <td class="cell-thumb">
                             <?php if (!empty($collection['thumbnail_url'])): ?>
                                 <img src="<?= e($collection['thumbnail_url']) ?>" alt="" loading="lazy" style="width: 60px; height: 45px; object-fit: cover;">
                             <?php endif; ?>
                         </td>
-                        <td><?= e($collection['name'] ?? 'Untitled Collection') ?></td>
-                        <td><code><?= e($collection['slug'] ?? '') ?></code></td>
-                        <td><?= (int) ($collection['item_count'] ?? 0) ?></td>
-                        <td><?= e($collection['created_at'] ?? '') ?></td>
-                        <td><?= e($collection['updated_at'] ?? '') ?></td>
+                        <td class="cell-title" data-label="Name"><?= e($collection['name'] ?? 'Untitled Collection') ?></td>
+                        <td data-label="Slug"><code><?= e($collection['slug'] ?? '') ?></code></td>
+                        <td data-label="Items"><?= (int) ($collection['item_count'] ?? 0) ?></td>
+                        <td data-label="Created"><?= e($collection['created_at'] ?? '') ?></td>
+                        <td data-label="Updated"><?= e($collection['updated_at'] ?? '') ?></td>
                         <td class="admin-actions-cell">
                                 <a href="/collections/<?= e($collection['slug'] ?? '') ?>" target="_blank" class="admin-btn admin-btn-sm admin-btn-ghost">View</a>
                                 <a href="/immersive/collections/<?= e($collection['slug'] ?? '') ?>" target="_blank" class="admin-btn admin-btn-sm admin-btn-ghost">Immersive</a>

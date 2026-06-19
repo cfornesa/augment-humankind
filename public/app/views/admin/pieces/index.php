@@ -80,27 +80,27 @@ ob_start();
                             <?php if (!empty($piece['thumbnail_url'])): ?>
                                 <img src="<?= e($piece['thumbnail_url']) ?>" alt="<?= e((string)($piece['thumbnail_alt_text'] ?? $piece['title'] ?? '')) ?>" loading="lazy" style="width: 60px; height: 45px; object-fit: cover; border: 1px solid var(--line); display: block;">
                             <?php else: ?>
-                                <div style="width: 60px; height: 45px; border: 1px dashed var(--line); background: var(--paper); display: flex; align-items: center; justify-content: center; font-size: 10px; color: var(--ink-soft);">None</div>
+                                <div class="empty-thumb-placeholder" data-piece-id="<?= (int) $piece['id'] ?>" style="width: 60px; height: 45px; border: 1px dashed var(--line); background: var(--paper); display: flex; align-items: center; justify-content: center; font-size: 10px; color: var(--ink-soft);">None</div>
                             <?php endif; ?>
                         </td>
-                        <td><?= e($piece['title'] ?? 'Untitled') ?></td>
-                        <td><code><?= (int) $piece['id'] ?></code></td>
-                        <td><?= e(strtoupper($piece['engine'] ?? 'p5')) ?></td>
-                        <td>
+                        <td class="cell-title" data-label="Title"><?= e($piece['title'] ?? 'Untitled') ?></td>
+                        <td data-label="ID"><code><?= (int) $piece['id'] ?></code></td>
+                        <td data-label="Engine"><?= e(strtoupper($piece['engine'] ?? 'p5')) ?></td>
+                        <td data-label="Art Media">
                             <?php if (empty($piece['categories'])): ?>
                                 <span class="admin-hint">None</span>
                             <?php else: ?>
                                 <?= e(implode(', ', array_column($piece['categories'], 'name'))) ?>
                             <?php endif; ?>
                         </td>
-                        <td>
+                        <td data-label="Status">
                             <span class="status-badge status-<?= e($piece['status'] ?? 'active') ?>">
                                 <?= e($piece['status'] ?? 'active') ?>
                             </span>
                         </td>
-                        <td><?= (int) ($piece['version_count'] ?? 0) ?></td>
-                        <td><?= e($piece['created_at'] ?? '') ?></td>
-                        <td><?= e($piece['updated_at'] ?? '') ?></td>
+                        <td data-label="Versions"><?= (int) ($piece['version_count'] ?? 0) ?></td>
+                        <td data-label="Created"><?= e($piece['created_at'] ?? '') ?></td>
+                        <td data-label="Updated"><?= e($piece['updated_at'] ?? '') ?></td>
                         <td class="admin-actions-cell">
                                 <a href="/pieces/<?= (int) $piece['id'] ?>" target="_blank" class="admin-btn admin-btn-sm admin-btn-ghost">View</a>
                                 <a href="/immersive/pieces/<?= (int) $piece['id'] ?>" target="_blank" class="admin-btn admin-btn-sm admin-btn-ghost">Immersive</a>
@@ -200,108 +200,112 @@ ob_start();
         return '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>' + title + '</title>\n<script type="importmap">\n{\n  "imports": {\n    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",\n    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"\n  }\n}\n<\/script>\n<style>\nhtml,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#0d0d0f;color:#fff;}\nbody{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}\n#runtime-root{width:100vw;height:100vh;overflow:hidden;}\n#piece-error{position:fixed;inset:auto 1rem 1rem 1rem;z-index:9999;padding:1rem;border:1px solid #fca5a5;background:#450a0a;color:#fee2e2;font:14px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;display:none;}\ncanvas{display:block;width:100%;height:100%;}\n' + css + '\n</style>\n</head>\n<body>\n<div id="runtime-root">' + html + '</div>\n<div id="piece-error" role="alert"></div>\n<script>\nconst PIECE_ENGINE = ' + jsonEngine + ';\nconst PIECE_CODE = ' + jsonCode + ';\nfunction showPieceError(error) {\n  const el = document.getElementById("piece-error");\n  if (!el) return;\n  el.textContent = (error && (error.stack || error.message)) ? (error.stack || error.message) : String(error);\n  el.style.display = "block";\n}\nwindow.addEventListener("error", (event) => showPieceError(event.error || event.message));\nwindow.addEventListener("unhandledrejection", (event) => showPieceError(event.reason || "Unhandled promise rejection"));\nfunction runPieceCode() {\n  try {\n    const fn = new Function(PIECE_CODE + "\\n//# sourceURL=piece-runtime.js");\n    fn();\n  } catch (error) {\n    showPieceError(error);\n  }\n}\nfunction findCanvas(id) {\n  return document.getElementById(id) || document.querySelector("canvas") || (() => {\n    const canvas = document.createElement("canvas");\n    canvas.id = id;\n    const parent = document.getElementById("canvas-container") || document.getElementById("sketch-container") || document.getElementById("runtime-root");\n    parent.appendChild(canvas);\n    return canvas;\n  })();\n}\nfunction sizeCanvas(canvas) {\n  const w = Math.max(1, canvas.parentElement?.clientWidth || window.innerWidth || 1280);\n  const h = Math.max(1, canvas.parentElement?.clientHeight || window.innerHeight || 720);\n  canvas.width = w;\n  canvas.height = h;\n}\nfunction startFrame(callback) {\n  let count = 0;\n  function tick() {\n    count++;\n    try { callback(count); } catch (error) { showPieceError(error); return; }\n    requestAnimationFrame(tick);\n  }\n  requestAnimationFrame(tick);\n}\nfunction bootCanvasRuntime(extra) {\n  runPieceCode();\n  if (typeof window.sketch !== "function") return;\n  const canvas = findCanvas(PIECE_ENGINE === "c2" ? "c2-canvas" : "scene");\n  canvas.style.cssText = "display:block;width:100%;height:100%;";\n  sizeCanvas(canvas);\n  window.addEventListener("resize", () => sizeCanvas(canvas));\n  try { window.sketch({ canvas, startFrame, ...(extra || {}) }); } catch (error) { showPieceError(error); }\n}\nfunction bootP5() {\n  const script = document.createElement("script");\n  script.src = "https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js";\n  script.onload = () => {\n    runPieceCode();\n    try {\n      if (typeof window.sketch === "function" && typeof window.p5 === "function") {\n        const parent = document.getElementById("canvas-container") || document.getElementById("sketch-container") || document.getElementById("runtime-root");\n        new window.p5(window.sketch, parent);\n      }\n    } catch (error) { showPieceError(error); }\n  };\n  script.onerror = () => showPieceError("Could not load p5.js runtime.");\n  document.head.appendChild(script);\n}\nfunction bootC2() {\n  const script = document.createElement("script");\n  script.src = "https://cdn.jsdelivr.net/npm/c2.js@1.0.9/dist/c2.min.js";\n  script.onload = () => {\n    bootCanvasRuntime({ c2: window.c2 });\n  };\n  script.onerror = () => showPieceError("Could not load c2.js runtime.");\n  document.head.appendChild(script);\n}\nasync function bootThree() {\n  try {\n    const mod = await import("https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js");\n    const { OrbitControls } = await import("https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js");\n    window.THREE = mod;\n    runPieceCode();\n    if (typeof window.sketch !== "function") return;\n    const canvas = findCanvas("scene");\n    canvas.style.cssText = "display:block;width:100%;height:100%;";\n    sizeCanvas(canvas);\n    const state = { scene: null, camera: null, renderer: null };\n    let controls = null;\n    let rafIds = [];\n    const instrumentedThree = { ...mod };\n    instrumentedThree.Scene = class extends mod.Scene {\n      constructor() { super(); state.scene = this; }\n    };\n    instrumentedThree.PerspectiveCamera = class extends mod.PerspectiveCamera {\n      constructor(...args) { super(...args); state.camera = this; }\n    };\n    instrumentedThree.WebGLRenderer = class extends mod.WebGLRenderer {\n      constructor(params) {\n        super({ ...(params || {}), canvas });\n        state.renderer = this;\n        const _origSetSize = this.setSize.bind(this);\n        this.setSize = (w, h) => _origSetSize(w, h, false);\n        const _origRender = this.render.bind(this);\n        this.render = (sc, cam) => {\n          if (sc) state.scene = sc;\n          if (cam) state.camera = cam;\n          return _origRender(sc, cam);\n        };\n      }\n    };\n    const width = canvas.width || window.innerWidth || 1280;\n    const height = canvas.height || window.innerHeight || 720;\n    function autoFit() {\n      if (!state.scene || !state.camera) return;\n      const box = new mod.Box3();\n      state.scene.traverse((obj) => {\n        if (obj.isHelper || obj.isLight || obj.isCamera) return;\n        if (obj.isPoints) return;\n        if (obj.material) {\n          const mat = obj.material;\n          if (mat.side === 1 || (Array.isArray(mat) && mat.some(m => m.side === 1))) return;\n        }\n        const name = (obj.name || "").toLowerCase();\n        if (name.includes("sky") || name.includes("background") || name.includes("env") || name.includes("floor") || name.includes("ground") || name.includes("grid") || name.includes("dome") || name.includes("space") || name.includes("star")) return;\n        if ((obj.isMesh || obj.isLine || obj.isSprite) && obj.geometry) {\n          obj.geometry.computeBoundingBox?.();\n          if (obj.geometry.boundingBox) {\n            const worldBox = obj.geometry.boundingBox.clone().applyMatrix4(obj.matrixWorld);\n            const worldSize = new mod.Vector3();\n            worldBox.getSize(worldSize);\n            if (worldSize.x >= 30 || worldSize.y >= 30 || worldSize.z >= 30) return;\n            if (obj.geometry.type === "PlaneGeometry" || obj.geometry.type === "PlaneBufferGeometry") {\n              if (worldSize.x >= 15 || worldSize.y >= 15 || worldSize.z >= 15) return;\n            }\n            box.union(worldBox);\n          }\n        }\n      });\n      if (box.isEmpty()) return;\n      const center = new mod.Vector3(); box.getCenter(center);\n      const size = new mod.Vector3();   box.getSize(size);\n      if (state.camera.position.lengthSq() > 0.01) {\n        if (controls) { controls.target.copy(center); controls.update(); }\n        return;\n      }\n      const maxDim = Math.max(size.x, size.y, size.z) || 1;\n      const fov = state.camera.fov * (Math.PI / 180);\n      const dist = Math.abs(maxDim / 2 / Math.tan(fov / 2)) * 0.63;\n      state.camera.position.set(center.x + dist, center.y + dist * 0.4, center.z + dist);\n      state.camera.lookAt(center);\n      state.camera.updateMatrixWorld(true);\n      if (controls) { controls.target.copy(center); controls.update(); }\n    }\n    function ensureFallbackLighting() {\n      if (!state.scene?.traverse) return;\n      let hasRealLight = false;\n      let hasFallback = false;\n      const fallbacks = [];\n      state.scene.traverse((obj) => {\n        if (!obj.isLight) return;\n        if (obj.name?.startsWith("__viewer_fallback_")) { hasFallback = true; fallbacks.push(obj); }\n        else hasRealLight = true;\n      });\n      if (hasRealLight) {\n        fallbacks.forEach((obj) => state.scene.remove(obj));\n        return;\n      }\n      if (hasFallback) return;\n      const amb = new mod.AmbientLight(0xffffff, 0.7);\n      amb.name = "__viewer_fallback_ambient__";\n      state.scene.add(amb);\n      const dir = new mod.DirectionalLight(0xffffff, 0.8);\n      dir.position.set(5, 10, 7.5);\n      dir.name = "__viewer_fallback_dir__";\n      state.scene.add(dir);\n    }\n    function startFrame(handler) {\n      let count = 0;\n      function tick() {\n        count++;\n        try { handler(count); } catch (error) { showPieceError(error); return; }\n        if (count === 15) autoFit();\n        const id = requestAnimationFrame(tick);\n        rafIds.push(id);\n      }\n      const id = requestAnimationFrame(tick);\n      rafIds.push(id);\n      return () => { rafIds.forEach((rafId) => cancelAnimationFrame(rafId)); rafIds = []; };\n    }\n    window.THREE = instrumentedThree;\n    window.sketch({ THREE: instrumentedThree, canvas, startFrame, width, height, size: { width, height }, OrbitControls });\n    ensureFallbackLighting();\n    autoFit();\n\n    if (state.camera && state.renderer) {\n      controls = new OrbitControls(state.camera, canvas);\n      controls.enableDamping = true;\n      controls.enablePan = true;\n      const camDir = new mod.Vector3();\n      state.camera.getWorldDirection(camDir);\n      const camLen = state.camera.position.length();\n      controls.target.copy(state.camera.position).addScaledVector(camDir, Math.max(camLen * 0.8, 3));\n      autoFit();\n      controls.update();\n\n      let consecutiveErrors = 0;\n      const animateControls = () => {\n        const id = requestAnimationFrame(animateControls);\n        rafIds.push(id);\n        try {\n          ensureFallbackLighting();\n          controls.update();\n          state.renderer.render(state.scene, state.camera);\n          consecutiveErrors = 0;\n        } catch (renderError) {\n          consecutiveErrors++;\n          if (consecutiveErrors === 1) showPieceError(renderError);\n          if (consecutiveErrors >= 5) cancelAnimationFrame(id);\n        }\n      };\n      animateControls();\n    }\n\n    window.addEventListener("resize", () => {\n      sizeCanvas(canvas);\n      if (state.renderer && state.camera) {\n        state.camera.aspect = canvas.width / canvas.height;\n        state.camera.updateProjectionMatrix();\n        state.renderer.setSize(canvas.width, canvas.height, false);\n      }\n    });\n\n    window.parent.postMessage({ type: "sketch-status", valid: true }, "*");\n  } catch (error) {\n    showPieceError(error);\n  }\n}\nif (PIECE_ENGINE === "p5") {\n  bootP5();\n} else if (PIECE_ENGINE === "three") {\n  bootThree();\n} else if (PIECE_ENGINE === "c2") {\n  bootC2();\n} else {\n  runPieceCode();\n  if (typeof window.sketch === "function") {\n    try { window.sketch(); } catch (error) { showPieceError(error); }\n  }\n}\n<\/script>\n</body>\n</html>';
     }
 
-    // Register click via event delegation on document
-    document.addEventListener('click', async function (event) {
-        var btnIndividual = event.target.closest('.btn-capture-piece-thumb');
+    // Reusable core capture and upload routine
+    async function runCaptureForId(id, cellThumb, btnIndividual) {
+        var originalText = btnIndividual ? btnIndividual.textContent : '';
         if (btnIndividual) {
-            event.preventDefault();
-            var id = btnIndividual.dataset.id;
-            var row = btnIndividual.closest('tr');
-            var cellThumb = row.querySelector('.cell-thumb');
-            var originalText = btnIndividual.textContent;
             btnIndividual.disabled = true;
             btnIndividual.textContent = 'Generating…';
             btnIndividual.style.color = 'var(--ink-soft)';
+        }
+        if (cellThumb) {
+            cellThumb.style.opacity = '0.5';
+            var placeholder = cellThumb.querySelector('.empty-thumb-placeholder');
+            if (placeholder) {
+                placeholder.textContent = 'Capturing…';
+            }
+        }
 
-            var captureFrame = null;
+        var captureFrame = null;
+        try {
+            // Fetch piece details
+            var resp = await fetch('/embed/pieces/' + id + '/data');
+            if (!resp.ok) {
+                throw new Error('Fetch failed: ' + resp.status);
+            }
+            var data = await resp.json();
 
-            try {
-                // Fetch piece details
-                var resp = await fetch('/embed/pieces/' + id + '/data');
-                if (!resp.ok) {
-                    throw new Error('Fetch failed: ' + resp.status);
-                }
-                var data = await resp.json();
+            if (!data.generatedCode && !data.htmlCode) {
+                throw new Error('This piece has no code yet — open it in Edit and add JS/HTML before generating a thumbnail.');
+            }
 
-                if (!data.generatedCode && !data.htmlCode) {
-                    throw new Error('This piece has no code yet — open it in Edit and add JS before generating a thumbnail.');
-                }
+            var srcdoc = renderDocumentJS(
+                data.title || 'Art piece',
+                data.engine || 'p5',
+                data.htmlCode || '',
+                data.cssCode || '',
+                data.generatedCode || ''
+            );
 
-                var srcdoc = renderDocumentJS(
-                    data.title || 'Art piece',
-                    data.engine || 'p5',
-                    data.htmlCode || '',
-                    data.cssCode || '',
-                    data.generatedCode || ''
+            // Inject preserveDrawingBuffer:true for Three.js
+            if (data.engine === 'three') {
+                srcdoc = srcdoc.replace(
+                    'super({ ...(params || {}), canvas });',
+                    'super({ ...(params || {}), canvas, preserveDrawingBuffer: true });'
                 );
+            }
 
-                // Inject preserveDrawingBuffer:true for Three.js
-                if (data.engine === 'three') {
-                    srcdoc = srcdoc.replace(
-                        'super({ ...(params || {}), canvas });',
-                        'super({ ...(params || {}), canvas, preserveDrawingBuffer: true });'
-                    );
-                }
+            // Mount off-screen iframe
+            captureFrame = document.createElement('iframe');
+            captureFrame.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:960px;height:540px;border:none;';
+            captureFrame.sandbox = 'allow-scripts allow-same-origin';
+            document.body.appendChild(captureFrame);
 
-                // Mount off-screen iframe
-                captureFrame = document.createElement('iframe');
-                captureFrame.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:960px;height:540px;border:none;';
-                captureFrame.sandbox = 'allow-scripts allow-same-origin';
-                document.body.appendChild(captureFrame);
+            captureFrame.srcdoc = srcdoc;
+            await new Promise(function (resolve) {
+                captureFrame.onload = resolve;
+                setTimeout(resolve, 800);
+            });
 
-                captureFrame.srcdoc = srcdoc;
-                await new Promise(function (resolve) {
-                    captureFrame.onload = resolve;
-                    setTimeout(resolve, 800);
-                });
+            // Three.js loads ~1MB from CDN cold; give it an extra head-start before polling
+            var initialWait = (data.engine === 'three') ? 6000 : 500;
+            await new Promise(function (resolve) { setTimeout(resolve, initialWait); });
 
-                // Three.js loads ~1MB from CDN cold; give it an extra head-start before polling
-                var initialWait = (data.engine === 'three') ? 6000 : 500;
-                await new Promise(function (resolve) { setTimeout(resolve, initialWait); });
-
-                // Poll for canvas/svg up to ~20s to allow CDN runtimes to load and render
-                var canvas = null;
-                for (var attempt = 0; attempt < 40 && !canvas; attempt++) {
-                    await new Promise(function (resolve) { setTimeout(resolve, 500); });
-                    var iframeDoc = captureFrame.contentDocument;
-                    canvas = iframeDoc && iframeDoc.querySelector('canvas');
-                    if (!canvas) {
-                        var svg = iframeDoc && iframeDoc.querySelector('svg');
-                        if (svg) {
-                            canvas = await convertSvgToCanvas(svg, 960, 540);
-                        }
+            // Poll for canvas/svg up to ~20s to allow CDN runtimes to load and render
+            var canvas = null;
+            for (var attempt = 0; attempt < 40 && !canvas; attempt++) {
+                await new Promise(function (resolve) { setTimeout(resolve, 500); });
+                var iframeDoc = captureFrame.contentDocument;
+                canvas = iframeDoc && iframeDoc.querySelector('canvas');
+                if (!canvas) {
+                    var svg = iframeDoc && iframeDoc.querySelector('svg');
+                    if (svg) {
+                        canvas = await convertSvgToCanvas(svg, 960, 540);
                     }
                 }
+            }
 
-                if (!canvas) {
-                    throw new Error('No canvas or svg element found after waiting. The piece code may have an error, or the runtime did not finish loading.');
-                }
+            if (!canvas) {
+                throw new Error('No canvas or svg element found after waiting.');
+            }
 
-                var imageData = canvas.toDataURL('image/png');
-                document.body.removeChild(captureFrame);
-                captureFrame = null;
+            var imageData = canvas.toDataURL('image/png');
+            document.body.removeChild(captureFrame);
+            captureFrame = null;
 
-                // Upload
-                var formData = new FormData();
-                formData.append('image_data', imageData);
+            // Upload
+            var formData = new FormData();
+            formData.append('image_data', imageData);
 
-                var uploadResp = await fetch('/admin/pieces/' + id + '/capture-thumbnail', {
-                    method: 'POST',
-                    body: formData
-                });
+            var uploadResp = await fetch('/admin/pieces/' + id + '/capture-thumbnail', {
+                method: 'POST',
+                body: formData
+            });
 
-                if (!uploadResp.ok) {
-                    var err = await uploadResp.json();
-                    throw new Error(err.error || 'Server error');
-                }
+            if (!uploadResp.ok) {
+                var err = await uploadResp.json();
+                throw new Error(err.error || 'Server error');
+            }
 
-                var res = await uploadResp.json();
-                
-                // Update cell thumbnail
-                if (cellThumb) {
-                    cellThumb.innerHTML = '<img src="' + res.url + '?t=' + Date.now() + '" alt="" loading="lazy" style="width: 60px; height: 45px; object-fit: cover; border: 1px solid var(--line); display: block;">';
-                }
-                
+            var res = await uploadResp.json();
+            
+            // Update cell thumbnail
+            if (cellThumb) {
+                cellThumb.innerHTML = '<img src="' + res.url + '?t=' + Date.now() + '" alt="" loading="lazy" style="width: 60px; height: 45px; object-fit: cover; border: 1px solid var(--line); display: block;">';
+                cellThumb.style.opacity = '';
+            }
+            
+            if (btnIndividual) {
                 btnIndividual.textContent = 'Generated!';
                 btnIndividual.style.color = 'var(--green)';
                 setTimeout(function () {
@@ -309,9 +313,17 @@ ob_start();
                     btnIndividual.style.color = '';
                     btnIndividual.disabled = false;
                 }, 3000);
-            } catch (err) {
-                console.error('Individual capture failed for ID ' + id + ':', err);
-                alert('Thumbnail generation failed: ' + err.message);
+            }
+        } catch (err) {
+            console.error('Capture failed for ID ' + id + ':', err);
+            if (cellThumb) {
+                cellThumb.style.opacity = '';
+                var placeholder = cellThumb.querySelector('.empty-thumb-placeholder');
+                if (placeholder) {
+                    placeholder.textContent = 'Failed';
+                }
+            }
+            if (btnIndividual) {
                 btnIndividual.textContent = 'Failed';
                 btnIndividual.style.color = 'var(--red)';
                 setTimeout(function () {
@@ -319,9 +331,27 @@ ob_start();
                     btnIndividual.style.color = '';
                     btnIndividual.disabled = false;
                 }, 3000);
-                if (captureFrame && captureFrame.parentNode) {
-                    document.body.removeChild(captureFrame);
-                }
+            }
+            throw err;
+        } finally {
+            if (captureFrame && captureFrame.parentNode) {
+                document.body.removeChild(captureFrame);
+            }
+        }
+    }
+
+    // Register click via event delegation on document
+    document.addEventListener('click', async function (event) {
+        var btnIndividual = event.target.closest('.btn-capture-piece-thumb');
+        if (btnIndividual) {
+            event.preventDefault();
+            var id = btnIndividual.dataset.id;
+            var row = btnIndividual.closest('tr');
+            var cellThumb = row ? row.querySelector('.cell-thumb') : null;
+            try {
+                await runCaptureForId(id, cellThumb, btnIndividual);
+            } catch (err) {
+                alert('Thumbnail generation failed: ' + err.message);
             }
             return;
         }
@@ -369,86 +399,12 @@ ob_start();
             console.log('Regenerating piece ' + (i + 1) + '/' + pieceIds.length + ' (ID: ' + id + ')');
             status.textContent = 'Processing ' + (i + 1) + '/' + pieceIds.length + ' (ID: ' + id + ')';
 
+            var row = document.querySelector('tbody tr[data-id="' + id + '"]');
+            var cellThumb = row ? row.querySelector('.cell-thumb') : null;
+            var btnIndividual = row ? row.querySelector('.btn-capture-piece-thumb') : null;
+
             try {
-                // Fetch piece details
-                var resp = await fetch('/embed/pieces/' + id + '/data');
-                if (!resp.ok) {
-                    throw new Error('Fetch failed: ' + resp.status);
-                }
-                var data = await resp.json();
-
-                if (!data.generatedCode && !data.htmlCode) {
-                    throw new Error('No code');
-                }
-
-                var srcdoc = renderDocumentJS(
-                    data.title || 'Art piece',
-                    data.engine || 'p5',
-                    data.htmlCode || '',
-                    data.cssCode || '',
-                    data.generatedCode || ''
-                );
-
-                // Inject preserveDrawingBuffer:true for Three.js
-                if (data.engine === 'three') {
-                    srcdoc = srcdoc.replace(
-                        'super({ ...(params || {}), canvas });',
-                        'super({ ...(params || {}), canvas, preserveDrawingBuffer: true });'
-                    );
-                }
-
-                // Mount off-screen iframe
-                var captureFrame = document.createElement('iframe');
-                captureFrame.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:960px;height:540px;border:none;';
-                captureFrame.sandbox = 'allow-scripts allow-same-origin';
-                document.body.appendChild(captureFrame);
-
-                captureFrame.srcdoc = srcdoc;
-                await new Promise(function (resolve) {
-                    captureFrame.onload = resolve;
-                    setTimeout(resolve, 800);
-                });
-
-                // Three.js loads ~1MB from CDN cold; give it an extra head-start before polling
-                var initialWait = (data.engine === 'three') ? 6000 : 500;
-                await new Promise(function (resolve) { setTimeout(resolve, initialWait); });
-
-                // Poll for canvas/svg up to ~20s
-                var canvas = null;
-                for (var attempt = 0; attempt < 40 && !canvas; attempt++) {
-                    await new Promise(function (resolve) { setTimeout(resolve, 500); });
-                    var iframeDoc = captureFrame.contentDocument;
-                    canvas = iframeDoc && iframeDoc.querySelector('canvas');
-                    if (!canvas) {
-                        var svg = iframeDoc && iframeDoc.querySelector('svg');
-                        if (svg) {
-                            canvas = await convertSvgToCanvas(svg, 960, 540);
-                        }
-                    }
-                }
-
-                if (!canvas) {
-                    throw new Error('No canvas or svg element found');
-                }
-
-                var imageData = canvas.toDataURL('image/png');
-                document.body.removeChild(captureFrame);
-
-                // Upload
-                var formData = new FormData();
-                formData.append('image_data', imageData);
-
-                var uploadResp = await fetch('/admin/pieces/' + id + '/capture-thumbnail', {
-                    method: 'POST',
-                    body: formData
-                });
-
-                if (!uploadResp.ok) {
-                    var err = await uploadResp.json();
-                    throw new Error(err.error || 'Server error');
-                }
-
-                console.log('Successfully regenerated thumbnail for piece ID ' + id);
+                await runCaptureForId(id, cellThumb, btnIndividual);
                 successCount++;
             } catch (err) {
                 console.error('Failed for piece ID ' + id + ':', err);
@@ -463,12 +419,34 @@ ob_start();
         status.textContent = 'Done! Success: ' + successCount + ', Failed: ' + failCount;
         btnRegen.disabled = false;
         btnRegen.textContent = 'Regenerate All Thumbnails';
+    });
 
-        if (successCount > 0) {
-            setTimeout(function () {
-                window.location.reload();
-            }, 2000);
+    // Sequential Auto-Capture Queue for empty placeholders
+    async function runAutoCaptureQueue() {
+        var placeholders = Array.from(document.querySelectorAll('.empty-thumb-placeholder'));
+        if (placeholders.length === 0) return;
+        
+        console.log('Auto-capture queue started for ' + placeholders.length + ' placeholder(s).');
+        for (var i = 0; i < placeholders.length; i++) {
+            var placeholder = placeholders[i];
+            var id = placeholder.dataset.pieceId;
+            var cellThumb = placeholder.closest('.cell-thumb');
+            var row = placeholder.closest('tr');
+            var btnIndividual = row ? row.querySelector('.btn-capture-piece-thumb') : null;
+
+            try {
+                await runCaptureForId(id, cellThumb, btnIndividual);
+            } catch (err) {
+                console.error('Auto-capture failed for piece ID ' + id + ':', err);
+            }
+            await new Promise(function (resolve) { setTimeout(resolve, 500); });
         }
+        console.log('Auto-capture queue complete.');
+    }
+
+    // Run queue on load (after a short delay to let page settle)
+    window.addEventListener('load', function () {
+        setTimeout(runAutoCaptureQueue, 1000);
     });
 })();
 </script>

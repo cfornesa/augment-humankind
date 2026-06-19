@@ -38,6 +38,11 @@ ob_start();
             <textarea name="description" rows="5" data-tiptap><?= htmlspecialchars($collection['description'] ?? '') ?></textarea>
         </div>
 
+        <div class="form-row">
+            <label>Sort Order</label>
+            <input type="number" name="sort_order" min="1" value="<?= (int) ($collection['sort_order'] ?? 0) + 1 ?>">
+        </div>
+
         <!-- Thumbnail -->
         <fieldset class="form-fieldset">
             <legend>Thumbnail <span class="form-hint">(optional)</span></legend>

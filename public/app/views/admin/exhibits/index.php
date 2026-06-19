@@ -54,17 +54,17 @@ ob_start();
                 <?php foreach ($exhibits as $ex): ?>
                     <tr data-id="<?= $ex['id'] ?>">
                         <td class="drag-handle" title="Drag to reorder">&#8597;</td>
-                        <td>
+                        <td class="cell-title" data-label="Title">
                             <a href="/portfolio/exhibit/<?= htmlspecialchars($ex['slug']) ?>" target="_blank">
                                 <?= htmlspecialchars($ex['title']) ?>
                             </a>
                         </td>
-                        <td><?= htmlspecialchars($ex['year'] ?? '') ?></td>
-                        <td><?= htmlspecialchars(implode(', ', array_column($ex['categories'] ?? [], 'name')) ?: '—') ?></td>
-                        <td><?= htmlspecialchars(implode(', ', array_column($ex['collections'] ?? [], 'name')) ?: '—') ?></td>
-                        <td><?= count($ex['media_items'] ?? Exhibit::resolvedMediaItems($ex)) ?></td>
-                        <td><?= htmlspecialchars($ex['created_at'] ?? '') ?></td>
-                        <td class="admin-actions">
+                        <td data-label="Year"><?= htmlspecialchars($ex['year'] ?? '') ?></td>
+                        <td data-label="Category"><?= htmlspecialchars(implode(', ', array_column($ex['categories'] ?? [], 'name')) ?: '—') ?></td>
+                        <td data-label="Collection"><?= htmlspecialchars(implode(', ', array_column($ex['collections'] ?? [], 'name')) ?: '—') ?></td>
+                        <td data-label="Slides"><?= count($ex['media_items'] ?? Exhibit::resolvedMediaItems($ex)) ?></td>
+                        <td data-label="Created"><?= htmlspecialchars($ex['created_at'] ?? '') ?></td>
+                        <td class="admin-actions admin-actions-cell">
                             <a href="/admin/exhibits/<?= $ex['id'] ?>/edit">Edit</a>
                             <form method="POST" action="/admin/exhibits/<?= $ex['id'] ?>/delete"
                                   onsubmit="return confirm('Move this exhibit to the recycle bin?')">

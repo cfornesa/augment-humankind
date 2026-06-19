@@ -108,6 +108,10 @@ ob_start();
                 <label>Grid Columns</label>
                 <input type="number" name="cols" min="1" max="20" value="<?= (int) ($collection['cols'] ?? 1) ?>">
             </div>
+            <div class="form-row" style="flex: 1;">
+                <label>Sort Order</label>
+                <input type="number" name="sort_order" min="1" value="<?= (int) ($collection['sort_order'] ?? 0) + 1 ?>">
+            </div>
         </div>
 
         <div class="form-row">

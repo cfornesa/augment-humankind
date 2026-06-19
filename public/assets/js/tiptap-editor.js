@@ -283,7 +283,7 @@ const ContentCardNode = Node.create({
 
 // ─── Custom: Link with title attribute ───────────────────────────────────────
 
-const LinkWithTitle = Link.configure({ openOnClick: false }).extend({
+const LinkWithTitle = Link.extend({
   addAttributes() {
     return {
       ...this.parent?.(),
@@ -304,7 +304,7 @@ const LinkWithTitle = Link.configure({ openOnClick: false }).extend({
       },
     }
   },
-})
+}).configure({ openOnClick: false })
 
 // ─── Custom: Image with NodeView edit button ──────────────────────────────────
 // The NodeView wraps the image in a relative-positioned container and overlays
@@ -580,6 +580,7 @@ function initTiptap(textarea) {
   iframeNotice.appendChild(iframeNoticeActions)
 
   // ── Floating link trigger + popover (appended to body, position:fixed) ──────
+  let activeLinkEl = null
   const linkTrigger = document.createElement('button')
   linkTrigger.type = 'button'
   linkTrigger.className = 'tiptap-link-trigger'
@@ -630,11 +631,29 @@ function initTiptap(textarea) {
     const rect = anchorEl.getBoundingClientRect()
     linkPopover.style.left = rect.left + 'px'
     linkPopover.style.top  = (rect.bottom + 4) + 'px'
-    const attrs = editor.getAttributes('link')
-    linkHrefInput.value  = attrs.href  || ''
-    linkTitleInput.value = attrs.title || ''
-    linkAltInput.value   = attrs.alt   || ''
-    linkTargetSelect.value = attrs.target || '_self'
+    
+    let href = ''
+    let title = ''
+    let alt = ''
+    let target = '_self'
+
+    if (activeLinkEl) {
+      href = activeLinkEl.getAttribute('href') || ''
+      title = activeLinkEl.getAttribute('title') || ''
+      alt = activeLinkEl.getAttribute('alt') || ''
+      target = activeLinkEl.getAttribute('target') || '_self'
+    } else {
+      const attrs = editor.getAttributes('link')
+      href  = attrs.href  || ''
+      title = attrs.title || ''
+      alt   = attrs.alt   || ''
+      target = attrs.target || '_self'
+    }
+
+    linkHrefInput.value  = href
+    linkTitleInput.value = title
+    linkAltInput.value   = alt
+    linkTargetSelect.value = target
     linkPopover.hidden = false
     linkPopoverOpen = true
     linkHrefInput.focus()
@@ -652,13 +671,15 @@ function initTiptap(textarea) {
       let node = domInfo.node
       if (node.nodeType === 3) node = node.parentNode // text node → parent
       while (node && node.tagName !== 'A' && node !== editorDiv) node = node.parentNode
-      if (!node || node.tagName !== 'A') { linkTrigger.hidden = true; return }
+      if (!node || node.tagName !== 'A') { linkTrigger.hidden = true; activeLinkEl = null; return }
+      activeLinkEl = node
       const rect = node.getBoundingClientRect()
       linkTrigger.style.left = (rect.right + 3) + 'px'
       linkTrigger.style.top  = (rect.top + (rect.height - 20) / 2) + 'px'
       linkTrigger.hidden = false
     } catch {
       linkTrigger.hidden = true
+      activeLinkEl = null
     }
   }
 
@@ -675,6 +696,8 @@ function initTiptap(textarea) {
     const target = linkTargetSelect.value || null
     if (!href) {
       editor.chain().focus().extendMarkRange('link').unsetLink().run()
+      linkTrigger.hidden = true
+      activeLinkEl = null
     } else {
       editor.chain().focus().extendMarkRange('link').setLink({ href, target, title, alt }).run()
     }
@@ -683,6 +706,8 @@ function initTiptap(textarea) {
 
   linkRemoveBtn.addEventListener('click', () => {
     editor.chain().focus().extendMarkRange('link').unsetLink().run()
+    linkTrigger.hidden = true
+    activeLinkEl = null
     closeLinkPopover()
   })
 
@@ -693,10 +718,21 @@ function initTiptap(textarea) {
     })
   })
 
-  // Close link popover when clicking outside
+  // Close link popover and hide link trigger when clicking outside
   document.addEventListener('click', e => {
-    if (linkPopoverOpen && !linkTrigger.contains(e.target) && !linkPopover.contains(e.target)) {
+    const clickedInsideEditor = editorDiv.contains(e.target)
+    const clickedPopover = linkPopover.contains(e.target)
+    const clickedTrigger = linkTrigger.contains(e.target)
+    const clickedToolbar = e.target.closest('.tiptap-toolbar')
+
+    if (!clickedInsideEditor && !clickedPopover && !clickedTrigger && !clickedToolbar) {
       closeLinkPopover()
+      linkTrigger.hidden = true
+      activeLinkEl = null
+    } else if (linkPopoverOpen && !clickedTrigger && !clickedPopover) {
+      closeLinkPopover()
+      linkTrigger.hidden = true
+      activeLinkEl = null
     }
   })
 
@@ -1009,11 +1045,46 @@ function initTiptap(textarea) {
     if (sourceMode) return
     syncToolbar()
     if (editor.isActive('link')) positionLinkTrigger()
-    else { linkTrigger.hidden = true; if (!linkPopoverOpen) closeLinkPopover() }
+    else { linkTrigger.hidden = true; activeLinkEl = null; if (!linkPopoverOpen) closeLinkPopover() }
   })
   editor.on('transaction', () => { if (!sourceMode) syncToolbar() })
 
-  editor.on('destroy', () => { linkTrigger.remove(); linkPopover.remove() })
+  editor.on('blur', () => {
+    setTimeout(() => {
+      const activeEl = document.activeElement
+      if (
+        activeEl &&
+        (linkTrigger.contains(activeEl) ||
+         linkPopover.contains(activeEl) ||
+         activeEl === linkTrigger ||
+         activeEl === linkPopover)
+      ) {
+        return
+      }
+      if (!linkPopoverOpen) {
+        linkTrigger.hidden = true
+        activeLinkEl = null
+      }
+    }, 150)
+  })
+
+  const onScroll = () => {
+    if (!linkPopoverOpen) {
+      linkTrigger.hidden = true
+      activeLinkEl = null
+    } else {
+      closeLinkPopover()
+      linkTrigger.hidden = true
+      activeLinkEl = null
+    }
+  }
+  window.addEventListener('scroll', onScroll, { passive: true })
+
+  editor.on('destroy', () => {
+    linkTrigger.remove()
+    linkPopover.remove()
+    window.removeEventListener('scroll', onScroll)
+  })
 
   // ── Assemble ─────────────────────────────────────────────────────────────
   wrap.appendChild(bar)

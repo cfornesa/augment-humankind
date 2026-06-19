@@ -2707,3 +2707,19 @@ Two consecutive bug-fix passes against live user reports, each verified against 
 
 ### Verification
 - JS and PHP syntax validation completed successfully.
+
+## 2026-06-19 — Admin Table Fluidity and TipTap Link Editor Refinements
+
+### Fluid-Actions Table Layout
+- Removed the hardcoded `min-width: 950px` on desktop admin tables in `admin.css`.
+- Added a `min-width: 280px` constraint on the Actions column (`.admin-actions-cell`) on desktop, allowing action buttons to layout side-by-side and wrap cleanly across multiple lines.
+- Set table min-width to `0 !important` and override mobile actions cell min-width to `0 !important` in the mobile media query, preventing card components from overflowing the 100% viewport width.
+
+### TipTap Link Editor Cleanup
+- Integrated a `blur` event listener in `tiptap-editor.js` to automatically hide the floating link trigger pencil icon (`linkTrigger`) and clear active link references after a 150ms timeout (unless focus moves inside the popover or trigger).
+- Added a window `scroll` event listener that immediately closes the popover and hides the floating trigger button on scroll.
+- Hardened update/remove button event handlers to immediately hide the floating trigger and reset active link state when a link mark is cleared.
+
+### Verification
+- JS syntax check for `tiptap-editor.js` completed successfully.
+

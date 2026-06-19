@@ -46,6 +46,7 @@ class PortfolioAdminController
         try {
             $data = self::resolveExhibitData(null);
             $exhibitId = Exhibit::create($data);
+            reorder_shift_position($exhibitId, $data['sort_order'], 'exhibits');
             ExhibitMediaItem::syncForExhibit($exhibitId, $data['media_items']);
             Collection::syncForExhibit($exhibitId, $data['collection_ids']);
             header('Location: /admin/exhibits');
@@ -76,10 +77,18 @@ class PortfolioAdminController
     public static function exhibitUpdate(string $id): void
     {
         admin_check();
+        $existing = Exhibit::find((int) $id);
+        if (!$existing) {
+            header('Location: /admin/exhibits');
+            exit;
+        }
 
         try {
             $data = self::resolveExhibitData((int) $id);
+            $sortOrder = $data['sort_order'];
+            $data['sort_order'] = (int) ($existing['sort_order'] ?? 0); // Keep it temporarily to prevent duplicate order during UPDATE
             Exhibit::update((int) $id, $data);
+            reorder_shift_position((int) $id, $sortOrder, 'exhibits');
             ExhibitMediaItem::syncForExhibit((int) $id, $data['media_items']);
             Collection::syncForExhibit((int) $id, $data['collection_ids']);
             header('Location: /admin/exhibits');
@@ -356,15 +365,17 @@ class PortfolioAdminController
 
         try {
             [$thumbType, $thumbValue] = self::resolveThumbnail(null);
+            $sortOrder = isset($_POST['sort_order']) ? max(0, (int) $_POST['sort_order'] - 1) : 0;
             $id = Collection::create([
                 'name' => $name,
                 'slug' => self::resolvedCollectionSlug($name, null),
                 'description' => trim($_POST['description'] ?? ''),
                 'thumbnail_type' => $thumbType,
                 'thumbnail_value' => $thumbValue,
-                'sort_order' => 0,
+                'sort_order' => $sortOrder,
                 'comments_enabled' => isset($_POST['comments_enabled']) ? 1 : 0,
             ]);
+            reorder_shift_position($id, $sortOrder, 'collections');
             Collection::syncExhibits($id, array_map('intval', $_POST['exhibit_ids'] ?? []));
             header('Location: /admin/exhibit-collections');
         } catch (Throwable $e) {
@@ -457,6 +468,7 @@ class PortfolioAdminController
         }
 
         try {
+            $sortOrder = isset($_POST['sort_order']) ? max(0, (int) $_POST['sort_order'] - 1) : ($existing['sort_order'] ?? 0);
             [$thumbType, $thumbValue] = self::resolveThumbnail($existing);
             Collection::update((int) $id, [
                 'name' => $name,
@@ -467,6 +479,7 @@ class PortfolioAdminController
                 'sort_order' => (int) ($existing['sort_order'] ?? 0),
                 'comments_enabled' => isset($_POST['comments_enabled']) ? 1 : 0,
             ]);
+            reorder_shift_position((int) $id, $sortOrder, 'collections');
             Collection::syncExhibits((int) $id, array_map('intval', $_POST['exhibit_ids'] ?? []));
             header('Location: /admin/exhibit-collections');
         } catch (Throwable $e) {
@@ -532,7 +545,7 @@ class PortfolioAdminController
             'placard_notes' => trim($_POST['placard_notes'] ?? ''),
             'thumbnail_type' => $thumbType,
             'thumbnail_value' => $thumbValue,
-            'sort_order' => (int) ($_POST['sort_order'] ?? 0),
+            'sort_order' => max(0, (int) ($_POST['sort_order'] ?? 1) - 1),
             'comments_enabled' => isset($_POST['comments_enabled']) ? 1 : 0,
             'media_items' => $mediaItems,
             'collection_ids' => array_map('intval', $_POST['collection_ids'] ?? []),

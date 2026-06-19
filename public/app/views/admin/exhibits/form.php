@@ -88,7 +88,7 @@ ob_start();
 
         <div class="form-row">
             <label>Sort Order</label>
-            <input type="number" name="sort_order" value="<?= (int) ($exhibit['sort_order'] ?? 0) ?>" min="0">
+            <input type="number" name="sort_order" value="<?= (int) ($exhibit['sort_order'] ?? 0) + 1 ?>" min="1">
         </div>
 
         <fieldset class="form-fieldset">

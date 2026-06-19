@@ -288,10 +288,12 @@
     flex-wrap: wrap;
     gap: 0.35rem;
     align-items: center;
+    min-width: 280px;
 }
 
 .admin-table-wrap {
     width: 100%;
+    max-width: 100%;
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
 }
@@ -503,6 +505,7 @@ tr.drag-over td {
 .admin-container {
     display: grid;
     gap: 2rem;
+    min-width: 0;
 }
 
 .admin-container h1,
@@ -1320,7 +1323,7 @@ dialog.inline-create-dialog::backdrop {
     flex-wrap: wrap;
 }
 
-@media (max-width: 860px) {
+@media (max-width: 1024px) {
     .admin-chrome {
         grid-template-columns: 1fr;
         width: min(calc(100% - 1rem), 90rem);
@@ -1352,9 +1355,130 @@ dialog.inline-create-dialog::backdrop {
         align-items: stretch;
     }
 
-    .admin-table {
+    /* Table to Card responsive transformations */
+    .admin-table-wrap .admin-table {
+        min-width: 0 !important;
+    }
+
+    .admin-table,
+    .admin-table tbody,
+    .admin-table tr,
+    .admin-table td {
         display: block;
-        overflow-x: auto;
+        width: 100% !important;
+        box-sizing: border-box;
+    }
+    
+    .admin-table thead {
+        display: none;
+    }
+    
+    .admin-table tr {
+        border: 3px solid var(--line);
+        background: var(--white);
+        box-shadow: 4px 4px 0 var(--line);
+        padding: 1.25rem;
+        margin-bottom: 1.5rem;
+        position: relative;
+    }
+    
+    .admin-table td {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 0.6rem 0;
+        border-bottom: 1px solid var(--paper-deep);
+        min-height: 2.2rem;
+    }
+    
+    .admin-table td:last-child {
+        border-bottom: none;
+    }
+
+    /* Column Headers via data-label */
+    .admin-table td[data-label]::before {
+        content: attr(data-label);
+        font-weight: 800;
+        color: var(--ink-soft);
+        text-transform: uppercase;
+        font-size: 0.75rem;
+        margin-right: 1rem;
+    }
+
+    /* Drag Handle position */
+    .admin-table td.drag-handle {
+        display: block;
+        position: absolute;
+        top: 0.5rem;
+        right: 0.75rem;
+        width: auto !important;
+        font-size: 1.4rem;
+        cursor: grab;
+        border: none;
+        padding: 0;
+        min-height: 0;
+    }
+
+    /* Thumbnail display as full-width banner at the top of the card */
+    .admin-table td.cell-thumb {
+        display: block;
+        padding: 0;
+        border: none;
+        margin-bottom: 1rem;
+        margin-top: 0.5rem;
+    }
+    .admin-table td.cell-thumb img {
+        width: 100% !important;
+        height: auto !important;
+        max-height: 220px !important;
+        aspect-ratio: 16/9;
+        object-fit: cover;
+        border: 1px solid var(--line);
+        display: block;
+    }
+    .admin-table td.cell-thumb div {
+        width: 100% !important;
+        height: auto !important;
+        aspect-ratio: 16/9;
+        max-height: 220px;
+        border: 1px dashed var(--line);
+    }
+
+    /* Title display as card header, bold and styled */
+    .admin-table td.cell-title {
+        display: block;
+        font-size: 1.2rem;
+        font-weight: 950;
+        border-bottom: 2px solid var(--line);
+        padding-bottom: 0.6rem;
+        margin-bottom: 0.6rem;
+        min-height: 0;
+    }
+    .admin-table td.cell-title a {
+        font-size: 1.2rem;
+        font-weight: 950;
+    }
+    .admin-table td.cell-title[data-label]::before {
+        display: none; /* Hide label for title to let it stand as header */
+    }
+
+    /* Actions buttons block under the details */
+    .admin-table td.admin-actions-cell,
+    .admin-table td.admin-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        padding-top: 0.8rem;
+        margin-top: 0.4rem;
+        border-top: 2px solid var(--line);
+        min-height: 0;
+        width: 100% !important;
+        min-width: 0 !important;
+    }
+    .admin-table td.admin-actions-cell form,
+    .admin-table td.admin-actions form {
+        display: inline-block;
+        margin: 0;
     }
 
     dialog#media-asset-modal {

@@ -57,10 +57,10 @@ ob_start();
                 <?php foreach ($collections as $col): ?>
                     <tr data-id="<?= $col['id'] ?>">
                         <td class="drag-handle" title="Drag to reorder">&#8597;</td>
-                        <td><?= htmlspecialchars($col['name']) ?></td>
-                        <td><?= (int) ($col['exhibit_count'] ?? 0) ?></td>
-                        <td><?= htmlspecialchars($col['created_at'] ?? '') ?></td>
-                        <td class="admin-actions">
+                        <td class="cell-title" data-label="Name"><?= htmlspecialchars($col['name']) ?></td>
+                        <td data-label="Exhibits"><?= (int) ($col['exhibit_count'] ?? 0) ?></td>
+                        <td data-label="Created"><?= htmlspecialchars($col['created_at'] ?? '') ?></td>
+                        <td class="admin-actions admin-actions-cell">
                             <a href="<?= htmlspecialchars($collectionIndexPath) ?>/<?= $col['id'] ?>/edit">Edit</a>
                             <form method="POST" action="<?= htmlspecialchars($collectionIndexPath) ?>/<?= $col['id'] ?>/delete"
                                   onsubmit="return confirm('<?= htmlspecialchars($collectionDeleteMessage, ENT_QUOTES, 'UTF-8') ?>')">

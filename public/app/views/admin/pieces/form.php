@@ -255,6 +255,11 @@ $preferredProfileId = $preferredProfileId ?? null;
                                     <option value="archived" <?= ($piece['status'] ?? '') === 'archived' ? 'selected' : '' ?>>Archived</option>
                                 </select>
                             </div>
+                            <div class="field">
+                                <label for="sort_order">Sort Order</label>
+                                <input id="sort_order" name="sort_order" type="number" min="1"
+                                       value="<?= (int) ($piece['sort_order'] ?? 0) + 1 ?>">
+                            </div>
                         </div>
 
                         <fieldset class="form-fieldset">

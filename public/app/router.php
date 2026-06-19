@@ -18,6 +18,7 @@ require_once __DIR__ . '/helpers/art-piece-generation.php';
 require_once __DIR__ . '/helpers/navigation.php';
 require_once __DIR__ . '/helpers/admin-navigation.php';
 require_once __DIR__ . '/helpers/platform-ui.php';
+require_once __DIR__ . '/helpers/reorder.php';
 require_once __DIR__ . '/lib/ai/AiProviderClient.php';
 require_once __DIR__ . '/models/AdminIdentity.php';
 require_once __DIR__ . '/models/PlatformUser.php';

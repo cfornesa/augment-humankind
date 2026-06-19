@@ -128,3 +128,18 @@ Bit twice in Site Identity: first the logo (Settings vs. Design tabs), then all 
 Missing requires on the static route made `function_exists()` guards silently behave as logged-out, which is how the nav avatar bug happened — same session showed it working on `/blog` but not `/`.
 
 2026-06-19 DECISION Home and About are the only two protected "system pages" (`Page::PROTECTED_SLUGS`) — undeletable, each auto-seeded/self-healing, each rendering a mandatory top section (Home: Hero+CTA, About: heading+body) from existing `site_settings` fields before normal Pages-CMS sections.
+
+2026-06-19 DECISION URL fields (for pages, categories, collections, exhibits, and posts) were changed from type="url" to type="text" to prevent HTML5 validation failures when picker-selected relative paths (e.g. /image/83) are saved. Constrained Design tab logo preview heights to 60px to prevent layout distortion.
+
+2026-06-19 DECISION Upgraded TipTap link popover and schema to support title, alt, and target attributes vertically in rows, using a DOM-node activeLinkEl fallback to retrieve attributes reliably when the cursor is focused on a link.
+
+2026-06-19 DECISION Added min-width: 0 to the parent .admin-container grid element and max-width: 100% to .admin-table-wrap to resolve CSS Grid horizontal table overflow leaks on desktop.
+
+2026-06-19 DECISION Implemented table-to-card layout conversion below 1024px for Pieces, Platform Collections, Exhibits, and Collections list views, shifting the sidebar collapse breakpoint to 1024px to match, and conditionally disabling drag-reordering under 1024px.
+
+2026-06-19 DECISION Added Sort Order input fields (1-based index) to edit forms and implemented a sequential reordering shift helper (reorder.php) in the database on save/update to shift adjacent items contiguous orders automatically.
+
+2026-06-19 DECISION Removed table min-width: 950px on desktop and added a min-width: 280px constraint for the Actions cell, letting columns size fluids and actions wrap cleanly. Overrode table and actions cell min-widths to 0 inside the mobile media query, preventing card cutoff and wrapping buttons inline on mobile/tablet.
+
+2026-06-19 DECISION Integrated editor blur, window scroll, and immediate link-unset listener resets in tiptap-editor.js to ensure the floating link trigger button hides immediately and doesn't remain fixed in mid-air.
+
