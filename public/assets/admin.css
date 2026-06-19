@@ -1585,3 +1585,10 @@ dialog.inline-create-dialog::backdrop {
     pointer-events: none;
     cursor: default;
 }
+
+/* Constrain Design tab logo previews so they do not push down layout */
+#design-logo-url-preview img,
+#design-logo-dark-url-preview img {
+    max-height: 60px;
+    border: 1px solid var(--line);
+}

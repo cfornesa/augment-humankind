@@ -47,7 +47,7 @@ ob_start();
                     <img src="<?= htmlspecialchars($collection['thumbnail_value']) ?>" alt="">
                 <?php endif ?>
             </div>
-            <input id="collection-thumb-url" type="url" name="thumbnail_link"
+            <input id="collection-thumb-url" type="text" name="thumbnail_link"
                    value="<?= htmlspecialchars($collection['thumbnail_value'] ?? '') ?>"
                    placeholder="No image selected" readonly>
             <div class="media-field-actions">

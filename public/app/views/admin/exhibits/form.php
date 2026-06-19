@@ -99,7 +99,7 @@ ob_start();
                     <img src="<?= htmlspecialchars($exhibit['thumbnail_value']) ?>" alt="">
                 <?php endif ?>
             </div>
-            <input id="artwork-thumb-url" type="url" name="thumbnail_link"
+            <input id="artwork-thumb-url" type="text" name="thumbnail_link"
                    value="<?= htmlspecialchars($exhibit['thumbnail_value'] ?? '') ?>"
                    placeholder="No image selected" readonly>
             <div class="media-field-actions">

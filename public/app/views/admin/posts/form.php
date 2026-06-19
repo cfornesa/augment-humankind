@@ -101,7 +101,7 @@ ob_start();
                     <img src="<?= htmlspecialchars($post['featured_image_url']) ?>" alt="">
                 <?php endif ?>
             </div>
-            <input id="post-featured-url" type="url" name="featured_image_url"
+            <input id="post-featured-url" type="text" name="featured_image_url"
                    value="<?= htmlspecialchars($post['featured_image_url'] ?? '') ?>"
                    placeholder="No image selected" readonly>
             <div class="media-field-actions">

@@ -292,6 +292,16 @@ const LinkWithTitle = Link.configure({ openOnClick: false }).extend({
         parseHTML: el => el.getAttribute('title'),
         renderHTML: attrs => attrs.title ? { title: attrs.title } : {},
       },
+      target: {
+        default: null,
+        parseHTML: el => el.getAttribute('target'),
+        renderHTML: attrs => attrs.target ? { target: attrs.target } : {},
+      },
+      alt: {
+        default: null,
+        parseHTML: el => el.getAttribute('alt'),
+        renderHTML: attrs => attrs.alt ? { alt: attrs.alt } : {},
+      },
     }
   },
 })
@@ -583,18 +593,35 @@ function initTiptap(textarea) {
   linkPopover.hidden = true
 
   const linkHrefLabel = document.createElement('span'); linkHrefLabel.className = 'tiptap-edit-label'; linkHrefLabel.textContent = 'URL'
-  const linkHrefInput = document.createElement('input'); linkHrefInput.type = 'url'; linkHrefInput.className = 'tiptap-edit-input'; linkHrefInput.placeholder = 'https://…'
+  const linkHrefInput = document.createElement('input'); linkHrefInput.type = 'text'; linkHrefInput.className = 'tiptap-edit-input'; linkHrefInput.placeholder = '/path or https://…'
+
+  const linkAltLabel = document.createElement('span'); linkAltLabel.className = 'tiptap-edit-label'; linkAltLabel.textContent = 'Alt'
+  const linkAltInput = document.createElement('input'); linkAltInput.type = 'text'; linkAltInput.className = 'tiptap-edit-input'; linkAltInput.placeholder = 'Alt text (optional)'
+
   const linkTitleLabel = document.createElement('span'); linkTitleLabel.className = 'tiptap-edit-label'; linkTitleLabel.textContent = 'Title'
   const linkTitleInput = document.createElement('input'); linkTitleInput.type = 'text'; linkTitleInput.className = 'tiptap-edit-input'; linkTitleInput.placeholder = 'Description (optional)'
-  const linkUpdateBtn = document.createElement('button'); linkUpdateBtn.type = 'button'; linkUpdateBtn.className = 'admin-btn admin-btn-sm'; linkUpdateBtn.textContent = 'Update'
-  const linkRemoveBtn = document.createElement('button'); linkRemoveBtn.type = 'button'; linkRemoveBtn.className = 'admin-btn admin-btn-ghost admin-btn-sm'; linkRemoveBtn.textContent = 'Remove link'
 
-  linkPopover.appendChild(linkHrefLabel)
-  linkPopover.appendChild(linkHrefInput)
-  linkPopover.appendChild(linkTitleLabel)
-  linkPopover.appendChild(linkTitleInput)
-  linkPopover.appendChild(linkUpdateBtn)
-  linkPopover.appendChild(linkRemoveBtn)
+  const linkTargetLabel = document.createElement('span'); linkTargetLabel.className = 'tiptap-edit-label'; linkTargetLabel.textContent = 'Target'
+  const linkTargetSelect = document.createElement('select'); linkTargetSelect.className = 'tiptap-edit-input'
+  const optSelf = document.createElement('option'); optSelf.value = '_self'; optSelf.textContent = 'Same tab (_self)'
+  const optBlank = document.createElement('option'); optBlank.value = '_blank'; optBlank.textContent = 'New tab (_blank)'
+  linkTargetSelect.appendChild(optSelf)
+  linkTargetSelect.appendChild(optBlank)
+
+  const linkUpdateBtn = document.createElement('button'); linkUpdateBtn.type = 'button'; linkUpdateBtn.className = 'admin-btn admin-btn-sm'; linkUpdateBtn.textContent = 'Update'
+  const linkRemoveBtn = document.createElement('button'); linkRemoveBtn.type = 'button'; linkRemoveBtn.className = 'admin-btn admin-btn-ghost admin-btn-sm'; linkRemoveBtn.textContent = 'Remove'
+
+  const r1 = document.createElement('div'); r1.className = 'tiptap-link-popover-row'; r1.appendChild(linkHrefLabel); r1.appendChild(linkHrefInput)
+  const r2 = document.createElement('div'); r2.className = 'tiptap-link-popover-row'; r2.appendChild(linkAltLabel); r2.appendChild(linkAltInput)
+  const r3 = document.createElement('div'); r3.className = 'tiptap-link-popover-row'; r3.appendChild(linkTitleLabel); r3.appendChild(linkTitleInput)
+  const r4 = document.createElement('div'); r4.className = 'tiptap-link-popover-row'; r4.appendChild(linkTargetLabel); r4.appendChild(linkTargetSelect)
+  const r5 = document.createElement('div'); r5.className = 'tiptap-link-popover-actions'; r5.appendChild(linkUpdateBtn); r5.appendChild(linkRemoveBtn)
+
+  linkPopover.appendChild(r1)
+  linkPopover.appendChild(r2)
+  linkPopover.appendChild(r3)
+  linkPopover.appendChild(r4)
+  linkPopover.appendChild(r5)
   document.body.appendChild(linkPopover)
 
   let linkPopoverOpen = false
@@ -606,6 +633,8 @@ function initTiptap(textarea) {
     const attrs = editor.getAttributes('link')
     linkHrefInput.value  = attrs.href  || ''
     linkTitleInput.value = attrs.title || ''
+    linkAltInput.value   = attrs.alt   || ''
+    linkTargetSelect.value = attrs.target || '_self'
     linkPopover.hidden = false
     linkPopoverOpen = true
     linkHrefInput.focus()
@@ -640,12 +669,14 @@ function initTiptap(textarea) {
   })
 
   linkUpdateBtn.addEventListener('click', () => {
-    const href  = linkHrefInput.value.trim()
-    const title = linkTitleInput.value.trim() || null
+    const href   = linkHrefInput.value.trim()
+    const title  = linkTitleInput.value.trim() || null
+    const alt    = linkAltInput.value.trim() || null
+    const target = linkTargetSelect.value || null
     if (!href) {
       editor.chain().focus().extendMarkRange('link').unsetLink().run()
     } else {
-      editor.chain().focus().extendMarkRange('link').setLink({ href, target: '_blank', title }).run()
+      editor.chain().focus().extendMarkRange('link').setLink({ href, target, title, alt }).run()
     }
     closeLinkPopover()
   })
@@ -655,7 +686,7 @@ function initTiptap(textarea) {
     closeLinkPopover()
   })
 
-  ;[linkHrefInput, linkTitleInput].forEach(inp => {
+  ;[linkHrefInput, linkAltInput, linkTitleInput, linkTargetSelect].forEach(inp => {
     inp.addEventListener('keydown', e => {
       if (e.key === 'Enter') { e.preventDefault(); linkUpdateBtn.click() }
       if (e.key === 'Escape') { e.preventDefault(); closeLinkPopover() }
@@ -864,7 +895,13 @@ function initTiptap(textarea) {
 
   // Link — toolbar button shows/focuses the floating popover for new link insertion
   const linkBtn = icon('🔗'); linkBtn.title = 'Insert / edit link'
-  linkBtn.addEventListener('click', () => {
+  linkBtn.addEventListener('click', e => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (linkPopoverOpen) {
+      closeLinkPopover()
+      return
+    }
     editor.chain().focus().run()
     // Position popover near the toolbar button itself
     openLinkPopover(linkBtn)

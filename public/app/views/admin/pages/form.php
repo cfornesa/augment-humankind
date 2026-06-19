@@ -66,7 +66,7 @@ ob_start();
             </div>
             <div class="form-row">
                 <label for="page-og-image">Open Graph Image URL</label>
-                <input id="page-og-image" type="url" name="og_image" value="<?= htmlspecialchars($page['og_image'] ?? '', ENT_QUOTES, 'UTF-8') ?>">
+                <input id="page-og-image" type="text" name="og_image" value="<?= htmlspecialchars($page['og_image'] ?? '', ENT_QUOTES, 'UTF-8') ?>">
                 <button type="button" class="picker-trigger" data-picker-target="page-og-image">Choose from Library</button>
             </div>
         </fieldset>

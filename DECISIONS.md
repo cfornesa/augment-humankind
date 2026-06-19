@@ -2691,3 +2691,19 @@ Two consecutive bug-fix passes against live user reports, each verified against 
 ### Verification
 - `php -l` clean across every changed/new file in both passes.
 - Live round-trips against the production DB (read-only checks plus the one intentional schema-apply write) for: poster save/reload, Design-tab warnings, nav avatar parity between `/blog` and `/`, Settings/Design cross-tab independence, picker dialog presence, theme/palette persistence, and Home/About delete rejection plus correct public rendering on `/` and the new `/about` (with no leakage onto `/services` or `/blog`).
+
+## 2026-06-19 — URL Fields, TipTap Link Attributes, and Logo Preview Sizing
+
+### URL Field Validation
+- Replaced `type="url"` with `type="text"` on five image/featured media fields (pages, categories, collections, exhibits, posts) that can accept relative paths from the media picker, preventing HTML5 validation failures on submit.
+
+### TipTap Link Editing
+- Extended the custom `LinkWithTitle` extension to support `target` and `alt` attributes in parsed HTML output.
+- Re-styled the TipTap link popover to display URL, Alt, Title, and Target dropdown fields vertically in rows, and wired them up to get/set attributes on save.
+- Modified the toolbar Link button click listener to stop propagation and toggle the popover, preventing it from closing immediately.
+
+### Logo Preview Layout
+- Constrained Design tab logo preview heights to `60px` in `admin.css`, preventing large selected logos from distorting the grid layout and pushing the color palette out of view.
+
+### Verification
+- JS and PHP syntax validation completed successfully.
