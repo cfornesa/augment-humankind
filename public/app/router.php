@@ -47,6 +47,7 @@ require_once __DIR__ . '/models/PlatformOAuthApp.php';
 require_once __DIR__ . '/models/PlatformCollection.php';
 require_once __DIR__ . '/controllers/Admin/AuthController.php';
 require_once __DIR__ . '/controllers/UserAuthController.php';
+require_once __DIR__ . '/controllers/SharedAuthController.php';
 require_once __DIR__ . '/controllers/UserProfileController.php';
 require_once __DIR__ . '/controllers/Admin/PagesController.php';
 require_once __DIR__ . '/controllers/Admin/PortfolioController.php';
@@ -176,9 +177,13 @@ $publicRoutes = [
     ['GET',  '/user/login',                           [UserAuthController::class, 'loginForm']],
     ['GET',  '/user/logout',                          [UserAuthController::class, 'logout']],
     ['GET',  '/user/auth/github/start',               [UserAuthController::class, 'oauthStart']],
-    ['GET',  '/user/auth/github/callback',            [UserAuthController::class, 'oauthCallback']],
     ['GET',  '/user/auth/google/start',               [UserAuthController::class, 'oauthStart']],
-    ['GET',  '/user/auth/google/callback',            [UserAuthController::class, 'oauthCallback']],
+
+    // Shared OAuth callback — one callback URL per provider, registered once
+    // with GitHub/Google, used by both admin and member login (disambiguated
+    // internally via which pending session state matches).
+    ['GET',  '/auth/github/callback',                 [SharedAuthController::class, 'oauthCallback']],
+    ['GET',  '/auth/google/callback',                 [SharedAuthController::class, 'oauthCallback']],
     ['GET',  '/user/settings',                        [UserProfileController::class, 'settings']],
     ['POST', '/user/settings/profile',                [UserProfileController::class, 'settingsProfileUpdate']],
     ['POST', '/user/settings/photo',                  [UserProfileController::class, 'settingsPhotoUpload']],
@@ -191,9 +196,7 @@ $adminRoutes = [
     ['GET',  '/admin/setup',                [AuthController::class, 'setup']],
     ['GET',  '/admin/login',                [AuthController::class, 'loginForm']],
     ['GET',  '/admin/auth/github/start',    [AuthController::class, 'oauthStart']],
-    ['GET',  '/admin/auth/github/callback', [AuthController::class, 'oauthCallback']],
     ['GET',  '/admin/auth/google/start',    [AuthController::class, 'oauthStart']],
-    ['GET',  '/admin/auth/google/callback', [AuthController::class, 'oauthCallback']],
     ['GET',  '/admin/logout',               [AuthController::class, 'logout']],
 
     ['GET',  '/admin/pages',                           [PagesController::class, 'index']],

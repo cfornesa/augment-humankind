@@ -56,7 +56,7 @@ class AuthController
 
         $params = [
             'client_id' => $config['client_id'],
-            'redirect_uri' => oauth_redirect_uri($provider),
+            'redirect_uri' => shared_oauth_redirect_uri($provider),
             'response_type' => 'code',
             'scope' => $config['scope'],
             'state' => $state,
@@ -71,9 +71,14 @@ class AuthController
         exit;
     }
 
-    public static function oauthCallback(): void
+    public static function handlesPendingCallback(string $provider): bool
     {
-        $provider = self::requestedProvider();
+        $state = $_SESSION['oauth_state'] ?? null;
+        return is_array($state) && ($state['provider'] ?? null) === $provider;
+    }
+
+    public static function handleCallback(string $provider): void
+    {
         $subjectHash = rate_limit_subject_for_scope('admin_oauth_callback');
         $limit = rate_limit_consume('admin_oauth_callback', $subjectHash);
         if (!$limit['allowed']) {
@@ -138,7 +143,20 @@ class AuthController
             }
 
             if (class_exists('PlatformUser')) {
-                PlatformUser::upsertOwnerFromAdminProfile($provider, $profile);
+                $ownerUserId = PlatformUser::upsertOwnerFromAdminProfile($provider, $profile);
+                if ($ownerUserId !== null) {
+                    // The admin allowlist check above already vetted this identity, so it's
+                    // safe to also establish the member-facing session here — otherwise the
+                    // same person has to OAuth a second time to comment/view their profile
+                    // on the public site. This is one-directional: a member login must never
+                    // grant admin access, since member signup has no allowlist gate.
+                    $stmt = db()->prepare('SELECT * FROM users WHERE id = ? LIMIT 1');
+                    $stmt->execute([$ownerUserId]);
+                    $ownerUser = $stmt->fetch();
+                    if ($ownerUser) {
+                        user_login($ownerUser);
+                    }
+                }
             }
 
             admin_login_identity($identity);
@@ -382,7 +400,7 @@ class AuthController
                 'client_id' => $config['client_id'],
                 'client_secret' => $config['client_secret'],
                 'code' => $code,
-                'redirect_uri' => oauth_redirect_uri($provider),
+                'redirect_uri' => shared_oauth_redirect_uri($provider),
                 'grant_type' => 'authorization_code',
             ])
         );

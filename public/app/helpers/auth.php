@@ -134,10 +134,20 @@ function user_login(array $user): void
 
 function user_logout(): void
 {
+    // Admin login now also establishes the member session (see AuthController::
+    // handleCallback), and current_user() falls back to the admin identity when
+    // user_id is empty. So logging out here must also clear the admin session —
+    // otherwise an admin who logs out of the public view re-appears as "logged
+    // in" via that fallback. Logout is the mirror of login: one action, one
+    // session, on either side.
     unset(
         $_SESSION['user_id'],
         $_SESSION['user_username'],
         $_SESSION['user_display_name'],
-        $_SESSION['user_oauth_state']
+        $_SESSION['user_oauth_state'],
+        $_SESSION['admin_identity_id'],
+        $_SESSION['admin_provider'],
+        $_SESSION['admin_display_name'],
+        $_SESSION['oauth_state']
     );
 }

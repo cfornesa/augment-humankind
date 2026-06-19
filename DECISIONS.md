@@ -2729,5 +2729,161 @@ Two consecutive bug-fix passes against live user reports, each verified against 
 - Replaced the relative ES6 dynamic import of `immersive-gallery.js` in `piece-render.php`'s `bootThree()` with the self-contained Three.js runtime loader (importing `three` and `OrbitControls` directly from CDN absolute HTTPS URLs).
 - This ensures that Three.js rendering inside sandboxed `srcdoc` iframes never triggers relative path resolution issues or dynamic module fetch blocks in Safari, matching the stable inlined implementation in `form.php` and `generate-preview.php` while passing the consistency test suite.
 
+## 2026-06-19 — OAuth Callback Unification + Site-Wide Session Symmetry
+
+### Context
+User reported being completely unable to log in, on both admin and member sides,
+on both production and local. Investigation found two stacked problems: the
+registered OAuth redirect URI in Google Cloud Console and the GitHub OAuth App
+still pointed at the retired Node.js/NextAuth platform's `/api/auth/callback/
+{provider}` path, never updated for this PHP app; and even once that's corrected,
+the PHP app itself sent a *different* callback path per login surface
+(`/admin/auth/{provider}/callback` vs `/user/auth/{provider}/callback`) from the
+*same* two registered apps — which would have required 4 registered redirect
+URIs (effectively 4 apps) instead of the 2 actually held. User explicitly rejected
+creating additional OAuth apps as the fix.
+
+### Decisions
+- Admin and member OAuth login (GitHub and Google) now share one callback URL per
+  provider — `/auth/google/callback`, `/auth/github/callback` — disambiguated
+  internally via which pending `state` session key matches, never via URL path.
+  Recorded as a standing constraint in `CONSTRAINTS.md` to prevent re-fragmenting
+  this in a future session.
+- Site-wide sign-in (CONSTRAINTS.md, set 2026-06-16) had silently regressed:
+  admin login never populated the member session, so the public site required a
+  second, separate OAuth round trip. Fixed by making admin login also establish
+  the member session via the existing (previously-discarded)
+  `PlatformUser::upsertOwnerFromAdminProfile()` return value.
+- Symmetric gap found in logout: `user_logout()` cleared only the member session,
+  leaving `admin_identity_id` intact, so `current_user()`'s admin-fallback silently
+  re-derived a "logged in" member identity — public-side logout became a no-op
+  once login was unified. Fixed by having `user_logout()` also clear the admin
+  session keys.
+- By explicit user request, the reverse direction was also added: member login
+  now also grants the admin session, but *only* when the authenticating identity
+  passes the existing `oauth_allowed_identity()` allowlist check — the same gate
+  admin login already uses. Member signup itself stays open to anyone; this
+  cannot be used to self-escalate.
+
+### Files Changed
+- `public/app/helpers/oauth.php` — replaced `oauth_redirect_uri()` /
+  `user_oauth_redirect_uri()` with one `shared_oauth_redirect_uri()`.
+- `public/app/controllers/SharedAuthController.php` (new) — dispatches
+  `/auth/{provider}/callback` to `AuthController::handleCallback()` or
+  `UserAuthController::handleCallback()` based on `handlesPendingCallback()`.
+- `public/app/controllers/Admin/AuthController.php` — `oauthCallback()` renamed
+  to `handleCallback(string $provider)` + new `handlesPendingCallback()`; now also
+  calls `user_login()` on the resolved owner row after a successful admin login.
+- `public/app/controllers/UserAuthController.php` — same refactor; `handleCallback()`
+  now also calls `admin_login_identity()` when `oauth_allowed_identity()` passes.
+- `public/app/helpers/auth.php` — `user_logout()` now also clears
+  `admin_identity_id`/`admin_provider`/`admin_display_name`/`oauth_state`.
+- `public/app/router.php` — removed the 4 old split callback routes, added the
+  2 shared ones; added the `SharedAuthController.php` require.
+- `public/index.php` — added `/auth/` to both the bootstrap-exempt prefix list
+  and the router-dispatch prefix gate (missing from both initially, which is why
+  the new route 404'd before this fix).
+
+### Verification
+- `php -l` clean across all changed/new files.
+- Local OAuth start→callback round trips verified for both admin and member
+  flows: correct shared `redirect_uri` sent to GitHub/Google; correct
+  provider+state dispatch to the right handler on callback (admin-flow errors
+  land on `/admin/login`, member-flow errors land on `/user/login`).
+- Forged-session checks against the live database confirmed
+  `PlatformUser::upsertOwnerFromAdminProfile()` resolves the existing owner row,
+  `user_login()` populates the session from it, and `user_logout()` clears both
+  `user_id` and `admin_identity_id` — `current_user()`/`user_logged_in()` correctly
+  report logged-out afterward.
+- `oauth_allowed_identity()` gate verified directly: the owner's Google email and
+  GitHub username pass; a simulated non-allowlisted identity does not.
+- `tests/art-piece-generation.php` and `tests/three-runtime-consistency.php`
+  re-run with identical pass/fail counts to before this session (no regression).
+
+### Remaining External Step (not code)
+Production and local OAuth provider consoles still need their registered
+redirect URI updated to the new shared path: Google Cloud Console needs both
+`https://augmenthumankind.com/auth/google/callback` and the local dev equivalent
+added (Google supports multiple); the GitHub OAuth App's single callback field
+needs to be set to `https://augmenthumankind.com/auth/github/callback` (local
+GitHub testing would need a second GitHub OAuth App, since classic OAuth Apps
+allow only one callback URL — not yet requested).
+
+## 2026-06-19 — Sitewide Heading Width + Mobile Nav Spacing
+
+### Context
+User reported the home hero heading wrapping into a narrow vertical word-stack
+instead of spanning the page width, and the mobile hamburger menu button sitting
+visually far from the account avatar instead of grouped beside it.
+
+### Root Causes
+- A global `h1 { max-width: 10ch; }` rule, plus `.page-hero h1 { max-width: 14ch; }`
+  and `.gallery-intro h1, .collection-title, .collection-detail-title
+  { max-width: 16ch; }` — a deliberate oversized "stacked-word" display-type
+  treatment applied to every heading sitewide, not just the home hero.
+- `.site-header`'s `justify-content: space-between` at the `≤860px` breakpoint
+  spread `.brand`/`.menu-toggle`/`.account-menu` evenly once `.site-nav` left the
+  flex flow (collapsed behind the hamburger), pinning the hamburger toward the
+  middle of the header instead of next to the avatar.
+
+### Decision
+Confirmed via direct question: remove the heading-width caps **sitewide**, not
+scoped to just the home hero. Left `.gallery-section-copy`'s `52ch` untouched
+(ordinary paragraph readability width, unrelated to the heading pattern) and
+`.mission-band h2`/`.section-heading h2` untouched (h2, out of scope).
+
+### Implemented (`public/assets/styles.css`)
+- Removed `max-width: 10ch` from the global `h1` rule.
+- Removed `.page-hero h1` from its `max-width: 14ch` group (kept the h2 entries).
+- Removed the `.gallery-intro h1, .collection-title, .collection-detail-title
+  { max-width: 16ch; }` rule entirely.
+- In the `@media (max-width: 860px)` block: added `justify-content: flex-start`
+  to `.site-header` and `margin-inline-end: auto` to `.brand`, so the brand stays
+  pinned left while the hamburger and account menu sit adjacent at the right edge.
+
+### Verification
+- Brace-balance check on the stylesheet (401 open / 401 close, unchanged).
+- Visual confirmation via headless Chrome screenshots at desktop (1470px) and
+  mobile (735px) widths: heading now wraps at full content width; hamburger and
+  avatar sit adjacent with minimal gap at the mobile breakpoint.
+- CSS-only change; `php -l` and existing test suites unaffected.
+
+## 2026-06-19 — DESIGN.md Initial Population
+
+### Context
+DESIGN.md's References, Derived Identity, and Declared Preferences sections were
+still template placeholders (aside from a pre-existing Observed Taste log from
+earlier sessions). User asked to populate it using the current, already-built
+site as the reference point — rather than the usual flow of naming external
+influences first — motivated in part by the same-session heading-width decision.
+
+### Implemented
+Loaded the `design-workflow` skill per the AGENTS.md skill table.
+- **References:** filled the previously-empty `Logo`
+  (`public/assets/friendly-guide.png`) and `Existing brand materials`
+  (`public/assets/styles.css` design tokens + the live site itself, explicitly
+  designated by the user as the working reference point) bullets. Left
+  `Admired applications/art/writing` open — no external references named yet.
+- **Derived Identity:** drafted from the site's actual CSS tokens, copy voice,
+  and existing mascot/brand decisions, presented as a hypothesis and revised once
+  on user correction — removed all specific color-name language, refocused on
+  structure/style/feel. Final confirmed version covers: what the references share
+  (structural rigor, sparing disciplined accent use, oversized weight), the
+  tension (mascot warmth vs. the site's reality as a technically dense
+  publishing/syndication system), four confirmed taste refusals (AI-startup
+  visual cliché, decorative AI-generated filler imagery — explicitly tied to the
+  existing "person is always the named author" constraint, corporate SaaS
+  tropes, engagement-bait content-hub patterns), and the intended first-load
+  feeling ("welcomed, then quietly reassured").
+- **Observed Taste:** added two dated entries — the heading-width direction
+  change, and the behavioral pattern of redirecting Derived Identity away from
+  color-specific language toward structure.
+- **Declared Preferences** intentionally left untouched — per the skill, that
+  section is human-authored only, not agent-derived.
+
+### Verification
+All three sections written only after explicit confirmation per the
+`design-workflow` skill's rule against silent updates.
+
 
 

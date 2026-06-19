@@ -45,13 +45,12 @@
        as much as visual references do. -->
 
 - **Logo:**
-  <!-- Filename if available in your repository.
-       Example: assets/logo.svg
-       Leave blank if none exists yet. -->
+  `public/assets/friendly-guide.png` — the robot mascot already used as the brand mark.
 
 - **Existing brand materials:**
-  <!-- Any other files — type specimens, color swatches, style guides —
-       already committed to the repo. -->
+  `public/assets/styles.css` (the "Pareto" design tokens) and the live site itself —
+  designated by the person as the working reference point as of 2026-06-19, rather
+  than external admired sites/art/writing (those remain open below).
 
 ---
 
@@ -64,27 +63,47 @@
      the value is in the derivation process, not the output alone. -->
 
 - **What your references share:**
-  <!-- The common thread the agent observes across your inputs.
-       Example: "High contrast, sparse layout, type as the primary
-       visual element, no decorative illustration." -->
+  A structural confidence that doesn't rely on decoration: thick, consistent borders
+  and hard, offset shadows (no blur, no gradients) on every interactive surface,
+  paired with oversized, heavy-weight type that takes up space without apology. The
+  mascot is the one soft, hand-drawn element inside an otherwise rigid, almost
+  engineering-diagram structure — everything else is geometric, high-contrast, and
+  deliberately unfussy. Accent color is used sparingly and consistently rather than
+  as a mood — a small, disciplined set of signals (button, card, highlight), not a
+  palette doing emotional work.
 
 - **The tension you are navigating:**
-  <!-- The productive contradiction in your references — the thing
-       that makes your aesthetic specific rather than generic.
-       Example: "Warm and personal, but not precious or nostalgic." -->
+  The site presents as a personal, approachable field guide — friendly mascot,
+  plain-spoken and slightly philosophical copy, an inviting surface — but underneath,
+  it's a technically dense publishing and syndication system: a CMS, multi-platform
+  syndication adapters, RSS/Atom/JSON feeds, AI-assisted piece generation, an
+  immersive gallery. The visual language has to do double duty: stay warm enough
+  that the depth of the system doesn't read as cold or corporate, while staying
+  structured enough that a visitor senses they've found something considered and
+  durable — not a template with a cute logo bolted on, and not an AI-slop content
+  mill either. The hard borders and confident scale carry that second half of the
+  message; the mascot alone couldn't.
 
 - **What you dislike in contrast:**
-  <!-- Defined negatively. Taste is largely shaped by refusal.
-       Be specific — "corporate" is a start, but "the visual language
-       of SaaS landing pages: gradient CTAs, stock photography of
-       smiling teams, artificial whitespace" is more useful.
-       This section informs the agent's gallery options as strongly
-       as positive preferences do. -->
+  The generic "AI-startup" visual register: soft gradients, glassmorphic blur,
+  glowing abstract orbs/blobs, thin weightless type floating in excessive empty
+  whitespace. Decorative AI-generated filler imagery used as background or stock-in
+  dressing rather than the actual authored art pieces — this would directly
+  contradict the standing "person is always the named author" constraint
+  (CONSTRAINTS.md). Corporate SaaS landing-page tropes: stock photography of smiling
+  teams, buzzword copy ("unlock", "supercharge", "seamless", "revolutionize"),
+  gradient call-to-action buttons, testimonial carousels. Engagement-bait
+  content-hub patterns: autoplaying video, infinite scroll with no end state, fake
+  urgency banners, notification-bait UI — the attention-economy playbook, even
+  though this site is technically a content/syndication hub that could be tempted
+  toward them.
 
 - **The feeling on first load:**
-  <!-- One to three words or a short sentence describing the immediate
-       emotional register you want a first-time visitor to experience.
-       Example: "Curious. Like finding someone's personal library." -->
+  Welcomed, then quietly reassured. The mascot and direct, human-voiced copy should
+  make a visitor feel let into something personal rather than marketed at. The
+  structural rigor underneath — borders, shadows, scale — should register, even
+  subconsciously, as "a real person built something real here," giving the warmth
+  credibility instead of undercutting it.
 
 ---
 
@@ -159,6 +178,8 @@
 2026-06-16 · DIRECTION · Added inline manual generation action links for both Art Pieces and Platform Collections, prioritizing instant feedback and granular control over bulk-only regeneration.
 2026-06-16 · DIRECTION · Preferred lightweight parity over a heavier moderation UI for comment ownership and table actions, keeping controls icon-forward and visually consistent across public and admin surfaces.
 2026-06-16 · DIRECTION · Preferred inline reader states that behave like condensed single-post views: content replaces previews, primary toggles remain visible in both states, and editing interfaces stay hidden until explicitly invoked.
+2026-06-19 · DIRECTION · Rejected the oversized "stacked-word" narrow heading treatment (h1 capped at 10ch, with 14ch/16ch variants on page-hero and gallery/collection titles) sitewide in favor of full-width wrapping — bold/oversized type should still read at scale, but natural line breaks now take priority over dramatic narrow stacking.
+2026-06-19 · TENSION · Explicitly redirected a Derived Identity draft away from specific color names toward structure and feel — taste here should be described by borders, shadows, scale, and tone, not by which hues are in play.
 
 ---
 

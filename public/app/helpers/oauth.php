@@ -28,20 +28,12 @@ function oauth_provider_config(string $provider): array
     };
 }
 
-function oauth_redirect_uri(string $provider): string
+function shared_oauth_redirect_uri(string $provider): string
 {
     $https = !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off';
     $scheme = $https ? 'https' : 'http';
     $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
-    return $scheme . '://' . $host . '/admin/auth/' . strtolower($provider) . '/callback';
-}
-
-function user_oauth_redirect_uri(string $provider): string
-{
-    $https = !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off';
-    $scheme = $https ? 'https' : 'http';
-    $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
-    return $scheme . '://' . $host . '/user/auth/' . strtolower($provider) . '/callback';
+    return $scheme . '://' . $host . '/auth/' . strtolower($provider) . '/callback';
 }
 
 function oauth_http_request(string $method, string $url, array $headers = [], ?string $body = null): array

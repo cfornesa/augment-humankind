@@ -34,7 +34,7 @@ class UserAuthController
 
         $params = [
             'client_id' => $config['client_id'],
-            'redirect_uri' => user_oauth_redirect_uri($provider),
+            'redirect_uri' => shared_oauth_redirect_uri($provider),
             'response_type' => 'code',
             'scope' => $config['scope'],
             'state' => $state,
@@ -49,9 +49,14 @@ class UserAuthController
         exit;
     }
 
-    public static function oauthCallback(): void
+    public static function handlesPendingCallback(string $provider): bool
     {
-        $provider = self::requestedProvider();
+        $state = $_SESSION['user_oauth_state'] ?? null;
+        return is_array($state) && ($state['provider'] ?? null) === $provider;
+    }
+
+    public static function handleCallback(string $provider): void
+    {
         $state = $_SESSION['user_oauth_state'] ?? null;
 
         if (!is_array($state) || ($state['provider'] ?? null) !== $provider || ($state['value'] ?? '') !== ($_GET['state'] ?? '')) {
@@ -71,6 +76,26 @@ class UserAuthController
             $profile = self::fetchOauthProfile($provider, $code);
             $user = self::upsertMember($provider, $profile);
             user_login($user);
+
+            // Mirror of AuthController::handleCallback granting the member session on
+            // admin login: if this same OAuth identity is on the admin allowlist, also
+            // grant the admin session here. Member signup itself stays open to anyone —
+            // only identities that already pass oauth_allowed_identity() (the same gate
+            // admin login uses) get the admin session, so this can't be used to
+            // self-escalate.
+            if (class_exists('AdminIdentity') && oauth_allowed_identity($provider, $profile)) {
+                $identityId = AdminIdentity::upsertFromProfile([
+                    'provider' => $provider,
+                    'provider_subject' => (string) $profile['provider_subject'],
+                    'email' => $profile['email'] ?? null,
+                    'display_name' => (string) $profile['display_name'],
+                    'avatar_url' => $profile['avatar_url'] ?? null,
+                ]);
+                $identity = AdminIdentity::find($identityId);
+                if ($identity) {
+                    admin_login_identity($identity);
+                }
+            }
 
             $dest = ($redirect !== '' && str_starts_with($redirect, '/')) ? $redirect : '/user/' . urlencode($user['username'] ?? '');
             header('Location: ' . $dest);
@@ -262,7 +287,7 @@ class UserAuthController
                 'client_id' => $config['client_id'],
                 'client_secret' => $config['client_secret'],
                 'code' => $code,
-                'redirect_uri' => user_oauth_redirect_uri($provider),
+                'redirect_uri' => shared_oauth_redirect_uri($provider),
                 'grant_type' => 'authorization_code',
             ])
         );

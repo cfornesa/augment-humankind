@@ -30,14 +30,16 @@ trigger: End of session; proposing MEMORY.md or DECISIONS.md updates.
 ## MEMORY.md Rules
 
 - Write only confirmed, repeated, or clearly stable lessons.
-- Keep under 150 lines. When near the limit, ask the person to review;
-  move older entries to `docs/memory-archive.md`.
+- No line cap — this project is large enough that a hard limit isn't useful.
+  Keep entries terse instead: each entry must fit within 2 sentences total
+  (lesson + optional note), so the file stays readable as it grows.
 - No secrets, tokens, or personal data.
 - Flag contradictions — do not silently overwrite existing entries.
 - When a DECISIONS.md entry becomes stable and user-confirmed, summarize
   it as a DECISION entry here.
 
-**Entry format** — one line per lesson, optional note on the next line:
+**Entry format** — one line per lesson, optional note on the next line,
+2 sentences maximum total:
 YYYY-MM-DD CATEGORY Lesson in one sentence.
 Optional one-line note with context or source decision.
 

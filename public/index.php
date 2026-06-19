@@ -93,7 +93,8 @@ $bootstrapExempt = $path === '/admin' || str_starts_with($path, '/admin/')
     || str_starts_with($path, '/embed/')
     || str_starts_with($path, '/immersive/')
     || str_starts_with($path, '/assets/')
-    || str_starts_with($path, '/vendor/');
+    || str_starts_with($path, '/vendor/')
+    || str_starts_with($path, '/auth/');
 
 if (!$bootstrapExempt && !site_bootstrap_complete()) {
     http_response_code(503);
@@ -119,6 +120,7 @@ if ($path === '/portfolio' || str_starts_with($path, '/portfolio/')
     || in_array($path, ['/feed.xml', '/atom', '/feed.json', '/jsonfeed', '/export.json', '/export/json'], true)
     || $path === '/admin' || str_starts_with($path, '/admin/')
     || $path === '/user' || str_starts_with($path, '/user/')
+    || str_starts_with($path, '/auth/')
     || preg_match('#^/(media|image)/[0-9]+$#', $path)
     || preg_match('#^/[a-z0-9-]+/feed\.(xml|json)$#', $path)) {
     require_once __DIR__ . '/app/bootstrap.php';

@@ -145,5 +145,10 @@ Missing requires on the static route made `function_exists()` guards silently be
 
 2026-06-19 DECISION Inlined the self-contained Three.js runtime loader (importing three and OrbitControls from absolute CDN URLs) inside piece-render.php to bypass Safari's security blocks on relative dynamic module imports inside sandboxed srcdoc iframes.
 
+2026-06-19 DECISION OAuth login for admin and member now shares one callback URL per provider (/auth/google/callback, /auth/github/callback), dispatched internally by pending session state rather than URL path. Splitting per-flow callbacks would need 4 registered OAuth apps instead of the 2 actually held.
+
+2026-06-19 CORRECTION Site-wide sign-in (one login/logout covers both admin and member sessions) is a standing constraint that silently regressed before this session. Watch for this any time auth.php, AuthController, or UserAuthController are touched in isolation from each other.
+
+2026-06-19 PREFERENCE Describe DESIGN.md taste/identity language by structure, materials, and feel (borders, shadows, scale, tone), not specific color names. Corrected a color-specific Derived Identity draft to this effect.
 
 
