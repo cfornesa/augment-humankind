@@ -143,3 +143,7 @@ Missing requires on the static route made `function_exists()` guards silently be
 
 2026-06-19 DECISION Integrated editor blur, window scroll, and immediate link-unset listener resets in tiptap-editor.js to ensure the floating link trigger button hides immediately and doesn't remain fixed in mid-air.
 
+2026-06-19 DECISION Inlined the self-contained Three.js runtime loader (importing three and OrbitControls from absolute CDN URLs) inside piece-render.php to bypass Safari's security blocks on relative dynamic module imports inside sandboxed srcdoc iframes.
+
+
+

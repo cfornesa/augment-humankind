@@ -2723,3 +2723,11 @@ Two consecutive bug-fix passes against live user reports, each verified against 
 ### Verification
 - JS syntax check for `tiptap-editor.js` completed successfully.
 
+## 2026-06-19 — Three.js Public View srcdoc Safari Bugfix
+
+### Self-Contained Runtime Inlining
+- Replaced the relative ES6 dynamic import of `immersive-gallery.js` in `piece-render.php`'s `bootThree()` with the self-contained Three.js runtime loader (importing `three` and `OrbitControls` directly from CDN absolute HTTPS URLs).
+- This ensures that Three.js rendering inside sandboxed `srcdoc` iframes never triggers relative path resolution issues or dynamic module fetch blocks in Safari, matching the stable inlined implementation in `form.php` and `generate-preview.php` while passing the consistency test suite.
+
+
+
