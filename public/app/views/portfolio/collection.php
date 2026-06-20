@@ -34,6 +34,8 @@ require __DIR__ . '/../partials/header.php';
             </div>
         </div>
 
+        <?php $status = $collection['status'] ?? 'active'; require __DIR__ . '/../partials/status-banner.php'; ?>
+
         <?php if (empty($exhibits)): ?>
             <p class="gallery-empty">No exhibits in this collection yet.</p>
         <?php else: ?>

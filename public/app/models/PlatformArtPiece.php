@@ -205,9 +205,10 @@ class PlatformArtPiece
             'created'    => 'ap.created_at',
             'updated'    => 'ap.updated_at',
             'sort_order' => 'ap.sort_order',
+            'id'         => 'ap.id',
             default      => 'GREATEST(ap.created_at, ap.updated_at)',
         };
-        $idDir = ($sort === 'sort_order') ? 'ASC' : $dir;
+        $idDir = in_array($sort, ['sort_order', 'id'], true) ? 'ASC' : $dir;
         return "{$col} {$dir}, ap.id {$idDir}";
     }
 
@@ -236,6 +237,14 @@ class PlatformArtPiece
 
     public static function create(array $data): int
     {
+        $sortOrder = $data['sort_order'] ?? null;
+        if ($sortOrder === null) {
+            // Shift everyone else down a slot so the new piece can take
+            // position 0 — keeps sort_order always in [0, N-1], never negative.
+            db()->exec('UPDATE art_pieces SET sort_order = sort_order + 1 WHERE deleted_at IS NULL');
+            $sortOrder = 0;
+        }
+
         $stmt = db()->prepare(
             'INSERT INTO art_pieces
                 (owner_user_id, title, prompt, engine, status,
@@ -250,7 +259,7 @@ class PlatformArtPiece
             $data['status'] ?? 'active',
             $data['thumbnail_url'] ?? null,
             $data['description'] ?? null,
-            $data['sort_order'] ?? self::nextSortOrder(),
+            $sortOrder,
             isset($data['comments_enabled']) ? (int)(bool) $data['comments_enabled'] : 0,
         ]);
         return (int) db()->lastInsertId();
@@ -340,9 +349,15 @@ class PlatformArtPiece
     public static function updateCurrentVersion(int $pieceId, int $versionId): void
     {
         $stmt = db()->prepare(
-            'UPDATE art_pieces SET current_version_id = ? WHERE id = ?'
+            'UPDATE art_pieces SET current_version_id = ?, updated_at = NOW() WHERE id = ?'
         );
         $stmt->execute([$versionId, $pieceId]);
+    }
+
+    public static function touchUpdatedAt(int $pieceId): void
+    {
+        $stmt = db()->prepare('UPDATE art_pieces SET updated_at = NOW() WHERE id = ?');
+        $stmt->execute([$pieceId]);
     }
 
     public static function categoryIds(int $pieceId): array
@@ -528,12 +543,5 @@ class PlatformArtPiece
         }
 
         return $cache[$tableName];
-    }
-
-    private static function nextSortOrder(): int
-    {
-        return (int) db()->query(
-            'SELECT COALESCE(MIN(sort_order), 1) - 1 FROM art_pieces WHERE deleted_at IS NULL'
-        )->fetchColumn();
     }
 }

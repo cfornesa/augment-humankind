@@ -13,12 +13,11 @@ $canonicalUrl = seo_absolute_url('/' . $page['slug']);
 
 require __DIR__ . '/partials/header.php';
 ?>
-    <?php if (!empty($isPreview)): ?>
-        <section class="form-status form-status-success" aria-label="Draft preview notice">
-            <h3>Draft Preview</h3>
-            <p>This page is still in draft status. Only signed-in admins can see this preview at the public URL.</p>
-        </section>
-    <?php endif; ?>
+    <?php if (!empty($isPreview)):
+        $status = 'draft';
+        $statusBannerNote = 'This page is still in draft status. Only signed-in admins can see this preview at the public URL.';
+        require __DIR__ . '/partials/status-banner.php';
+    endif; ?>
     <?php if ($page['slug'] === 'home' || $page['slug'] === 'about'): ?>
         <?php $siteSettings = class_exists('SiteSettings') ? (SiteSettings::current() ?: []) : []; ?>
         <?php if ($page['slug'] === 'home'): ?>

@@ -4,17 +4,19 @@ declare(strict_types=1);
 
 class PlatformCollection
 {
-    public static function all(): array
+    public static function all(bool $adminMode = false): array
     {
         if (!self::tableExists()) {
             return [];
         }
 
+        $statusClause = $adminMode ? '' : "AND pc.status = 'active'";
         $rows = db()->query(
             "SELECT pc.*, COUNT(pcii.item_id) AS item_count
              FROM platform_collections pc
              LEFT JOIN platform_collection_items pcii ON pcii.collection_id = pc.id
              WHERE pc.deleted_at IS NULL
+               {$statusClause}
              GROUP BY pc.id
              ORDER BY pc.sort_order ASC, pc.id ASC"
         )->fetchAll();
@@ -50,7 +52,7 @@ class PlatformCollection
         }
 
         return (int) db()->query(
-            'SELECT COUNT(*) FROM platform_collections WHERE deleted_at IS NULL'
+            "SELECT COUNT(*) FROM platform_collections WHERE deleted_at IS NULL AND status = 'active'"
         )->fetchColumn();
     }
 
@@ -64,7 +66,7 @@ class PlatformCollection
             "SELECT pc.*, COUNT(pcii.item_id) AS item_count
              FROM platform_collections pc
              LEFT JOIN platform_collection_items pcii ON pcii.collection_id = pc.id
-             WHERE pc.deleted_at IS NULL
+             WHERE pc.deleted_at IS NULL AND pc.status = 'active'
              GROUP BY pc.id
              ORDER BY GREATEST(pc.created_at, pc.updated_at) DESC, pc.id DESC
              LIMIT ?"
@@ -84,7 +86,7 @@ class PlatformCollection
             "SELECT pc.*, COUNT(pcii.item_id) AS item_count
              FROM platform_collections pc
              LEFT JOIN platform_collection_items pcii ON pcii.collection_id = pc.id
-             WHERE pc.deleted_at IS NULL
+             WHERE pc.deleted_at IS NULL AND pc.status = 'active'
              GROUP BY pc.id
              ORDER BY GREATEST(pc.created_at, pc.updated_at) DESC, pc.id DESC
              LIMIT ?, ?"
@@ -95,7 +97,7 @@ class PlatformCollection
         return $stmt->fetchAll();
     }
 
-    public static function searchFiltered(string $q, string $sort = 'newest', string $dir = 'desc', int $offset = 0, int $limit = 500): array
+    public static function searchFiltered(string $q, string $sort = 'newest', string $dir = 'desc', int $offset = 0, int $limit = 500, bool $adminMode = false): array
     {
         if (!self::tableExists()) {
             return [];
@@ -105,13 +107,18 @@ class PlatformCollection
 
         $dir = strtoupper($dir) === 'ASC' ? 'ASC' : 'DESC';
         $sortCol = match ($sort) {
-            'name'    => 'pc.name',
-            'items'   => 'item_count',
-            'created' => 'pc.created_at',
-            'updated' => 'pc.updated_at',
-            default   => 'GREATEST(pc.created_at, pc.updated_at)',
+            'name'       => 'pc.name',
+            'items'      => 'item_count',
+            'created'    => 'pc.created_at',
+            'updated'    => 'pc.updated_at',
+            'sort_order' => 'pc.sort_order',
+            default      => 'GREATEST(pc.created_at, pc.updated_at)',
         };
+        if ($sort === 'sort_order') {
+            $dir = 'ASC';
+        }
 
+        $statusClause = $adminMode ? '' : "AND pc.status = 'active'";
         $stmt = db()->prepare(
             "SELECT pc.*, COUNT(DISTINCT pcii.item_id) AS item_count
              FROM platform_collections pc
@@ -121,6 +128,7 @@ class PlatformCollection
                AND pcii.item_type = 'art_piece'
                AND ap.deleted_at IS NULL
              WHERE pc.deleted_at IS NULL
+               {$statusClause}
                AND (
                    pc.name LIKE ?
                    OR pc.description LIKE ?
@@ -225,8 +233,8 @@ class PlatformCollection
     {
         $stmt = db()->prepare(
             'INSERT INTO platform_collections
-                (slug, name, description, artist_statement, biography, `rows`, cols, iframe_code, sort_order, comments_enabled, thumbnail_url)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                (slug, name, description, artist_statement, biography, `rows`, cols, iframe_code, sort_order, comments_enabled, thumbnail_url, status)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         );
         $stmt->execute([
             $data['slug'],
@@ -240,6 +248,7 @@ class PlatformCollection
             $data['sort_order'] ?? self::nextSortOrder(),
             isset($data['comments_enabled']) ? (int)(bool) $data['comments_enabled'] : 0,
             $data['thumbnail_url'] ?? null,
+            $data['status'] ?? 'active',
         ]);
         return (int) db()->lastInsertId();
     }
@@ -249,7 +258,8 @@ class PlatformCollection
         $stmt = db()->prepare(
             'UPDATE platform_collections SET
                 slug = ?, name = ?, description = ?, artist_statement = ?,
-                biography = ?, `rows` = ?, cols = ?, iframe_code = ?, sort_order = ?, comments_enabled = ?, thumbnail_url = ?
+                biography = ?, `rows` = ?, cols = ?, iframe_code = ?, sort_order = ?, comments_enabled = ?, thumbnail_url = ?,
+                status = ?, updated_at = NOW()
              WHERE id = ?'
         );
         $stmt->execute([
@@ -264,6 +274,7 @@ class PlatformCollection
             $data['sort_order'] ?? 0,
             isset($data['comments_enabled']) ? (int)(bool) $data['comments_enabled'] : 0,
             $data['thumbnail_url'] ?? null,
+            $data['status'] ?? 'active',
             $id,
         ]);
     }

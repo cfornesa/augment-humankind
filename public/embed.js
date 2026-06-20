@@ -339,12 +339,55 @@
     }
   }
 
+  // iOS Safari has no Fullscreen API at all (not even webkit-prefixed — it
+  // only ever existed for <video>), so the nested immersive iframe's own
+  // requestFullscreen() always rejects there. It falls back to a CSS overlay
+  // sized to itself, but that's only as big as this wrapper's host element —
+  // cropped/wrong if the host page embeds it at less than full size. This
+  // listener promotes the wrapper itself to a true viewport-filling overlay
+  // on the host page instead, escaping any clipping/transformed ancestor
+  // containers, and demotes it back to its original position on exit.
+  function installFullscreenWrapperProtocol(el) {
+    let restoreParent = null;
+    let restoreNextSibling = null;
+
+    function enterWrapperFullscreen() {
+      if (el.classList.contains("creatr-fullscreen")) return;
+      restoreParent = el.parentNode;
+      restoreNextSibling = el.nextSibling;
+      el.classList.add("creatr-fullscreen");
+      if (el.parentNode !== document.body) {
+        document.body.appendChild(el);
+      }
+    }
+
+    function exitWrapperFullscreen() {
+      if (!el.classList.contains("creatr-fullscreen")) return;
+      el.classList.remove("creatr-fullscreen");
+      if (restoreParent && el.parentNode !== restoreParent) {
+        restoreParent.insertBefore(el, restoreNextSibling);
+      }
+      restoreParent = null;
+      restoreNextSibling = null;
+    }
+
+    window.addEventListener("message", (e) => {
+      if (!e.data || e.data.type !== "creatr-toggle-fullscreen") return;
+      if (e.data.value) {
+        enterWrapperFullscreen();
+      } else {
+        exitWrapperFullscreen();
+      }
+    });
+  }
+
   // Web Component for Exhibit Wall
   class CreatrExhibitWall extends HTMLElement {
     constructor() {
       super();
       this.attachShadow({ mode: "open" });
       this.isMounted = false;
+      installFullscreenWrapperProtocol(this);
     }
 
     connectedCallback() {
@@ -386,6 +429,22 @@
             :host {
               min-height: 180px !important;
             }
+          }
+          /* Promoted to a direct child of document.body while fullscreen —
+             escapes any clipping/transformed ancestor on the host page (the
+             original iOS Safari bug: a CSS-only "fake fullscreen" overlay
+             nested inside a transformed container gets cropped). */
+          :host(.creatr-fullscreen) {
+            position: fixed !important;
+            inset: 0 !important;
+            width: 100dvw !important;
+            height: 100dvh !important;
+            max-width: none !important;
+            aspect-ratio: auto !important;
+            min-height: 0 !important;
+            border: none !important;
+            border-radius: 0 !important;
+            z-index: 2147483647 !important;
           }
           .mount {
             width: 100%;

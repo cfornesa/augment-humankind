@@ -18,17 +18,17 @@ require dirname(__DIR__) . '/partials/header.php';
                 <input id="collections-q" class="filter-search-input" name="q" type="search"
                     value="<?= e($q) ?>" placeholder="Search collections…" autocomplete="off">
                 <button class="button button-primary filter-submit" type="submit">Search</button>
-                <?php if ($q !== '' || $sort !== 'newest'): ?>
+                <?php if ($q !== '' || $sort !== 'curated'): ?>
                     <a href="/collections" class="filter-reset">Clear</a>
                 <?php endif; ?>
             </div>
-            <details class="filter-bar-secondary" <?= $sort !== 'newest' ? 'open' : '' ?>>
+            <details class="filter-bar-secondary" <?= $sort !== 'curated' ? 'open' : '' ?>>
                 <summary class="filter-toggle">Sort</summary>
                 <div class="filter-bar-options">
                     <fieldset class="filter-fieldset">
                         <legend>Sort</legend>
                         <div class="filter-chip-group" role="group">
-                            <?php foreach (['newest' => 'Newest first', 'oldest' => 'Oldest first', 'az' => 'A–Z', 'za' => 'Z–A'] as $val => $label): ?>
+                            <?php foreach (['curated' => 'Default order', 'newest' => 'Newest first', 'oldest' => 'Oldest first', 'az' => 'A–Z', 'za' => 'Z–A'] as $val => $label): ?>
                                 <label class="filter-chip <?= $sort === $val ? 'filter-chip-active' : '' ?>">
                                     <input type="radio" name="sort" value="<?= e($val) ?>"
                                         <?= $sort === $val ? 'checked' : '' ?>

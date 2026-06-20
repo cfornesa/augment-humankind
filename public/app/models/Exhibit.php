@@ -39,18 +39,18 @@ class Exhibit
     public static function countVisible(): int
     {
         return (int) db()->query(
-            'SELECT COUNT(*) FROM exhibits WHERE deleted_at IS NULL'
+            "SELECT COUNT(*) FROM exhibits WHERE deleted_at IS NULL AND status = 'active'"
         )->fetchColumn();
     }
 
     public static function latestActive(int $limit = 3): array
     {
         $stmt = db()->prepare(
-            'SELECT e.*
+            "SELECT e.*
              FROM exhibits e
-             WHERE e.deleted_at IS NULL
+             WHERE e.deleted_at IS NULL AND e.status = 'active'
              ORDER BY e.created_at DESC, e.id DESC
-             LIMIT ?'
+             LIMIT ?"
         );
         $stmt->bindValue(1, max(1, $limit), PDO::PARAM_INT);
         $stmt->execute();
@@ -60,11 +60,11 @@ class Exhibit
     public static function paginateLatest(int $offset, int $limit): array
     {
         $stmt = db()->prepare(
-            'SELECT e.*
+            "SELECT e.*
              FROM exhibits e
-             WHERE e.deleted_at IS NULL
+             WHERE e.deleted_at IS NULL AND e.status = 'active'
              ORDER BY e.created_at DESC, e.id DESC
-             LIMIT ?, ?'
+             LIMIT ?, ?"
         );
         $stmt->bindValue(1, max(0, $offset), PDO::PARAM_INT);
         $stmt->bindValue(2, max(1, $limit), PDO::PARAM_INT);
@@ -72,28 +72,34 @@ class Exhibit
         return self::attachCollections(self::attachCategories($stmt->fetchAll()));
     }
 
-    public static function searchFiltered(string $q, string $sort = 'newest', string $dir = 'desc', int $offset = 0, int $limit = 500): array
+    public static function searchFiltered(string $q, string $sort = 'newest', string $dir = 'desc', int $offset = 0, int $limit = 500, bool $adminMode = false): array
     {
         $like = $q !== '' ? '%' . str_replace(['%', '_'], ['\\%', '\\_'], $q) . '%' : '%';
 
         $dir = strtoupper($dir) === 'ASC' ? 'ASC' : 'DESC';
         $sortCol = match ($sort) {
-            'title'   => 'e.title',
-            'created' => 'e.created_at',
-            'az'      => 'e.title',
-            'za'      => 'e.title',
-            default   => 'e.created_at',
+            'title'      => 'e.title',
+            'created'    => 'e.created_at',
+            'updated'    => 'e.updated_at',
+            'sort_order' => 'e.sort_order',
+            'az'         => 'e.title',
+            'za'         => 'e.title',
+            default      => 'GREATEST(e.created_at, e.updated_at)',
         };
-        if ($sort === 'az') {
+        if ($sort === 'sort_order') {
+            $dir = 'ASC';
+        } elseif ($sort === 'az') {
             $dir = 'ASC';
         } elseif ($sort === 'za') {
             $dir = 'DESC';
         }
 
+        $statusClause = $adminMode ? '' : "AND e.status = 'active'";
         $stmt = db()->prepare(
             "SELECT e.*
              FROM exhibits e
              WHERE e.deleted_at IS NULL
+               {$statusClause}
                AND (e.title LIKE ? OR e.description LIKE ?)
              ORDER BY {$sortCol} {$dir}, e.id {$dir}
              LIMIT ? OFFSET ?"
@@ -150,8 +156,8 @@ class Exhibit
         $stmt = db()->prepare(
             'INSERT INTO exhibits
                 (title, artist_name, slug, year, medium, dimensions, description, placard_notes,
-                 thumbnail_type, thumbnail_value, sort_order, comments_enabled)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                 thumbnail_type, thumbnail_value, sort_order, comments_enabled, status)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         );
         $stmt->execute([
             $data['title'],
@@ -166,6 +172,7 @@ class Exhibit
             $data['thumbnail_value'] ?: null,
             $data['sort_order'] ?? 0,
             isset($data['comments_enabled']) ? (int)(bool) $data['comments_enabled'] : 0,
+            $data['status'] ?? 'active',
         ]);
         return (int) db()->lastInsertId();
     }
@@ -176,7 +183,8 @@ class Exhibit
             'UPDATE exhibits SET
                 title = ?, artist_name = ?, slug = ?, year = ?, medium = ?, dimensions = ?,
                 description = ?, placard_notes = ?,
-                thumbnail_type = ?, thumbnail_value = ?, sort_order = ?, comments_enabled = ?
+                thumbnail_type = ?, thumbnail_value = ?, sort_order = ?, comments_enabled = ?,
+                status = ?, updated_at = NOW()
              WHERE id = ?'
         );
         $stmt->execute([
@@ -192,6 +200,7 @@ class Exhibit
             $data['thumbnail_value'] ?: null,
             $data['sort_order'] ?? 0,
             isset($data['comments_enabled']) ? (int)(bool) $data['comments_enabled'] : 0,
+            $data['status'] ?? 'active',
             $id,
         ]);
     }

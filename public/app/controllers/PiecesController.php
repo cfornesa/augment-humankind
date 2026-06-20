@@ -10,21 +10,26 @@ class PiecesController
     {
         $q      = trim((string) ($_GET['q'] ?? ''));
         $engine = (string) ($_GET['engine'] ?? '');
-        $sort   = (string) ($_GET['sort'] ?? 'newest');
+        // Defaults to the same curated sort_order the admin pieces list uses
+        // (new pieces first), so this page's order matches /admin/pieces by
+        // default. Only diverges when the visitor explicitly picks a sort.
+        $sort   = (string) ($_GET['sort'] ?? 'curated');
         $offset = max(0, (int) ($_GET['offset'] ?? 0));
 
         if (!in_array($engine, ['p5', 'c2', 'three', 'svg'], true)) {
             $engine = '';
         }
-        if (!in_array($sort, ['newest', 'oldest', 'az', 'za'], true)) {
-            $sort = 'newest';
+        if (!in_array($sort, ['curated', 'newest', 'oldest', 'az', 'za', 'unsorted'], true)) {
+            $sort = 'curated';
         }
 
         [$modelSort, $dir] = match ($sort) {
-            'oldest' => ['newest', 'asc'],
-            'az'     => ['title',  'asc'],
-            'za'     => ['title',  'desc'],
-            default  => ['newest', 'desc'],
+            'newest'   => ['newest', 'desc'],
+            'oldest'   => ['newest', 'asc'],
+            'az'       => ['title',  'asc'],
+            'za'       => ['title',  'desc'],
+            'unsorted' => ['id',     'asc'],
+            default    => ['sort_order', 'asc'],
         };
 
         $batch = PlatformArtPiece::searchFiltered(
@@ -40,7 +45,7 @@ class PiecesController
         $pieces     = $hasMore ? array_slice($batch, 0, self::PAGE_SIZE) : $batch;
         $nextOffset = $offset + self::PAGE_SIZE;
 
-        $filterParams = array_filter(['q' => $q, 'engine' => $engine, 'sort' => $sort !== 'newest' ? $sort : '']);
+        $filterParams = array_filter(['q' => $q, 'engine' => $engine, 'sort' => $sort !== 'curated' ? $sort : '']);
         $filterQs     = http_build_query(array_filter($filterParams));
         $fetchUrl     = '/pieces' . ($filterQs !== '' ? '?' . $filterQs : '');
 

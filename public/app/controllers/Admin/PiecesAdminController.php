@@ -329,6 +329,7 @@ class PiecesAdminController
         try {
             $data = self::resolveVersionData((int) $id);
             PlatformArtPieceVersion::update((int) $vid, $data);
+            PlatformArtPiece::touchUpdatedAt((int) $id);
             header('Location: /admin/pieces/' . $id . '/versions');
         } catch (Throwable $e) {
             $version = self::draftVersionFromPost();
@@ -342,6 +343,7 @@ class PiecesAdminController
     {
         admin_check();
         PlatformArtPieceVersion::delete((int) $vid);
+        PlatformArtPiece::touchUpdatedAt((int) $id);
         header('Location: /admin/pieces/' . $id . '/versions');
         exit;
     }
@@ -386,7 +388,7 @@ class PiecesAdminController
             'status' => $status,
             'thumbnail_url' => trim($_POST['thumbnail_url'] ?? '') ?: null,
             'description' => trim($_POST['description'] ?? '') ?: null,
-            'sort_order' => isset($_POST['sort_order']) ? max(0, (int) $_POST['sort_order'] - 1) : null,
+            'sort_order' => isset($_POST['sort_order']) ? max(0, (int) $_POST['sort_order']) : null,
             'comments_enabled' => isset($_POST['comments_enabled']) ? 1 : 0,
             'category_ids' => array_map('intval', $_POST['category_ids'] ?? []),
         ];

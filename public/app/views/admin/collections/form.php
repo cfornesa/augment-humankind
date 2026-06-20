@@ -43,6 +43,15 @@ ob_start();
             <input type="number" name="sort_order" min="1" value="<?= (int) ($collection['sort_order'] ?? 0) + 1 ?>">
         </div>
 
+        <div class="form-row">
+            <label>Status</label>
+            <select name="status">
+                <option value="active" <?= ($collection['status'] ?? 'active') === 'active' ? 'selected' : '' ?>>Active</option>
+                <option value="draft" <?= ($collection['status'] ?? '') === 'draft' ? 'selected' : '' ?>>Draft</option>
+                <option value="archived" <?= ($collection['status'] ?? '') === 'archived' ? 'selected' : '' ?>>Archived</option>
+            </select>
+        </div>
+
         <!-- Thumbnail -->
         <fieldset class="form-fieldset">
             <legend>Thumbnail <span class="form-hint">(optional)</span></legend>

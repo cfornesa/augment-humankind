@@ -21,11 +21,11 @@ class PlatformCollectionsAdminController
         }
 
         if ($q !== '') {
-            $collections = PlatformCollection::searchFiltered($q, $sort === 'sort_order' ? 'newest' : $sort, $dir);
+            $collections = PlatformCollection::searchFiltered($q, $sort === 'sort_order' ? 'newest' : $sort, $dir, 0, 500, true);
         } elseif ($sort !== 'sort_order') {
-            $collections = PlatformCollection::searchFiltered('', $sort, $dir);
+            $collections = PlatformCollection::searchFiltered('', $sort, $dir, 0, 500, true);
         } else {
-            $collections = PlatformCollection::all();
+            $collections = PlatformCollection::all(true);
         }
 
         foreach ($collections as &$collection) {
@@ -79,6 +79,7 @@ class PlatformCollectionsAdminController
                 'cols' => (int) ($_POST['cols'] ?? 1),
                 'iframe_code' => trim($_POST['iframe_code'] ?? '') ?: null,
                 'comments_enabled' => isset($_POST['comments_enabled']) ? 1 : 0,
+                'status' => self::resolvedStatus($_POST['status'] ?? null),
             ]);
             reorder_shift_position($id, $sortOrder, 'platform_collections');
 
@@ -154,6 +155,7 @@ class PlatformCollectionsAdminController
                 'sort_order' => (int) ($existing['sort_order'] ?? 0),
                 'comments_enabled' => isset($_POST['comments_enabled']) ? 1 : 0,
                 'thumbnail_url' => trim($_POST['thumbnail_url'] ?? '') ?: ($existing['thumbnail_url'] ?? null),
+                'status' => self::resolvedStatus($_POST['status'] ?? null),
             ]);
             reorder_shift_position((int) $id, $sortOrder, 'platform_collections');
 
@@ -208,7 +210,7 @@ class PlatformCollectionsAdminController
                 'item_count' => (int) ($collection['item_count'] ?? 0),
                 'thumbnail_url' => PlatformCollection::firstThumbnail((int) $collection['id']),
             ];
-        }, PlatformCollection::all());
+        }, PlatformCollection::all(true));
 
         echo json_encode($collections);
         exit;
@@ -245,6 +247,12 @@ class PlatformCollectionsAdminController
             $slug = $original . '-' . $count;
             $count++;
         }
+    }
+
+    private static function resolvedStatus(?string $status): string
+    {
+        $status = trim((string) $status);
+        return in_array($status, ['active', 'draft', 'archived'], true) ? $status : 'active';
     }
 
     public static function captureThumbnail(string $id): void

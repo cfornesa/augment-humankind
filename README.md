@@ -173,6 +173,8 @@ mysql -h "$DB_HOST" -u "$DB_USER" -p "$DB_NAME" < docs/migrations/2026-06-17-adm
 mysql -h "$DB_HOST" -u "$DB_USER" -p "$DB_NAME" < docs/migrations/2026-06-18-ai-personas.sql
 mysql -h "$DB_HOST" -u "$DB_USER" -p "$DB_NAME" < docs/migrations/2026-06-18-operational-hardening.sql
 mysql -h "$DB_HOST" -u "$DB_USER" -p "$DB_NAME" < docs/migrations/2026-06-19-media-draft-confirm.sql
+mysql -h "$DB_HOST" -u "$DB_USER" -p "$DB_NAME" < docs/migrations/2026-06-19-exhibits-collections-updated-at.sql
+mysql -h "$DB_HOST" -u "$DB_USER" -p "$DB_NAME" < docs/migrations/2026-06-19-portfolio-status.sql
 mysql -h "$DB_HOST" -u "$DB_USER" -p "$DB_NAME" < scripts/add-post-sections-table.sql
 php scripts/apply-portfolio-taxonomy-schema.php
 php scripts/apply-portfolio-ordering-schema.php

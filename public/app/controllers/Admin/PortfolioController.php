@@ -21,7 +21,7 @@ class PortfolioAdminController
         }
 
         if ($q !== '' || $sort !== 'sort_order') {
-            $exhibits = Exhibit::searchFiltered($q, $sort === 'sort_order' ? 'created' : $sort, $dir);
+            $exhibits = Exhibit::searchFiltered($q, $sort === 'sort_order' ? 'created' : $sort, $dir, 0, 500, true);
         } else {
             $exhibits = Exhibit::all();
         }
@@ -316,7 +316,7 @@ class PortfolioAdminController
         }
 
         if ($q !== '' || $sort !== 'sort_order') {
-            $collections = Collection::searchFiltered($q, $sort === 'sort_order' ? 'created' : $sort, $dir);
+            $collections = Collection::searchFiltered($q, $sort === 'sort_order' ? 'created' : $sort, $dir, 0, 500, true);
         } else {
             $collections = Collection::allWithExhibitCount();
         }
@@ -374,6 +374,7 @@ class PortfolioAdminController
                 'thumbnail_value' => $thumbValue,
                 'sort_order' => $sortOrder,
                 'comments_enabled' => isset($_POST['comments_enabled']) ? 1 : 0,
+                'status' => self::resolvedStatus($_POST['status'] ?? null),
             ]);
             reorder_shift_position($id, $sortOrder, 'collections');
             Collection::syncExhibits($id, array_map('intval', $_POST['exhibit_ids'] ?? []));
@@ -478,6 +479,7 @@ class PortfolioAdminController
                 'thumbnail_value' => $thumbValue,
                 'sort_order' => (int) ($existing['sort_order'] ?? 0),
                 'comments_enabled' => isset($_POST['comments_enabled']) ? 1 : 0,
+                'status' => self::resolvedStatus($_POST['status'] ?? null),
             ]);
             reorder_shift_position((int) $id, $sortOrder, 'collections');
             Collection::syncExhibits((int) $id, array_map('intval', $_POST['exhibit_ids'] ?? []));
@@ -546,10 +548,17 @@ class PortfolioAdminController
             'thumbnail_type' => $thumbType,
             'thumbnail_value' => $thumbValue,
             'sort_order' => max(0, (int) ($_POST['sort_order'] ?? 1) - 1),
+            'status' => self::resolvedStatus($_POST['status'] ?? null),
             'comments_enabled' => isset($_POST['comments_enabled']) ? 1 : 0,
             'media_items' => $mediaItems,
             'collection_ids' => array_map('intval', $_POST['collection_ids'] ?? []),
         ];
+    }
+
+    private static function resolvedStatus(?string $status): string
+    {
+        $status = trim((string) $status);
+        return in_array($status, ['active', 'draft', 'archived'], true) ? $status : 'active';
     }
 
     private static function resolveExhibitMediaItems(): array

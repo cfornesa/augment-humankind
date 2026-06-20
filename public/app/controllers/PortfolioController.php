@@ -31,17 +31,21 @@ class PortfolioController
     public static function collectionsIndex(): void
     {
         $q    = trim((string) ($_GET['q'] ?? ''));
-        $sort = (string) ($_GET['sort'] ?? 'newest');
-        if (!in_array($sort, ['newest', 'oldest', 'az', 'za'], true)) {
-            $sort = 'newest';
+        // Defaults to the same curated sort_order the admin exhibit
+        // collections list uses, so this page's order matches the admin by
+        // default. Only diverges when the visitor explicitly picks a sort.
+        $sort = (string) ($_GET['sort'] ?? 'curated');
+        if (!in_array($sort, ['curated', 'newest', 'oldest', 'az', 'za'], true)) {
+            $sort = 'curated';
         }
         [$modelSort, $dir] = match ($sort) {
-            'oldest' => ['created', 'asc'],
-            'az'     => ['az',      'asc'],
-            'za'     => ['za',      'desc'],
-            default  => ['newest',  'desc'],
+            'newest' => ['newest',     'desc'],
+            'oldest' => ['created',    'asc'],
+            'az'     => ['az',         'asc'],
+            'za'     => ['za',         'desc'],
+            default  => ['sort_order', 'asc'],
         };
-        $filterQs = http_build_query(array_filter(['q' => $q, 'sort' => $sort !== 'newest' ? $sort : '']));
+        $filterQs = http_build_query(array_filter(['q' => $q, 'sort' => $sort !== 'curated' ? $sort : '']));
         $fetchUrl = '/portfolio/exhibit-collections' . ($filterQs !== '' ? '?' . $filterQs : '');
 
         self::renderArchive(
@@ -65,17 +69,21 @@ class PortfolioController
     public static function exhibitsIndex(): void
     {
         $q    = trim((string) ($_GET['q'] ?? ''));
-        $sort = (string) ($_GET['sort'] ?? 'newest');
-        if (!in_array($sort, ['newest', 'oldest', 'az', 'za'], true)) {
-            $sort = 'newest';
+        // Defaults to the same curated sort_order the admin exhibits list
+        // uses, so this page's order matches the admin by default. Only
+        // diverges when the visitor explicitly picks a sort.
+        $sort = (string) ($_GET['sort'] ?? 'curated');
+        if (!in_array($sort, ['curated', 'newest', 'oldest', 'az', 'za'], true)) {
+            $sort = 'curated';
         }
         [$modelSort, $dir] = match ($sort) {
-            'oldest' => ['created', 'asc'],
-            'az'     => ['az',      'asc'],
-            'za'     => ['za',      'desc'],
-            default  => ['newest',  'desc'],
+            'newest' => ['newest',     'desc'],
+            'oldest' => ['created',    'asc'],
+            'az'     => ['az',         'asc'],
+            'za'     => ['za',         'desc'],
+            default  => ['sort_order', 'asc'],
         };
-        $filterQs = http_build_query(array_filter(['q' => $q, 'sort' => $sort !== 'newest' ? $sort : '']));
+        $filterQs = http_build_query(array_filter(['q' => $q, 'sort' => $sort !== 'curated' ? $sort : '']));
         $fetchUrl = '/portfolio/exhibits' . ($filterQs !== '' ? '?' . $filterQs : '');
 
         self::renderArchive(
@@ -99,17 +107,21 @@ class PortfolioController
     public static function platformCollectionsIndex(): void
     {
         $q    = trim((string) ($_GET['q'] ?? ''));
-        $sort = (string) ($_GET['sort'] ?? 'newest');
-        if (!in_array($sort, ['newest', 'oldest', 'az', 'za'], true)) {
-            $sort = 'newest';
+        // Defaults to the same curated sort_order the admin platform
+        // collections list uses, so this page's order matches the admin by
+        // default. Only diverges when the visitor explicitly picks a sort.
+        $sort = (string) ($_GET['sort'] ?? 'curated');
+        if (!in_array($sort, ['curated', 'newest', 'oldest', 'az', 'za'], true)) {
+            $sort = 'curated';
         }
         [$modelSort, $dir] = match ($sort) {
-            'oldest' => ['newest', 'asc'],
-            'az'     => ['name',   'asc'],
-            'za'     => ['name',   'desc'],
-            default  => ['newest', 'desc'],
+            'newest' => ['newest',     'desc'],
+            'oldest' => ['newest',     'asc'],
+            'az'     => ['name',       'asc'],
+            'za'     => ['name',       'desc'],
+            default  => ['sort_order', 'asc'],
         };
-        $filterQs = http_build_query(array_filter(['q' => $q, 'sort' => $sort !== 'newest' ? $sort : '']));
+        $filterQs = http_build_query(array_filter(['q' => $q, 'sort' => $sort !== 'curated' ? $sort : '']));
         $fetchUrl = '/portfolio/platform-collections' . ($filterQs !== '' ? '?' . $filterQs : '');
 
         self::renderArchive(
@@ -134,20 +146,24 @@ class PortfolioController
     {
         $q      = trim((string) ($_GET['q'] ?? ''));
         $engine = trim((string) ($_GET['engine'] ?? ''));
-        $sort   = (string) ($_GET['sort'] ?? 'newest');
-        if (!in_array($sort, ['newest', 'oldest', 'az', 'za'], true)) {
-            $sort = 'newest';
+        // Defaults to the same curated sort_order the admin pieces list
+        // uses, so this page's order matches the admin by default. Only
+        // diverges when the visitor explicitly picks a sort.
+        $sort   = (string) ($_GET['sort'] ?? 'curated');
+        if (!in_array($sort, ['curated', 'newest', 'oldest', 'az', 'za'], true)) {
+            $sort = 'curated';
         }
         if (!in_array($engine, ['p5', 'c2', 'three', 'svg'], true)) {
             $engine = '';
         }
         [$modelSort, $dir] = match ($sort) {
-            'oldest' => ['newest', 'asc'],
-            'az'     => ['title',  'asc'],
-            'za'     => ['title',  'desc'],
-            default  => ['newest', 'desc'],
+            'newest' => ['newest',     'desc'],
+            'oldest' => ['newest',     'asc'],
+            'az'     => ['title',      'asc'],
+            'za'     => ['title',      'desc'],
+            default  => ['sort_order', 'asc'],
         };
-        $filterQs = http_build_query(array_filter(['q' => $q, 'engine' => $engine, 'sort' => $sort !== 'newest' ? $sort : '']));
+        $filterQs = http_build_query(array_filter(['q' => $q, 'engine' => $engine, 'sort' => $sort !== 'curated' ? $sort : '']));
         $fetchUrl = '/portfolio/pieces' . ($filterQs !== '' ? '?' . $filterQs : '');
 
         self::renderArchive(

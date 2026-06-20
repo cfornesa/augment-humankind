@@ -23,6 +23,8 @@ $hasCode = $version && (!empty($version['html_code']) || !empty($version['css_co
     <?php endif; ?>
 </section>
 
+<?php $status = $piece['status'] ?? 'active'; require dirname(__DIR__) . '/partials/status-banner.php'; ?>
+
 <section class="piece-stage" aria-label="Generative art piece">
     <?php if ($hasCode): ?>
         <div class="piece-canvas-container">

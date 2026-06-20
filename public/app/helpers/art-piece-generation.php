@@ -59,8 +59,8 @@ function art_piece_generation_system_prompt(string $engine): string
             'CRITICAL: The HTML container div MUST use id="container" — do NOT use custom ids such as \'book-container\', \'scene-container\', \'app\', or \'root\'. The runtime only mounts the WebGL canvas inside elements with known ids (container, canvas-container, sketch-container). Any other id causes the canvas to be placed outside the styled container, making the scene invisible in the normal preview.',
             "CRITICAL: Use `width` and `height` from the runtime for ALL sizing — never use `window.innerWidth` or `window.innerHeight`. Pass `false` as the third argument to `renderer.setSize(width, height, false)` to prevent CSS override. Do NOT add `window.addEventListener('resize', ...)` — the runtime handles resize. Incorrect sizing makes the scene invisible in the default post view.",
             "CRITICAL: If you use MeshPhongMaterial, MeshLambertMaterial, or MeshStandardMaterial, you MUST add at least one light (e.g. AmbientLight + DirectionalLight). These materials are invisible without lights. MeshBasicMaterial does not need lights and is suitable for simple solid-colored objects.",
-            "Prefer `startFrame(handler)` for animation and render inside that handler. If you use another Three.js animation pattern, it must still render into the provided canvas and remain self-contained.",
-            "CRITICAL: Animations MUST be infinite. Use Math.sin/cos, elapsed time, frameCount, or a supervised render loop to create periodic motion or pulsating effects. Ensure elements don't just disappear; the scene must remain visually active indefinitely.",
+            "Use `startFrame(handler)` for animation and call `renderer.render(scene, camera)` yourself inside that handler. CRITICAL: `handler` is called with exactly ONE argument — an integer frame counter (`startFrame((frameCount) => { ... })`) — never elapsed time or delta time. If you need real elapsed time for `Math.sin`/`Math.cos` motion, create your own `const clock = new THREE.Clock();` inside the sketch and read `clock.getElapsedTime()` at the top of the handler; do NOT destructure a second parameter from the handler — it will always be `undefined` and corrupt every value computed from it.",
+            "CRITICAL: Animations MUST be infinite. Use Math.sin/cos with elapsed time from a local `THREE.Clock` or the handler's frame counter to create periodic motion or pulsating effects. Ensure elements don't just disappear; the scene must remain visually active indefinitely.",
             "Keep the scene self-contained."
         ]),
         'svg' => implode(' ', [
@@ -192,6 +192,20 @@ function art_piece_preflight_code(string $engine, string $code): string
             ]
         ];
         foreach ($c2Rules as $rule) {
+            if (preg_match($rule['pattern'], $validatedCode)) {
+                throw new RuntimeException($rule['message']);
+            }
+        }
+    }
+
+    if ($engine === 'three') {
+        $threeRules = [
+            [
+                'pattern' => '/startFrame\s*\(\s*(?:\([^)]*,[^)]*\)|function\s*\([^)]*,[^)]*\))/',
+                'message' => 'Generated Three.js code cannot pass a multi-parameter handler to startFrame(); the runtime only ever calls it with a single frame-count integer, never elapsed/delta time. Use startFrame((frameCount) => {...}) and a local THREE.Clock for real elapsed time.'
+            ],
+        ];
+        foreach ($threeRules as $rule) {
             if (preg_match($rule['pattern'], $validatedCode)) {
                 throw new RuntimeException($rule['message']);
             }

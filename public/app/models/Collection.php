@@ -62,14 +62,14 @@ class Collection
     public static function countWithAtLeastOneExhibit(): int
     {
         $stmt = db()->query(
-            'SELECT COUNT(*)
+            "SELECT COUNT(*)
              FROM collections c
-             WHERE c.deleted_at IS NULL
+             WHERE c.deleted_at IS NULL AND c.status = 'active'
                AND EXISTS (
                    SELECT 1 FROM collection_exhibits ce
                    JOIN exhibits e ON e.id = ce.exhibit_id AND e.deleted_at IS NULL
                    WHERE ce.collection_id = c.id
-               )'
+               )"
         );
         return (int) $stmt->fetchColumn();
     }
@@ -77,16 +77,16 @@ class Collection
     public static function latestActive(int $limit = 3): array
     {
         $stmt = db()->prepare(
-            'SELECT c.*
+            "SELECT c.*
              FROM collections c
-             WHERE c.deleted_at IS NULL
+             WHERE c.deleted_at IS NULL AND c.status = 'active'
                AND EXISTS (
                    SELECT 1 FROM collection_exhibits ce
                    JOIN exhibits e ON e.id = ce.exhibit_id AND e.deleted_at IS NULL
                    WHERE ce.collection_id = c.id
                )
              ORDER BY c.created_at DESC, c.id DESC
-             LIMIT ?'
+             LIMIT ?"
         );
         $stmt->bindValue(1, max(1, $limit), PDO::PARAM_INT);
         $stmt->execute();
@@ -96,16 +96,16 @@ class Collection
     public static function paginateLatest(int $offset, int $limit): array
     {
         $stmt = db()->prepare(
-            'SELECT c.*
+            "SELECT c.*
              FROM collections c
-             WHERE c.deleted_at IS NULL
+             WHERE c.deleted_at IS NULL AND c.status = 'active'
                AND EXISTS (
                    SELECT 1 FROM collection_exhibits ce
                    JOIN exhibits e ON e.id = ce.exhibit_id AND e.deleted_at IS NULL
                    WHERE ce.collection_id = c.id
                )
              ORDER BY c.created_at DESC, c.id DESC
-             LIMIT ?, ?'
+             LIMIT ?, ?"
         );
         $stmt->bindValue(1, max(0, $offset), PDO::PARAM_INT);
         $stmt->bindValue(2, max(1, $limit), PDO::PARAM_INT);
@@ -113,28 +113,34 @@ class Collection
         return $stmt->fetchAll();
     }
 
-    public static function searchFiltered(string $q, string $sort = 'newest', string $dir = 'desc', int $offset = 0, int $limit = 500): array
+    public static function searchFiltered(string $q, string $sort = 'newest', string $dir = 'desc', int $offset = 0, int $limit = 500, bool $adminMode = false): array
     {
         $like = $q !== '' ? '%' . str_replace(['%', '_'], ['\\%', '\\_'], $q) . '%' : '%';
 
         $dir = strtoupper($dir) === 'ASC' ? 'ASC' : 'DESC';
         $sortCol = match ($sort) {
-            'name'    => 'c.name',
-            'created' => 'c.created_at',
-            'az'      => 'c.name',
-            'za'      => 'c.name',
-            default   => 'c.created_at',
+            'name'       => 'c.name',
+            'created'    => 'c.created_at',
+            'updated'    => 'c.updated_at',
+            'sort_order' => 'c.sort_order',
+            'az'         => 'c.name',
+            'za'         => 'c.name',
+            default      => 'GREATEST(c.created_at, c.updated_at)',
         };
-        if ($sort === 'az') {
+        if ($sort === 'sort_order') {
+            $dir = 'ASC';
+        } elseif ($sort === 'az') {
             $dir = 'ASC';
         } elseif ($sort === 'za') {
             $dir = 'DESC';
         }
 
+        $statusClause = $adminMode ? '' : "AND c.status = 'active'";
         $stmt = db()->prepare(
             "SELECT c.*
              FROM collections c
              WHERE c.deleted_at IS NULL
+               {$statusClause}
                AND (c.name LIKE ? OR c.description LIKE ?)
              ORDER BY {$sortCol} {$dir}, c.id {$dir}
              LIMIT ? OFFSET ?"
@@ -205,8 +211,8 @@ class Collection
     public static function create(array $data): int
     {
         $stmt = db()->prepare(
-            'INSERT INTO collections (name, slug, description, thumbnail_type, thumbnail_value, sort_order, comments_enabled)
-             VALUES (?, ?, ?, ?, ?, ?, ?)'
+            'INSERT INTO collections (name, slug, description, thumbnail_type, thumbnail_value, sort_order, comments_enabled, status)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
         );
         $stmt->execute([
             $data['name'],
@@ -216,6 +222,7 @@ class Collection
             $data['thumbnail_value'] ?: null,
             $data['sort_order'] ?? 0,
             isset($data['comments_enabled']) ? (int)(bool) $data['comments_enabled'] : 0,
+            $data['status'] ?? 'active',
         ]);
         return (int) db()->lastInsertId();
     }
@@ -225,7 +232,8 @@ class Collection
         $stmt = db()->prepare(
             'UPDATE collections
              SET name = ?, slug = ?, description = ?,
-                 thumbnail_type = ?, thumbnail_value = ?, sort_order = ?, comments_enabled = ?
+                 thumbnail_type = ?, thumbnail_value = ?, sort_order = ?, comments_enabled = ?,
+                 status = ?, updated_at = NOW()
              WHERE id = ?'
         );
         $stmt->execute([
@@ -236,6 +244,7 @@ class Collection
             $data['thumbnail_value'] ?: null,
             $data['sort_order'] ?? 0,
             isset($data['comments_enabled']) ? (int)(bool) $data['comments_enabled'] : 0,
+            $data['status'] ?? 'active',
             $id,
         ]);
     }

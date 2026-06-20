@@ -16,6 +16,13 @@
        These colours stay bright in dark mode, so --ink (which flips to near-white) cannot
        be used directly on them. --on-accent is always the original dark ink value. */
     --on-accent: #15374a;
+    /* .form-status notice backgrounds. Defined per-theme (not hardcoded on the
+       class itself) because --ink flips from dark to near-white in dark mode —
+       a background that stays light there puts light text on a light surface. */
+    --notice-success-bg: #e9f7f2;
+    --notice-error-bg: #fff1cd;
+    --notice-draft-bg: #fff4dd;
+    --notice-archived-bg: #eef0f2;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -28,6 +35,10 @@
         --line: #3d7a9b;
         --shadow: 10px 10px 0 #3d7a9b;
         --white: #162a3a;
+        --notice-success-bg: #16332c;
+        --notice-error-bg: #3a2f12;
+        --notice-draft-bg: #3a2c12;
+        --notice-archived-bg: #22303a;
     }
 
     :root:not([data-theme="light"]) body {
@@ -48,6 +59,10 @@
     --line: #3d7a9b;
     --shadow: 10px 10px 0 #3d7a9b;
     --white: #162a3a;
+    --notice-success-bg: #16332c;
+    --notice-error-bg: #3a2f12;
+    --notice-draft-bg: #3a2c12;
+    --notice-archived-bg: #22303a;
 }
 
 html[data-theme="dark"] body {
@@ -931,11 +946,19 @@ h3 {
 }
 
 .form-status-success {
-    background: #e9f7f2;
+    background: var(--notice-success-bg);
 }
 
 .form-status-error {
-    background: #fff1cd;
+    background: var(--notice-error-bg);
+}
+
+.form-status-draft {
+    background: var(--notice-draft-bg);
+}
+
+.form-status-archived {
+    background: var(--notice-archived-bg);
 }
 
 .contact-form .button:disabled {

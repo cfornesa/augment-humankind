@@ -27,6 +27,8 @@ require __DIR__ . '/../partials/header.php';
                 </div>
             </div>
 
+            <?php $status = $exhibit['status'] ?? 'active'; require __DIR__ . '/../partials/status-banner.php'; ?>
+
             <div class="work-piece-wrap">
                 <?php if ($initialItem === null): ?>
                     <div class="work-piece-fallback" role="status">

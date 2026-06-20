@@ -165,11 +165,24 @@ export function createKeyboardNavigation(controls, options = {}) {
   }
 
   const _fwd = new THREE.Vector3();
+  // `speed` is tuned as a per-tick step at a steady 60fps. animateControls()'s
+  // actual tick rate varies with device/browser/fullscreen state, so scale by
+  // elapsed real time to keep navigation speed consistent regardless of frame
+  // rate — without this, the exact same key-hold duration could move the
+  // camera a little or a lot depending on how fast frames happen to tick.
+  const TARGET_FRAME_MS = 1000 / 60;
+  const MAX_FRAME_SCALE = 4; // cap the catch-up after a stutter/tab-background gap
+  let lastUpdateAt = null;
 
   function update() {
+    const now = performance.now();
+    const frameScale = lastUpdateAt === null
+      ? 1
+      : Math.min(MAX_FRAME_SCALE, Math.max(0, (now - lastUpdateAt) / TARGET_FRAME_MS));
+    lastUpdateAt = now;
     if (!controls.enabled || keys.size === 0) return false;
     controls.object.getWorldDirection(_fwd);
-    const resolvedSpeed = typeof speed === "function" ? speed(controls) : speed;
+    const resolvedSpeed = (typeof speed === "function" ? speed(controls) : speed) * frameScale;
     const { dx, dy, dz } = computeOrbitKeyboardMotion(_fwd, keys, resolvedSpeed);
     const newCamX = Math.max(minX, Math.min(maxX, controls.object.position.x + dx));
     const newCamY = Math.max(minY, Math.min(maxY, controls.object.position.y + dy));
@@ -722,6 +735,7 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
   let frameId = 0;
   let consecutiveErrors = 0;
   let controlFrame = 0;
+  let pieceDrivesOwnRender = false;
   const stopFrameHandles = new Set();
   const state = { scene: null, camera: null, renderer: null, objects: [] };
 
@@ -836,11 +850,21 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
   }
 
   const startFrame = (handler) => {
+    pieceDrivesOwnRender = true;
     let frameCount = 0;
     let rafId = 0;
     function tick() {
       frameCount += 1;
-      handler(frameCount);
+      try {
+        handler(frameCount);
+      } catch (err) {
+        // The piece's own render loop just died — hand rendering back to
+        // the bootstrap loop so the canvas doesn't freeze on its last frame
+        // with no further visual feedback (e.g. while dragging/orbiting).
+        pieceDrivesOwnRender = false;
+        onError(err);
+        return;
+      }
       if (frameCount === 15) autoFitCamera();
       rafId = window.requestAnimationFrame(tick);
     }
@@ -856,6 +880,7 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
   let controls = null;
   let keyNav = null;
   let isOrbitActive = false;
+  let userHasInteracted = false;
   const _orbitCamPos = new THREE.Vector3();
   const _orbitTarget = new THREE.Vector3();
 
@@ -1002,6 +1027,30 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
     if (hitPoint) moveThreeOrbitTo(hitPoint);
   }
 
+  function onThreeWheel(e) {
+    // OrbitControls' own wheel/dolly handling changes camera.position
+    // directly without dispatching "start"/"end", so isOrbitActive never
+    // flips and saveOrbitState() never captures the new zoom distance —
+    // the very next frame's "snap back to last saved state" logic then
+    // reverts the zoom. Handling wheel ourselves (and saving state after)
+    // closes that gap.
+    if (!controls || !state.camera) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const cameraPosition = state.camera.position;
+    const direction = cameraPosition.clone().sub(controls.target);
+    const currentDistance = direction.length();
+    if (currentDistance < 1e-6) return;
+    const minDistance = controls.minDistance || 0.6;
+    const maxDistance = controls.maxDistance || Math.max(40, currentDistance * 4);
+    const zoomScale = Math.exp(Math.max(-1, Math.min(1, e.deltaY / 600)));
+    const nextDistance = Math.max(minDistance, Math.min(maxDistance, currentDistance * zoomScale));
+    direction.setLength(nextDistance);
+    cameraPosition.copy(controls.target).add(direction);
+    controls.update();
+    saveOrbitState();
+  }
+
   function resize() {
     const width = stageEl.clientWidth || window.innerWidth;
     const height = stageEl.clientHeight || window.innerHeight;
@@ -1044,6 +1093,19 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
         // keyboard/click navigation has translated the camera + target together.
         // This prevents the next pan from reviving an older zoom distance.
         controls.update();
+
+        // Many pieces script their own ambient camera motion every frame
+        // (e.g. a slow sway via camera.position.x = ... ; camera.lookAt(...)),
+        // and since only the piece's own render call paints pixels when
+        // pieceDrivesOwnRender is true, that scripted view always wins over
+        // whatever the user just dragged/panned/keyed to — drag interaction
+        // looks completely inert even though state.camera *is* updating
+        // correctly underneath. Once the user has ever taken control of the
+        // camera, latch on a forced bootstrap render (below) for the rest of
+        // the session so user input reliably wins from then on.
+        if (isOrbitActive || externalMotion) {
+          userHasInteracted = true;
+        }
 
         saveOrbitState();
       }
@@ -1117,7 +1179,16 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
         }
         bg = bg ?? "#000000";
         syncThreeRendererBackground(state.renderer, state.scene, bg);
-        state.renderer.render(state.scene, state.camera);
+        // When the piece drives its own startFrame render loop (the documented
+        // contract), it already calls renderer.render() every frame — rendering
+        // here too would just duplicate that full-scene draw every tick. The
+        // one exception is once the user has taken control of the camera
+        // (userHasInteracted): our render call here runs after controls.update()
+        // above, so it reflects the user's drag/key state, not the piece's own
+        // scripted camera — that's the one that needs to reach the screen.
+        if (!pieceDrivesOwnRender || userHasInteracted) {
+          state.renderer.render(state.scene, state.camera);
+        }
       }
       consecutiveErrors = 0;
     } catch (err) {
@@ -1185,6 +1256,7 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
     canvas.addEventListener("pointerup", onThreePointerUp);
     canvas.addEventListener("pointercancel", clearThreePointer);
     canvas.addEventListener("lostpointercapture", clearThreePointer);
+    canvas.addEventListener("wheel", onThreeWheel, { passive: false, capture: true });
 
     const preventNativeGesture = (event) => {
       if (event.cancelable) event.preventDefault();
@@ -1220,6 +1292,7 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
       canvas.removeEventListener("pointerup", onThreePointerUp);
       canvas.removeEventListener("pointercancel", clearThreePointer);
       canvas.removeEventListener("lostpointercapture", clearThreePointer);
+      canvas.removeEventListener("wheel", onThreeWheel, { capture: true });
       canvas.removeEventListener("gesturestart", preventNativeGesture);
       canvas.removeEventListener("gesturechange", preventNativeGesture);
       canvas.removeEventListener("gestureend", preventNativeGesture);

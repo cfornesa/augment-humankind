@@ -151,4 +151,7 @@ Missing requires on the static route made `function_exists()` guards silently be
 
 2026-06-19 PREFERENCE Describe DESIGN.md taste/identity language by structure, materials, and feel (borders, shadows, scale, tone), not specific color names. Corrected a color-specific Derived Identity draft to this effect.
 
+2026-06-19 CORRECTION The wheel-zoom-preserving invariant from the entry above (only wheel/pinch changes zoom, drag/pan preserves it) regressed silently: an unrelated refactor (media_files schema work) deleted the `onThreeWheel` handler that made it true, with no replacement, and nothing caught it until the user re-encountered the exact bug. Restored verbatim in `public/assets/js/immersive-gallery.js`; this is the kind of regression Rule 7 (below) now exists to gate.
+
+2026-06-19 DECISION Added AGENTS.md Rule 7: never knowingly harm existing, working functionality. Any action in any mode — including mid-execution of an already-approved plan — that's foreseeably risky to something that currently works needs its own explicit approval; a prior plan approval doesn't cover risk discovered while executing it. Mirrored as a short pointer in CLAUDE.md.
 

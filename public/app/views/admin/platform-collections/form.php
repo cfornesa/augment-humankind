@@ -115,6 +115,15 @@ ob_start();
         </div>
 
         <div class="form-row">
+            <label>Status</label>
+            <select name="status">
+                <option value="active" <?= ($collection['status'] ?? 'active') === 'active' ? 'selected' : '' ?>>Active</option>
+                <option value="draft" <?= ($collection['status'] ?? '') === 'draft' ? 'selected' : '' ?>>Draft</option>
+                <option value="archived" <?= ($collection['status'] ?? '') === 'archived' ? 'selected' : '' ?>>Archived</option>
+            </select>
+        </div>
+
+        <div class="form-row">
             <label>Description</label>
             <textarea name="description" rows="4"><?= htmlspecialchars($collection['description'] ?? '') ?></textarea>
         </div>

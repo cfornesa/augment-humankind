@@ -91,6 +91,15 @@ ob_start();
             <input type="number" name="sort_order" value="<?= (int) ($exhibit['sort_order'] ?? 0) + 1 ?>" min="1">
         </div>
 
+        <div class="form-row">
+            <label>Status</label>
+            <select name="status">
+                <option value="active" <?= ($exhibit['status'] ?? 'active') === 'active' ? 'selected' : '' ?>>Active</option>
+                <option value="draft" <?= ($exhibit['status'] ?? '') === 'draft' ? 'selected' : '' ?>>Draft</option>
+                <option value="archived" <?= ($exhibit['status'] ?? '') === 'archived' ? 'selected' : '' ?>>Archived</option>
+            </select>
+        </div>
+
         <fieldset class="form-fieldset">
             <legend>Thumbnail <span class="form-hint">(optional)</span></legend>
             <input type="hidden" name="thumbnail_type" value="link">

@@ -18,9 +18,9 @@ require __DIR__ . '/../partials/header.php';
 
         <?php if (!empty($showFilterBar)):
             $activeEngine   = $engine ?? '';
-            $activeSort     = $sort ?? 'newest';
+            $activeSort     = $sort ?? 'curated';
             $activeQ        = $q ?? '';
-            $filtersActive  = $activeQ !== '' || $activeSort !== 'newest' || $activeEngine !== '';
+            $filtersActive  = $activeQ !== '' || $activeSort !== 'curated' || $activeEngine !== '';
         ?>
         <form class="content-filter-bar" action="<?= e($canonicalPath) ?>" method="get">
             <div class="filter-bar-primary">
@@ -50,7 +50,7 @@ require __DIR__ . '/../partials/header.php';
                     <fieldset class="filter-fieldset">
                         <legend>Sort</legend>
                         <div class="filter-chip-group" role="group">
-                            <?php foreach (['newest' => 'Newest first', 'oldest' => 'Oldest first', 'az' => 'A–Z', 'za' => 'Z–A'] as $v => $l): ?>
+                            <?php foreach (['curated' => 'Default order', 'newest' => 'Newest first', 'oldest' => 'Oldest first', 'az' => 'A–Z', 'za' => 'Z–A'] as $v => $l): ?>
                                 <label class="filter-chip <?= $activeSort === $v ? 'filter-chip-active' : '' ?>">
                                     <input type="radio" name="sort" value="<?= $v ?>"
                                            <?= $activeSort === $v ? 'checked' : '' ?> class="sr-only"

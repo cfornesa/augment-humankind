@@ -9,18 +9,22 @@ class CollectionsController
     public static function index(): void
     {
         $q      = trim((string) ($_GET['q'] ?? ''));
-        $sort   = (string) ($_GET['sort'] ?? 'newest');
+        // Defaults to the same curated sort_order the admin platform
+        // collections list uses, so this page's order matches the admin by
+        // default. Only diverges when the visitor explicitly picks a sort.
+        $sort   = (string) ($_GET['sort'] ?? 'curated');
         $offset = max(0, (int) ($_GET['offset'] ?? 0));
 
-        if (!in_array($sort, ['newest', 'oldest', 'az', 'za'], true)) {
-            $sort = 'newest';
+        if (!in_array($sort, ['curated', 'newest', 'oldest', 'az', 'za'], true)) {
+            $sort = 'curated';
         }
 
         [$modelSort, $dir] = match ($sort) {
+            'newest' => ['newest', 'desc'],
             'oldest' => ['newest', 'asc'],
             'az'     => ['name',   'asc'],
             'za'     => ['name',   'desc'],
-            default  => ['newest', 'desc'],
+            default  => ['sort_order', 'asc'],
         };
 
         $batch = PlatformCollection::searchFiltered($q, $modelSort, $dir, $offset, self::PAGE_SIZE + 1);
@@ -34,7 +38,7 @@ class CollectionsController
         }
         unset($collection);
 
-        $filterParams = array_filter(['q' => $q, 'sort' => $sort !== 'newest' ? $sort : '']);
+        $filterParams = array_filter(['q' => $q, 'sort' => $sort !== 'curated' ? $sort : '']);
         $filterQs     = http_build_query(array_filter($filterParams));
         $fetchUrl     = '/collections' . ($filterQs !== '' ? '?' . $filterQs : '');
 

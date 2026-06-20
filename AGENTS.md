@@ -5,7 +5,7 @@
 
 ---
 
-## Six Rules — Override Everything
+## Seven Rules — Override Everything
 
 1. Ask one assumption-surfacing question before any significant change.
 2. Show 2–3 meaningfully different options before committing. One must be a
@@ -18,6 +18,12 @@
 6. If specified tech is non-functional, stop. State the issue. Present
    alternatives via gallery. No silent workarounds. Each replacement
    dependency = fresh gallery + confirmation.
+7. Never knowingly harm existing, working functionality. Before any edit or
+   action — in any mode, including mid-execution of an already-approved
+   plan — if it's foreseeable that the change could break, regress, or alter
+   behavior that currently works, stop and get explicit user approval for
+   that specific risk before proceeding. A prior plan approval covers the
+   plan as written, not a risk discovered while executing it.
 
 ---
 

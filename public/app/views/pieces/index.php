@@ -19,7 +19,7 @@ require dirname(__DIR__) . '/partials/header.php';
                     value="<?= e($q) ?>" placeholder="Search pieces…" autocomplete="off">
                 <button class="button button-primary filter-submit" type="submit">Search</button>
             </div>
-            <details class="filter-bar-secondary" <?= ($engine !== '' || $sort !== 'newest') ? 'open' : '' ?>>
+            <details class="filter-bar-secondary" <?= ($engine !== '' || $sort !== 'curated') ? 'open' : '' ?>>
                 <summary class="filter-toggle">Filters &amp; Sort</summary>
                 <div class="filter-bar-options">
                     <fieldset class="filter-fieldset">
@@ -38,7 +38,7 @@ require dirname(__DIR__) . '/partials/header.php';
                     <fieldset class="filter-fieldset">
                         <legend>Sort</legend>
                         <div class="filter-chip-group" role="group">
-                            <?php foreach (['newest' => 'Newest first', 'oldest' => 'Oldest first', 'az' => 'A–Z', 'za' => 'Z–A'] as $val => $label): ?>
+                            <?php foreach (['curated' => 'Default order', 'newest' => 'Newest first', 'oldest' => 'Oldest first', 'az' => 'A–Z', 'za' => 'Z–A', 'unsorted' => 'Unsorted'] as $val => $label): ?>
                                 <label class="filter-chip <?= $sort === $val ? 'filter-chip-active' : '' ?>">
                                     <input type="radio" name="sort" value="<?= e($val) ?>"
                                         <?= $sort === $val ? 'checked' : '' ?>
@@ -48,7 +48,7 @@ require dirname(__DIR__) . '/partials/header.php';
                             <?php endforeach; ?>
                         </div>
                     </fieldset>
-                    <?php if ($q !== '' || $engine !== '' || $sort !== 'newest'): ?>
+                    <?php if ($q !== '' || $engine !== '' || $sort !== 'curated'): ?>
                         <a href="/pieces" class="filter-reset">Clear filters</a>
                     <?php endif; ?>
                 </div>

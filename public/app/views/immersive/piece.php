@@ -216,8 +216,8 @@ html, body {
 /* Fullscreen Toggle Button */
 .fullscreen-toggle-btn {
   position: absolute;
-  bottom: 1rem;
-  right: 1rem;
+  bottom: calc(1rem + env(safe-area-inset-bottom));
+  right: calc(1rem + env(safe-area-inset-right));
   z-index: 130;
   display: inline-flex;
   height: 2.75rem;
@@ -362,16 +362,21 @@ html, body {
 }
 
 /* Fullscreen Mode Overlay Class on shell */
+/* Safari's address bar show/hide changes the visible viewport dynamically —
+   100vh/100vw don't track that, so the overlay can be cropped or oversized.
+   --immersive-viewport-{width,height} are kept in sync with
+   window.visualViewport (see syncImmersiveViewportVars below); 100dvh/100dvw
+   is the fallback when that hasn't run yet (e.g. before JS executes). */
 .immersive-shell.fullscreen {
   overflow: hidden;
-  height: 100vh;
-  width: 100vw;
+  height: var(--immersive-viewport-height, 100dvh);
+  width: var(--immersive-viewport-width, 100dvw);
 }
 .immersive-shell.fullscreen .stage-wrapper {
   position: fixed;
   inset: 0;
-  width: 100vw;
-  height: 100vh;
+  width: var(--immersive-viewport-width, 100dvw);
+  height: var(--immersive-viewport-height, 100dvh);
   z-index: 120;
   border-bottom: none;
 }
@@ -384,15 +389,15 @@ html, body {
 /* Embed Mode Class on shell */
 .immersive-shell.embed-mode {
   overflow: hidden;
-  height: 100vh;
-  width: 100vw;
+  height: var(--immersive-viewport-height, 100dvh);
+  width: var(--immersive-viewport-width, 100dvw);
   background: #000;
 }
 .immersive-shell.embed-mode .stage-wrapper {
   position: fixed;
   inset: 0;
-  width: 100vw;
-  height: 100vh;
+  width: var(--immersive-viewport-width, 100dvw);
+  height: var(--immersive-viewport-height, 100dvh);
   border-bottom: none;
 }
 .immersive-shell.embed-mode .immersive-header,
@@ -558,6 +563,51 @@ import { mountThreeImmersivePiece, mountGalleryPiece } from '/assets/js/immersiv
 // Setup full screen toggling variables
 const shell = document.getElementById('immersive-shell');
 
+// iOS Safari has no Fullscreen API support at all (not even webkit-prefixed —
+// it only ever existed for <video>), so shell.requestFullscreen() always
+// rejects there and we fall back to a CSS fixed-overlay. That overlay needs
+// to track the *actual* visible viewport (Safari's address bar dynamically
+// shows/hides, changing it), which 100vh/100vw don't do.
+function isIPhoneWebKitBrowser() {
+    if (typeof navigator === 'undefined') return false;
+    const ua = navigator.userAgent || '';
+    const maxTouchPoints = navigator.maxTouchPoints || 0;
+    const isIPad = /\biPad\b/i.test(ua) || (/\bMacintosh\b/i.test(ua) && maxTouchPoints > 1);
+    return /\biPhone\b/i.test(ua) && /AppleWebKit/i.test(ua) && !isIPad;
+}
+
+function syncImmersiveViewportVars() {
+    const viewport = window.visualViewport;
+    const width = Math.round(viewport ? viewport.width : window.innerWidth);
+    const height = Math.round(viewport ? viewport.height : window.innerHeight);
+    shell.style.setProperty('--immersive-viewport-width', Math.max(width, 1) + 'px');
+    shell.style.setProperty('--immersive-viewport-height', Math.max(height, 1) + 'px');
+}
+
+function clearImmersiveViewportVars() {
+    shell.style.removeProperty('--immersive-viewport-width');
+    shell.style.removeProperty('--immersive-viewport-height');
+}
+
+let removeViewportListeners = null;
+function watchImmersiveViewport() {
+    if (removeViewportListeners) return;
+    syncImmersiveViewportVars();
+    window.addEventListener('resize', syncImmersiveViewportVars);
+    window.visualViewport?.addEventListener('resize', syncImmersiveViewportVars);
+    window.visualViewport?.addEventListener('scroll', syncImmersiveViewportVars);
+    removeViewportListeners = () => {
+        window.removeEventListener('resize', syncImmersiveViewportVars);
+        window.visualViewport?.removeEventListener('resize', syncImmersiveViewportVars);
+        window.visualViewport?.removeEventListener('scroll', syncImmersiveViewportVars);
+        removeViewportListeners = null;
+    };
+}
+function unwatchImmersiveViewport() {
+    removeViewportListeners?.();
+    clearImmersiveViewportVars();
+}
+
 window.toggleFullscreen = function() {
     const isCurrentlyFull = shell.classList.contains('fullscreen');
     if (isCurrentlyFull) {
@@ -572,6 +622,17 @@ window.toggleFullscreen = function() {
         }).catch(() => {
             // fallback if fullscreen API blocked or unsupported (like on iOS Safari)
             syncFullscreenState(true);
+            // If this page is itself nested in an iframe (e.g. embedded via
+            // <creatr-art-piece>/<creatr-exhibit-wall>), the CSS overlay above
+            // is only as big as the iframe — ask the wrapper to promote us
+            // to a true viewport-filling overlay on the host page instead.
+            if (isIPhoneWebKitBrowser()) {
+                try {
+                    if (window.parent && window.parent !== window) {
+                        window.parent.postMessage({ type: 'creatr-toggle-fullscreen', value: true }, '*');
+                    }
+                } catch (e) {}
+            }
         });
     }
 };
@@ -582,16 +643,25 @@ function syncFullscreenState(isFull) {
 
     if (isFull) {
         shell.classList.add('fullscreen');
+        watchImmersiveViewport();
         btn.innerHTML = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14h6v6m10-6h-6v6M4 10h6V4m10 6h-6V4"/></svg>`;
         btn.setAttribute('aria-label', 'Return to gallery view');
         document.body.style.overflow = 'hidden';
         document.documentElement.style.overflow = 'hidden';
     } else {
         shell.classList.remove('fullscreen');
+        unwatchImmersiveViewport();
         btn.innerHTML = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>`;
         btn.setAttribute('aria-label', 'Expand immersive view');
         document.body.style.overflow = '';
         document.documentElement.style.overflow = '';
+        if (isIPhoneWebKitBrowser()) {
+            try {
+                if (window.parent && window.parent !== window) {
+                    window.parent.postMessage({ type: 'creatr-toggle-fullscreen', value: false }, '*');
+                }
+            } catch (e) {}
+        }
     }
     // Resize standard event dispatch so Three.js & other canvases react to viewport changes
     window.dispatchEvent(new Event('resize'));

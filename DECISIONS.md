@@ -2885,5 +2885,29 @@ Loaded the `design-workflow` skill per the AGENTS.md skill table.
 All three sections written only after explicit confirmation per the
 `design-workflow` skill's rule against silent updates.
 
+## 2026-06-19 — AGENTS.md Rule 7: No Harm to Existing Functionality
+
+### Context
+User explicitly instructed adding a new standing rule after a zoom-interaction
+regression in the immersive Three.js viewer turned out to be a previously-fixed
+bug that was silently deleted by an unrelated later refactor (commit `6a838d0`
+removed a wheel-zoom handler added in `151cb9a`, with no replacement, buried in
+a 600+ line diff). The user wants this category of silent regression — and any
+other foreseeable harm to working functionality — gated behind explicit
+approval going forward, even mid-execution of an already-approved plan.
+
+### Change Made
+- `AGENTS.md`: added **Rule 7** to the "Six Rules" section (renamed "Seven
+  Rules"): never knowingly harm existing, working functionality; if an action
+  in any mode carries foreseeable risk to something that currently works, stop
+  and get explicit approval for that specific risk, even if a plan covering
+  the broader change was already approved.
+- `CLAUDE.md`: added a short reinforcement naming Rule 7 directly, since
+  CLAUDE.md is the first-loaded file in Claude Code sessions.
+
+### Verification
+Per the "AGENTS.md Safeguard" section, this was proposed as a plan (explicit
+human instruction + plan-mode approval) before editing; this entry is the
+required DECISIONS.md log, with a MEMORY.md summary to follow.
 
 
