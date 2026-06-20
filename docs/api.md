@@ -249,6 +249,45 @@ Compatibility embed and immersive routes return content rather than redirects:
   gallery embeds. Query parameters `title`, `alt`, and `caption` are optional
   display metadata.
 
+## Admin Piece Generation Routes
+
+AI piece generation is an admin-only workflow. The browser submits generation
+requests with `fetch()` so the page can keep showing elapsed time and poll
+attempt progress while the server-side validation/repair loop is running.
+
+- `GET /admin/pieces/generate` — renders the generation form.
+- `POST /admin/pieces/generate` — accepts `prompt`, `engine`, `profile_id`,
+  and optional `persona_id`; runs the configured AI generation loop; returns
+  JSON.
+- `GET /admin/pieces/generate/progress` — returns the current session's
+  generation attempt state as JSON.
+- `GET /admin/pieces/generate/preview` — renders the one-time pending
+  generation preview saved in the admin session; redirects back to
+  `/admin/pieces/generate` if no pending preview exists.
+- `POST /admin/pieces/generate/save` — saves the previewed piece and returns
+  JSON with a redirect URL.
+
+`POST /admin/pieces/generate` success response:
+
+```json
+{"success": true}
+```
+
+Failure responses use:
+
+```json
+{"success": false, "error": "Human-readable error"}
+```
+
+`GET /admin/pieces/generate/progress` returns:
+
+```json
+{"attempt": 2, "max_attempts": 5, "engine": "three"}
+```
+
+The progress route may return `null` for `attempt` when no generation is
+currently recorded for the admin session.
+
 ## Platform Compatibility API Routes
 
 The following JSON/API routes are provided so old platform clients can continue

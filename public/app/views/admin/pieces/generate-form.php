@@ -67,7 +67,7 @@ ob_start();
             <p style="margin-top: 0.5rem;"><a href="/admin/user-profiles" class="admin-btn">Configure AI Profiles &amp; Keys</a></p>
         </div>
     <?php else: ?>
-        <form method="post" action="/admin/pieces/generate" class="admin-form" id="generate-form">
+        <form class="admin-form" id="generate-form" data-generate-url="/admin/pieces/generate">
             <div class="field">
                 <label for="profile_id">AI Profile / Vendor &amp; Model</label>
                 <select id="profile_id" name="profile_id" required>
@@ -115,11 +115,12 @@ ob_start();
             <div class="field">
                 <label for="prompt">Creative Prompt</label>
                 <textarea id="prompt" name="prompt" rows="6" placeholder="Describe the visual effects, interaction, behavior, colors, and layout of the piece. E.g. 'A cascading waterfall of particles that bounce off obstacles when the mouse is dragged.'" required><?= e($prompt ?? '') ?></textarea>
-                <small>The generation engine will trigger a validation/retry repair loop up to 3 times to correct syntax, namespace conflicts, or forbidden API behaviors.</small>
+                <small>The generation engine will trigger a validation/retry repair loop up to <?= (int) ART_PIECE_MAX_ATTEMPTS ?> times to correct syntax, namespace conflicts, or forbidden API behaviors.</small>
             </div>
 
             <div class="form-actions" style="margin-top: 2rem;">
-                <button type="submit" class="admin-btn" id="generate-submit-btn">Start AI Generation Loop</button>
+                <div id="generate-status" class="form-status" role="status" aria-live="polite" style="display:none; width:100%; margin-bottom:0.75rem;"></div>
+                <button type="button" class="admin-btn" id="generate-submit-btn">Start AI Generation Loop</button>
                 <a href="/admin/pieces" class="admin-btn admin-btn-ghost">Cancel</a>
             </div>
         </form>
@@ -149,6 +150,7 @@ ob_start();
             var codeWarn   = document.getElementById('code-cap-warning');
             var form       = document.getElementById('generate-form');
             var btn        = document.getElementById('generate-submit-btn');
+            var statusEl   = document.getElementById('generate-status');
             var dialog     = document.getElementById('persona-dialog');
 
             function checkCodeCap() {
@@ -207,20 +209,87 @@ ob_start();
                 return minutes + ':' + (seconds < 10 ? '0' : '') + seconds;
             }
 
-            form.addEventListener('submit', function () {
-                if (!btn) return;
+            function setGenerateStatus(message, isError) {
+                if (!statusEl) return;
+                statusEl.style.display = 'block';
+                statusEl.className = isError ? 'form-status form-status-error' : 'form-status';
+                statusEl.textContent = message;
+            }
+
+            function parseJsonResponse(resp) {
+                return resp.json().then(function (data) {
+                    if (!resp.ok || !data.success) {
+                        throw new Error(data.error || 'Generation failed.');
+                    }
+                    return data;
+                });
+            }
+
+            btn.addEventListener('click', function () {
+                if (!form || !btn) return;
+                if (!form.reportValidity()) return;
+
                 btn.disabled = true;
-                // This is a traditional full-page form submission, not
-                // fetch() — the current page's JS keeps running (and this
-                // interval keeps ticking) until the server's response
-                // actually starts arriving and the browser begins
-                // navigating away, so the elapsed time stays visible for
-                // the whole wait.
                 var startedAt = Date.now();
-                btn.innerText = 'Generating & Validating (up to 5 attempts, ~10 min max)... 0:00 elapsed';
-                setInterval(function () {
-                    btn.innerText = 'Generating & Validating (up to 5 attempts, ~10 min max)... ' + formatElapsed(Date.now() - startedAt) + ' elapsed';
-                }, 1000);
+                var currentAttempt = null;
+                var maxAttempts = <?= (int) ART_PIECE_MAX_ATTEMPTS ?>;
+                var timerInterval = null;
+                var progressInterval = null;
+
+                function renderRunningStatus() {
+                    var elapsed = formatElapsed(Date.now() - startedAt);
+                    if (currentAttempt) {
+                        setGenerateStatus('Attempt ' + currentAttempt + ' of ' + maxAttempts + ' - ' + elapsed + ' elapsed');
+                    } else {
+                        setGenerateStatus('Starting generation - ' + elapsed + ' elapsed');
+                    }
+                }
+
+                function stopIntervals() {
+                    if (timerInterval) {
+                        clearInterval(timerInterval);
+                        timerInterval = null;
+                    }
+                    if (progressInterval) {
+                        clearInterval(progressInterval);
+                        progressInterval = null;
+                    }
+                }
+
+                function pollProgress() {
+                    fetch('/admin/pieces/generate/progress', {
+                        headers: {'Accept': 'application/json'}
+                    }).then(function (resp) {
+                        if (!resp.ok) return null;
+                        return resp.json();
+                    }).then(function (data) {
+                        if (!data) return;
+                        if (data.attempt) currentAttempt = data.attempt;
+                        if (data.max_attempts) maxAttempts = data.max_attempts;
+                        renderRunningStatus();
+                    }).catch(function () {
+                        // The generation request itself is authoritative.
+                    });
+                }
+
+                renderRunningStatus();
+                timerInterval = setInterval(renderRunningStatus, 1000);
+                progressInterval = setInterval(pollProgress, 1500);
+                pollProgress();
+
+                fetch(form.dataset.generateUrl || '/admin/pieces/generate', {
+                    method: 'POST',
+                    body: new FormData(form),
+                    headers: {'Accept': 'application/json'}
+                }).then(parseJsonResponse).then(function () {
+                    stopIntervals();
+                    setGenerateStatus('Generation complete. Opening preview...');
+                    window.location.href = '/admin/pieces/generate/preview';
+                }).catch(function (err) {
+                    stopIntervals();
+                    setGenerateStatus(err.message || 'Generation failed.', true);
+                    btn.disabled = false;
+                });
             });
         })();
         </script>

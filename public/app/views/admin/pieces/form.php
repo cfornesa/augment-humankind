@@ -518,6 +518,7 @@ $preferredProfileId = $preferredProfileId ?? null;
                             <small>This will send your prompt and the current code blocks in the HTML/CSS/JS tabs above to the AI, then suggest changes that you can inspect, edit, and accept or reject.</small>
                         </div>
                         <div style="margin-top: 1rem;">
+                            <div id="ai-refine-status" role="status" aria-live="polite" style="min-height:1.4em; margin-bottom:0.5rem; font-size:0.875rem; color:var(--ink-soft);"></div>
                             <button type="button" id="btn-refine-ai" class="admin-btn" style="background: var(--yellow);">Request AI Changes</button>
                         </div>
                     </div>
@@ -629,6 +630,7 @@ $preferredProfileId = $preferredProfileId ?? null;
     var currentPieceId = <?= $isEdit ? (int) $piece['id'] : 'null' ?>;
 
     var btnRefineAi = document.getElementById('btn-refine-ai');
+    var aiRefineStatusEl = document.getElementById('ai-refine-status');
     var aiProfileField = document.getElementById('ai_profile_id');
     var aiPersonaField = document.getElementById('ai_persona_id');
     var aiPromptField = document.getElementById('ai_refine_prompt');
@@ -791,14 +793,17 @@ $preferredProfileId = $preferredProfileId ?? null;
 
         // Set loading state
         btnRefineAi.disabled = true;
-        var originalBtnText = btnRefineAi.textContent;
-        btnRefineAi.textContent = 'Requesting AI Changes... 0:00 elapsed';
         var refineStartedAt = Date.now();
-        var refineTimerInterval = setInterval(function () {
+        function setRefineElapsed() {
+            if (!aiRefineStatusEl) return;
             var totalSeconds = Math.floor((Date.now() - refineStartedAt) / 1000);
             var minutes = Math.floor(totalSeconds / 60);
             var seconds = totalSeconds % 60;
-            btnRefineAi.textContent = 'Requesting AI Changes... ' + minutes + ':' + (seconds < 10 ? '0' : '') + seconds + ' elapsed';
+            aiRefineStatusEl.textContent = 'Requesting AI Changes... ' + minutes + ':' + (seconds < 10 ? '0' : '') + seconds + ' elapsed';
+        }
+        setRefineElapsed();
+        var refineTimerInterval = setInterval(function () {
+            setRefineElapsed();
         }, 1000);
 
         // Clear any old banner and leftover save-status message from a
@@ -911,7 +916,9 @@ $preferredProfileId = $preferredProfileId ?? null;
         .finally(function () {
             clearInterval(refineTimerInterval);
             btnRefineAi.disabled = false;
-            btnRefineAi.textContent = originalBtnText;
+            if (aiRefineStatusEl) {
+                aiRefineStatusEl.textContent = '';
+            }
         });
     });
 
@@ -1061,13 +1068,18 @@ $preferredProfileId = $preferredProfileId ?? null;
             setTimeout(resolve, 800);
         });
 
+        // Match the list-page capture timing: Three.js loads a larger runtime
+        // and needs the same head-start before the shared ready-marker poll.
+        var initialWait = (engine === 'three') ? 6000 : 500;
+        await new Promise(function (resolve) { setTimeout(resolve, initialWait); });
+
         // For p5/c2, a canvas element existing isn't enough — it's created
         // before the first real draw() call, so require the ready marker
         // piece-runtime.js sets once something's actually been painted.
         // Other engines keep relying on the poll window itself.
         var requireReadyMarker = (engine === 'p5' || engine === 'c2' || engine === 'three');
         var canvas = null;
-        for (var attempt = 0; attempt < 16 && !canvas; attempt++) {
+        for (var attempt = 0; attempt < 40 && !canvas; attempt++) {
             await new Promise(function (resolve) { setTimeout(resolve, 500); });
             var iframeDoc = captureFrame.contentDocument;
             var foundCanvas = iframeDoc && iframeDoc.querySelector('canvas');

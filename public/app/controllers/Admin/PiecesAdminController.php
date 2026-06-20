@@ -604,24 +604,30 @@ class PiecesAdminController
     {
         set_time_limit(660); // 5 attempts × 2 min + buffer
         admin_check();
+        header('Content-Type: application/json; charset=utf-8');
         $startedAt = microtime(true);
         $prompt = trim($_POST['prompt'] ?? '');
         $engine = trim($_POST['engine'] ?? 'p5');
         $profileId = (int) ($_POST['profile_id'] ?? 0);
         $personaId = (int) ($_POST['persona_id'] ?? 0);
 
-        $profiles = db()->query("SELECT uavs.*, u.name AS user_name FROM user_ai_vendor_settings uavs JOIN users u ON u.id = uavs.user_id WHERE uavs.enabled = 1 ORDER BY uavs.profile_name ASC")->fetchAll();
-        $personas = self::loadPersonas();
-        $selectedPersonaId = $personaId > 0 ? $personaId : null;
         $actorId = (int) (admin_identity()['id'] ?? 0);
+        self::writeGenerateProgress(null, $engine);
+
         $limit = rate_limit_consume('ai_generate_piece', rate_limit_subject_for_scope('ai_generate_piece', $actorId > 0 ? $actorId : null));
         if (!$limit['allowed']) {
-            self::renderRateLimitedHtml(
-                (int) $limit['retry_after'],
-                'Too many AI generation requests. Please wait a few minutes and try again.',
-                $profileId,
-                $personaId
-            );
+            audit_log_event('ai_request', 'ai_generate_piece', 'throttled', [
+                'actor_admin_identity_id' => $actorId > 0 ? $actorId : null,
+                'http_status' => 429,
+                'metadata' => ['retry_after' => (int) $limit['retry_after']],
+            ]);
+            http_response_code(429);
+            header('Retry-After: ' . (int) $limit['retry_after']);
+            echo json_encode([
+                'success' => false,
+                'error' => 'Too many AI generation requests. Please wait a few minutes and try again.',
+            ]);
+            exit;
         }
 
         try {
@@ -670,6 +676,7 @@ class PiecesAdminController
 
             while ($attemptCount < ART_PIECE_MAX_ATTEMPTS) {
                 $attemptCount++;
+                self::writeGenerateProgress($attemptCount, $engine);
                 $currentAttemptLog = [
                     'attempt' => $attemptCount,
                     'vendor' => $profile['vendor'],
@@ -754,7 +761,20 @@ class PiecesAdminController
                     'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
                 ],
             ]);
-            require dirname(__DIR__, 2) . '/views/admin/pieces/generate-preview.php';
+            self::storePendingGeneration([
+                'engine' => $engine,
+                'html_code' => $htmlCode,
+                'css_code' => $cssCode,
+                'generated_code' => $generatedCode,
+                'vendor' => $profile['vendor'] ?? '',
+                'model' => $profile['model'] ?? '',
+                'endpoint_kind' => $profile['endpoint_kind'] ?? '',
+                'attempt_count' => $attemptCount,
+                'prompt' => $prompt,
+                'profile_id' => $profileId,
+                'persona_id' => $personaId,
+            ]);
+            echo json_encode(['success' => true]);
 
         } catch (Throwable $e) {
             audit_log_event('ai_request', 'ai_generate_piece', 'error', [
@@ -767,11 +787,58 @@ class PiecesAdminController
                     'error' => $e->getMessage(),
                 ],
             ]);
-            $error = $e->getMessage();
-            $selectedProfileId = $profileId;
-            $selectedPersonaId = $personaId > 0 ? $personaId : null;
-            require dirname(__DIR__, 2) . '/views/admin/pieces/generate-form.php';
+            http_response_code(400);
+            echo json_encode(['success' => false, 'error' => $e->getMessage()]);
         }
+        exit;
+    }
+
+    public static function generatePreview(): void
+    {
+        admin_check();
+
+        $pending = $_SESSION['pending_generation'] ?? null;
+        unset($_SESSION['pending_generation']);
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_write_close();
+        }
+
+        if (!is_array($pending)) {
+            header('Location: /admin/pieces/generate');
+            exit;
+        }
+
+        $engine = (string) ($pending['engine'] ?? 'p5');
+        $htmlCode = (string) ($pending['html_code'] ?? '');
+        $cssCode = (string) ($pending['css_code'] ?? '');
+        $generatedCode = (string) ($pending['generated_code'] ?? '');
+        $profile = [
+            'vendor' => (string) ($pending['vendor'] ?? ''),
+            'model' => (string) ($pending['model'] ?? ''),
+            'endpoint_kind' => (string) ($pending['endpoint_kind'] ?? ''),
+        ];
+        $attemptCount = (int) ($pending['attempt_count'] ?? 1);
+        $prompt = (string) ($pending['prompt'] ?? '');
+        $profileId = (int) ($pending['profile_id'] ?? 0);
+        $personaId = (int) ($pending['persona_id'] ?? 0);
+
+        require dirname(__DIR__, 2) . '/views/admin/pieces/generate-preview.php';
+    }
+
+    public static function generateProgress(): void
+    {
+        admin_check();
+        header('Content-Type: application/json; charset=utf-8');
+
+        $progress = $_SESSION['generate_progress'] ?? [];
+        echo json_encode([
+            'attempt' => isset($progress['attempt']) ? (int) $progress['attempt'] : null,
+            'max_attempts' => isset($progress['max_attempts']) ? (int) $progress['max_attempts'] : ART_PIECE_MAX_ATTEMPTS,
+            'engine' => isset($progress['engine']) ? (string) $progress['engine'] : null,
+            'complete' => !empty($progress['complete']),
+            'updated_at' => isset($progress['updated_at']) ? (int) $progress['updated_at'] : null,
+        ]);
+        exit;
     }
 
     public static function generateSave(): void
@@ -1416,6 +1483,41 @@ class PiecesAdminController
         header('Retry-After: ' . $retryAfter);
         echo json_encode(['error' => 'Too many requests. Please wait and try again.']);
         exit;
+    }
+
+    private static function ensureWritableSession(): void
+    {
+        if (session_status() !== PHP_SESSION_ACTIVE) {
+            session_start();
+        }
+    }
+
+    private static function writeGenerateProgress(?int $attempt, string $engine): void
+    {
+        self::ensureWritableSession();
+        unset($_SESSION['pending_generation']);
+        $_SESSION['generate_progress'] = [
+            'attempt' => $attempt,
+            'max_attempts' => ART_PIECE_MAX_ATTEMPTS,
+            'engine' => $engine,
+            'complete' => false,
+            'updated_at' => time(),
+        ];
+        session_write_close();
+    }
+
+    private static function storePendingGeneration(array $pending): void
+    {
+        self::ensureWritableSession();
+        $_SESSION['pending_generation'] = $pending;
+        $_SESSION['generate_progress'] = [
+            'attempt' => (int) ($pending['attempt_count'] ?? 1),
+            'max_attempts' => ART_PIECE_MAX_ATTEMPTS,
+            'engine' => (string) ($pending['engine'] ?? ''),
+            'complete' => true,
+            'updated_at' => time(),
+        ];
+        session_write_close();
     }
 
     private static function renderRateLimitedHtml(int $retryAfter, string $message, int $profileId, int $personaId): void

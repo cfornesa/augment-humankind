@@ -33,7 +33,7 @@ $defaultTitle = 'AI ' . strtoupper($engine) . ' Piece - ' . date('M d, Y H:i');
         </div>
     </div>
 
-    <form method="post" action="/admin/pieces/generate/save" class="admin-form">
+    <form class="admin-form" data-save-url="/admin/pieces/generate/save">
         <!-- Hidden inputs for AI generation details -->
         <input type="hidden" name="engine" value="<?= e($engine) ?>">
         <input type="hidden" name="generation_vendor" value="<?= e($profile['vendor'] ?? '') ?>">
@@ -106,10 +106,10 @@ $defaultTitle = 'AI ' . strtoupper($engine) . ' Piece - ' . date('M d, Y H:i');
         <input type="hidden" id="thumbnail_data" name="thumbnail_data" value="">
 
         <div class="form-actions" style="margin-top: 2rem; display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem;">
-            <button type="submit" class="admin-btn">Save and Insert (Create Version 1)</button>
+            <span id="save-status" role="status" aria-live="polite" style="width:100%; font-size: 0.8rem; color: var(--ink-soft);"></span>
+            <button type="button" class="admin-btn" id="save-insert-btn">Save and Insert (Create Version 1)</button>
             <a href="/admin/pieces/generate" class="admin-btn admin-btn-ghost">Discard &amp; Restart</a>
             <span id="thumbnail-status" style="font-size: 0.8rem; color: var(--ink-soft);">Waiting for piece to render…</span>
-            <span id="save-status" style="font-size: 0.8rem; color: var(--ink-soft);"></span>
         </div>
     </form>
 
@@ -188,7 +188,7 @@ canvas{display:block;width:100%;height:100%;}
     "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
   }
 }
-</script>
+<\/script>
 <script>
 const PIECE_ENGINE = \${JSON.stringify(engine)};
 const PIECE_CODE = \${JSON.stringify(js)};
@@ -269,7 +269,7 @@ const PIECE_PRESERVE_DRAWING_BUFFER = true;
     (function () {
         var form = document.querySelector('form.admin-form');
         if (!form) return;
-        var saveBtn = form.querySelector('button[type="submit"]');
+        var saveBtn = document.getElementById('save-insert-btn');
         var saveStatusEl = document.getElementById('save-status');
         var timerInterval = null;
         var startedAt = null;
@@ -284,6 +284,7 @@ const PIECE_PRESERVE_DRAWING_BUFFER = true;
         function startTimer(label) {
             startedAt = Date.now();
             if (timerInterval) clearInterval(timerInterval);
+            if (saveStatusEl) saveStatusEl.textContent = label + ' (' + formatElapsed(0) + ' elapsed)';
             timerInterval = setInterval(function () {
                 if (saveStatusEl) saveStatusEl.textContent = label + ' (' + formatElapsed(Date.now() - startedAt) + ' elapsed)';
             }, 1000);
@@ -300,7 +301,7 @@ const PIECE_PRESERVE_DRAWING_BUFFER = true;
         }
 
         function submitSave(formData, isRetry) {
-            fetch(form.action, { method: 'POST', body: formData }).then(function (resp) {
+            fetch(form.dataset.saveUrl || '/admin/pieces/generate/save', { method: 'POST', body: formData }).then(function (resp) {
                 return resp.json();
             }).then(function (data) {
                 stopTimer();
@@ -323,8 +324,9 @@ const PIECE_PRESERVE_DRAWING_BUFFER = true;
             });
         }
 
-        form.addEventListener('submit', function (e) {
-            e.preventDefault();
+        if (!saveBtn) return;
+        saveBtn.addEventListener('click', function () {
+            if (!form.reportValidity()) return;
             if (saveBtn) saveBtn.disabled = true;
             startTimer('Saving…');
             submitSave(new FormData(form), false);
