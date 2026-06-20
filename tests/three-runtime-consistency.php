@@ -234,6 +234,84 @@ foreach ([
     });
 }
 
+echo "\n=== thumbnail capture readiness signal (P5/C2/Three) ===\n";
+
+test('bootP5 waits for instance.frameCount before signaling ready, not right after setup', function () use ($runtime) {
+    // Regression guard: createCanvas() runs synchronously inside setup(),
+    // before draw() ever paints anything — signaling readiness right after
+    // setup (instead of after a real draw call) is what produced piece 80's
+    // blank P5.js thumbnail despite the piece itself rendering fine live.
+    assert_contains($runtime, 'instance.frameCount >= 1');
+});
+
+test('bootCanvasRuntime (C2/generic) signals ready only after its first real startFrame tick', function () use ($runtime) {
+    assert_contains($runtime, 'function instrumentedStartFrame(callback)');
+    assert_contains($runtime, 'readySignaled = true; signalCanvasReady(canvas);');
+});
+
+test('bootThree signals ready from an actual render call, not unconditionally right after setup', function () use ($runtime) {
+    // Regression guard: the old unconditional postMessage right after
+    // window.sketch() returns fired before any real frame was guaranteed to
+    // exist — same class of bug as P5/C2, just usually masked on desktop by
+    // generous fixed timeouts elsewhere. Capture callers now wait for this
+    // same signal instead of guessing a big-enough delay. signalCanvasReady()
+    // itself still posts the message (legitimately, once) — the guard here
+    // is that bootThree() only triggers it via signalThreeReadyOnce(), from
+    // an actual render path, not as an unconditional line at setup's end.
+    assert_contains($runtime, 'function signalThreeReadyOnce()');
+    $count = substr_count($runtime, 'signalThreeReadyOnce();');
+    if ($count < 3) {
+        throw new RuntimeException("Expected signalThreeReadyOnce() called from all 3 sites (startFrame tick, animateControls, end-of-function fallback), found {$count}");
+    }
+});
+
+test('index.php inline bootstrap copy mirrors the same readiness signal (its one allowed inline copy)', function () {
+    $src = file_get_contents(__DIR__ . '/../public/app/views/admin/pieces/index.php');
+    assert_contains($src, 'function signalCanvasReady(canvas)');
+    assert_contains($src, 'instance.frameCount >= 1');
+    assert_contains($src, 'function signalThreeReadyOnce()');
+    $count = substr_count($src, 'signalThreeReadyOnce();');
+    if ($count < 3) {
+        throw new RuntimeException("Expected signalThreeReadyOnce() called from all 3 sites, found {$count}");
+    }
+});
+
+foreach ([
+    'form.php' => __DIR__ . '/../public/app/views/admin/pieces/form.php',
+    'index.php' => __DIR__ . '/../public/app/views/admin/pieces/index.php',
+] as $label => $path) {
+    $src = file_get_contents($path);
+    test("{$label} manual thumbnail capture requires the ready marker for p5/c2/three, not just canvas existence", function () use ($src) {
+        assert_contains($src, "dataset.creatrReady === '1'");
+        assert_contains($src, "engine === 'p5'");
+        assert_contains($src, "engine === 'c2'");
+        assert_contains($src, "engine === 'three'");
+    });
+    test("{$label} capture iframe stays within the viewport instead of being positioned off-screen", function () use ($src) {
+        // Regression guard: requestAnimationFrame is throttled or skipped by
+        // some browsers for elements positioned outside the viewport as a
+        // power-saving measure, which would stop p5/c2's own draw loop from
+        // ever running regardless of how long the capture code waits.
+        assert_not_contains($src, 'left:-9999px');
+        assert_contains($src, 'opacity:0');
+    });
+}
+
+echo "\n=== CreatrImmersiveImage embedded Expand button (iOS Safari) ===\n";
+
+test('CreatrImmersiveImage installs the same fullscreen wrapper protocol as CreatrExhibitWall', function () use ($embedJs) {
+    // Regression guard: CreatrImmersiveImage embeds the full
+    // /immersive/images/{ref} page directly (same as CreatrExhibitWall),
+    // so its Expand button posts the same creatr-toggle-fullscreen message
+    // on iPhone Safari — but the wrapper-side listener was never installed,
+    // so clicking Expand inside an embedded immersive image silently did
+    // nothing useful.
+    $classBody = substr($embedJs, strpos($embedJs, 'class CreatrImmersiveImage'));
+    $classBody = substr($classBody, 0, strpos($classBody, 'class CreatrExhibitWall'));
+    assert_contains($classBody, 'installFullscreenWrapperProtocol(this)');
+    assert_contains($classBody, ':host(.creatr-fullscreen)');
+});
+
 echo "\n=== Results ===\n";
 echo "Passed: {$passed}\n";
 echo "Failed: {$failed}\n";

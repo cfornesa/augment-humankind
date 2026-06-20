@@ -3342,4 +3342,125 @@ by the label mismatch; after the fix, two separate live runs both succeeded
 on attempt 1, with the model's patches parsed and matching the original
 code cleanly. Full `php -l` sweep and both other test suites stay green.
 
+## 2026-06-20 — Blank P5.js/C2.js/Three.js Thumbnails: Capture Never Waited for a Real Drawn Frame
+
+### Context
+Piece 80 (P5.js) generated successfully, but its thumbnail was genuinely
+blank white — confirmed by pulling the stored PNG bytes straight from
+`media_files` and viewing them (a valid 1179×1620 PNG, fully white). Manual
+"Generate Thumbnail" retries from both the Pieces list and the Edit page
+also failed, ruling out "just the auto-capture path." Separately, the user
+recalled Three.js thumbnails failing specifically on mobile in the past;
+checking all 20 existing Three.js thumbnails' actual pixel content found
+none currently blank, but the same structural weakness was present, just
+masked by generous fixed buffers that happen to cover desktop.
+
+### Root cause
+Three separate, hand-duplicated capture implementations
+(`generate-preview.php`'s auto-capture, `form.php`'s `performCapture()`,
+`index.php`'s `runCaptureForId()` — the last with its own full inline copy
+of the boot logic, not just the capture loop) all called
+`canvas.toDataURL('image/png')` based on a *proxy* for readiness, never an
+actual confirmed rendered frame:
+- P5.js (`bootP5()`) and C2.js (`bootCanvasRuntime()`) never posted any
+  ready signal at all — `createCanvas()`/`findCanvas()` create the canvas
+  element synchronously inside setup, before `draw()`/the piece's first
+  `startFrame()` tick ever paints anything onto it, so "canvas exists" and
+  "canvas has real content" are different moments. Capture fell through to
+  a blind timeout, which is a guess, not a fact.
+- Three.js (`bootThree()`) *did* post a `sketch-status` message, but
+  unconditionally right after `window.sketch()` returned and OrbitControls
+  was set up — before either the piece's own `startFrame()` loop or the
+  bootstrap's `animateControls()` loop had actually rendered anything.
+  Reliable on desktop only because the existing buffers (3500ms in
+  generate-preview.php, 6000ms-then-poll in the manual paths) happened to
+  be generous enough to cover the gap — the same class of bug as P5/C2,
+  just with a wider safety margin that a slower mobile CPU/network erodes.
+- `form.php`/`index.php` additionally positioned their capture iframe at
+  `left:-9999px;top:-9999px` — genuinely outside the viewport, which some
+  browsers throttle or skip `requestAnimationFrame` for as a power-saving
+  measure, independent of how long the capture code waits.
+
+Piece 80's own generated code was checked directly and is unremarkable (no
+`preload()`/`loadImage()`, simple `setup()`/`draw()`) — the bug is
+structural, not specific to that piece.
+
+### Implemented
+- `piece-runtime.js` gained a shared `signalCanvasReady(canvas)` helper
+  (sets `canvas.dataset.creatrReady = '1'` and posts the existing
+  `sketch-status` message) called only once something has actually been
+  painted: `bootP5()` polls `instance.frameCount >= 1` (p5's own real frame
+  counter) before signaling; `bootCanvasRuntime()` wraps the `startFrame`
+  handed to the sketch so the signal fires after its first real tick;
+  `bootThree()` gained `signalThreeReadyOnce()`, fired from both possible
+  render paths (the piece's own `startFrame()` tick, and the bootstrap's
+  `animateControls()` loop) plus an end-of-function fallback for the
+  degenerate case where neither ever renders.
+- `index.php`'s inline duplicate of the boot logic got the identical
+  mirrored fix (its one accepted exception to "load the shared file," per
+  the existing test suite's own carve-out).
+- `form.php` and `index.php`'s manual capture now require
+  `canvas.dataset.creatrReady === '1'` (not just canvas existence) for
+  p5/c2/three before calling `toDataURL()`, and their capture iframe moved
+  from `left:-9999px` to `opacity:0` while staying within the viewport
+  (`position:fixed; left:0; top:0`).
+- `generate-preview.php` needed no changes — it already listens for
+  `sketch-status`, and now correctly receives it later, after a real frame.
+
+### Verification
+12 new tests in `tests/three-runtime-consistency.php`: the readiness signal
+is present and correctly gated in `piece-runtime.js` and mirrored in
+`index.php`'s inline copy, both manual capture call sites require the
+marker for p5/c2/three, and both no longer position the capture iframe
+off-screen. 55 + 48 + 11 tests passing, full `php -l` sweep and `node
+--check` on both touched `.js` files clean. Could not exercise this live —
+no browser automation tool is available in this environment — verified by
+tracing the exact code paths and confirming no current Three.js thumbnail
+in the database is actually blank (sampled pixel colors directly from all
+20 stored thumbnails). Asked the user to confirm live across all three
+capture mechanisms and, separately, on an actual mobile device.
+
+## 2026-06-20 — Embedded Immersive-Image Expand Button Missing on iOS Safari
+
+### Context
+User reported the immersive "Expand" control not working correctly inside
+embeds on blog posts specifically, on iPhone Safari — possibly working fine
+when viewing the immersive page directly.
+
+### Root cause
+`embed.js` defines `CreatrArtPiece`, `CreatrImmersiveImage`, and
+`CreatrExhibitWall`. The immersive pages (`piece.php`/`collection.php`/
+`image.php`) already handle iPhone Safari's total lack of any Fullscreen
+API correctly: when their own `requestFullscreen()` rejects, they fall back
+to a CSS-only fixed overlay, and — since that overlay would otherwise be
+clipped to a small embed box when the page is sitting inside an iframe —
+`postMessage({ type: 'creatr-toggle-fullscreen', value })` up to whoever is
+hosting it. `embed.js` has a matching listener,
+`installFullscreenWrapperProtocol()`, that promotes the custom element
+itself to `document.body` so it fills the real viewport — but it was wired
+up for `CreatrExhibitWall` only. `CreatrArtPiece` genuinely doesn't need it
+(its embedded iframe points at a separate minimal `/embed/pieces/{id}`
+route with no fullscreen affordance; its "VR" control just navigates the
+parent page away). `CreatrImmersiveImage`'s embedded iframe, however, points
+directly at the full `/immersive/images/{ref}` page — the same situation as
+the exhibit wall — and was missing both the constructor call and the
+matching CSS rule, so its Expand button's postMessage went unheard.
+
+### Implemented
+Mirrored `CreatrExhibitWall`'s existing, working pattern into
+`CreatrImmersiveImage`: added `installFullscreenWrapperProtocol(this)` to
+its constructor and the matching `:host(.creatr-fullscreen)` CSS block to
+its shadow-root `<style>`. No changes to the immersive pages themselves —
+their side of the protocol was already correct. `CreatrArtPiece` and
+`CreatrExhibitWall` untouched.
+
+### Verification
+1 new test in `tests/three-runtime-consistency.php` confirming
+`CreatrImmersiveImage`'s class body specifically contains both the
+constructor call and the CSS rule (not just that the strings exist
+somewhere in the file, which an existing looser test already covered and
+would not have caught this gap). `node --check` clean on `embed.js`. Could
+not test against a real iPhone Safari session — no such environment is
+available here; asked the user to verify live.
+
 

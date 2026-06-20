@@ -39,6 +39,10 @@ function startFrame(callback) {
   }
   requestAnimationFrame(tick);
 }
+function signalCanvasReady(canvas) {
+  if (canvas) canvas.dataset.creatrReady = '1';
+  try { window.parent.postMessage({ type: 'sketch-status', valid: true }, '*'); } catch (_) {}
+}
 function bootCanvasRuntime(extra) {
   runPieceCode();
   if (typeof window.sketch !== 'function') return;
@@ -46,7 +50,18 @@ function bootCanvasRuntime(extra) {
   canvas.style.cssText = 'display:block;width:100%;height:100%;';
   sizeCanvas(canvas);
   window.addEventListener('resize', () => sizeCanvas(canvas));
-  try { window.sketch({ canvas, startFrame, ...(extra || {}) }); } catch (error) { showPieceError(error); }
+  // Only the piece's own first real draw means there's something worth
+  // capturing — wrap the startFrame handed to the sketch so the readiness
+  // signal fires after its first tick actually runs, not merely once
+  // bootstrapping has handed control to the piece.
+  let readySignaled = false;
+  function instrumentedStartFrame(callback) {
+    return startFrame((count) => {
+      callback(count);
+      if (!readySignaled) { readySignaled = true; signalCanvasReady(canvas); }
+    });
+  }
+  try { window.sketch({ canvas, startFrame: instrumentedStartFrame, ...(extra || {}) }); } catch (error) { showPieceError(error); }
 }
 function bootP5() {
   const script = document.createElement('script');
@@ -56,7 +71,18 @@ function bootP5() {
     try {
       if (typeof window.sketch === 'function' && typeof window.p5 === 'function') {
         const parent = document.getElementById('container') || document.getElementById('canvas-container') || document.getElementById('sketch-container') || document.getElementById('runtime-root');
-        new window.p5(window.sketch, parent);
+        const instance = new window.p5(window.sketch, parent);
+        // p5's own frameCount only increments after a real draw() call —
+        // wait for that instead of signaling right after setup(), when the
+        // canvas exists but is still blank.
+        const waitForFirstDraw = () => {
+          if (instance.frameCount >= 1) {
+            signalCanvasReady(parent.querySelector('canvas') || document.querySelector('canvas'));
+          } else {
+            requestAnimationFrame(waitForFirstDraw);
+          }
+        };
+        requestAnimationFrame(waitForFirstDraw);
       }
     } catch (error) { showPieceError(error); }
   };
@@ -86,6 +112,12 @@ async function bootThree() {
     let controls = null;
     let rafIds = [];
     let pieceDrivesOwnRender = false;
+    let readySignaled = false;
+    function signalThreeReadyOnce() {
+      if (readySignaled) return;
+      readySignaled = true;
+      signalCanvasReady(canvas);
+    }
     const instrumentedThree = { ...mod };
     instrumentedThree.Scene = class extends mod.Scene {
       constructor() { super(); state.scene = this; }
@@ -188,6 +220,7 @@ async function bootThree() {
           showPieceError(error);
           return;
         }
+        signalThreeReadyOnce();
         if (count === 15) autoFit();
         const id = requestAnimationFrame(tick);
         rafIds.push(id);
@@ -239,6 +272,7 @@ async function bootThree() {
           if (isOrbitActive) userHasInteracted = true;
           if (!pieceDrivesOwnRender || userHasInteracted) {
             state.renderer.render(state.scene, state.camera);
+            signalThreeReadyOnce();
           }
           consecutiveErrors = 0;
         } catch (renderError) {
@@ -259,7 +293,11 @@ async function bootThree() {
       }
     });
 
-    window.parent.postMessage({ type: 'sketch-status', valid: true }, '*');
+    // Safety net: if the piece never renders via startFrame() or the
+    // bootstrap's own animateControls() loop (e.g. it never constructs a
+    // THREE.PerspectiveCamera/WebGLRenderer at all), signal anyway so
+    // capture doesn't wait forever for a frame that will never come.
+    signalThreeReadyOnce();
   } catch (error) {
     showPieceError(error);
   }

@@ -679,14 +679,29 @@ structured spec, HTML/CSS/generated code, generation vendor, model, and
 validation status. The public renderer supports migrated p5, c2, Three.js,
 SVG, and generic HTML/code versions.
 
-`POST /admin/pieces/[id]/capture-thumbnail` renders the piece's current version
-code in an off-screen sandboxed iframe with `preserveDrawingBuffer: true`
-(overriding the Three.js default), captures the canvas as a PNG after a
-3-second animation stabilization delay, and saves it to
-`public/uploads/thumbnails/piece-{id}-{time}.png`. Accepts `image_data`
-(base64-encoded PNG string) in the request body. Returns
-`{"ok":true,"url":"/uploads/thumbnails/piece-{id}-{time}.png"}` on success and
-updates `art_pieces.thumbnail_url`.
+`POST /admin/pieces/[id]/capture-thumbnail` accepts `image_data`
+(base64-encoded PNG string, captured client-side) in the request body,
+decodes it, stores it via `MediaFile::create()` into `media_files`, and
+points `art_pieces.thumbnail_url` at the resulting `/image/{mediaId}`.
+
+The client side renders the piece's current version code in a sandboxed
+iframe (kept within the viewport via `opacity:0`, not positioned off-screen
+— see below) with `preserveDrawingBuffer: true` for Three.js, then captures
+the canvas as a PNG once it's confirmed ready, via one of three
+hand-duplicated capture implementations: `generate-preview.php`'s
+auto-capture-on-generate, `form.php`'s `performCapture()` (manual "Generate
+Thumbnail" on the Edit page), and `index.php`'s `runCaptureForId()` (manual,
+from the Pieces list — this one carries its own full inline copy of
+`piece-runtime.js`'s boot logic rather than loading the shared file, and
+must be kept mirrored by hand). All three previously captured based on a
+*proxy* for readiness (canvas element existing, or a fixed timeout) rather
+than a confirmed real rendered frame — `piece-runtime.js` now sets
+`canvas.dataset.creatrReady = '1'` (and posts the existing `sketch-status`
+message) only once a real frame has actually drawn: P5 polls
+`instance.frameCount >= 1`; C2/generic wraps the `startFrame` handed to the
+sketch; Three.js fires from whichever of its two possible render paths
+actually runs. The manual capture paths require this marker for p5/c2/three
+before calling `toDataURL()`.
 
 `GET /admin/pieces/generate` renders the interface for AI piece generation, letting the admin select the engine, prompt, vendor settings, and model. `POST /admin/pieces/generate` triggers the generation process (running a 3-attempt validation and repair loop checking window.sketch constraints and output structure) and returns a preview sandbox. `POST /admin/pieces/generate/save` saves the generated metadata and code as a new piece with its initial version.
 

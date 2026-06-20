@@ -1037,9 +1037,13 @@ $preferredProfileId = $preferredProfileId ?? null;
 
         var srcdoc = renderDocumentJS(titleField.value || 'Art piece', engine, html, css, js, true);
 
-        // Mount in off-screen iframe with both allow-scripts and allow-same-origin
+        // Mount an invisible-but-in-viewport iframe — genuinely off-screen
+        // positioning (large negative left/top) is throttled or skipped for
+        // requestAnimationFrame by some browsers as a power-saving measure,
+        // which would stop p5/c2's own draw loop from ever running here
+        // regardless of how long this code waits.
         var captureFrame = document.createElement('iframe');
-        captureFrame.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:960px;height:540px;border:none;';
+        captureFrame.style.cssText = 'position:fixed;left:0;top:0;width:960px;height:540px;border:none;opacity:0;pointer-events:none;z-index:-1;';
         captureFrame.sandbox = 'allow-scripts allow-same-origin';
         document.body.appendChild(captureFrame);
 
@@ -1049,16 +1053,24 @@ $preferredProfileId = $preferredProfileId ?? null;
             setTimeout(resolve, 800);
         });
 
-        // Wait ~3s for animation to stabilise
-        await new Promise(function (resolve) { setTimeout(resolve, 3000); });
-
-        var iframeDoc = captureFrame.contentDocument;
-        var canvas = iframeDoc && iframeDoc.querySelector('canvas');
-
-        if (!canvas) {
-            var svg = iframeDoc && iframeDoc.querySelector('svg');
-            if (svg) {
-                canvas = await convertSvgToCanvas(svg, 960, 540);
+        // For p5/c2, a canvas element existing isn't enough — it's created
+        // before the first real draw() call, so require the ready marker
+        // piece-runtime.js sets once something's actually been painted.
+        // Other engines keep relying on the poll window itself.
+        var requireReadyMarker = (engine === 'p5' || engine === 'c2' || engine === 'three');
+        var canvas = null;
+        for (var attempt = 0; attempt < 16 && !canvas; attempt++) {
+            await new Promise(function (resolve) { setTimeout(resolve, 500); });
+            var iframeDoc = captureFrame.contentDocument;
+            var foundCanvas = iframeDoc && iframeDoc.querySelector('canvas');
+            if (foundCanvas && (!requireReadyMarker || foundCanvas.dataset.creatrReady === '1')) {
+                canvas = foundCanvas;
+            }
+            if (!canvas) {
+                var svg = iframeDoc && iframeDoc.querySelector('svg');
+                if (svg) {
+                    canvas = await convertSvgToCanvas(svg, 960, 540);
+                }
             }
         }
 

@@ -235,6 +235,7 @@
       super();
       this.attachShadow({ mode: "open" });
       this.isMounted = false;
+      installFullscreenWrapperProtocol(this);
     }
 
     connectedCallback() {
@@ -274,6 +275,22 @@
             :host {
               min-height: 180px !important;
             }
+          }
+          /* Promoted to a direct child of document.body while fullscreen —
+             escapes any clipping/transformed ancestor on the host page (the
+             original iOS Safari bug: a CSS-only "fake fullscreen" overlay
+             nested inside a transformed container gets cropped). */
+          :host(.creatr-fullscreen) {
+            position: fixed !important;
+            inset: 0 !important;
+            width: 100dvw !important;
+            height: 100dvh !important;
+            max-width: none !important;
+            aspect-ratio: auto !important;
+            min-height: 0 !important;
+            border: none !important;
+            border-radius: 0 !important;
+            z-index: 2147483647 !important;
           }
           .mount, iframe {
             width: 100% !important;
