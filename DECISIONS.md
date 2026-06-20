@@ -3463,4 +3463,85 @@ would not have caught this gap). `node --check` clean on `embed.js`. Could
 not test against a real iPhone Safari session — no such environment is
 available here; asked the user to verify live.
 
+## 2026-06-20 — Fixed "ERR_CONNECTION_CLOSED" on Piece Save + Added Live Elapsed-Time UI to Generate/Refine/Save
+
+### Context
+On production (Hostinger), saving a freshly-generated C2.js piece failed
+with the browser's "ERR_CONNECTION_CLOSED" — generation itself had already
+succeeded and taken ~5 minutes; the save attempt, not the generation, is
+what failed. Separately, neither Generate nor AI Refine show how long the
+admin has been waiting, making it hard to tell "slow" apart from "stuck."
+
+### Ruled out directly (not assumed)
+- **Resource exhaustion**: the user's own Hostinger panel graphs at the
+  time of the incident show PHP Workers averaging 5/100 and Max Processes
+  averaging 40/200 — nowhere near capacity, and the rest of the site
+  (confirmed via a portfolio screenshot) stayed reachable throughout.
+- **Payload size**: pulled actual stored code lengths directly from the
+  database across all four engines — even the largest (Three.js, ~16KB JS
+  average) plus a captured thumbnail (tens of KB as a PNG) is nowhere near
+  `post_max_size`/`upload_max_filesize` (`public/.htaccess`: 72M/64M).
+  C2.js isn't even the largest on average.
+- **Engine-specific behavior**: `PiecesAdminController::generateSave()`
+  branches on nothing engine-related at all.
+- **Browser/viewport-specific code**: confirmed via grep that
+  `generate-preview.php`/`generate-form.php` contain zero
+  `innerWidth`/`matchMedia`/`userAgent`-conditional logic — nothing in this
+  flow behaves differently at any width or for any specific browser.
+
+### Most likely cause
+A dead/stale HTTP connection reused for the Save POST. Generate
+(`/admin/pieces/generate`) and Save (`/admin/pieces/generate/save`,
+confirmed via grep to have exactly one caller) are two *separate*
+traditional full-page form submissions, with a gap between them (the user
+estimated 15-30s) while reviewing the preview. If the prior request's
+keep-alive connection was already idle-closed server-side (shared hosting
+commonly uses short keep-alive timeouts to conserve capacity — consistent
+with the low worker/process numbers observed) or invalidated by iOS
+backgrounding the tab during the wait, the browser's attempt to reuse it
+for the second POST fails exactly like this — and browsers won't silently
+retry a POST (unsafe/non-idempotent), so the raw connection error surfaces
+directly. This mechanism is browser-agnostic by nature (any browser reusing
+a connection the server already closed fails the same way); iPhone Safari
+is plausibly just the likeliest *place* to encounter it, since iOS
+suspends background tab activity more aggressively than desktop browsers
+sitting on an active, foregrounded tab — not the only place it can occur.
+
+### Implemented
+- `PiecesAdminController::generateSave()` now returns JSON
+  (`{"success":true,"redirect":"/admin/pieces"}` or
+  `{"success":false,"error":"..."}` with HTTP 400) instead of a redirect —
+  confirmed exactly one caller exists, so no other code path depended on
+  the old redirect response.
+- `generate-preview.php`'s Save form now submits via `fetch()` instead of a
+  traditional POST, with a one-time automatic retry specifically on a
+  network-level failure (the `fetch()` promise itself rejecting — i.e. the
+  connection died before the server ever received the request) — not on a
+  resolved-but-unsuccessful server response, which surfaces the real error
+  instead of retrying blindly. A fresh `fetch()` attempt opens a new
+  connection, sidestepping the stale one regardless of whether a server
+  keep-alive timeout or OS-level backgrounding caused the staleness.
+- Added a live elapsed-time indicator to all three waits: Generate
+  (`generate-form.php`'s existing submit handler, ticking the button text
+  every second — the page's JS keeps running through a traditional POST's
+  wait, right up until the response actually starts arriving), AI Refine
+  (`form.php`'s existing `btnRefineAi` click handler), and the now-`fetch()`-based
+  Save (`generate-preview.php`).
+
+### Verification
+Full `php -l` sweep and `node --check` (via extraction) on every modified
+inline `<script>` block clean; existing 55+48+11 tests still pass
+unaffected. Directly exercised `generateSave()`'s new JSON response shape
+end-to-end via a CLI harness simulating an authenticated admin session
+against the real database (not assumed from reading the diff): confirmed
+the success shape (`{"success":true,"redirect":"/admin/pieces"}`) by
+creating and immediately deleting a real test piece, and confirmed the
+validation-error shape (`{"success":false,"error":"Title is required."}`,
+HTTP 400) in a separate run. Could not reproduce the actual stale-connection
+scenario itself — it depends on Hostinger's live infrastructure behavior,
+not something the local dev server exhibits — asked the user to retry the
+same flow in production and confirm the retry either succeeds transparently
+or surfaces a clear error instead of the raw browser-level connection
+error.
+
 

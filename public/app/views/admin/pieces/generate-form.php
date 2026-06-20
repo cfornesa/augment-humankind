@@ -200,8 +200,27 @@ ob_start();
                     .catch(function(){ errEl.textContent = 'Request failed. Please try again.'; errEl.hidden = false; });
             });
 
+            function formatElapsed(ms) {
+                var totalSeconds = Math.floor(ms / 1000);
+                var minutes = Math.floor(totalSeconds / 60);
+                var seconds = totalSeconds % 60;
+                return minutes + ':' + (seconds < 10 ? '0' : '') + seconds;
+            }
+
             form.addEventListener('submit', function () {
-                if (btn) { btn.disabled = true; btn.innerText = 'Generating & Validating (up to 5 attempts, ~10 min max)...'; }
+                if (!btn) return;
+                btn.disabled = true;
+                // This is a traditional full-page form submission, not
+                // fetch() — the current page's JS keeps running (and this
+                // interval keeps ticking) until the server's response
+                // actually starts arriving and the browser begins
+                // navigating away, so the elapsed time stays visible for
+                // the whole wait.
+                var startedAt = Date.now();
+                btn.innerText = 'Generating & Validating (up to 5 attempts, ~10 min max)... 0:00 elapsed';
+                setInterval(function () {
+                    btn.innerText = 'Generating & Validating (up to 5 attempts, ~10 min max)... ' + formatElapsed(Date.now() - startedAt) + ' elapsed';
+                }, 1000);
             });
         })();
         </script>

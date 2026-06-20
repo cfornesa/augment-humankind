@@ -109,6 +109,7 @@ $defaultTitle = 'AI ' . strtoupper($engine) . ' Piece - ' . date('M d, Y H:i');
             <button type="submit" class="admin-btn">Save and Insert (Create Version 1)</button>
             <a href="/admin/pieces/generate" class="admin-btn admin-btn-ghost">Discard &amp; Restart</a>
             <span id="thumbnail-status" style="font-size: 0.8rem; color: var(--ink-soft);">Waiting for piece to render…</span>
+            <span id="save-status" style="font-size: 0.8rem; color: var(--ink-soft);"></span>
         </div>
     </form>
 
@@ -257,6 +258,77 @@ const PIECE_PRESERVE_DRAWING_BUFFER = true;
 
         // Fallback for engines that don't post sketch-status (e.g. SVG or p5 race)
         setTimeout(function () { if (!captured) capture(); }, 10000);
+    })();
+
+    // Save as fetch() with a one-time retry on a network-level failure only
+    // (the connection itself dying, not a server-returned error) — a stale
+    // keep-alive connection reused after sitting idle since the Generate
+    // request (e.g. a gap spent reviewing the preview, or the tab getting
+    // backgrounded on mobile) fails a traditional POST with no way to
+    // recover; a fresh fetch() attempt opens a new connection instead.
+    (function () {
+        var form = document.querySelector('form.admin-form');
+        if (!form) return;
+        var saveBtn = form.querySelector('button[type="submit"]');
+        var saveStatusEl = document.getElementById('save-status');
+        var timerInterval = null;
+        var startedAt = null;
+
+        function formatElapsed(ms) {
+            var totalSeconds = Math.floor(ms / 1000);
+            var minutes = Math.floor(totalSeconds / 60);
+            var seconds = totalSeconds % 60;
+            return minutes + ':' + (seconds < 10 ? '0' : '') + seconds;
+        }
+
+        function startTimer(label) {
+            startedAt = Date.now();
+            if (timerInterval) clearInterval(timerInterval);
+            timerInterval = setInterval(function () {
+                if (saveStatusEl) saveStatusEl.textContent = label + ' (' + formatElapsed(Date.now() - startedAt) + ' elapsed)';
+            }, 1000);
+        }
+
+        function stopTimer() {
+            if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+        }
+
+        function setSaveStatus(msg, isError) {
+            if (!saveStatusEl) return;
+            saveStatusEl.textContent = msg;
+            saveStatusEl.style.color = isError ? '#ef4444' : 'var(--ink-soft)';
+        }
+
+        function submitSave(formData, isRetry) {
+            fetch(form.action, { method: 'POST', body: formData }).then(function (resp) {
+                return resp.json();
+            }).then(function (data) {
+                stopTimer();
+                if (data.success) {
+                    setSaveStatus('Saved ✓ Redirecting…');
+                    window.location.href = data.redirect || '/admin/pieces';
+                } else {
+                    setSaveStatus('Save failed: ' + (data.error || 'Unknown error'), true);
+                    if (saveBtn) saveBtn.disabled = false;
+                }
+            }).catch(function () {
+                if (!isRetry) {
+                    setSaveStatus('Connection issue — retrying…');
+                    setTimeout(function () { submitSave(formData, true); }, 1000);
+                    return;
+                }
+                stopTimer();
+                setSaveStatus('Save failed: the connection was lost. Please try again.', true);
+                if (saveBtn) saveBtn.disabled = false;
+            });
+        }
+
+        form.addEventListener('submit', function (e) {
+            e.preventDefault();
+            if (saveBtn) saveBtn.disabled = true;
+            startTimer('Saving…');
+            submitSave(new FormData(form), false);
+        });
     })();
     </script>
 </div>

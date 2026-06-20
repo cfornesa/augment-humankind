@@ -792,7 +792,14 @@ $preferredProfileId = $preferredProfileId ?? null;
         // Set loading state
         btnRefineAi.disabled = true;
         var originalBtnText = btnRefineAi.textContent;
-        btnRefineAi.textContent = 'Requesting AI Changes...';
+        btnRefineAi.textContent = 'Requesting AI Changes... 0:00 elapsed';
+        var refineStartedAt = Date.now();
+        var refineTimerInterval = setInterval(function () {
+            var totalSeconds = Math.floor((Date.now() - refineStartedAt) / 1000);
+            var minutes = Math.floor(totalSeconds / 60);
+            var seconds = totalSeconds % 60;
+            btnRefineAi.textContent = 'Requesting AI Changes... ' + minutes + ':' + (seconds < 10 ? '0' : '') + seconds + ' elapsed';
+        }, 1000);
 
         // Clear any old banner and leftover save-status message from a
         // previous attempt.
@@ -902,6 +909,7 @@ $preferredProfileId = $preferredProfileId ?? null;
             alert('AI Refinement Error: ' + err.message);
         })
         .finally(function () {
+            clearInterval(refineTimerInterval);
             btnRefineAi.disabled = false;
             btnRefineAi.textContent = originalBtnText;
         });

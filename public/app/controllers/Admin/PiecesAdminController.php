@@ -777,6 +777,7 @@ class PiecesAdminController
     public static function generateSave(): void
     {
         admin_check();
+        header('Content-Type: application/json; charset=utf-8');
 
         try {
             $title = trim($_POST['title'] ?? '');
@@ -849,9 +850,10 @@ class PiecesAdminController
 
             PlatformArtPiece::updateCurrentVersion($pieceId, $versionId);
 
-            header('Location: /admin/pieces');
+            echo json_encode(['success' => true, 'redirect' => '/admin/pieces']);
         } catch (Throwable $e) {
-            header('Location: /admin/pieces?error=' . urlencode($e->getMessage()));
+            http_response_code(400);
+            echo json_encode(['success' => false, 'error' => $e->getMessage()]);
         }
         exit;
     }
