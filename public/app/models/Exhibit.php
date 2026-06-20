@@ -45,11 +45,17 @@ class Exhibit
 
     public static function latestActive(int $limit = 3): array
     {
+        // GREATEST(created_at, updated_at), not plain created_at — must match
+        // searchFiltered()'s 'newest' sort exactly, since the portfolio
+        // gallery's "See More" button continues this preview by re-querying
+        // searchFiltered(..., 'newest', ...) at an offset. A mismatched sort
+        // here means the offset continuation reorders the list underneath
+        // itself, causing cards to repeat or get skipped.
         $stmt = db()->prepare(
             "SELECT e.*
              FROM exhibits e
              WHERE e.deleted_at IS NULL AND e.status = 'active'
-             ORDER BY e.created_at DESC, e.id DESC
+             ORDER BY GREATEST(e.created_at, e.updated_at) DESC, e.id DESC
              LIMIT ?"
         );
         $stmt->bindValue(1, max(1, $limit), PDO::PARAM_INT);

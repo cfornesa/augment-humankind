@@ -34,7 +34,7 @@ require __DIR__ . '/../partials/header.php';
                     data-see-more-listing
                     data-next-offset="<?= count($collections) ?>"
                     data-has-more="<?= $collectionTotal > count($collections) ? 'true' : 'false' ?>"
-                    data-fetch-url="/portfolio/exhibit-collections"
+                    data-fetch-url="/portfolio/exhibit-collections?sort=newest"
                 >
                     <div class="portfolio-grid-3" data-listing-grid>
                         <?php $items = $collections; $itemType = 'collections'; require __DIR__ . '/archive-cards.php'; ?>
@@ -71,7 +71,7 @@ require __DIR__ . '/../partials/header.php';
                     data-see-more-listing
                     data-next-offset="<?= count($exhibits) ?>"
                     data-has-more="<?= $exhibitTotal > count($exhibits) ? 'true' : 'false' ?>"
-                    data-fetch-url="/portfolio/exhibits"
+                    data-fetch-url="/portfolio/exhibits?sort=newest"
                 >
                     <div class="portfolio-grid-3" data-listing-grid>
                         <?php $items = $exhibits; $itemType = 'exhibits'; require __DIR__ . '/archive-cards.php'; ?>
@@ -105,7 +105,7 @@ require __DIR__ . '/../partials/header.php';
                     data-see-more-listing
                     data-next-offset="<?= count($platformCollections) ?>"
                     data-has-more="<?= $platformCollectionTotal > count($platformCollections) ? 'true' : 'false' ?>"
-                    data-fetch-url="/portfolio/platform-collections"
+                    data-fetch-url="/portfolio/platform-collections?sort=newest"
                 >
                     <div class="portfolio-grid-3" data-listing-grid>
                         <?php $items = $platformCollections; $itemType = 'platform-collections'; require __DIR__ . '/archive-cards.php'; ?>
@@ -139,7 +139,7 @@ require __DIR__ . '/../partials/header.php';
                     data-see-more-listing
                     data-next-offset="<?= count($pieces) ?>"
                     data-has-more="<?= $pieceTotal > count($pieces) ? 'true' : 'false' ?>"
-                    data-fetch-url="/portfolio/pieces"
+                    data-fetch-url="/portfolio/pieces?sort=newest"
                 >
                     <div class="portfolio-grid-3" data-listing-grid>
                         <?php $items = $pieces; $itemType = 'pieces'; require __DIR__ . '/archive-cards.php'; ?>

@@ -212,11 +212,23 @@ async function bootThree() {
       autoFit();
       controls.update();
 
+      let isOrbitActive = false;
+      let userHasInteracted = false;
+      controls.addEventListener('start', () => { isOrbitActive = true; });
+      controls.addEventListener('end', () => { isOrbitActive = false; });
+
       // If the piece drives its own startFrame render loop (the documented
       // contract), this loop only needs to keep OrbitControls interactive —
       // re-rendering here too would just duplicate the piece's own draw call
-      // every frame. Only render here when the piece registered no loop of
-      // its own (e.g. a custom animation pattern with no startFrame call).
+      // every frame. The one exception: many pieces script their own ambient
+      // camera motion every frame (e.g. camera.position.x = ...;
+      // camera.lookAt(...)), and since only the piece's own render call
+      // paints pixels while pieceDrivesOwnRender is true, that scripted view
+      // always wins over whatever the user just dragged — drag looks
+      // completely inert even though state.camera *is* updating correctly
+      // underneath. Once the user has ever taken control of the camera,
+      // latch a forced bootstrap render for the rest of the session so user
+      // input reliably wins from then on (mirrors immersive-gallery.js).
       let consecutiveErrors = 0;
       const animateControls = () => {
         const id = requestAnimationFrame(animateControls);
@@ -224,7 +236,8 @@ async function bootThree() {
         try {
           ensureFallbackLighting();
           controls.update();
-          if (!pieceDrivesOwnRender) {
+          if (isOrbitActive) userHasInteracted = true;
+          if (!pieceDrivesOwnRender || userHasInteracted) {
             state.renderer.render(state.scene, state.camera);
           }
           consecutiveErrors = 0;

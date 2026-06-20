@@ -78,11 +78,33 @@ test('OrbitControls loop creates OrbitControls bound to state.camera/canvas', fu
 
 test('animateControls does not double-render when the piece drives its own loop', function () use ($runtime) {
     assert_contains($runtime, 'pieceDrivesOwnRender = true');
-    assert_contains($runtime, 'if (!pieceDrivesOwnRender) {');
+    assert_contains($runtime, 'if (!pieceDrivesOwnRender || userHasInteracted) {');
 });
 
 test('a dead piece render loop hands rendering back to the bootstrap (no permanent freeze)', function () use ($runtime) {
     assert_contains($runtime, 'pieceDrivesOwnRender = false');
+});
+
+test('user-driven camera control overrides a piece\'s own scripted camera once the user has interacted (plain /pieces/{id} page, same fix as immersive-gallery.js)', function () use ($runtime) {
+    // Regression guard: piece-runtime.js is a SEPARATE implementation from
+    // immersive-gallery.js (used by the plain /pieces/{id} page, not just
+    // VR mode). Without this latch, any piece that scripts its own camera
+    // every frame (a normal ambient-motion pattern) permanently defeats
+    // OrbitControls drag/zoom on the plain page even though it works fine
+    // in VR mode — confirmed for piece 40 vs piece 75.
+    assert_contains($runtime, "controls.addEventListener('start'");
+    assert_contains($runtime, 'userHasInteracted = true');
+});
+
+test('Three.js/OrbitControls load from absolute https:// CDN URLs, not relative/bare-specifier imports (Safari sandboxed-srcdoc compatibility)', function () use ($runtime) {
+    // Regression guard: Safari blocks relative dynamic module imports
+    // inside sandboxed <iframe srcdoc> documents — this is why Three.js
+    // pieces rendered blank and non-interactive on mobile Safari until this
+    // was fixed. The fix is specifically importing from an ABSOLUTE
+    // https:// URL; reverting to a relative path or a bare specifier like
+    // import('three') would silently reintroduce the blank-on-iPhone bug.
+    assert_contains($runtime, "await import('https://cdn.jsdelivr.net/npm/three@");
+    assert_contains($runtime, "await import('https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js')");
 });
 
 echo "\n=== PHP views load the shared runtime (not an inline copy) ===\n";
