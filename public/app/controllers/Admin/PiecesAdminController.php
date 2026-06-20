@@ -178,30 +178,38 @@ class PiecesAdminController
             $code = self::resolveVersionCodeFromPost();
             if (self::hasAnyVersionCode($code)) {
                 $currentVersion = $existing['current_version'] ?? null;
-                if ($currentVersion) {
-                    $merged = $currentVersion; // start from full existing row
-                    $merged['html_code'] = $code['html_code'];
-                    $merged['css_code'] = $code['css_code'];
-                    $merged['generated_code'] = $code['generated_code'] ?? ($currentVersion['generated_code'] ?? '');
-                    $merged['engine'] = $data['engine']; // keep version engine in sync with piece engine
-                    PlatformArtPieceVersion::update((int) $currentVersion['id'], $merged);
+                $codeChanged = !$currentVersion
+                    || $code['html_code'] !== ($currentVersion['html_code'] ?? null)
+                    || $code['css_code'] !== ($currentVersion['css_code'] ?? null)
+                    || ($code['generated_code'] ?? '') !== ($currentVersion['generated_code'] ?? '');
+
+                if ($currentVersion && !$codeChanged) {
+                    // Code is unchanged (a metadata-only save) — leave the
+                    // current version's row and its AI attribution alone.
                 } else {
+                    // Every code-changing save creates a new version rather
+                    // than overwriting the current one in place, so version
+                    // history is meaningful and "Revert" has something to
+                    // revert to — this applies to manual edits and AI Refine
+                    // saves alike.
                     $versionId = PlatformArtPieceVersion::create([
                         'art_piece_id' => (int) $id,
-                        'version_number' => 1,
+                        'version_number' => PlatformArtPieceVersion::nextVersionNumber((int) $id),
                         'prompt' => $data['prompt'] !== null && $data['prompt'] !== ''
                             ? $data['prompt']
-                            : $data['title'],
-                        'structured_spec' => null,
+                            : ($currentVersion['prompt'] ?? $data['title']),
+                        'structured_spec' => $currentVersion['structured_spec'] ?? null,
                         'html_code' => $code['html_code'],
                         'css_code' => $code['css_code'],
-                        'generated_code' => $code['generated_code'] ?? '',
+                        'generated_code' => $code['generated_code'] ?? ($currentVersion['generated_code'] ?? ''),
                         'engine' => $data['engine'],
-                        'generation_vendor' => null,
-                        'generation_model' => null,
-                        'validation_status' => null,
-                        'generation_attempt_count' => 0,
+                        'generation_vendor' => $currentVersion['generation_vendor'] ?? null,
+                        'generation_model' => $currentVersion['generation_model'] ?? null,
+                        'validation_status' => $currentVersion['validation_status'] ?? null,
+                        'generation_attempt_count' => $currentVersion['generation_attempt_count'] ?? 0,
                         'notes' => null,
+                        'ai_profile_id' => $data['ai_profile_id'] ?? null,
+                        'ai_persona_id' => $data['ai_persona_id'] ?? null,
                     ]);
                     PlatformArtPiece::updateCurrentVersion((int) $id, $versionId);
                 }
@@ -270,6 +278,7 @@ class PiecesAdminController
         }
         $version = null;
         $error = null;
+        [$profiles, , $personas] = self::loadProfilesData();
         require dirname(__DIR__, 2) . '/views/admin/pieces/version-form.php';
     }
 
@@ -290,6 +299,7 @@ class PiecesAdminController
         } catch (Throwable $e) {
             $version = self::draftVersionFromPost();
             $error = $e->getMessage();
+            [$profiles, , $personas] = self::loadProfilesData();
             require dirname(__DIR__, 2) . '/views/admin/pieces/version-form.php';
         }
         exit;
@@ -309,6 +319,7 @@ class PiecesAdminController
             exit;
         }
         $error = null;
+        [$profiles, , $personas] = self::loadProfilesData();
         require dirname(__DIR__, 2) . '/views/admin/pieces/version-form.php';
     }
 
@@ -334,6 +345,7 @@ class PiecesAdminController
         } catch (Throwable $e) {
             $version = self::draftVersionFromPost();
             $error = $e->getMessage();
+            [$profiles, , $personas] = self::loadProfilesData();
             require dirname(__DIR__, 2) . '/views/admin/pieces/version-form.php';
         }
         exit;
@@ -391,6 +403,10 @@ class PiecesAdminController
             'sort_order' => isset($_POST['sort_order']) ? max(0, (int) $_POST['sort_order']) : null,
             'comments_enabled' => isset($_POST['comments_enabled']) ? 1 : 0,
             'category_ids' => array_map('intval', $_POST['category_ids'] ?? []),
+            // Not persisted on art_pieces itself — read by update() when a
+            // code change creates a new art_piece_versions row.
+            'ai_profile_id' => isset($_POST['ai_profile_id']) ? ((int) $_POST['ai_profile_id'] ?: null) : null,
+            'ai_persona_id' => isset($_POST['ai_persona_id']) ? ((int) $_POST['ai_persona_id'] ?: null) : null,
         ];
     }
 
@@ -442,6 +458,8 @@ class PiecesAdminController
             'validation_status' => $_POST['validation_status'] ?? 'validated',
             'generation_attempt_count' => (int) ($_POST['generation_attempt_count'] ?? 1),
             'notes' => trim($_POST['notes'] ?? '') ?: null,
+            'ai_profile_id' => (int) ($_POST['ai_profile_id'] ?? 0) ?: null,
+            'ai_persona_id' => (int) ($_POST['ai_persona_id'] ?? 0) ?: null,
         ];
     }
 
@@ -459,6 +477,8 @@ class PiecesAdminController
             'validation_status' => $_POST['validation_status'] ?? 'validated',
             'generation_attempt_count' => (int) ($_POST['generation_attempt_count'] ?? 1),
             'notes' => trim((string) ($_POST['notes'] ?? '')),
+            'ai_profile_id' => (int) ($_POST['ai_profile_id'] ?? 0) ?: null,
+            'ai_persona_id' => (int) ($_POST['ai_persona_id'] ?? 0) ?: null,
         ];
     }
 
@@ -823,6 +843,8 @@ class PiecesAdminController
                 'validation_status' => 'validated',
                 'generation_attempt_count' => (int) ($_POST['generation_attempt_count'] ?? 1),
                 'notes' => 'Generated via AI',
+                'ai_profile_id' => (int) ($_POST['profile_id'] ?? 0) ?: null,
+                'ai_persona_id' => (int) ($_POST['persona_id'] ?? 0) ?: null,
             ]);
 
             PlatformArtPiece::updateCurrentVersion($pieceId, $versionId);
@@ -1129,6 +1151,7 @@ class PiecesAdminController
             $html = (string) ($input['html_code'] ?? '');
             $css = (string) ($input['css_code'] ?? '');
             $js = (string) ($input['generated_code'] ?? '');
+            $originalPrompt = trim((string) ($input['original_prompt'] ?? ''));
 
             if ($prompt === '') {
                 throw new InvalidArgumentException('Prompt is required.');
@@ -1156,6 +1179,7 @@ class PiecesAdminController
             $htmlCode = '';
             $cssCode = '';
             $generatedCode = '';
+            $plan = '';
             $previousRawResponse = null;
             $lastError = '';
 
@@ -1167,58 +1191,69 @@ class PiecesAdminController
                 }
 
                 if ($attemptCount === 1) {
-                    $userPromptForApi = art_piece_refine_user_prompt($engine, $prompt, $html, $css, $js);
+                    $userPromptForApi = art_piece_refine_user_prompt($engine, $prompt, $html, $css, $js, $originalPrompt ?: null);
                 } else {
-                    $userPromptForApi = art_piece_repair_prompt($engine, $prompt, $previousRawResponse, $lastError);
+                    $userPromptForApi = art_piece_refine_repair_prompt($engine, $prompt, $previousRawResponse, $lastError, $html, $css, $js);
                 }
 
-                $res = $aiClient->generate($systemPrompt, $userPromptForApi);
+                // suppressPlanningPreamble=false: the PLAN+PATCH protocol
+                // requires a PLAN section — leaving the old "skip planning
+                // notes" instruction on (correct for fresh generation, which
+                // calls this same client) would directly contradict it.
+                // maxTokensOverride is raised because a patch's output cost
+                // is structurally higher than fresh generation's: every
+                // patch reproduces a verbatim SEARCH anchor on top of its
+                // REPLACE content.
+                $res = $aiClient->generate($systemPrompt, $userPromptForApi, suppressPlanningPreamble: false, maxTokensOverride: 24576);
                 if (!$res['ok']) {
                     $lastError = $res['error'] ?? 'API error';
+                    continue;
+                }
+                if (\App\Lib\Ai\AiProviderClient::finishReasonMeansTruncated($res['finishReason'] ?? null)) {
+                    $lastError = "The AI's response was cut off before finishing (token limit reached) — try a smaller, more specific instruction.";
+                    $previousRawResponse = $res['text'];
                     continue;
                 }
 
                 $rawText = $res['text'];
                 $previousRawResponse = $rawText;
 
-                // Extract blocks
-                $blocks = art_piece_extract_code_blocks($rawText);
-                $extractedHtml = $blocks['htmlCode'] ?? '';
-                $extractedCss = $blocks['cssCode'] ?? '';
-                $extractedJs = $blocks['generatedCode'] ?? '';
-
-                // SVG edge case: AI may omit JS block for CSS-only animations
-                if ($engine === 'svg' && $extractedJs === '') {
-                    $extractedJs = 'window.sketch = () => {};';
-                }
-
-                // Provide sensible defaults if the AI omitted them
-                if ($extractedHtml === '') {
-                    $extractedHtml = match ($engine) {
-                        'svg' => '<svg viewBox="0 0 800 600" xmlns="http://www.w3.org/2000/svg" width="100%" height="100%"></svg>',
-                        'p5' => '<div id="canvas-container"></div>',
-                        default => '<div id="container"></div>',
-                    };
-                }
-                if ($extractedCss === '') {
-                    $extractedCss = 'body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; }';
-                }
-
-                // Preflight validation
+                // Apply the AI's patches against the ORIGINAL code (not a
+                // regenerated file) — anything not named in a patch is
+                // carried forward unchanged, which is the actual guarantee
+                // that an unscoped refinement can't quietly rewrite the rest
+                // of the piece.
                 try {
+                    $patches = art_piece_extract_refine_patches($rawText);
+
+                    // A response with zero patches across every file is not
+                    // a legitimate "nothing needed changing" outcome here —
+                    // the admin always asked for a real, visible change. Left
+                    // unchecked this silently "succeeds" by returning the
+                    // original code untouched, which is indistinguishable
+                    // from the refinement never having happened at all.
+                    if (!$patches['html'] && !$patches['css'] && !$patches['js']) {
+                        throw new RuntimeException('AI response contained no valid PATCH blocks in the required format — at least one PATCH is required to make the requested change.');
+                    }
+
+                    $extractedHtml = art_piece_apply_refine_patches($html, $patches['html']);
+                    $extractedCss = art_piece_apply_refine_patches($css, $patches['css']);
+                    $extractedJs = art_piece_apply_refine_patches($js, $patches['js']);
+
                     if ($extractedHtml === '' && $engine !== 'svg') {
-                        throw new RuntimeException('HTML block is empty');
+                        throw new RuntimeException('HTML is empty after applying patches');
                     }
                     if ($extractedJs !== '') {
                         art_piece_preflight_code($engine, $extractedJs);
                     } elseif ($engine !== 'svg') {
-                        throw new RuntimeException('JavaScript block is empty');
+                        throw new RuntimeException('JavaScript is empty after applying patches');
                     }
 
                     // Success!
                     $htmlCode = $extractedHtml;
                     $cssCode = $extractedCss;
                     $generatedCode = $extractedJs;
+                    $plan = art_piece_extract_refine_plan($rawText);
                     $success = true;
                     break;
                 } catch (Throwable $e) {
@@ -1235,6 +1270,14 @@ class PiecesAdminController
                 'html_code' => $htmlCode,
                 'css_code' => $cssCode,
                 'generated_code' => $generatedCode,
+                // The AI's stated plan before patching, surfaced to the
+                // admin alongside the diff for the same before-acting
+                // visibility a plan gives.
+                'plan' => $plan,
+                // Echoed back so the client can carry these through to the
+                // version that gets created when the accepted code is saved.
+                'profile_id' => $profileId,
+                'persona_id' => $personaId > 0 ? $personaId : null,
             ]);
             audit_log_event('ai_request', 'ai_refine_piece', 'success', [
                 'actor_admin_identity_id' => $actorId > 0 ? $actorId : null,
@@ -1247,6 +1290,10 @@ class PiecesAdminController
                     'engine' => $engine,
                     'attempt_count' => $attemptCount,
                     'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+                    // Truncated raw model response, so a future "succeeded
+                    // but did nothing useful" report can be diagnosed from
+                    // the log directly instead of by inference.
+                    'raw_response' => mb_substr((string) $previousRawResponse, 0, 4000),
                 ],
             ]);
             exit;
@@ -1258,6 +1305,7 @@ class PiecesAdminController
                 'metadata' => [
                     'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
                     'error' => $e->getMessage(),
+                    'raw_response' => mb_substr((string) ($previousRawResponse ?? ''), 0, 4000),
                 ],
             ]);
             http_response_code(500);
@@ -1267,6 +1315,92 @@ class PiecesAdminController
             ]);
             exit;
         }
+    }
+
+    /**
+     * Saves an accepted AI Refine suggestion as a new version immediately —
+     * no separate "Save Changes" submit required. The version's prompt is
+     * the refinement instruction that produced it (what was actually asked
+     * for), not the piece's original creative prompt — those are different
+     * things and conflating them was the bug that made every version show
+     * the same original prompt regardless of what each refinement actually
+     * changed.
+     */
+    public static function refineSave(string $id): void
+    {
+        admin_check();
+        header('Content-Type: application/json; charset=utf-8');
+
+        $piece = PlatformArtPiece::find((int) $id);
+        if (!$piece) {
+            http_response_code(404);
+            echo json_encode(['success' => false, 'error' => 'Piece not found.']);
+            exit;
+        }
+
+        $currentVersion = $piece['current_version'] ?? null;
+        if (!$currentVersion) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'error' => 'This piece has no current version to refine.']);
+            exit;
+        }
+
+        try {
+            $input = json_decode(file_get_contents('php://input'), true) ?? [];
+            $html = (string) ($input['html_code'] ?? '');
+            $css = (string) ($input['css_code'] ?? '');
+            $js = (string) ($input['generated_code'] ?? '');
+            $refinementPrompt = trim((string) ($input['refinement_prompt'] ?? ''));
+            $profileId = (int) ($input['profile_id'] ?? 0) ?: null;
+            $personaId = (int) ($input['persona_id'] ?? 0) ?: null;
+
+            if ($refinementPrompt === '') {
+                throw new InvalidArgumentException('Refinement prompt is required.');
+            }
+
+            $codeChanged = $html !== ($currentVersion['html_code'] ?? null)
+                || $css !== ($currentVersion['css_code'] ?? null)
+                || $js !== ($currentVersion['generated_code'] ?? '');
+
+            if (!$codeChanged) {
+                echo json_encode([
+                    'success' => true,
+                    'changed' => false,
+                    'version_number' => (int) $currentVersion['version_number'],
+                ]);
+                exit;
+            }
+
+            $versionNumber = PlatformArtPieceVersion::nextVersionNumber((int) $id);
+            $versionId = PlatformArtPieceVersion::create([
+                'art_piece_id' => (int) $id,
+                'version_number' => $versionNumber,
+                'prompt' => $refinementPrompt,
+                'structured_spec' => $currentVersion['structured_spec'] ?? null,
+                'html_code' => $html,
+                'css_code' => $css,
+                'generated_code' => $js,
+                'engine' => $currentVersion['engine'] ?? $piece['engine'],
+                'generation_vendor' => $currentVersion['generation_vendor'] ?? null,
+                'generation_model' => $currentVersion['generation_model'] ?? null,
+                'validation_status' => $currentVersion['validation_status'] ?? null,
+                'generation_attempt_count' => $currentVersion['generation_attempt_count'] ?? 0,
+                'notes' => 'Saved via AI Refine accept.',
+                'ai_profile_id' => $profileId,
+                'ai_persona_id' => $personaId,
+            ]);
+            PlatformArtPiece::updateCurrentVersion((int) $id, $versionId);
+
+            echo json_encode([
+                'success' => true,
+                'changed' => true,
+                'version_number' => $versionNumber,
+            ]);
+        } catch (Throwable $e) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+        }
+        exit;
     }
 
     private static function emitRateLimitedJson(string $scope, int $retryAfter, int $actorId): void

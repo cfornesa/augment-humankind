@@ -2910,4 +2910,436 @@ Per the "AGENTS.md Safeguard" section, this was proposed as a plan (explicit
 human instruction + plan-mode approval) before editing; this entry is the
 required DECISIONS.md log, with a MEMORY.md summary to follow.
 
+## 2026-06-20 — AI Profile/Persona Attribution Per Version + AI Refine Context Fix
+
+### Context
+User wanted to know which AI Profile and AI Persona produced each version of
+a piece, see that disclosed publicly, edit it, and trust that "AI Refine"
+genuinely edits the existing piece using its original intent as context
+rather than quietly starting over. Investigated directly before designing
+anything (3 Explore agents within budget this time, plus follow-up reads),
+since several of these were reports of suspected bugs needing confirmation,
+not assumed fixes.
+
+### Confirmed findings
+- AI Refine already sent the current HTML/CSS/JS as context (not a
+  from-scratch regeneration) — confirmed by reading `art_piece_refine_user_prompt()`
+  and the client JS that sends live textarea values. What was missing: the
+  piece's original creative prompt was never included, so the AI saw the code
+  and the new instruction but not why the code looked the way it did.
+- Root cause of "an AI refinement didn't save as a new version" (piece 73):
+  every save on the piece edit form — manual or AI-Refine-originated — went
+  through one path that updated the current version's row in place, and only
+  ever created a new version the very first time a piece got any code at all.
+- Old versions were already safe (nothing deletes a version except the
+  explicit per-version "Delete" action; `current_version_id` is a plain
+  pointer), so a "Revert" action was low-risk to add.
+- The "missing description" report was a data gap, not a code bug: every
+  existing piece had `description = NULL`; the display logic already
+  rendered it correctly whenever present.
+
+### Implemented
+- **Schema**: `docs/migrations/2026-06-20-art-piece-version-ai-attribution.sql`
+  adds `ai_profile_id`/`ai_persona_id` (nullable, no FK) to
+  `art_piece_versions`. No FK so deleting an AI profile/persona later never
+  cascades into deleting historical art; display falls back to "(Blank)".
+- **Versioning behavior** (`PiecesAdminController::update()`): every
+  code-changing save now creates a new version instead of updating the
+  current one in place — covers manual edits and AI Refine alike, per
+  explicit user choice over a narrower AI-Refine-only option. Metadata-only
+  saves (no code change) still don't create a version.
+- **AI Refine context fix**: `art_piece_refine_user_prompt()` gained an
+  `$originalPrompt` parameter, included as a new "ORIGINAL CREATIVE PROMPT"
+  section before the refinement instruction. Confirmed the full picture the
+  model now receives: a system prompt built from engine rules plus, if a
+  persona is selected, that persona's `system_prompt` appended as style
+  guidance; a user prompt containing the original creative prompt (when
+  available), the refinement instruction, and the current HTML/CSS/JS code
+  verbatim — a targeted edit with full context, not a blind regeneration.
+  `refineAi()`'s JSON response now echoes back `profile_id`/`persona_id` so
+  the client can carry them into the version created on save.
+- **Admin UI**: "AI Profile Used"/"AI Persona Used" selects (defaulting to
+  "(Blank)") on the piece edit form's Metadata tab and on the per-version
+  edit form. The Versions list gained AI Profile/AI Persona columns, a
+  "Preview" link per row (`/immersive/pieces/{id}?version={vid}`, reusing the
+  existing version-override support — no new rendering code), and relabeled
+  the existing safe "Set current" action to "Revert" with a confirmation
+  prompt, moved into the Actions column next to Edit/Delete.
+- **Public/immersive display**: after a follow-up correction from the user,
+  settled on one "Prompt" section (no separate "AI Attribution" heading)
+  listing, in order: Engine, AI Profile, AI Persona, then "Prompt: ..." — each
+  consistently prefaced with its label. The existing description display
+  (already correct, above the piece stage) was left untouched.
+- Updated `docs/api.md`'s `/admin/pieces/refine-ai` and
+  `/admin/pieces/[id]/versions/[vid]/set-current` documentation to describe
+  the actual current request/response shape and versioning behavior.
+
+### Verification
+Full `php -l` sweep and both test suites pass. End-to-end DB-level test using
+a temporary piece (created, versioned with profile/persona attribution
+attached, reverted, cleaned up) confirmed: new versions preserve prior
+versions' code and attribution untouched; reverting changes what the public
+page actually renders; `art_piece_refine_user_prompt()` correctly includes
+the original prompt section when provided and omits it cleanly when not.
+Live-curled `/pieces/{id}` and `/immersive/pieces/{id}` to confirm "(Blank)"
+defaults and correct section ordering.
+
+## 2026-06-20 — AI Refine: Plan-Then-Patch Protocol Replaces Full-File Regeneration
+
+### Context
+Even with a strengthened minimal-edit system prompt and a diff view (both
+shipped earlier the same day), a real refine request — three small, named
+changes — came back having rewritten nearly the entire SVG: different
+gradients, the abstract background shapes deleted, the body/clothing
+deleted, hand-tuned hair/beard detail replaced, particle physics rewritten.
+The diff view did its job (the change was visible and caught before saving),
+but confirmed a prompt instruction alone is not a guarantee against an LLM's
+tendency to regenerate rather than edit. User proposed the actual fix: make
+the AI plan what it intends to touch first — the same plan-then-execute
+discipline used with Claude Code in plan mode — rather than trusting it to
+behave once it starts writing code.
+
+### Root cause
+`refineAi()` asked the AI to return three complete, regenerated code blocks
+via `art_piece_extract_code_blocks()` — the exact same extraction function
+used by initial generation. There was no structural difference between
+"generate from scratch" and "refine an existing piece" in how the output was
+parsed; both asked for the whole file back, and `art_piece_preflight_code()`
+only validates security/structural constraints, with no concept of
+"faithfulness to the unchanged parts." No prompt wording fixes this — every
+refine attempt asked the model to reproduce, from memory, every byte of the
+file it shouldn't touch, which is exactly the task class LLMs are unreliable
+at.
+
+### Implemented
+- `art_piece_refine_system_prompt()` now requires a two-step response: a
+  `PLAN:` section naming the specific existing elements relevant to the
+  instruction (quoting a fragment of each, stating what changes and why),
+  then one or more `PATCH <html|css|js>:` blocks expressed as exact
+  `<<<<<<< SEARCH` / `=======` / `>>>>>>> REPLACE` find-and-replace edits
+  against the current code — never a rewritten file. Includes a worked
+  example (few-shot, more reliable than an abstract format description for
+  getting parseable output). A file with no `PATCH` block is untouched.
+- New helpers in `art-piece-generation.php`: `art_piece_extract_refine_plan()`
+  (pulls the PLAN text for display), `art_piece_extract_refine_patches()`
+  (parses every PATCH/SEARCH/REPLACE block), `art_piece_apply_refine_patches()`
+  (applies each patch as an exact substring replacement against the
+  *original* code sent in the request — the actual guarantee: content
+  outside a matched SEARCH region is never regenerated, so it cannot drift).
+  A patch that doesn't match the current code exactly once (not found, or
+  ambiguous/multiple matches) throws, feeding the existing 5-attempt retry
+  loop via a new `art_piece_refine_repair_prompt()` (distinct from
+  generation's repair prompt, whose "animations must be infinite" framing
+  doesn't apply to a rejected patch).
+- `refineAi()` rewired to extract+apply patches against the original
+  `$html`/`$css`/`$js` (stable across retries) instead of treating the AI's
+  raw output as the new file; the resulting code still runs through the
+  unchanged `art_piece_preflight_code()` checks. Response gains a `plan`
+  field.
+- `form.php`: the AI Refine banner now shows the AI's stated plan above the
+  existing diff view, so intent is visible before — and alongside — the
+  actual result, mirroring how a plan is visible before Claude Code acts.
+- Initial generation (`generate()`) is untouched — it has no existing code
+  to preserve, so full-file output remains correct there.
+
+### Verification
+14 new tests in `tests/art-piece-generation.php` (44 total, all passing):
+patch extraction (single/multiple/none), successful application, both
+failure modes (not-found, ambiguous), and a reconstructed fixture of the
+actual failing case from this conversation — confirmed the abstract
+background shapes, gradients, and body/clothing survive byte-for-byte
+identical when only the named elements (glasses, mouth, beard length) are
+patched. Full `php -l` sweep and both test suites clean.
+
+## 2026-06-20 — AI Refine: Zero-Patches Silent "Success" Fixed
+
+### Context
+First real-world call to the plan-then-patch protocol (shipped earlier the
+same day) reported "No code differences detected" for a real, valid
+instruction ("add glasses, shorten hair and beard") — the request completed
+without error but applied nothing.
+
+### Root cause
+`art_piece_apply_refine_patches()` with zero patches correctly returns the
+original code unchanged (the right behavior when a *specific file* genuinely
+needs no edit) — but nothing distinguished that from "the AI's response had
+zero parseable PATCH blocks for *any* file," which means the request was
+never fulfilled at all. The existing per-file empty-code checks couldn't
+catch it, because the original code isn't empty, just unchanged. Confirmed by
+re-reading `form.php`'s diff-rendering JS: "No code differences detected"
+only renders inside the success handler, meaning the server reported success
+with identical before/after code. Two compounding gaps found while
+diagnosing: the SEARCH/REPLACE regex had no case-insensitive flag, and
+nothing logged the raw AI response anywhere, so the exact deviation in the
+model's actual output couldn't be confirmed after the fact.
+
+### Implemented
+- `refineAi()` now treats "all three patch arrays empty" as a failed attempt
+  (throws, feeding the existing 5-attempt retry loop with an explicit
+  "you must include at least one PATCH block" message) instead of silently
+  succeeding with the unchanged original code.
+- `art_piece_extract_refine_patches()`'s SEARCH/REPLACE regex is now
+  case-insensitive.
+- `ai_refine_piece` audit log entries (both success and error) now include
+  the raw AI response (truncated to ~4000 chars), so a future failure like
+  this one can be read directly from the log instead of inferred.
+- 2 new regression tests: lowercase markers parsing, and the
+  all-three-empty guard condition.
+
+### Verification
+46 tests passing (2 new), full `php -l` sweep clean. Confirmed via a direct
+simulation of the exact failure (a PLAN-only response with no PATCH blocks)
+that the guard now triggers correctly, and that a normal compliant response
+is not blocked. Live confirmation pending — asked the user to retry the same
+real prompt through the admin UI; this can't be verified end-to-end without
+a real AI API call.
+
+## 2026-06-20 — Per-Version Prompt Fixed to the Refinement Instruction + Accept Now Saves Immediately
+
+### Context
+After the plan-then-patch fix shipped, the user noticed both versions of
+piece 73 showed the *same* "Prompt" in the public Versions list/section
+("Man in suit and glasses smiling") even though version 2 came from a
+specific AI Refine instruction ("Add glasses... shorten hair and beard...").
+They also asked that accepting an AI Refine suggestion save immediately
+(with an inline confirmation) instead of requiring a separate "Save Changes"
+submit, and asked for a one-time correction of piece 73 version 2's stored
+prompt to the exact refinement text.
+
+### Root cause
+`PiecesAdminController::update()` — the only save path that created a new
+version, at the time — read `prompt` from the Metadata tab's original
+creative-prompt textarea (`$data['prompt']`, via `resolvePieceData()`),
+never from the AI Refine tab's "What would you like to change" field. Since
+the Metadata prompt field doesn't change between refinements, every version
+created via accept-then-save inherited the same original prompt.
+
+### Implemented
+- New `PiecesAdminController::refineSave()` + route
+  `POST /admin/pieces/[id]/refine-save`: creates a new version directly from
+  an accepted AI Refine suggestion, with `prompt` set to the actual
+  refinement instruction (not the original creative prompt). Compares
+  submitted code against the current version first; a no-op accept (rare,
+  since Accept is only reachable after a successful refine) creates no new
+  version.
+- `form.php`'s "Accept Changes" button now calls this endpoint immediately
+  via `fetch()` instead of just updating textareas and waiting for a manual
+  "Save Changes" submit. An inline `#ai-save-status` message shows
+  "Saving…" → "Saved as Version N." (or a clear error, with the banner left
+  open so the admin can retry or fall back to Reject — the suggestion isn't
+  lost on a failed save). New, not-yet-created pieces (no piece id yet) fall
+  back to the prior local-only accept behavior, since there's no piece row
+  to attach a version to.
+- The main "Save Changes" form submit (`update()`) is **unchanged** — manual
+  HTML/CSS/JS tab edits still create a version there, with `prompt` falling
+  back to the Metadata tab's original creative prompt (a manual edit has no
+  "refinement instruction" of its own). Per-version `prompt` remains
+  editable by hand on `/admin/pieces/[id]/versions/[vid]/edit`.
+- One-time data correction: `art_piece_versions.id=142` (piece 73, version 2)
+  `prompt` set to the user's exact verbatim text via a direct parameterized
+  UPDATE; version 1 (`id=136`) untouched. Confirmed via `SELECT` before and
+  after.
+- Updated `docs/api.md`: documented `refine-save`'s contract, clarified that
+  `update()`'s version `prompt` source is the Metadata tab (manual edits
+  only) versus `refine-save`'s (the actual refinement instruction), and noted
+  both `/pieces/[id]` and `/immersive/pieces/[id]` show full per-version
+  prompt/attribution history, not just the current version.
+
+### Verification
+Full `php -l` sweep, both test suites (46 + 39) passing, and the embedded
+`<script>` block extracted and checked with `node --check`. Live-curled
+`/pieces/73` after the data fix to confirm version 1 still reads the original
+prompt and version 2 now reads the exact corrected text verbatim.
+
+## 2026-06-20 — AI Refine: Whitespace-Tolerant Patch Matching + Retries See the Source Again
+
+### Context
+A real Three.js refinement failed outright — all 5 attempts rejected with
+"SEARCH text did not match the current code exactly," on a single
+`THREE.MeshStandardMaterial({...})` line. User asked whether to harden this
+generally or specifically for Three.js. Investigated before answering:
+general, not engine-specific — Three.js just has longer, denser lines
+(object-literal constructor calls) that are statistically more prone to the
+same underlying weakness every engine shares.
+
+### Root causes (two, compounding)
+1. `art_piece_refine_repair_prompt()` — sent on every retry (attempts 2-5) —
+   never included the current HTML/CSS/JS at all, only the failure message
+   and the AI's own previous (wrong) response. Confirmed by reading the
+   function and its one call site in `refineAi()`. Every retry was working
+   blind from memory of its own mistake, with no way to actually re-derive a
+   correct verbatim SEARCH block from the real source — plausibly enough on
+   its own to explain 5/5 failures.
+2. Exact-byte matching has no tolerance for incidental whitespace
+   reformatting, which LLMs are known to introduce even when directly
+   copying visible text (extra/missing space around `:`/`{`/`,`,
+   re-indenting) without changing anything meaningful.
+
+### Implemented
+- `art_piece_refine_repair_prompt()` gained `$html`/`$css`/`$js` params and
+  now includes the same `### CURRENT HTML/CSS/JAVASCRIPT CODE` sections the
+  first attempt gets; `refineAi()`'s retry call site passes the same stable
+  variables the first attempt used.
+- New `art_piece_find_patch_match()`: exact substring match first
+  (unchanged fast path); if that finds nothing, falls back to a
+  whitespace-tolerant match — tokenizes SEARCH into word-runs
+  (`[A-Za-z0-9_$]+`) and individual punctuation characters, discarding
+  whitespace entirely (not just splitting on the search text's *own*
+  whitespace, which only tolerates one direction of mismatch — confirmed by
+  a failing test before correcting it), then re-joins with `\s*` between
+  every token so the pattern matches regardless of which side has more or
+  less whitespace. Every actual token must still match exactly; only
+  whitespace between tokens is flexible — not a content-fuzziness
+  allowance. `art_piece_apply_refine_patches()` now calls this instead of
+  `substr_count`/`str_replace` directly.
+- `art_piece_refine_system_prompt()` gained a line recommending short,
+  single-purpose SEARCH blocks over large multi-line ones — less surface
+  area for a transcription slip.
+- Widened the failure-message SEARCH snippet from 160 to 300 characters, so
+  a long Three.js line isn't cut off mid-statement in the repair prompt.
+
+### Verification
+7 new tests covering both directions of whitespace mismatch, multi-line
+indentation tolerance, confirmation that genuine content differences are
+still rejected, and that ambiguous matches are still caught via the fallback
+path specifically (required fixing one test that accidentally exercised the
+exact-match path instead). 53 tests passing total, full `php -l` sweep and
+`three-runtime-consistency.php` clean. Can't verify against a live AI call
+myself — asked the user to retry the same Three.js refinement.
+
+## 2026-06-20 — AI Refine: Raised output token limit for OpenCode Go and Zen Models
+
+### Context
+A real Three.js refinement failed during reasoning due to token limit exhaustion. The model terminated early with finish_reason: length and zero content tokens generated because reasoning was too verbose.
+
+### Root cause
+The active AI profile (opencode-go/opencode-zen) uses reasoning models that output verbose internal thinking/reasoning blocks (up to 7,000 tokens) before starting the actual code completion. The previous output token limit (`max_tokens`) of 8192 was exhausted by the reasoning blocks, causing the API call to fail to return the plan and search/replace patches.
+
+### Implemented
+- Raised `max_tokens` limit from `8192` to `16384` for OpenCode Go/Zen models in `public/app/lib/ai/AiProviderClient.php` when `max_tokens` is configured.
+
+### Verification
+- Both `tests/art-piece-generation.php` (53/53 passed) and `tests/three-runtime-consistency.php` (39/39 passed) suites pass.
+- Verified that `AiProviderClient.php` sets `max_tokens` to `16384` for OpenCode Go and Zen.
+
+## 2026-06-20 — AI Refine: Removed a Contradictory "Skip Planning" Instruction + Refine-Specific Token Budget + Truncation Detection
+
+### Context
+Even after the `max_tokens` 8192→16384 raise above, the same Three.js
+refinement still failed every attempt — now "AI response contained no valid
+PATCH blocks." User asked whether the PATCH protocol itself needed
+rethinking. Investigated by pulling the actual raw AI responses from
+`audit_log_events` (logging added specifically so this wouldn't have to be
+guessed at) before concluding anything.
+
+### Root causes (two, neither is the PATCH protocol itself)
+1. **Confirmed, definite bug**: `AiProviderClient::generate()` — shared by
+   both fresh generation and refine — unconditionally appends "CRITICAL: Do
+   not output \<think\>, reasoning, analysis, **planning notes**,
+   explanations, or prose. Output only the required fenced HTML, CSS, and
+   JavaScript code blocks" for opencode vendors (chat-completions transport,
+   line ~82), and an equivalent for `anthropic-messages` (line ~141). Both
+   predate this session's PLAN+PATCH protocol and were written for the old
+   full-file format. They directly contradict
+   `art_piece_refine_system_prompt()`, which *requires* a `PLAN:` section —
+   telling the model "plan first" and "never output planning notes" in the
+   same request is exactly the kind of conflicting instruction that produces
+   malformed structured output.
+2. **Well-evidenced contributing factor**: the most recent failure had
+   `metadata_json IS NULL` in `audit_log_events` — `audit_log_event()`
+   silently swallows a `json_encode()` failure, which happens on invalid
+   UTF-8, consistent with a response cut off mid multi-byte character. A
+   prior failed attempt's logged response showed a `PLAN:` already
+   enumerating 3+ distinct changes before hitting the log's own truncation —
+   consistent with a response that needs more tokens than the (already-once
+   raised) ceiling allows. Refine's output cost is structurally higher than
+   fresh generation for an equally complex piece, since every patch also
+   reproduces a verbatim SEARCH anchor on top of its REPLACE content — the
+   16384 raise above wasn't necessarily wrong, just not necessarily enough
+   for refine specifically, and there was no way to tell truncation apart
+   from an ordinary format failure either way.
+
+### Implemented
+- `AiProviderClient::generate()` gained `bool $suppressPlanningPreamble = true`
+  (default preserves the existing behavior above for fresh generation
+  exactly) and `?int $maxTokensOverride = null`. `refineAi()`'s call site
+  passes `suppressPlanningPreamble: false` and `maxTokensOverride: 24576`.
+  `chat()` and the `generate()` controller action's call site are both
+  untouched — they use the defaults, so their behavior is unchanged byte for
+  byte.
+- New `extractFinishReason()` (private) and `finishReasonMeansTruncated()`
+  (public static) pull the provider's stop/finish reason
+  (`finish_reason`/`stop_reason`/`finishReason` depending on transport) and
+  recognize "length"/"max_tokens"/"MAX_TOKENS"/"incomplete" as truncation.
+  `refineAi()` checks this per attempt and surfaces "The AI's response was
+  cut off before finishing (token limit reached) — try a smaller, more
+  specific instruction" instead of the generic "no valid PATCH blocks"
+  message when that's what actually happened.
+
+### Verification
+11 new tests in `tests/ai-provider-client.php`, using Guzzle's `MockHandler`
+to capture and inspect the actual outgoing request body (not just the
+helper logic) — confirms the suppression instruction is present by default
+and absent when refine opts out, confirms `max_tokens` reflects the override
+when given, and confirms `finishReasonMeansTruncated()` against all known
+transport spellings. 53 + 39 + 11 tests passing, full `php -l` sweep clean.
+Confirmed `generate()`'s and `chat()`'s other call sites pass no new
+arguments, so the fresh-generation flow is provably unaffected. Can't verify
+against a live AI call myself — asked the user to retry the same Three.js
+refinement.
+
+## 2026-06-20 — AI Refine: Found and Fixed the Actual Cause — "PATCH javascript:" vs "PATCH js:"
+
+### Context
+The user retried the same Three.js piece (id 75) after the fix above and
+got the exact same "no valid PATCH blocks" error, justifiably asking
+whether the PATCH architecture even works after four attempts. Rather than
+guess again, reproduced the failure directly: wrote a CLI script that
+bypasses the browser/HTTP entirely and calls the same `refineAi()` code
+path against the real piece 75, the real profile, and the real multi-part
+instruction ("darken skin to light tan and make hair shorter"), looping
+through all 5 attempts exactly as the controller does, printing the full
+unredacted raw response and parsed patch count at each step (the
+audit log's 500-char truncation had been hiding this).
+
+### Root cause
+Attempts 2 through 5 each produced a perfectly well-formed `PLAN:` section
+and syntactically correct `<<<<<<< SEARCH`/`=======`/`>>>>>>> REPLACE`
+pairs — but labeled the block `PATCH javascript:` instead of `PATCH js:`.
+`art_piece_extract_refine_patches()`'s regex only recognized the literal
+token `js`, so every one of these structurally valid patches was silently
+discarded, reproducing "zero valid PATCH blocks" even though the model had
+done exactly what was asked. `art_piece_refine_patch_format_example()`'s
+one worked example only ever demonstrated `PATCH html:` — never `PATCH
+js:` — so the model had nothing anchoring it to the project's specific
+abbreviation and fell back to the natural word "javascript." Three.js
+pieces are almost always JS-only changes, so they hit this every time; SVG
+pieces (mostly `PATCH html:`) never did, which is why this stayed hidden
+all session despite extensive testing on SVG pieces. Attempt 1 in the same
+run failed for an unrelated, pre-existing reason (the model ignored the
+format entirely and emitted three full fenced code blocks) — separate from
+this bug, and already handled correctly as a zero-patches retry.
+
+### Implemented
+- `art_piece_extract_refine_patches()`'s regex now also accepts
+  `javascript` as a file-type token and normalizes it to `js` when storing
+  the patch — both directly fixes every already-affected response and
+  removes the need to rely on prompting alone going forward.
+- `art_piece_refine_patch_format_example()` gained a second worked example
+  showing a concrete `PATCH js:` block (previously only `PATCH html:` was
+  shown), plus an explicit sentence: the JS file's label is always exactly
+  `js`, never `javascript`, even when every change in a piece is JS-only —
+  spelled out because Three.js pieces are the case where it matters most.
+
+### Verification
+2 new tests in `tests/art-piece-generation.php` covering a lone `PATCH
+javascript:` block and a mix of `javascript` + `html` blocks in the same
+response (55 tests passing total). Reproduced live against the actual
+failing piece (75) via a standalone CLI script calling the exact same
+`refineAi()` code path, the exact same profile, and a similar multi-part
+instruction: before the fix, attempts 2–5 each had valid patches discarded
+by the label mismatch; after the fix, two separate live runs both succeeded
+on attempt 1, with the model's patches parsed and matching the original
+code cleanly. Full `php -l` sweep and both other test suites stay green.
+
 

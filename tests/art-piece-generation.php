@@ -35,6 +35,12 @@ function assert_contains(string $haystack, string $needle, string $msg = ''): vo
     }
 }
 
+function assert_not_contains(string $haystack, string $needle, string $msg = ''): void {
+    if (str_contains($haystack, $needle) === true) {
+        throw new RuntimeException($msg . " Expected NOT to contain: {$needle}");
+    }
+}
+
 function assert_throws(callable $fn, string $expectedMsg = ''): void {
     try {
         $fn();
@@ -176,6 +182,34 @@ test('Unknown engine throws', function () {
     assert_throws(fn() => art_piece_refine_system_prompt('unknown'), 'Unknown engine');
 });
 
+test('Refine system prompt requires a plan-then-patch response, not a full-file rewrite', function () {
+    // Regression guard: a minimal-edit *instruction* alone wasn't enough —
+    // the AI still rewrote nearly an entire piece from scratch even with
+    // that wording in place. The actual fix is structural: the AI must
+    // name what it intends to touch (PLAN) and express every change as an
+    // exact find-and-replace (PATCH ... SEARCH/REPLACE) against the current
+    // code, never a regenerated file — see art_piece_apply_refine_patches().
+    $prompt = art_piece_refine_system_prompt('p5');
+    assert_contains($prompt, 'STEP 1');
+    assert_contains($prompt, 'STEP 2');
+    assert_contains($prompt, 'PLAN');
+    assert_contains($prompt, 'PATCH');
+    assert_contains($prompt, 'SEARCH');
+    assert_contains($prompt, 'REPLACE');
+    assert_contains($prompt, 'NEVER rewrite or regenerate a file in full');
+});
+
+test('Refine system prompt includes a worked PLAN/PATCH example', function () {
+    // Few-shot examples are far more reliable than an abstract format
+    // description at getting a model to produce parseable, exactly-matching
+    // SEARCH/REPLACE blocks.
+    $prompt = art_piece_refine_system_prompt('p5');
+    assert_contains($prompt, 'EXAMPLE');
+    assert_contains($prompt, '<<<<<<< SEARCH');
+    assert_contains($prompt, '=======');
+    assert_contains($prompt, '>>>>>>> REPLACE');
+});
+
 echo "\n=== art_piece_refine_user_prompt ===\n";
 
 // 14. User prompt format
@@ -186,6 +220,19 @@ test('User prompt includes all sections', function () {
     assert_contains($prompt, 'CURRENT HTML CODE');
     assert_contains($prompt, 'CURRENT CSS CODE');
     assert_contains($prompt, 'CURRENT JAVASCRIPT CODE');
+});
+
+test('User prompt repeats the minimal-edit reminder next to the instruction', function () {
+    $prompt = art_piece_refine_user_prompt('p5', 'Make it blue', '<div></div>', 'body{}', 'window.sketch = () => {};');
+    assert_contains($prompt, 'REMINDER');
+    assert_contains($prompt, 'PATCH blocks');
+    assert_contains($prompt, 'never as a rewritten file');
+});
+
+test('User prompt includes the original creative prompt as context when given', function () {
+    $prompt = art_piece_refine_user_prompt('p5', 'Make it blue', '<div></div>', 'body{}', 'window.sketch = () => {};', 'A dream-like landscape');
+    assert_contains($prompt, 'ORIGINAL CREATIVE PROMPT');
+    assert_contains($prompt, 'A dream-like landscape');
 });
 
 test('User prompt handles null inputs', function () {
@@ -211,6 +258,250 @@ test('Repair prompt handles null previous response', function () {
     assert_contains($prompt, 'Target engine: p5');
     assert_contains($prompt, 'test');
     assert_contains($prompt, 'error');
+});
+
+echo "\n=== art_piece_refine_repair_prompt ===\n";
+
+test('Refine repair prompt includes the failure and the format reminder, not generation-specific framing', function () {
+    // Distinct from art_piece_repair_prompt(): a rejected patch has nothing
+    // to do with "animations must be infinite" or visual fidelity to a
+    // creative prompt, so this must not reuse that wording.
+    $prompt = art_piece_refine_repair_prompt('svg', 'make it blue', 'bad response', "A patch's SEARCH text did not match");
+    assert_contains($prompt, 'Target engine: svg');
+    assert_contains($prompt, 'make it blue');
+    assert_contains($prompt, "A patch's SEARCH text did not match");
+    assert_contains($prompt, 'PLAN:');
+    assert_contains($prompt, 'SEARCH');
+    assert_contains($prompt, 'copied character-for-character');
+    assert_not_contains($prompt, 'infinite');
+});
+
+test('Refine repair prompt handles null previous response', function () {
+    $prompt = art_piece_refine_repair_prompt('p5', 'test', null, 'error');
+    assert_contains($prompt, 'Target engine: p5');
+    assert_contains($prompt, 'error');
+});
+
+test('Refine repair prompt re-includes the current code on retry', function () {
+    // Regression guard: every retry attempt (2-5) was sent without the
+    // current HTML/CSS/JS at all, so the AI was retrying blind from memory
+    // of its own previous wrong response instead of re-reading the real
+    // source to derive a correct verbatim SEARCH block — a likely
+    // contributor to repeated SEARCH-mismatch failures across all attempts.
+    $prompt = art_piece_refine_repair_prompt('three', 'darken the skin', 'bad response', 'mismatch', '<div id="container"></div>', 'body{}', 'const x = 1;');
+    assert_contains($prompt, 'CURRENT HTML CODE');
+    assert_contains($prompt, '<div id="container"></div>');
+    assert_contains($prompt, 'CURRENT CSS CODE');
+    assert_contains($prompt, 'body{}');
+    assert_contains($prompt, 'CURRENT JAVASCRIPT CODE');
+    assert_contains($prompt, 'const x = 1;');
+});
+
+echo "\n=== art_piece_extract_refine_plan ===\n";
+
+test('Extracts the PLAN section', function () {
+    $raw = "PLAN:\n- change the circle color\n\nPATCH html:\n<<<<<<< SEARCH\nfoo\n=======\nbar\n>>>>>>> REPLACE";
+    assert_eq(art_piece_extract_refine_plan($raw), '- change the circle color');
+});
+
+test('Returns empty string when no PLAN section is present', function () {
+    assert_eq(art_piece_extract_refine_plan('PATCH html:\n<<<<<<< SEARCH\nfoo\n=======\nbar\n>>>>>>> REPLACE'), '');
+});
+
+echo "\n=== art_piece_extract_refine_patches ===\n";
+
+test('Extracts a single patch for one file', function () {
+    $raw = "PLAN:\n- x\n\nPATCH html:\n<<<<<<< SEARCH\n<circle/>\n=======\n<circle fill=\"blue\"/>\n>>>>>>> REPLACE";
+    $patches = art_piece_extract_refine_patches($raw);
+    assert_eq(count($patches['html']), 1);
+    assert_eq($patches['html'][0]['search'], '<circle/>');
+    assert_eq($patches['html'][0]['replace'], '<circle fill="blue"/>');
+    assert_eq(count($patches['css']), 0);
+    assert_eq(count($patches['js']), 0);
+});
+
+test('Extracts multiple patches across multiple files', function () {
+    $raw = "PLAN:\n- x\n\n"
+        . "PATCH html:\n<<<<<<< SEARCH\na\n=======\nb\n>>>>>>> REPLACE\n\n"
+        . "PATCH html:\n<<<<<<< SEARCH\nc\n=======\nd\n>>>>>>> REPLACE\n\n"
+        . "PATCH css:\n<<<<<<< SEARCH\ne\n=======\nf\n>>>>>>> REPLACE";
+    $patches = art_piece_extract_refine_patches($raw);
+    assert_eq(count($patches['html']), 2);
+    assert_eq(count($patches['css']), 1);
+    assert_eq(count($patches['js']), 0);
+});
+
+test('A file with no PATCH block has no patches', function () {
+    $raw = "PLAN:\n- x\n\nPATCH css:\n<<<<<<< SEARCH\na\n=======\nb\n>>>>>>> REPLACE";
+    $patches = art_piece_extract_refine_patches($raw);
+    assert_eq(count($patches['html']), 0);
+    assert_eq(count($patches['js']), 0);
+});
+
+test('Lowercase search/replace markers still parse', function () {
+    // Regression guard: a real model response that used lowercase markers
+    // silently produced zero patches (treated as "succeeded, no changes"
+    // instead of being parsed or rejected) until this was made case-insensitive.
+    $raw = "PLAN:\n- x\n\nPATCH html:\n<<<<<<< search\n<circle/>\n=======\n<circle fill=\"blue\"/>\n>>>>>>> replace";
+    $patches = art_piece_extract_refine_patches($raw);
+    assert_eq(count($patches['html']), 1);
+    assert_eq($patches['html'][0]['replace'], '<circle fill="blue"/>');
+});
+
+test('"PATCH javascript:" is treated as a synonym for "PATCH js:"', function () {
+    // The real bug behind every Three.js refinement failing: the prompt asks
+    // for the label "js", but models reliably write "javascript" instead
+    // (observed consistently — every Three.js refinement is JS-only, and the
+    // worked example in the system prompt only demonstrated an HTML patch).
+    // Rejecting this label discards an otherwise perfectly valid,
+    // correctly-targeted patch over a spelling mismatch, not a real problem.
+    $raw = "PLAN:\n- x\n\nPATCH javascript:\n<<<<<<< SEARCH\nconst speed = 0.5;\n=======\nconst speed = 1.2;\n>>>>>>> REPLACE";
+    $patches = art_piece_extract_refine_patches($raw);
+    assert_eq(count($patches['js']), 1);
+    assert_eq($patches['js'][0]['search'], 'const speed = 0.5;');
+    assert_eq($patches['js'][0]['replace'], 'const speed = 1.2;');
+    assert_eq(count($patches['html']), 0);
+    assert_eq(count($patches['css']), 0);
+});
+
+test('Multiple "PATCH javascript:" blocks all parse, alongside an "html" block', function () {
+    $raw = "PLAN:\n- x\n\n"
+        . "PATCH javascript:\n<<<<<<< SEARCH\na\n=======\nb\n>>>>>>> REPLACE\n\n"
+        . "PATCH javascript:\n<<<<<<< SEARCH\nc\n=======\nd\n>>>>>>> REPLACE\n\n"
+        . "PATCH html:\n<<<<<<< SEARCH\ne\n=======\nf\n>>>>>>> REPLACE";
+    $patches = art_piece_extract_refine_patches($raw);
+    assert_eq(count($patches['js']), 2);
+    assert_eq(count($patches['html']), 1);
+});
+
+test('A response with a PLAN but no PATCH blocks at all yields zero patches in every file', function () {
+    // This is the exact shape of the real failure: refineAi() must treat
+    // "all three arrays empty" as a failed attempt, not a success with no
+    // changes — see the guard added around art_piece_extract_refine_patches()
+    // in PiecesAdminController::refineAi().
+    $raw = "PLAN:\n- I will add glasses and shorten the beard.\n\nNo patches follow.";
+    $patches = art_piece_extract_refine_patches($raw);
+    assert_eq(count($patches['html']), 0);
+    assert_eq(count($patches['css']), 0);
+    assert_eq(count($patches['js']), 0);
+    $allEmpty = !$patches['html'] && !$patches['css'] && !$patches['js'];
+    assert_eq($allEmpty, true, 'The all-empty condition used as the refineAi() guard must detect this case');
+});
+
+echo "\n=== art_piece_apply_refine_patches ===\n";
+
+test('Applies a patch, leaving everything else byte-for-byte unchanged', function () {
+    $original = "before <circle fill=\"red\"/> after";
+    $patches = [['search' => '<circle fill="red"/>', 'replace' => '<circle fill="blue"/>']];
+    assert_eq(art_piece_apply_refine_patches($original, $patches), 'before <circle fill="blue"/> after');
+});
+
+test('Applies multiple non-overlapping patches in one pass', function () {
+    $original = "AAA BBB CCC";
+    $patches = [
+        ['search' => 'AAA', 'replace' => 'XXX'],
+        ['search' => 'CCC', 'replace' => 'ZZZ'],
+    ];
+    assert_eq(art_piece_apply_refine_patches($original, $patches), 'XXX BBB ZZZ');
+});
+
+test('No patches returns the original code unchanged', function () {
+    assert_eq(art_piece_apply_refine_patches('untouched code', []), 'untouched code');
+});
+
+test('Null original code with no patches returns an empty string', function () {
+    assert_eq(art_piece_apply_refine_patches(null, []), '');
+});
+
+test('Throws when a SEARCH block is empty', function () {
+    assert_throws(fn() => art_piece_apply_refine_patches('abc', [['search' => '  ', 'replace' => 'x']]), 'empty SEARCH');
+});
+
+test('Throws when SEARCH text is not found in the current code', function () {
+    assert_throws(fn() => art_piece_apply_refine_patches('abc', [['search' => 'NOPE', 'replace' => 'x']]), 'did not match');
+});
+
+test('Throws when SEARCH text matches more than one location (ambiguous)', function () {
+    assert_throws(fn() => art_piece_apply_refine_patches('abc abc', [['search' => 'abc', 'replace' => 'x']]), 'ambiguous');
+});
+
+test('Reconstructed regression case: a 3-item instruction only touches the named elements', function () {
+    // Mirrors the actual failure this protocol was built to fix: a refine
+    // instruction asking only to add glasses, add a mouth, and shorten the
+    // hair/beard came back having rewritten the gradients, deleted the
+    // abstract background shapes, deleted the body/clothing, and rewritten
+    // the particle system — none of which were named. With patches, content
+    // outside a matched SEARCH block cannot change, by construction.
+    $original = implode("\n", [
+        '<radialGradient id="bgGrad"><stop stop-color="#3a1a5a"/></radialGradient>',
+        '<g id="bgShapes"><circle cx="120" cy="120" r="90" fill="#ff3366"/></g>',
+        '<ellipse cx="400" cy="540" rx="200" ry="140" fill="#8b5a3c"/>', // body/clothing
+        '<circle cx="370" cy="295" r="9" fill="#fff"/>', // eye
+        '<path d="M 330 350 Q 315 410 320 470" fill="url(#beardGrad)"/>', // beard
+    ]);
+    $patches = [
+        // Add glasses near the eye (additive, anchored to existing text).
+        ['search' => '<circle cx="370" cy="295" r="9" fill="#fff"/>', 'replace' => '<circle cx="370" cy="295" r="9" fill="#fff"/><rect x="350" y="290" width="100" height="20" class="glasses"/>'],
+        // Shorten the beard path.
+        ['search' => 'M 330 350 Q 315 410 320 470', 'replace' => 'M 330 350 Q 320 380 322 410'],
+    ];
+    $result = art_piece_apply_refine_patches($original, $patches);
+
+    // Untouched, unrequested elements survive byte-for-byte.
+    assert_contains($result, '<radialGradient id="bgGrad"><stop stop-color="#3a1a5a"/></radialGradient>');
+    assert_contains($result, '<g id="bgShapes"><circle cx="120" cy="120" r="90" fill="#ff3366"/></g>');
+    assert_contains($result, '<ellipse cx="400" cy="540" rx="200" ry="140" fill="#8b5a3c"/>');
+    // The named changes did apply.
+    assert_contains($result, 'class="glasses"');
+    assert_contains($result, 'M 330 350 Q 320 380 322 410');
+    assert_not_contains($result, 'Q 315 410 320 470');
+});
+
+echo "\n=== art_piece_find_patch_match (whitespace-tolerant fallback) ===\n";
+
+test('Tolerates the AI adding whitespace the original code does not have', function () {
+    // The actual reported failure: the AI's SEARCH had spaces around the
+    // braces that the real code did not.
+    $original = 'const skinMaterial = new THREE.MeshStandardMaterial({color: 0xffdbac});';
+    $patches = [['search' => 'const skinMaterial = new THREE.MeshStandardMaterial({ color: 0xffdbac });', 'replace' => 'const skinMaterial = new THREE.MeshStandardMaterial({color: 0xfff0d0});']];
+    $result = art_piece_apply_refine_patches($original, $patches);
+    assert_contains($result, '0xfff0d0');
+});
+
+test('Tolerates the AI removing whitespace the original code has', function () {
+    // The reverse direction — must not require "more" whitespace either.
+    $original = 'const skinMaterial = new THREE.MeshStandardMaterial({ color: 0xffdbac });';
+    $patches = [['search' => 'const skinMaterial = new THREE.MeshStandardMaterial({color: 0xffdbac});', 'replace' => 'const skinMaterial = new THREE.MeshStandardMaterial({color: 0xfff0d0});']];
+    $result = art_piece_apply_refine_patches($original, $patches);
+    assert_contains($result, '0xfff0d0');
+});
+
+test('Tolerates indentation/newline differences in a multi-line SEARCH block', function () {
+    $original = "line1\n    line2WithIndent\nline3";
+    $patches = [['search' => "line1\nline2WithIndent\nline3", 'replace' => 'REPLACED']];
+    assert_eq(art_piece_apply_refine_patches($original, $patches), 'REPLACED');
+});
+
+test('Whitespace tolerance still preserves everything outside the match exactly', function () {
+    $original = 'BEFORE_UNTOUCHED const m = new THREE.MeshStandardMaterial({color: 0xffdbac}); AFTER_UNTOUCHED';
+    $patches = [['search' => '{ color: 0xffdbac }', 'replace' => '{color: 0xfff0d0}']];
+    $result = art_piece_apply_refine_patches($original, $patches);
+    assert_contains($result, 'BEFORE_UNTOUCHED');
+    assert_contains($result, 'AFTER_UNTOUCHED');
+    assert_contains($result, '0xfff0d0');
+});
+
+test('A genuine content difference (not just whitespace) is still rejected', function () {
+    // The fallback must not become content-fuzzy — every actual token must
+    // still match, only whitespace between tokens is flexible.
+    assert_throws(fn() => art_piece_apply_refine_patches('color: 0xffdbac', [['search' => 'color: 0xAAAAAA', 'replace' => 'x']]), 'did not match');
+});
+
+test('Ambiguous matches are still rejected even via the whitespace-tolerant path', function () {
+    // Neither occurrence is an *exact* match for the single-spaced search
+    // (both have two spaces), so this only reaches the fallback path — which
+    // must still correctly detect that it now matches two locations.
+    assert_throws(fn() => art_piece_apply_refine_patches("a  b\na  b", [['search' => 'a b', 'replace' => 'x']]), 'ambiguous');
 });
 
 echo "\n=== Results ===\n";

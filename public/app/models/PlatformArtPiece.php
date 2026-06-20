@@ -407,12 +407,17 @@ class PlatformArtPiece
         $placeholders = implode(',', array_fill(0, count($ids), '?'));
 
         $stmt = db()->prepare(
-            "SELECT id, art_piece_id, version_number, prompt, structured_spec,
-                    html_code, css_code, generated_code, engine,
-                    generation_vendor, generation_model, validation_status,
-                    generation_attempt_count, notes
-             FROM art_piece_versions
-             WHERE art_piece_id IN ($placeholders)"
+            "SELECT v.id, v.art_piece_id, v.version_number, v.prompt, v.structured_spec,
+                    v.html_code, v.css_code, v.generated_code, v.engine,
+                    v.generation_vendor, v.generation_model, v.validation_status,
+                    v.generation_attempt_count, v.notes,
+                    v.ai_profile_id, v.ai_persona_id,
+                    uavs.profile_name AS ai_profile_name,
+                    ap.name AS ai_persona_name
+             FROM art_piece_versions v
+             LEFT JOIN user_ai_vendor_settings uavs ON uavs.id = v.ai_profile_id
+             LEFT JOIN ai_personas ap ON ap.id = v.ai_persona_id
+             WHERE v.art_piece_id IN ($placeholders)"
         );
         $stmt->execute($ids);
 

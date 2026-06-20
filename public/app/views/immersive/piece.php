@@ -16,6 +16,8 @@ $isThree = ($engine === 'three');
 $versionNum = $version['version_number'] ?? 1;
 $prompt = $version['prompt'] ?? $piece['prompt'] ?? '';
 $description = $piece['description'] ?? '';
+$aiProfileName = $version['ai_profile_name'] ?? '(Blank)';
+$aiPersonaName = $version['ai_persona_name'] ?? '(Blank)';
 
 // Determine details for URL/origin
 $origin = ($_SERVER['REQUEST_SCHEME'] ?? 'http') . '://' . ($_SERVER['HTTP_HOST'] ?? 'localhost');
@@ -526,6 +528,14 @@ canvas[aria-hidden="true"] {
                         <?php endif; ?>
                     </dd>
                 </div>
+                <div>
+                    <dt>AI Profile</dt>
+                    <dd><?= e($aiProfileName) ?></dd>
+                </div>
+                <div>
+                    <dt>AI Persona</dt>
+                    <dd><?= e($aiPersonaName) ?></dd>
+                </div>
                 <?php if ($prompt): ?>
                     <div>
                         <dt>Creative Prompt</dt>
@@ -549,6 +559,34 @@ canvas[aria-hidden="true"] {
             </dl>
         </div>
     </section>
+
+    <!-- Versions history (only shown in standard mode) -->
+    <?php if (!empty($piece['versions']) && count($piece['versions']) > 1): ?>
+    <section class="metadata-section versions-section" aria-labelledby="immersive-versions-title">
+        <div class="metadata-card">
+            <h2 class="card-title" id="immersive-versions-title">Versions</h2>
+            <dl class="card-grid">
+                <?php foreach ($piece['versions'] as $v): ?>
+                    <div>
+                        <dt>
+                            Version <?= (int) $v['version_number'] ?>
+                            <?php if ((int) ($piece['current_version_id'] ?? 0) === (int) $v['id']): ?>
+                                (current)
+                            <?php endif; ?>
+                        </dt>
+                        <dd>
+                            AI Profile: <?= e($v['ai_profile_name'] ?? '(Blank)') ?><br>
+                            AI Persona: <?= e($v['ai_persona_name'] ?? '(Blank)') ?>
+                            <?php if (!empty($v['prompt'])): ?>
+                                <br>Prompt: <?= e($v['prompt']) ?>
+                            <?php endif; ?>
+                        </dd>
+                    </div>
+                <?php endforeach; ?>
+            </dl>
+        </div>
+    </section>
+    <?php endif; ?>
 </div>
 
 <!-- Custom Toast Message Container -->

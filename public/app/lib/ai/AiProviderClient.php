@@ -43,10 +43,24 @@ class AiProviderClient
      *     'url' => string, // Resolved URL
      *     'kind' => string, // Resolved transport kind
      *     'status' => ?int, // Upstream HTTP status code (if available)
-     *     'rawResponse' => ?string // Preview of the raw response
+     *     'rawResponse' => ?string, // Preview of the raw response
+     *     'finishReason' => ?string, // Provider's stop/finish reason, when available (e.g. "length" means truncated by the token limit)
      * ]
+     *
+     * $suppressPlanningPreamble (default true, preserving prior behavior for
+     * the fresh-generation caller) appends a "skip reasoning/planning notes,
+     * output only fenced code blocks" instruction for vendors known to need
+     * it — written for the old full-file generation format. AI Refine's
+     * plan-then-patch protocol *requires* a PLAN section, so it passes
+     * false; leaving the old instruction on for refine directly contradicts
+     * the format it's asked to follow.
+     *
+     * $maxTokensOverride lets a caller raise the output ceiling above the
+     * transport's default — refine's output is structurally larger than an
+     * equivalently complex fresh generation, since every patch also
+     * reproduces a verbatim SEARCH anchor on top of its REPLACE content.
      */
-    public function generate(string $systemPrompt, string $userPrompt): array
+    public function generate(string $systemPrompt, string $userPrompt, bool $suppressPlanningPreamble = true, ?int $maxTokensOverride = null): array
     {
         try {
             $attempt = $this->getTransportAttempt();
@@ -78,7 +92,7 @@ class AiProviderClient
             $shouldDisableThinking = ($isDeepSeek || $isOpencode);
 
             $finalSystemPrompt = $systemPrompt;
-            if ($isOpencode) {
+            if ($isOpencode && $suppressPlanningPreamble) {
                 $finalSystemPrompt .= ' CRITICAL: Do not output <think>, reasoning, analysis, planning notes, explanations, or prose. Output only the required fenced HTML, CSS, and JavaScript code blocks.';
             }
 
@@ -96,7 +110,7 @@ class AiProviderClient
 
             $body = [
                 'model' => $normalizedModel,
-                'max_tokens' => $isDeepSeek ? 12000 : 8192,
+                'max_tokens' => $maxTokensOverride ?? (($isDeepSeek || $isOpencode) ? 16384 : 8192),
                 'messages' => [
                     ['role' => 'system', 'content' => $finalSystemPrompt],
                     ['role' => 'user', 'content' => $userPrompt]
@@ -121,7 +135,7 @@ class AiProviderClient
                     ]
                 ],
                 'generationConfig' => [
-                    'maxOutputTokens' => 8192
+                    'maxOutputTokens' => $maxTokensOverride ?? 8192
                 ]
             ];
         } elseif ($kind === 'openai-responses') {
@@ -135,10 +149,15 @@ class AiProviderClient
             $headers['x-api-key'] = $this->apiKey;
             $headers['anthropic-version'] = '2023-06-01';
 
+            $finalSystemPromptAnthropic = $systemPrompt;
+            if ($suppressPlanningPreamble) {
+                $finalSystemPromptAnthropic .= ' CRITICAL: Skip all internal chain-of-thought, reasoning steps, or step-by-step planning. Output the three requested code blocks directly and immediately to prevent gateway timeouts.';
+            }
+
             $body = [
                 'model' => $normalizedModel,
-                'max_tokens' => 8192,
-                'system' => $systemPrompt . ' CRITICAL: Skip all internal chain-of-thought, reasoning steps, or step-by-step planning. Output the three requested code blocks directly and immediately to prevent gateway timeouts.',
+                'max_tokens' => $maxTokensOverride ?? 8192,
+                'system' => $finalSystemPromptAnthropic,
                 'messages' => [
                     ['role' => 'user', 'content' => $userPrompt]
                 ]
@@ -181,6 +200,8 @@ class AiProviderClient
                 $extractedText = $this->extractAnthropicText($json);
             }
 
+            $finishReason = $this->extractFinishReason($kind, $json);
+
             if ($extractedText === null || trim($extractedText) === '') {
                 return [
                     'ok' => false,
@@ -189,7 +210,8 @@ class AiProviderClient
                     'url' => $url,
                     'kind' => $kind,
                     'status' => $status,
-                    'rawResponse' => substr($rawText, 0, 1200)
+                    'rawResponse' => substr($rawText, 0, 1200),
+                    'finishReason' => $finishReason,
                 ];
             }
 
@@ -200,7 +222,8 @@ class AiProviderClient
                 'url' => $url,
                 'kind' => $kind,
                 'status' => $status,
-                'rawResponse' => substr($rawText, 0, 1200)
+                'rawResponse' => substr($rawText, 0, 1200),
+                'finishReason' => $finishReason
             ];
 
         } catch (GuzzleException $e) {
@@ -215,7 +238,8 @@ class AiProviderClient
                 'url' => $url,
                 'kind' => $kind,
                 'status' => $status,
-                'rawResponse' => null
+                'rawResponse' => null,
+                'finishReason' => null
             ];
         } catch (Throwable $e) {
             return [
@@ -225,7 +249,8 @@ class AiProviderClient
                 'url' => $url,
                 'kind' => $kind,
                 'status' => null,
-                'rawResponse' => null
+                'rawResponse' => null,
+                'finishReason' => null
             ];
         }
     }
@@ -456,6 +481,49 @@ class AiProviderClient
             }
         }
         return trim(implode("\n", $parts));
+    }
+
+    /**
+     * Pulls the provider's stop/finish reason out of the raw response, when
+     * present — most relevant value is one that means "cut off by the
+     * output token limit" (chat-completions: "length"; Anthropic:
+     * "max_tokens"; Google: "MAX_TOKENS"), so a caller can tell a truncated
+     * response apart from one that simply didn't produce what was expected.
+     */
+    private function extractFinishReason(string $kind, ?array $payload): ?string
+    {
+        if ($payload === null) {
+            return null;
+        }
+        if ($kind === 'chat-completions') {
+            $reason = $payload['choices'][0]['finish_reason'] ?? null;
+            return is_string($reason) ? $reason : null;
+        }
+        if ($kind === 'anthropic-messages') {
+            $reason = $payload['stop_reason'] ?? null;
+            return is_string($reason) ? $reason : null;
+        }
+        if ($kind === 'google-generate-content') {
+            $reason = $payload['candidates'][0]['finishReason'] ?? null;
+            return is_string($reason) ? $reason : null;
+        }
+        if ($kind === 'openai-responses') {
+            $reason = $payload['incomplete_details']['reason'] ?? $payload['status'] ?? null;
+            return is_string($reason) ? $reason : null;
+        }
+        return null;
+    }
+
+    /**
+     * True when a provider's finish/stop reason means the response was cut
+     * off by the output token limit (vendor naming varies).
+     */
+    public static function finishReasonMeansTruncated(?string $finishReason): bool
+    {
+        if ($finishReason === null) {
+            return false;
+        }
+        return in_array(strtolower($finishReason), ['length', 'max_tokens', 'max_output_tokens', 'incomplete'], true);
     }
 
     /**

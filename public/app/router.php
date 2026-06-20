@@ -304,6 +304,7 @@ $adminRoutes = [
     ['POST', '/admin/pieces/create',           [PiecesAdminController::class, 'store']],
     ['GET',  '/admin/pieces/([0-9]+)/edit',              [PiecesAdminController::class, 'edit']],
     ['POST', '/admin/pieces/([0-9]+)/edit',              [PiecesAdminController::class, 'update']],
+    ['POST', '/admin/pieces/([0-9]+)/refine-save',       [PiecesAdminController::class, 'refineSave']],
     ['POST', '/admin/pieces/([0-9]+)/capture-thumbnail', [PiecesAdminController::class, 'captureThumbnail']],
     ['POST', '/admin/pieces/([0-9]+)/set-status',        [PiecesAdminController::class, 'setStatus']],
     ['POST', '/admin/pieces/([0-9]+)/delete',            [PiecesAdminController::class, 'delete']],

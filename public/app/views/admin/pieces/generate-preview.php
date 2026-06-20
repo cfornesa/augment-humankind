@@ -39,6 +39,8 @@ $defaultTitle = 'AI ' . strtoupper($engine) . ' Piece - ' . date('M d, Y H:i');
         <input type="hidden" name="generation_vendor" value="<?= e($profile['vendor'] ?? '') ?>">
         <input type="hidden" name="generation_model" value="<?= e($profile['model'] ?? '') ?>">
         <input type="hidden" name="generation_attempt_count" value="<?= (int) $attemptCount ?>">
+        <input type="hidden" name="profile_id" value="<?= (int) ($profileId ?? 0) ?>">
+        <input type="hidden" name="persona_id" value="<?= (int) ($personaId ?? 0) ?>">
 
         <div class="admin-tabs piece-preview-tabs" role="tablist" style="margin-bottom: 1.5rem;">
             <button type="button" class="admin-tab active" data-tab="meta">Metadata</button>

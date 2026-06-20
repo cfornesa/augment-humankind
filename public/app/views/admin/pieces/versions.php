@@ -25,6 +25,8 @@ ob_start();
                     <th>Engine</th>
                     <th>Vendor</th>
                     <th>Model</th>
+                    <th>AI Profile</th>
+                    <th>AI Persona</th>
                     <th>Status</th>
                     <th>Created</th>
                     <th>Current</th>
@@ -33,11 +35,14 @@ ob_start();
             </thead>
             <tbody>
                 <?php foreach ($versions as $version): ?>
+                    <?php $isCurrent = (int) ($piece['current_version_id'] ?? 0) === (int) $version['id']; ?>
                     <tr>
                         <td><?= (int) $version['version_number'] ?></td>
                         <td><?= e(strtoupper($version['engine'] ?? 'p5')) ?></td>
                         <td><?= e($version['generation_vendor'] ?? '—') ?></td>
                         <td><?= e($version['generation_model'] ?? '—') ?></td>
+                        <td><?= e($version['ai_profile_name'] ?? '(Blank)') ?></td>
+                        <td><?= e($version['ai_persona_name'] ?? '(Blank)') ?></td>
                         <td>
                             <span class="status-badge status-<?= e($version['validation_status'] ?? 'validated') ?>">
                                 <?= e($version['validation_status'] ?? 'validated') ?>
@@ -45,16 +50,18 @@ ob_start();
                         </td>
                         <td><?= e($version['created_at'] ?? '') ?></td>
                         <td>
-                            <?php if ((int) ($piece['current_version_id'] ?? 0) === (int) $version['id']): ?>
+                            <?php if ($isCurrent): ?>
                                 <strong>Yes</strong>
-                            <?php else: ?>
-                                <form method="post" action="/admin/pieces/<?= (int) $piece['id'] ?>/versions/<?= (int) $version['id'] ?>/set-current" class="inline-form">
-                                    <button type="submit" class="admin-link">Set current</button>
-                                </form>
                             <?php endif; ?>
                         </td>
                         <td>
                             <a href="/admin/pieces/<?= (int) $piece['id'] ?>/versions/<?= (int) $version['id'] ?>/edit" class="admin-link">Edit</a>
+                            <a href="/immersive/pieces/<?= (int) $piece['id'] ?>?version=<?= (int) $version['id'] ?>" target="_blank" rel="noopener" class="admin-link">Preview</a>
+                            <?php if (!$isCurrent): ?>
+                                <form method="post" action="/admin/pieces/<?= (int) $piece['id'] ?>/versions/<?= (int) $version['id'] ?>/set-current" class="inline-form" onsubmit="return confirm('Revert to version <?= (int) $version['version_number'] ?>? The current code will be replaced by this version\'s.')">
+                                    <button type="submit" class="admin-link">Revert</button>
+                                </form>
+                            <?php endif; ?>
                             <form method="post" action="/admin/pieces/<?= (int) $piece['id'] ?>/versions/<?= (int) $version['id'] ?>/delete" class="inline-form" onsubmit="return confirm('Delete this version permanently?')">
                                 <button type="submit" class="admin-link danger">Delete</button>
                             </form>

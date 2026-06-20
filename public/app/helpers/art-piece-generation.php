@@ -242,36 +242,270 @@ function art_piece_repair_prompt(string $engine, string $originalPrompt, ?string
 
 /**
  * Returns the system prompt for refining/iterating on an existing art piece.
+ *
+ * Unlike generation, refine never asks for a full rewritten file — a full
+ * rewrite gives an LLM no structural reason to leave anything untouched, and
+ * in practice it doesn't. Instead this enforces a plan-then-patch protocol:
+ * the AI must first name the specific existing elements it intends to touch
+ * (the same "state assumptions before acting" discipline plan mode uses),
+ * then express every change as an exact find-and-replace PATCH against the
+ * current code. Anything not captured in a patch is carried forward
+ * unchanged by art_piece_apply_refine_patches() — a structural guarantee,
+ * not a request the model can quietly ignore.
  */
 function art_piece_refine_system_prompt(string $engine): string
 {
     $baseRules = art_piece_generation_system_prompt($engine);
     return implode(' ', [
-        "You are an AI assistant specialized in iterating on and refining interactive generative art pieces.",
-        "You will receive the current HTML, CSS, and JS code blocks of the art piece and a refinement instruction.",
-        "Your task is to modify the existing code according to the instruction, while keeping the rest of the code intact.",
-        "Ensure all constraints of the {$engine} engine are strictly maintained.",
-        "You MUST return the modified code as exactly three Markdown code blocks (```html, ```css, and ```javascript) in that order.",
-        "Return ONLY those three fenced code blocks. Do NOT include any intro/outro prose, explanations, titles, bullets, or notes.",
+        "You are an AI assistant making a SINGLE, NARROWLY SCOPED edit to an existing interactive generative art piece, following a strict two-step process.",
+        "You will receive the original creative prompt (if available), the current HTML, CSS, and JS code blocks of the art piece, and a refinement instruction.",
+        "STEP 1 — PLAN: before writing any code, identify exactly which specific existing elements (a named SVG path/element, a CSS rule, a function or variable) are relevant to the refinement instruction. For each one, quote a short identifying fragment of the CURRENT code and state in one line what you will change about it and why. Name only elements the instruction is actually about — do not plan to touch anything it did not name.",
+        "STEP 2 — PATCH: express every change ONLY as an exact find-and-replace edit against the current code. NEVER rewrite or regenerate a file in full, even partially. For each element from your plan, write a PATCH block naming the file (html, css, or js), then a SEARCH section containing the EXISTING text copied VERBATIM — character-for-character, including whitespace and indentation, exactly as it appears in the current code below — and a REPLACE section with the new text to put in its place. A SEARCH block that does not match the current code (even allowing minor whitespace differences) will be rejected.",
+        "Prefer a SHORT, single-purpose SEARCH block — ideally one line, or the smallest span of text that uniquely identifies the one location you mean — over a large multi-line block. A shorter exact-match target is far less likely to contain a transcription mistake.",
+        "If a file (html, css, or js) needs no change at all, write NO PATCH block for that file — omit it entirely. Its current code is kept exactly as-is.",
+        "You MUST respond in exactly this format and nothing else — no prose, explanations, or notes before, between, or after these sections:",
+        art_piece_refine_patch_format_example(),
+        "Everything outside a matched SEARCH region is preserved exactly as it is today — you are never regenerating the whole file, only patching the specific elements named in your own plan.",
+        "Ensure all constraints of the {$engine} engine are strictly maintained in anything you write inside a REPLACE section.",
         "Here are the engine-specific rules for {$engine} that you MUST follow: ",
         $baseRules
     ]);
 }
 
 /**
- * Builds the user prompt representing the refinement task.
+ * A worked example of the PLAN/PATCH response format, included verbatim in
+ * the refine system prompt. Few-shot examples are far more reliable than an
+ * abstract format description at getting a model to actually produce
+ * parseable, exactly-matching SEARCH/REPLACE blocks.
  */
-function art_piece_refine_user_prompt(string $engine, string $refinementPrompt, ?string $html, ?string $css, ?string $js): string
+function art_piece_refine_patch_format_example(): string
 {
-    return implode("\n\n", [
-        "### REFINEMENT INSTRUCTION",
-        $refinementPrompt,
+    return implode("\n", [
+        "EXAMPLE (illustrative only — your plan/patches must be about the actual instruction and actual current code given to you):",
+        "PLAN:",
+        "- `<circle cx=\"50\" cy=\"50\" r=\"10\" fill=\"#ff0000\"/>` — the instruction asks to make this circle blue, so I will change only its fill color.",
+        "- `const speed = 0.5;` — the instruction asks to make the animation faster, so I will increase this value.",
+        "",
+        "PATCH html:",
+        "<<<<<<< SEARCH",
+        "<circle cx=\"50\" cy=\"50\" r=\"10\" fill=\"#ff0000\"/>",
+        "=======",
+        "<circle cx=\"50\" cy=\"50\" r=\"10\" fill=\"#0000ff\"/>",
+        ">>>>>>> REPLACE",
+        "",
+        "PATCH js:",
+        "<<<<<<< SEARCH",
+        "const speed = 0.5;",
+        "=======",
+        "const speed = 1.2;",
+        ">>>>>>> REPLACE",
+        "",
+        "(No PATCH css block here, because nothing in CSS needed to change for this example. The label for the JavaScript file is always exactly \"js\" — never \"javascript\" — even when every change in a piece is JS-only, as is typical for Three.js pieces.)",
+    ]);
+}
+
+/**
+ * Builds the user prompt representing the refinement task.
+ *
+ * $originalPrompt is the piece's own creative prompt (why the code looks the
+ * way it does), distinct from $refinementPrompt (what to change about it
+ * now) — without it, the AI only sees the code and the new instruction, with
+ * no sense of the original intent it's supposed to stay true to.
+ */
+function art_piece_refine_user_prompt(string $engine, string $refinementPrompt, ?string $html, ?string $css, ?string $js, ?string $originalPrompt = null): string
+{
+    $sections = [];
+    if ($originalPrompt !== null && trim($originalPrompt) !== '') {
+        $sections[] = "### ORIGINAL CREATIVE PROMPT (the intent this piece was built to fulfill — stay true to it)";
+        $sections[] = $originalPrompt;
+    }
+    $sections[] = "### REFINEMENT INSTRUCTION";
+    $sections[] = $refinementPrompt;
+    $sections[] = "### REMINDER";
+    $sections[] = "Apply ONLY the change named above, as PATCH blocks against the exact current code below — never as a rewritten file. Every color, shape, decoration, and detail not mentioned in the instruction must not appear in any SEARCH/REPLACE pair at all.";
+    $sections[] = "### CURRENT HTML CODE";
+    $sections[] = "```html\n" . ($html ?? '') . "\n```";
+    $sections[] = "### CURRENT CSS CODE";
+    $sections[] = "```css\n" . ($css ?? '') . "\n```";
+    $sections[] = "### CURRENT JAVASCRIPT CODE";
+    $sections[] = "```javascript\n" . ($js ?? '') . "\n```";
+
+    return implode("\n\n", $sections);
+}
+
+/**
+ * Pulls the PLAN: section out of a refine response, for display only (not
+ * used for validation) — lets the admin see what the AI intended to touch,
+ * the same visibility a plan gives before a change is made.
+ */
+function art_piece_extract_refine_plan(string $raw): string
+{
+    if (preg_match('/PLAN\s*:\s*\n([\s\S]*?)(?=\n\s*PATCH\s+(?:html|css|js)\s*:|\z)/i', $raw, $m)) {
+        return trim($m[1]);
+    }
+    return '';
+}
+
+/**
+ * Parses every "PATCH <file>:" section and its <<<<<<< SEARCH / =======
+ * / >>>>>>> REPLACE pairs out of a refine response.
+ *
+ * Returns ['html' => [['search' => ..., 'replace' => ...], ...], 'css' => [...], 'js' => [...]].
+ * A file with no PATCH block in the response simply has an empty array here.
+ *
+ * Accepts "javascript" as a synonym for "js" — despite the prompt asking
+ * for exactly "js", models (observed consistently on Three.js pieces, whose
+ * refinements are almost always JS-only) reliably write "PATCH javascript:"
+ * instead. Rejecting it would silently discard an otherwise perfectly valid,
+ * correctly-targeted patch over a label spelling, not a real problem with
+ * the patch itself.
+ */
+function art_piece_extract_refine_patches(string $raw): array
+{
+    $patches = ['html' => [], 'css' => [], 'js' => []];
+
+    if (!preg_match_all(
+        '/PATCH\s+(html|css|js|javascript)\s*:\s*\n([\s\S]*?)(?=\n\s*PATCH\s+(?:html|css|js|javascript)\s*:|\z)/i',
+        $raw,
+        $segments,
+        PREG_SET_ORDER
+    )) {
+        return $patches;
+    }
+
+    foreach ($segments as $segment) {
+        $file = strtolower($segment[1]);
+        if ($file === 'javascript') {
+            $file = 'js';
+        }
+        $body = $segment[2];
+        if (preg_match_all(
+            '/<<<<<<<\s*SEARCH\s*\n([\s\S]*?)\n=======\s*\n([\s\S]*?)\n>>>>>>>\s*REPLACE/i',
+            $body,
+            $pairs,
+            PREG_SET_ORDER
+        )) {
+            foreach ($pairs as $pair) {
+                $patches[$file][] = ['search' => $pair[1], 'replace' => $pair[2]];
+            }
+        }
+    }
+
+    return $patches;
+}
+
+/**
+ * Applies a list of search/replace patches to a single file's current code.
+ *
+ * This is the actual guarantee behind the plan-then-patch protocol: a patch
+ * can only change the exact text it names. Anything not named in a SEARCH
+ * block is never touched, because it's never passed back through the AI's
+ * generation path at all — there's nothing for it to drift on.
+ *
+ * Throws if a patch's SEARCH text doesn't match the current code exactly
+ * once (not found, or found in more than one place — ambiguous). Both
+ * failure messages are written to read naturally inside the existing
+ * repair-prompt retry loop.
+ */
+function art_piece_apply_refine_patches(?string $originalCode, array $patches): string
+{
+    $code = $originalCode ?? '';
+    foreach ($patches as $patch) {
+        $search = $patch['search'];
+        if (trim($search) === '') {
+            throw new RuntimeException('A patch had an empty SEARCH block — every patch must target specific existing text.');
+        }
+        $match = art_piece_find_patch_match($code, $search);
+        if ($match === null) {
+            throw new RuntimeException('A patch\'s SEARCH text did not match the current code, even allowing for whitespace differences — copy it verbatim from the current code shown to you: ' . mb_substr($search, 0, 300));
+        }
+        if ($match === 'ambiguous') {
+            throw new RuntimeException("A patch's SEARCH text matched more than one place in the current code (ambiguous, even allowing for whitespace differences) — include more surrounding context so it uniquely identifies one location: " . mb_substr($search, 0, 300));
+        }
+        $code = substr($code, 0, $match['start']) . $patch['replace'] . substr($code, $match['start'] + $match['length']);
+    }
+    return $code;
+}
+
+/**
+ * Finds where a patch's SEARCH text occurs in the current code, tolerating
+ * whitespace-only differences between the two.
+ *
+ * LLMs are well known to be inconsistent at reproducing *exact* spacing or
+ * indentation even when directly copying visible text — adding/dropping a
+ * space around `:`/`{`/`,`, normalizing tabs, etc., without changing
+ * anything semantically meaningful. This is not a content-fuzziness
+ * allowance: every actual character/token in the SEARCH text must still
+ * match exactly — only runs of whitespace between tokens are
+ * interchangeable, so this can't match the wrong content, only tolerate
+ * incidental reformatting of the right content.
+ *
+ * Returns ['start' => int, 'length' => int] for a single unambiguous match,
+ * the string 'ambiguous' if more than one location matches (by either exact
+ * or whitespace-tolerant matching), or null if no location matches either way.
+ */
+function art_piece_find_patch_match(string $code, string $search): array|string|null
+{
+    // Exact match first — the common, fast path for already-correct output.
+    $exactCount = substr_count($code, $search);
+    if ($exactCount === 1) {
+        return ['start' => strpos($code, $search), 'length' => strlen($search)];
+    }
+    if ($exactCount > 1) {
+        return 'ambiguous';
+    }
+
+    // Whitespace-tolerant fallback. Tokenizes into word-runs (identifiers,
+    // numbers — kept as a unit) and individual punctuation/symbol
+    // characters, discarding whitespace entirely, then re-joins with \s*
+    // between every pair. This (not just splitting on the search text's own
+    // whitespace) is what makes both directions of mismatch tolerated —
+    // "{ color:" vs "{color:" tokenize identically either way, since
+    // whitespace is never part of a token to begin with.
+    preg_match_all('/[A-Za-z0-9_$]+|[^\sA-Za-z0-9_$]/u', $search, $tokenMatches);
+    $tokens = $tokenMatches[0];
+    if ($tokens === []) {
+        return null;
+    }
+    $pattern = '/' . implode('\s*', array_map(static fn (string $t): string => preg_quote($t, '/'), $tokens)) . '/s';
+    if (!preg_match_all($pattern, $code, $matches, PREG_OFFSET_CAPTURE)) {
+        return null;
+    }
+    if (count($matches[0]) > 1) {
+        return 'ambiguous';
+    }
+    [$matchedText, $offset] = $matches[0][0];
+    return ['start' => $offset, 'length' => strlen($matchedText)];
+}
+
+/**
+ * Builds the repair prompt used when a refine attempt's patches fail to
+ * parse or apply. Distinct from art_piece_repair_prompt() (generation's
+ * repair prompt talks about infinite animations and visual fidelity to a
+ * creative prompt, neither of which applies to a rejected patch).
+ *
+ * Re-includes the current HTML/CSS/JS, the same as the first attempt's
+ * art_piece_refine_user_prompt() — without this, every retry was working
+ * blind from memory of its own previous (wrong) response, with no way to
+ * actually re-derive a correct verbatim SEARCH block from the real source.
+ */
+function art_piece_refine_repair_prompt(string $engine, string $refinementPrompt, ?string $previousRawResponse, string $failureMessage, ?string $html = null, ?string $css = null, ?string $js = null): string
+{
+    $segments = [
+        "Target engine: {$engine}",
+        "Refinement instruction: {$refinementPrompt}",
+        "Your previous response could not be applied: {$failureMessage}",
+        "Respond again in the exact PLAN: / PATCH <file>: / <<<<<<< SEARCH / ======= / >>>>>>> REPLACE format. Every SEARCH block must be copied character-for-character from the CURRENT code below, including whitespace and indentation — do not paraphrase, reformat, or reproduce it from memory of your previous attempt. Re-read the current code below and copy directly from it.",
         "### CURRENT HTML CODE",
         "```html\n" . ($html ?? '') . "\n```",
         "### CURRENT CSS CODE",
         "```css\n" . ($css ?? '') . "\n```",
         "### CURRENT JAVASCRIPT CODE",
         "```javascript\n" . ($js ?? '') . "\n```",
-    ]);
+    ];
+    if ($previousRawResponse !== null && $previousRawResponse !== '') {
+        $segments[] = "Your previous response: {$previousRawResponse}";
+    }
+    return implode("\n\n", $segments);
 }
 

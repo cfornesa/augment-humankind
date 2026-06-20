@@ -65,6 +65,31 @@ $version = $version ?? [];
                    value="<?= (int) ($version['generation_attempt_count'] ?? 1) ?>">
         </div>
 
+        <div class="field-grid">
+            <div class="field">
+                <label for="ai_profile_id">AI Profile Used</label>
+                <select id="ai_profile_id" name="ai_profile_id">
+                    <option value="">(Blank)</option>
+                    <?php foreach (($profiles ?? []) as $p): ?>
+                        <option value="<?= (int) $p['id'] ?>" <?= ((int) ($version['ai_profile_id'] ?? 0) === (int) $p['id']) ? 'selected' : '' ?>>
+                            <?= e($p['profile_name']) ?> (<?= e($p['vendor']) ?> - <?= e($p['model']) ?>)
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div class="field">
+                <label for="ai_persona_id">AI Persona Used</label>
+                <select id="ai_persona_id" name="ai_persona_id">
+                    <option value="">(Blank)</option>
+                    <?php foreach (($personas ?? []) as $persona): ?>
+                        <option value="<?= (int) $persona['id'] ?>" <?= ((int) ($version['ai_persona_id'] ?? 0) === (int) $persona['id']) ? 'selected' : '' ?>>
+                            <?= e((string) $persona['name']) ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+        </div>
+
         <div class="field">
             <label for="structured_spec">Structured Spec</label>
             <textarea id="structured_spec" name="structured_spec" rows="6"><?= e($version['structured_spec'] ?? '') ?></textarea>

@@ -415,6 +415,7 @@ Inline create endpoints return JSON:
 - `POST /admin/pieces/generate`
 - `POST /admin/pieces/generate/save`
 - `POST /admin/pieces/refine-ai`
+- `POST /admin/pieces/[id]/refine-save`
 - `GET /admin/pieces/[id]/versions`
 - `GET /admin/pieces/[id]/versions/create`
 - `POST /admin/pieces/[id]/versions/create`
@@ -689,12 +690,65 @@ updates `art_pieces.thumbnail_url`.
 
 `GET /admin/pieces/generate` renders the interface for AI piece generation, letting the admin select the engine, prompt, vendor settings, and model. `POST /admin/pieces/generate` triggers the generation process (running a 3-attempt validation and repair loop checking window.sketch constraints and output structure) and returns a preview sandbox. `POST /admin/pieces/generate/save` saves the generated metadata and code as a new piece with its initial version.
 
-`POST /admin/pieces/refine-ai` accepts a JSON body with `prompt`, `engine`, `profile_id`, `html_code`, `css_code`, and `generated_code`. It sends the current code blocks and the refinement instruction to the configured AI vendor, then runs the same 3-attempt validation and repair loop as generation. On success it returns `{success: true, html_code, css_code, generated_code}`; on failure it returns `{success: false, error: "..."}` with HTTP 500. The endpoint is used by the "AI Refine" tab in the piece editor to suggest changes that the admin can inspect, edit, accept, or reject.
+`POST /admin/pieces/refine-ai` accepts a JSON body with `prompt` (the refinement instruction), `engine`, `profile_id`, `persona_id` (optional), `html_code`, `css_code`, `generated_code`, and `original_prompt` (optional — the piece's own creative prompt). Unlike generation, refine never asks the AI for a complete rewritten file — a full rewrite gives a model no structural reason to leave anything untouched, and in practice none reliably do. Instead the AI must respond with a `PLAN:` section naming the specific existing elements it intends to touch, followed by one or more `PATCH <html|css|js>:` blocks, each an exact `<<<<<<< SEARCH` / `=======` / `>>>>>>> REPLACE` find-and-replace against the *current* code (see `art_piece_refine_system_prompt()`, which includes worked examples for both an HTML and a JS patch). `art_piece_extract_refine_patches()` parses these — it also accepts `PATCH javascript:` as a synonym for `PATCH js:` and normalizes it, since models reliably write the former despite being asked for the latter (this silently discarded every otherwise-valid patch on Three.js pieces specifically, since their refinements are almost always JS-only and so hit the mismatch on every attempt — found by reproducing a real failing piece's refine request directly against the same code path outside the browser); `art_piece_apply_refine_patches()` applies each one against the original `html_code`/`css_code`/`generated_code` sent in the request via `art_piece_find_patch_match()` — an exact substring match first, falling back to a whitespace-tolerant match (tokenizes into word-runs and individual punctuation characters, discarding whitespace, then re-joins with `\s*` between every token) if the exact match finds nothing. This tolerates the kind of incidental reformatting LLMs are known to introduce when transcribing code verbatim (adding/dropping a space around `:`/`{`/`,`, re-indenting) without weakening the guarantee: every actual token in `SEARCH` must still match exactly, only whitespace *between* tokens is flexible, so this can't match different content, only differently-formatted identical content. A file with no `PATCH` block for it is carried forward completely unchanged either way. This is a structural guarantee, not a prompt request: content outside a matched `SEARCH` region is never regenerated, so it cannot drift. A patch whose `SEARCH` text doesn't match the current code exactly once (not found, or ambiguous) by either method fails validation and feeds into the same retry loop generation uses, via a refine-specific repair prompt (`art_piece_refine_repair_prompt()`) that reminds the AI of the exact format — and, critically, re-includes the current HTML/CSS/JS on every retry attempt (not just the first), so a failed attempt can actually re-read the real source and correct itself instead of guessing blind from memory of its own previous wrong response — rather than reusing generation's "animations must be infinite" framing. The resulting code still runs through the same `art_piece_preflight_code()` engine/security checks as generation. On success it returns `{success: true, html_code, css_code, generated_code, plan, profile_id, persona_id}` — `plan` is the AI's stated PLAN text, shown to the admin alongside the diff for the same before-acting visibility a plan gives; `profile_id`/`persona_id` are echoed back so the client can carry them into the version created when the accepted code is saved. On failure it returns `{success: false, error: "..."}` with HTTP 500. The endpoint is used by the "AI Refine" tab in the piece editor, which also renders a line diff of what actually changed, and the AI's PLAN text, before the admin decides to accept, edit, or reject. Accepting calls `POST /admin/pieces/[id]/refine-save` immediately (see below) rather than requiring a separate "Save Changes" submit.
 
 `POST /admin/pieces/generate` and `POST /admin/pieces/refine-ai` are both
 rate-limited. A throttled request returns HTTP `429`.
 
-`POST /admin/pieces/[id]/versions/[vid]/set-current` sets the active version code for rendering.
+`refine-ai`'s call into `AiProviderClient::generate()` passes
+`suppressPlanningPreamble: false` and `maxTokensOverride: 24576` — both
+optional parameters added so refine's request isn't subject to behavior
+written for fresh generation. By default `generate()` appends a "skip
+reasoning/planning notes, output only fenced code blocks" instruction for
+opencode and Anthropic-transport vendors, which is correct for generation's
+plain-fenced-code-block format but directly contradicts refine's PLAN+PATCH
+format (which *requires* a `PLAN:` section); refine opts out of it. The
+higher token ceiling accounts for refine's structurally larger output cost —
+every patch reproduces a verbatim `SEARCH` anchor on top of its `REPLACE`
+content, on top of the transport's already-raised default of `16384` for
+opencode/deepseek models. `generate()` also now returns `finishReason`
+(the provider's stop/finish reason, transport-dependent field name), and
+`AiProviderClient::finishReasonMeansTruncated()` recognizes
+"length"/"max_tokens"/"MAX_TOKENS"/"incomplete" as a truncated response —
+`refine-ai` surfaces a distinct "cut off before finishing" error for these
+instead of the generic "no valid PATCH blocks" message, since the two
+failure modes need different fixes (a smaller instruction vs. a genuine
+SEARCH-mismatch retry). Neither change affects `generate()`'s other caller
+(fresh piece generation) or `chat()` (admin AI text/alt-text tools), which
+both pass no arguments and so keep the prior defaults exactly.
+
+`POST /admin/pieces/[id]/refine-save` accepts a JSON body with `html_code`, `css_code`, `generated_code`, `refinement_prompt`, `profile_id`, and `persona_id`, and is called automatically when "Accept Changes" is clicked in the AI Refine tab — no separate save step is needed. If the submitted code differs from the piece's current version, it creates a new `art_piece_versions` row with `prompt` set to `refinement_prompt` (the instruction that was actually given for *this* refinement — not the piece's original creative prompt; conflating the two was a bug that made every version display the same original prompt regardless of what each refinement actually changed) and `ai_profile_id`/`ai_persona_id` set from the request, then repoints `current_version_id` to it. If the code is unchanged, no version is created. Returns `{success: true, changed: bool, version_number: int}` on success or `{success: false, error: "..."}` with HTTP 400/404 on failure (piece not found, no current version to refine, or missing `refinement_prompt`). Requires an existing piece — a not-yet-saved new piece has no row to attach a version to, so the client only calls this when editing an existing piece.
+
+`POST /admin/pieces/[id]` (the main piece edit form's "Save Changes") creates
+a new `art_piece_versions` row whenever the submitted HTML/CSS/JS differs
+from the current version's stored code — covering manual code edits made
+directly in the HTML/CSS/JS tabs — instead of updating the current version's
+row in place. Its version's `prompt` falls back to the Metadata tab's
+original creative-prompt field, since a manual edit has no "refinement
+instruction" of its own. A save that only changes metadata (title,
+description, status, etc.) with no code change does not create a new
+version. Each `art_piece_versions` row carries its own
+`ai_profile_id`/`ai_persona_id` (nullable, no FK — displayed as "(Blank)"
+when unset or when the referenced profile/persona no longer exists), and its
+own `prompt`, both editable per-version on
+`/admin/pieces/[id]/versions/[vid]/edit`; the main piece edit form's Metadata
+tab edits the *current* version's AI attribution only (not its prompt — use
+the per-version edit page for that).
+
+Both `/pieces/[id]` and `/immersive/pieces/[id]` show each version's `prompt`,
+`ai_profile_id`-derived name, and `ai_persona_id`-derived name in a "Versions"
+list/section — not just the current version, the full history.
+
+`POST /admin/pieces/[id]/versions/[vid]/set-current` repoints the piece's
+`current_version_id` to the given version — this is what `/admin/pieces/[id]/versions`
+labels "Revert" for any non-current version (with a confirmation prompt), and
+is what makes `/pieces/[id]` and every other surface that renders the piece's
+"current" code switch to that version's code, including its recorded AI
+attribution. Old versions are never deleted as a side effect of this or of
+creating a new version — only the explicit "Delete" action on a version row
+removes it. The same list's "Preview" link opens
+`/immersive/pieces/[id]?version=[vid]` for any version (current or not)
+without changing what's live.
 
 `GET /admin/pieces/library` returns a JSON array of active art pieces
 (`id`, `title`, `engine`, `thumbnail_url`, `status`) for the Tiptap "Insert art

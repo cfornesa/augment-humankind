@@ -4,6 +4,17 @@ declare(strict_types=1);
 
 class PlatformArtPieceVersion
 {
+    private const SELECT_COLUMNS = "v.id, v.art_piece_id, v.version_number, v.prompt, v.structured_spec,
+                    v.html_code, v.css_code, v.generated_code, v.engine,
+                    v.generation_vendor, v.generation_model, v.validation_status,
+                    v.generation_attempt_count, v.notes, v.created_at,
+                    v.ai_profile_id, v.ai_persona_id,
+                    uavs.profile_name AS ai_profile_name,
+                    ap.name AS ai_persona_name";
+
+    private const SELECT_JOINS = "LEFT JOIN user_ai_vendor_settings uavs ON uavs.id = v.ai_profile_id
+             LEFT JOIN ai_personas ap ON ap.id = v.ai_persona_id";
+
     public static function allForPiece(int $pieceId): array
     {
         if (!self::tableExists()) {
@@ -11,13 +22,11 @@ class PlatformArtPieceVersion
         }
 
         $stmt = db()->prepare(
-            "SELECT id, art_piece_id, version_number, prompt, structured_spec,
-                    html_code, css_code, generated_code, engine,
-                    generation_vendor, generation_model, validation_status,
-                    generation_attempt_count, notes, created_at
-             FROM art_piece_versions
-             WHERE art_piece_id = ?
-             ORDER BY version_number DESC, created_at DESC"
+            "SELECT " . self::SELECT_COLUMNS . "
+             FROM art_piece_versions v
+             " . self::SELECT_JOINS . "
+             WHERE v.art_piece_id = ?
+             ORDER BY v.version_number DESC, v.created_at DESC"
         );
         $stmt->execute([$pieceId]);
         return $stmt->fetchAll();
@@ -30,12 +39,10 @@ class PlatformArtPieceVersion
         }
 
         $stmt = db()->prepare(
-            "SELECT id, art_piece_id, version_number, prompt, structured_spec,
-                    html_code, css_code, generated_code, engine,
-                    generation_vendor, generation_model, validation_status,
-                    generation_attempt_count, notes, created_at
-             FROM art_piece_versions
-             WHERE id = ?
+            "SELECT " . self::SELECT_COLUMNS . "
+             FROM art_piece_versions v
+             " . self::SELECT_JOINS . "
+             WHERE v.id = ?
              LIMIT 1"
         );
         $stmt->execute([$id]);
@@ -49,8 +56,8 @@ class PlatformArtPieceVersion
                 (art_piece_id, version_number, prompt, structured_spec,
                  html_code, css_code, generated_code, engine,
                  generation_vendor, generation_model, validation_status,
-                 generation_attempt_count, notes)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                 generation_attempt_count, notes, ai_profile_id, ai_persona_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         );
         $stmt->execute([
             $data['art_piece_id'],
@@ -66,6 +73,8 @@ class PlatformArtPieceVersion
             $data['validation_status'] ?? 'validated',
             $data['generation_attempt_count'] ?? 1,
             $data['notes'] ?? null,
+            $data['ai_profile_id'] ?: null,
+            $data['ai_persona_id'] ?: null,
         ]);
         return (int) db()->lastInsertId();
     }
@@ -77,7 +86,8 @@ class PlatformArtPieceVersion
                 prompt = ?, structured_spec = ?, html_code = ?, css_code = ?,
                 generated_code = ?, engine = ?, generation_vendor = ?,
                 generation_model = ?, validation_status = ?,
-                generation_attempt_count = ?, notes = ?
+                generation_attempt_count = ?, notes = ?,
+                ai_profile_id = ?, ai_persona_id = ?
              WHERE id = ?'
         );
         $stmt->execute([
@@ -92,6 +102,8 @@ class PlatformArtPieceVersion
             $data['validation_status'] ?? 'validated',
             $data['generation_attempt_count'] ?? 1,
             $data['notes'] ?? null,
+            $data['ai_profile_id'] ?: null,
+            $data['ai_persona_id'] ?: null,
             $id,
         ]);
     }

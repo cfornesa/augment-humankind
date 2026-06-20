@@ -102,8 +102,7 @@ $preferredProfileId = $preferredProfileId ?? null;
 
 .ai-banner {
     display: none;
-    align-items: center;
-    justify-content: space-between;
+    flex-direction: column;
     gap: 1rem;
     background: var(--yellow);
     border: 3px solid var(--line);
@@ -113,6 +112,13 @@ $preferredProfileId = $preferredProfileId ?? null;
     font-weight: 800;
 }
 
+.ai-banner-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
 .ai-banner span {
     font-size: 0.95rem;
     color: var(--ink);
@@ -120,7 +126,23 @@ $preferredProfileId = $preferredProfileId ?? null;
 
 .ai-banner-actions {
     display: flex;
+    align-items: center;
     gap: 0.5rem;
+    flex-shrink: 0;
+}
+
+.ai-save-status {
+    font-size: 0.85rem;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.ai-save-status.is-success {
+    color: #2f6d2f;
+}
+
+.ai-save-status.is-error {
+    color: #b3261e;
 }
 
 .ai-banner .admin-btn {
@@ -133,6 +155,85 @@ $preferredProfileId = $preferredProfileId ?? null;
 .ai-banner .admin-btn:hover {
     box-shadow: 1px 1px 0 var(--line);
     transform: translate(2px, 2px);
+}
+
+.ai-plan-container,
+.ai-diff-container {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    font-weight: 400;
+}
+
+.ai-plan-container:empty,
+.ai-diff-container:empty {
+    display: none;
+}
+
+.ai-plan-container {
+    background: var(--white);
+    border: 2px solid var(--line);
+    padding: 0.5rem 0.75rem;
+}
+
+.ai-plan-container strong {
+    display: block;
+    margin-bottom: 0.35rem;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--ink);
+}
+
+.ai-plan-container pre {
+    margin: 0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.8rem;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--ink);
+}
+
+.ai-diff-block {
+    background: var(--white);
+    border: 2px solid var(--line);
+    padding: 0.5rem 0.75rem;
+    max-height: 16rem;
+    overflow: auto;
+}
+
+.ai-diff-block strong {
+    display: block;
+    margin-bottom: 0.35rem;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--ink);
+}
+
+.ai-diff-pre {
+    margin: 0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.8rem;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.ai-diff-pre .diff-added {
+    background: rgba(140, 207, 63, 0.35);
+    color: var(--ink);
+}
+
+.ai-diff-pre .diff-removed {
+    background: rgba(245, 162, 59, 0.35);
+    color: var(--ink);
+    text-decoration: line-through;
+}
+
+.ai-diff-pre .diff-same {
+    color: var(--ink-soft);
 }
 
 .piece-tab-panel {
@@ -203,11 +304,16 @@ $preferredProfileId = $preferredProfileId ?? null;
 
     <!-- AI Refine Preview Banner -->
     <div id="ai-suggestion-banner" class="ai-banner" role="status">
-        <span>AI suggested changes are loaded. Review code tabs and preview before deciding:</span>
-        <div class="ai-banner-actions">
-            <button type="button" id="btn-ai-accept" class="admin-btn">Accept Changes</button>
-            <button type="button" id="btn-ai-reject" class="admin-btn admin-btn-ghost">Reject</button>
+        <div class="ai-banner-row">
+            <span>AI suggested changes are loaded. Review the plan and diff below, code tabs, and preview before deciding:</span>
+            <div class="ai-banner-actions">
+                <button type="button" id="btn-ai-accept" class="admin-btn">Accept Changes</button>
+                <button type="button" id="btn-ai-reject" class="admin-btn admin-btn-ghost">Reject</button>
+                <span id="ai-save-status" class="ai-save-status" role="status" aria-live="polite"></span>
+            </div>
         </div>
+        <div id="ai-plan-container" class="ai-plan-container" aria-label="AI's stated plan"></div>
+        <div id="ai-diff-container" class="ai-diff-container" aria-label="Code changes"></div>
     </div>
 
     <div class="editor-workspace">
@@ -319,6 +425,31 @@ $preferredProfileId = $preferredProfileId ?? null;
                             <label for="prompt">Prompt</label>
                             <textarea id="prompt" name="prompt" rows="4"><?= e($piece['prompt'] ?? '') ?></textarea>
                             <small>The creative prompt that originally generated this piece.</small>
+                        </div>
+
+                        <div class="field">
+                            <label for="meta_ai_profile_id">AI Profile Used</label>
+                            <select id="meta_ai_profile_id" name="ai_profile_id">
+                                <option value="">(Blank)</option>
+                                <?php foreach ($profiles as $p): ?>
+                                    <option value="<?= (int) $p['id'] ?>" <?= ((int) ($piece['current_version']['ai_profile_id'] ?? 0) === (int) $p['id']) ? 'selected' : '' ?>>
+                                        <?= e($p['profile_name']) ?> (<?= e($p['vendor']) ?> - <?= e($p['model']) ?>)
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                            <small>Which AI Profile produced the current version's code. Edit if the recorded value is wrong or missing.</small>
+                        </div>
+
+                        <div class="field">
+                            <label for="meta_ai_persona_id">AI Persona Used</label>
+                            <select id="meta_ai_persona_id" name="ai_persona_id">
+                                <option value="">(Blank)</option>
+                                <?php foreach (($personas ?? []) as $persona): ?>
+                                    <option value="<?= (int) $persona['id'] ?>" <?= ((int) ($piece['current_version']['ai_persona_id'] ?? 0) === (int) $persona['id']) ? 'selected' : '' ?>>
+                                        <?= e((string) $persona['name']) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
                         </div>
                     </div>
 
@@ -495,6 +626,7 @@ $preferredProfileId = $preferredProfileId ?? null;
     var engineField = document.getElementById('engine');
     var titleField = document.getElementById('title');
     var previewStage = document.getElementById('preview-stage-wrapper');
+    var currentPieceId = <?= $isEdit ? (int) $piece['id'] : 'null' ?>;
 
     var btnRefineAi = document.getElementById('btn-refine-ai');
     var aiProfileField = document.getElementById('ai_profile_id');
@@ -512,6 +644,8 @@ $preferredProfileId = $preferredProfileId ?? null;
 
     var originalCode = null;
     var previewTimeout = null;
+    var lastRefineProfileId = null;
+    var lastRefinePersonaId = null;
 
     // 1. Tab Switching
     tabs.forEach(function (tab) {
@@ -584,6 +718,62 @@ $preferredProfileId = $preferredProfileId ?? null;
     // Initial load
     updateLivePreview();
 
+    // 3b. Line diff helper — lets the admin see exactly what an AI Refine
+    // suggestion changed (not just the end result), since a prompt
+    // instruction alone is no guarantee the AI left unrelated parts of the
+    // piece untouched.
+    function computeLineDiff(oldText, newText) {
+        var oldLines = (oldText || '').split('\n');
+        var newLines = (newText || '').split('\n');
+        var n = oldLines.length, m = newLines.length;
+        var dp = [];
+        for (var i = 0; i <= n; i++) { dp.push(new Array(m + 1).fill(0)); }
+        for (var i2 = n - 1; i2 >= 0; i2--) {
+            for (var j2 = m - 1; j2 >= 0; j2--) {
+                dp[i2][j2] = oldLines[i2] === newLines[j2]
+                    ? dp[i2 + 1][j2 + 1] + 1
+                    : Math.max(dp[i2 + 1][j2], dp[i2][j2 + 1]);
+            }
+        }
+        var result = [];
+        var i = 0, j = 0;
+        while (i < n && j < m) {
+            if (oldLines[i] === newLines[j]) {
+                result.push({ type: 'same', text: oldLines[i] });
+                i++; j++;
+            } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+                result.push({ type: 'removed', text: oldLines[i] });
+                i++;
+            } else {
+                result.push({ type: 'added', text: newLines[j] });
+                j++;
+            }
+        }
+        while (i < n) { result.push({ type: 'removed', text: oldLines[i] }); i++; }
+        while (j < m) { result.push({ type: 'added', text: newLines[j] }); j++; }
+        return result;
+    }
+
+    function renderDiffBlock(container, label, oldText, newText) {
+        if ((oldText || '') === (newText || '')) return;
+        var blockEl = document.createElement('div');
+        blockEl.className = 'ai-diff-block';
+        var heading = document.createElement('strong');
+        heading.textContent = label + ' — changed';
+        blockEl.appendChild(heading);
+        var pre = document.createElement('pre');
+        pre.className = 'ai-diff-pre';
+        computeLineDiff(oldText, newText).forEach(function (d) {
+            var line = document.createElement('div');
+            line.className = 'diff-' + d.type;
+            var prefix = d.type === 'added' ? '+ ' : d.type === 'removed' ? '- ' : '  ';
+            line.textContent = prefix + d.text;
+            pre.appendChild(line);
+        });
+        blockEl.appendChild(pre);
+        container.appendChild(blockEl);
+    }
+
     // 4. AI Refinement (Reframe)
     btnRefineAi.addEventListener('click', function () {
         var prompt = aiPromptField.value.trim();
@@ -604,9 +794,14 @@ $preferredProfileId = $preferredProfileId ?? null;
         var originalBtnText = btnRefineAi.textContent;
         btnRefineAi.textContent = 'Requesting AI Changes...';
 
-        // Clear any old banner
+        // Clear any old banner and leftover save-status message from a
+        // previous attempt.
         aiBanner.style.display = 'none';
+        var aiSaveStatusEl = document.getElementById('ai-save-status');
+        aiSaveStatusEl.textContent = '';
+        aiSaveStatusEl.className = 'ai-save-status';
 
+        var pieceOriginalPromptField = document.getElementById('prompt');
         var payload = {
             prompt: prompt,
             engine: engine,
@@ -614,7 +809,10 @@ $preferredProfileId = $preferredProfileId ?? null;
             persona_id: aiPersonaField && aiPersonaField.value ? parseInt(aiPersonaField.value, 10) : 0,
             html_code: htmlField.value,
             css_code: cssField.value,
-            generated_code: jsField.value
+            generated_code: jsField.value,
+            // The piece's own creative prompt, so the AI knows the original
+            // intent it's refining, not just the raw code.
+            original_prompt: pieceOriginalPromptField ? pieceOriginalPromptField.value.trim() : ''
         };
 
         fetch('/admin/pieces/refine-ai', {
@@ -633,19 +831,60 @@ $preferredProfileId = $preferredProfileId ?? null;
             });
         })
         .then(function (data) {
+            // Snapshot what was there immediately before this suggestion, so
+            // the diff view below shows exactly what THIS refine changed —
+            // not the cumulative change across multiple refine attempts.
+            var beforeRefine = {
+                html: htmlField.value,
+                css: cssField.value,
+                js: jsField.value
+            };
+
             // Success! Store backup if not already in preview mode
             if (!originalCode) {
-                originalCode = {
-                    html: htmlField.value,
-                    css: cssField.value,
-                    js: jsField.value
-                };
+                originalCode = beforeRefine;
             }
+
+            // Remember which profile/persona produced this suggestion, so
+            // accepting it can carry that attribution into the new version
+            // saved when the piece form is submitted.
+            lastRefineProfileId = data.profile_id || null;
+            lastRefinePersonaId = data.persona_id || null;
 
             // Set suggested code to textareas
             htmlField.value = data.html_code || '';
             cssField.value = data.css_code || '';
             jsField.value = data.generated_code || '';
+
+            // Render the AI's stated plan (which specific elements it
+            // intended to touch, decided before it wrote any patch) — the
+            // same before-acting visibility a plan gives, shown above the
+            // diff so its intent can be sanity-checked alongside the result.
+            var planContainer = document.getElementById('ai-plan-container');
+            planContainer.innerHTML = '';
+            if (data.plan) {
+                var planHeading = document.createElement('strong');
+                planHeading.textContent = "AI's plan";
+                var planPre = document.createElement('pre');
+                planPre.textContent = data.plan;
+                planContainer.appendChild(planHeading);
+                planContainer.appendChild(planPre);
+            }
+
+            // Render a line diff so unrequested changes (e.g. to decorations,
+            // colors, or anything the instruction didn't name) are visible
+            // before deciding to accept — a prompt instruction alone can't
+            // guarantee the AI left everything else untouched.
+            var diffContainer = document.getElementById('ai-diff-container');
+            diffContainer.innerHTML = '';
+            renderDiffBlock(diffContainer, 'HTML', beforeRefine.html, htmlField.value);
+            renderDiffBlock(diffContainer, 'CSS', beforeRefine.css, cssField.value);
+            renderDiffBlock(diffContainer, 'JS', beforeRefine.js, jsField.value);
+            if (!diffContainer.children.length) {
+                var noChange = document.createElement('p');
+                noChange.textContent = 'No code differences detected.';
+                diffContainer.appendChild(noChange);
+            }
 
             // Update live preview
             updateLivePreview();
@@ -668,14 +907,93 @@ $preferredProfileId = $preferredProfileId ?? null;
         });
     });
 
-    // 5. Accept / Reject AI suggest actions
+    // 5. Accept / Reject AI suggest actions.
+    // Accepting immediately saves the change as a new version — no separate
+    // "Save Changes" submit needed — with an inline status message, since
+    // requiring a second manual save step after already deciding to accept
+    // was just unnecessary friction.
+    var aiSaveStatus = document.getElementById('ai-save-status');
+
+    function clearAiSaveStatus() {
+        aiSaveStatus.textContent = '';
+        aiSaveStatus.className = 'ai-save-status';
+    }
+
     btnAiAccept.addEventListener('click', function () {
-        // Just hide the banner, keeping the suggested values (and any manual tweaks) in the textareas
-        aiBanner.style.display = 'none';
-        originalCode = null;
+        // Carry the profile/persona that produced this suggestion into the
+        // Metadata tab's "used to generate this" fields, so the version
+        // this creates records them.
+        var metaProfileField = document.getElementById('meta_ai_profile_id');
+        var metaPersonaField = document.getElementById('meta_ai_persona_id');
+        if (metaProfileField && lastRefineProfileId) {
+            metaProfileField.value = String(lastRefineProfileId);
+        }
+        if (metaPersonaField) {
+            metaPersonaField.value = lastRefinePersonaId ? String(lastRefinePersonaId) : '';
+        }
+
+        if (!currentPieceId) {
+            // Brand new, not-yet-saved piece — there's no piece row to
+            // attach a version to yet. Accept locally; the normal "Save
+            // Changes" submit creates the piece and its first version.
+            aiBanner.style.display = 'none';
+            originalCode = null;
+            document.getElementById('ai-diff-container').innerHTML = '';
+            document.getElementById('ai-plan-container').innerHTML = '';
+            return;
+        }
+
+        var refinementPrompt = aiPromptField.value.trim();
+        btnAiAccept.disabled = true;
+        btnAiReject.disabled = true;
+        aiSaveStatus.className = 'ai-save-status';
+        aiSaveStatus.textContent = 'Saving…';
+
+        fetch('/admin/pieces/' + currentPieceId + '/refine-save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                html_code: htmlField.value,
+                css_code: cssField.value,
+                generated_code: jsField.value,
+                refinement_prompt: refinementPrompt,
+                profile_id: lastRefineProfileId,
+                persona_id: lastRefinePersonaId
+            })
+        })
+        .then(function (res) {
+            return res.json().then(function (data) {
+                if (!res.ok || !data.success) {
+                    throw new Error(data.error || 'Save failed.');
+                }
+                return data;
+            });
+        })
+        .then(function (data) {
+            aiSaveStatus.className = 'ai-save-status is-success';
+            aiSaveStatus.textContent = data.changed
+                ? 'Saved as Version ' + data.version_number + '.'
+                : 'No changes to save.';
+            aiBanner.style.display = 'none';
+            originalCode = null;
+            document.getElementById('ai-diff-container').innerHTML = '';
+            document.getElementById('ai-plan-container').innerHTML = '';
+            setTimeout(clearAiSaveStatus, 6000);
+        })
+        .catch(function (err) {
+            // Keep the banner open on failure so the admin can retry Accept
+            // or fall back to Reject — the suggestion isn't lost.
+            aiSaveStatus.className = 'ai-save-status is-error';
+            aiSaveStatus.textContent = 'Save failed: ' + err.message;
+        })
+        .finally(function () {
+            btnAiAccept.disabled = false;
+            btnAiReject.disabled = false;
+        });
     });
 
     btnAiReject.addEventListener('click', function () {
+        clearAiSaveStatus();
         if (originalCode) {
             htmlField.value = originalCode.html;
             cssField.value = originalCode.css;
@@ -684,6 +1002,8 @@ $preferredProfileId = $preferredProfileId ?? null;
         }
         aiBanner.style.display = 'none';
         originalCode = null;
+        document.getElementById('ai-diff-container').innerHTML = '';
+        document.getElementById('ai-plan-container').innerHTML = '';
     });
 
     // 6. Mobile toggle view

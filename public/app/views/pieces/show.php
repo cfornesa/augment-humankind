@@ -6,6 +6,13 @@ require dirname(__DIR__) . '/partials/header.php';
 
 $version = $version ?? null;
 $hasCode = $version && (!empty($version['html_code']) || !empty($version['css_code']) || !empty($version['generated_code']));
+$engineLabel = match (strtolower((string) ($version['engine'] ?? $piece['engine'] ?? 'p5'))) {
+    'p5' => 'P5.js',
+    'c2' => 'C2.js',
+    'three' => 'Three.js',
+    'svg' => 'SVG',
+    default => strtoupper((string) ($version['engine'] ?? $piece['engine'] ?? '')),
+};
 ?>
 <section class="page-hero" aria-labelledby="piece-title">
     <p class="eyebrow">Art Piece</p>
@@ -38,10 +45,15 @@ $hasCode = $version && (!empty($version['html_code']) || !empty($version['css_co
     <?php endif; ?>
 </section>
 
-<?php if ($version && !empty($version['prompt'])): ?>
+<?php if ($version): ?>
 <section class="piece-prompt" aria-labelledby="prompt-title">
     <h2 id="prompt-title">Prompt</h2>
-    <pre><?= e($version['prompt']) ?></pre>
+    <p>Engine: <?= e($engineLabel) ?></p>
+    <p>AI Profile: <?= e($version['ai_profile_name'] ?? '(Blank)') ?></p>
+    <p>AI Persona: <?= e($version['ai_persona_name'] ?? '(Blank)') ?></p>
+    <?php if (!empty($version['prompt'])): ?>
+        <p>Prompt: <?= e($version['prompt']) ?></p>
+    <?php endif; ?>
 </section>
 <?php endif; ?>
 
@@ -51,9 +63,16 @@ $hasCode = $version && (!empty($version['html_code']) || !empty($version['css_co
     <ul>
         <?php foreach ($piece['versions'] as $v): ?>
             <li>
-                Version <?= (int) $v['version_number'] ?>
-                <?php if ((int) ($piece['current_version_id'] ?? 0) === (int) $v['id']): ?>
-                    <strong>(current)</strong>
+                <p>
+                    <strong>Version <?= (int) $v['version_number'] ?></strong>
+                    <?php if ((int) ($piece['current_version_id'] ?? 0) === (int) $v['id']): ?>
+                        <strong>(current)</strong>
+                    <?php endif; ?>
+                </p>
+                <p>AI Profile: <?= e($v['ai_profile_name'] ?? '(Blank)') ?></p>
+                <p>AI Persona: <?= e($v['ai_persona_name'] ?? '(Blank)') ?></p>
+                <?php if (!empty($v['prompt'])): ?>
+                    <p>Prompt: <?= e($v['prompt']) ?></p>
                 <?php endif; ?>
             </li>
         <?php endforeach; ?>
