@@ -925,13 +925,32 @@ $preferredProfileId = $preferredProfileId ?? null;
             original_prompt: pieceOriginalPromptField ? pieceOriginalPromptField.value.trim() : ''
         };
 
-        fetch('/admin/pieces/refine-ai', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(payload)
-        })
+        // One-time retry on a network-level failure only (the fetch()
+        // promise itself rejecting — e.g. "Load failed" — not a
+        // server-returned error). AI Refine calls run long (up to 5 AI
+        // attempts server-side), making a stale/dropped keep-alive
+        // connection just as likely here as it was for Save
+        // (generate-preview.php's submitSave()), which a fresh fetch()
+        // recovers from since it opens a new connection.
+        function fetchRefine(isRetry) {
+            return fetch('/admin/pieces/refine-ai', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(payload)
+            }).catch(function (networkErr) {
+                if (isRetry) throw networkErr;
+                if (aiRefineStatusEl) aiRefineStatusEl.textContent = 'Connection issue — retrying…';
+                return new Promise(function (resolve) {
+                    setTimeout(resolve, 1000);
+                }).then(function () {
+                    return fetchRefine(true);
+                });
+            });
+        }
+
+        fetchRefine(false)
         .then(function (res) {
             return res.json().then(function (data) {
                 if (!res.ok) {

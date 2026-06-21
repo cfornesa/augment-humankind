@@ -124,7 +124,18 @@
             var canvas = null;
             var kind = 'canvas';
 
-            for (var attempt = 0; attempt < 40 && !canvas; attempt++) {
+            // Three.js loads its module (plus OrbitControls, which itself
+            // re-imports three) from a CDN inside the sandboxed iframe
+            // before any canvas or sketch code runs at all — on a slow
+            // mobile connection that import alone can outlast the previous
+            // ~27s ceiling with no error and no canvas to show for it, since
+            // nothing throws while the import promise is still pending.
+            // Extending the ceiling only costs time on the genuinely-broken
+            // path; the loop still breaks the moment a ready canvas/svg
+            // appears.
+            var maxAttempts = engine === 'three' ? 70 : 40;
+
+            for (var attempt = 0; attempt < maxAttempts && !canvas; attempt++) {
                 await wait(500);
                 var doc = frame.contentDocument;
                 if (!doc) continue;

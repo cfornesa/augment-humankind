@@ -3634,5 +3634,75 @@ good" but the preview/thumbnail capture timed out after ~20+ seconds.
   a real Three.js piece in this session — no browser automation tool was
   available.
 
+---
+
+## 2026-06-21 — Fixed two distinct robustness bugs hit on piece 83 (not a code-validity issue)
+
+### Context
+On piece 83 (Three.js), the same session hit two back-to-back failures: an
+AI Refine "Stronger Change" request alerted "AI Refinement Error: Load
+failed," and the subsequent plain Save then alerted "Auto thumbnail capture
+failed: No canvas or svg element found after waiting." Read directly from
+the production DB (with explicit user approval) to rule in/out a real cause
+before guessing: piece 83 has exactly one saved version (`id=150`, created
+before this session — none of the failed refine attempts ever got far
+enough to save), and its `generated_code` is a fully valid
+`window.sketch = (runtime) => {...}` with correct `startFrame`/
+`renderer.render` usage. This conclusively rules out the previously-fixed
+`window.sketch` validation gap (2026-06-20 entry above) as the cause here —
+both failures are robustness bugs, not AI-output defects.
+
+### Investigation
+1. **"Load failed"** (`public/app/views/admin/pieces/form.php`, the
+   `requestAiRefine()` `.catch()` that does `alert('AI Refinement Error: '
+   + err.message)`) — "Load failed" is the literal message WebKit/Safari's
+   `fetch()` throws on a network-layer failure (a dropped/stale connection),
+   not a server-returned JSON error. This is the same failure class as the
+   "ERR_CONNECTION_CLOSED" Save bug fixed earlier (MEMORY.md, 2026-06-20)
+   — but that fix (fetch-with-one-retry-on-network-failure, the pattern in
+   `generate-preview.php`'s `submitSave()`) was only ever applied to Save,
+   never to the AI Refine fetch. Refine calls run long (up to 5 AI attempts
+   server-side), making a stale keep-alive connection just as likely here.
+2. **"No canvas or svg element found"** on plain Save — `performCapture()`
+   in `form.php` captures whatever is currently in the HTML/CSS/JS
+   textareas; since the failed refine above threw before ever writing a
+   proposed suggestion into those fields, the textareas held the piece's
+   own already-saved, now DB-confirmed-valid code. The screenshots showed
+   this on mobile (2-bar signal) — Three.js pieces load `three.module.js` +
+   `OrbitControls.js` from a CDN inside the sandboxed capture iframe before
+   any canvas/sketch code runs at all, and that import runs concurrently
+   with the capture's wait budget (~26.8s: 6000ms initial + 40×500ms poll).
+   On a slow mobile connection the import alone can outlast that budget
+   with no error and no canvas — exactly matching the latent mobile-network
+   risk already flagged, unverified, in the 2026-06-20 readiness-signal fix
+   (MEMORY.md).
+
+### Implemented
+- `form.php`: wrapped the AI Refine `fetch()` in `fetchRefine(isRetry)`,
+  retrying once after a 1s delay on a network-level failure only (the
+  `fetch()` promise itself rejecting), mirroring `generate-preview.php`'s
+  existing Save retry pattern exactly. Server-returned errors (non-OK
+  response with a parsed JSON body) are unaffected and still surface
+  immediately with no retry.
+- `public/assets/js/admin-piece-capture.js`: raised the poll-loop ceiling
+  from 40 to 70 attempts (extra +15s) for `engine === 'three'` only, since
+  it's the one engine doing a CDN module import before any render-readiness
+  signal is even possible. The loop already breaks the instant a ready
+  canvas/svg is found, so this only costs time on the genuinely-stuck path
+  — no change to the happy-path latency for any engine.
+
+### Verification
+- `php -l` on `form.php`, `node --check` on `admin-piece-capture.js`: both
+  clean.
+- `tests/art-piece-generation.php`: 56/56 still pass (neither change
+  touches PHP validation logic).
+- Read piece 83's actual saved code directly from the production DB (user
+  explicitly approved this read) rather than assuming — confirmed the code
+  itself was never the problem for this incident.
+- Could not exercise a live retry/timeout round-trip against a real slow
+  mobile connection in this session — no browser automation tool was
+  available; the fix mirrors an already-shipped, already-effective pattern
+  (Save's retry) rather than a novel untested mechanism.
+
 
 
