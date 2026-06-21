@@ -124,6 +124,12 @@ $defaultTitle = 'AI ' . strtoupper($engine) . ' Piece - ' . date('M d, Y H:i');
         ((!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http') . '://' . ($_SERVER['HTTP_HOST'] ?? 'localhost')
     ) ?>;
     (function () {
+        var engine = <?= json_encode($engine) ?>;
+        var htmlTabButton = document.querySelector('.piece-preview-tabs button[data-tab="html"]');
+        if (htmlTabButton && engine !== 'svg') {
+            htmlTabButton.style.display = 'none';
+        }
+
         var tabs = document.querySelectorAll('.piece-preview-tabs .admin-tab');
         var panels = {
             meta: document.getElementById('tab-meta'),

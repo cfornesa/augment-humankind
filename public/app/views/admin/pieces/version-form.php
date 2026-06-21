@@ -95,9 +95,20 @@ $version = $version ?? [];
             <textarea id="structured_spec" name="structured_spec" rows="6"><?= e($version['structured_spec'] ?? '') ?></textarea>
         </div>
 
-        <div class="field">
+<?php
+$htmlCodeVal = $version['html_code'] ?? '';
+$engineVal = $version['engine'] ?? 'p5';
+if ($engineVal === 'p5') {
+    $htmlCodeVal = '<div id="canvas-container"></div>';
+} elseif ($engineVal === 'c2') {
+    $htmlCodeVal = '<canvas id="piece-canvas"></canvas>';
+} elseif ($engineVal === 'three') {
+    $htmlCodeVal = '<div id="container"></div>';
+}
+?>
+        <div class="field" id="field-html-code">
             <label for="html_code">HTML Code</label>
-            <textarea id="html_code" name="html_code" rows="6"><?= e($version['html_code'] ?? '') ?></textarea>
+            <textarea id="html_code" name="html_code" rows="6"><?= e($htmlCodeVal) ?></textarea>
         </div>
 
         <div class="field">
@@ -119,6 +130,37 @@ $version = $version ?? [];
             <button type="submit" class="admin-btn"><?= $isEdit ? 'Update' : 'Add' ?> Version</button>
             <a href="/admin/pieces/<?= (int) $piece['id'] ?>/versions" class="admin-btn admin-btn-ghost">Cancel</a>
         </div>
+
+        <script>
+        (function () {
+            var engineField = document.getElementById('engine');
+            var htmlField = document.getElementById('html_code');
+            var fieldHtmlCode = document.getElementById('field-html-code');
+
+            function updateEngineHtmlVisibility(engine) {
+                if (!fieldHtmlCode) return;
+                if (engine === 'svg') {
+                    fieldHtmlCode.style.display = '';
+                } else {
+                    fieldHtmlCode.style.display = 'none';
+                    if (engine === 'p5') {
+                        htmlField.value = '<div id="canvas-container"></div>';
+                    } else if (engine === 'c2') {
+                        htmlField.value = '<canvas id="piece-canvas"></canvas>';
+                    } else if (engine === 'three') {
+                        htmlField.value = '<div id="container"></div>';
+                    }
+                }
+            }
+
+            if (engineField) {
+                engineField.addEventListener('change', function () {
+                    updateEngineHtmlVisibility(engineField.value);
+                });
+                updateEngineHtmlVisibility(engineField.value);
+            }
+        })();
+        </script>
     </form>
 </div>
 <?php

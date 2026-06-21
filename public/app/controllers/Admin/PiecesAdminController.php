@@ -508,6 +508,21 @@ class PiecesAdminController
         return $draft;
     }
 
+    private static function getStandardHtmlForEngine(string $engine, ?string $defaultHtml = ''): string
+    {
+        switch ($engine) {
+            case 'p5':
+                return '<div id="canvas-container"></div>';
+            case 'c2':
+                return '<canvas id="piece-canvas"></canvas>';
+            case 'three':
+                return '<div id="container"></div>';
+            case 'svg':
+            default:
+                return $defaultHtml ?? '';
+        }
+    }
+
     private static function resolveVersionData(int $pieceId): array
     {
         $prompt = trim($_POST['prompt'] ?? '');
@@ -520,12 +535,17 @@ class PiecesAdminController
             $engine = 'p5';
         }
 
+        $html = trim($_POST['html_code'] ?? '') ?: null;
+        if (in_array($engine, ['p5', 'c2', 'three'], true)) {
+            $html = self::getStandardHtmlForEngine($engine);
+        }
+
         return [
             'art_piece_id' => $pieceId,
             'version_number' => PlatformArtPieceVersion::nextVersionNumber($pieceId),
             'prompt' => $prompt,
             'structured_spec' => trim($_POST['structured_spec'] ?? '') ?: null,
-            'html_code' => trim($_POST['html_code'] ?? '') ?: null,
+            'html_code' => $html,
             'css_code' => trim($_POST['css_code'] ?? '') ?: null,
             'generated_code' => trim($_POST['generated_code'] ?? '') ?: null,
             'engine' => $engine,
@@ -568,9 +588,14 @@ class PiecesAdminController
 
     private static function resolveVersionCodeFromPost(): array
     {
+        $engine = $_POST['engine'] ?? 'p5';
         $html = trim((string) ($_POST['html_code'] ?? ''));
         $css = trim((string) ($_POST['css_code'] ?? ''));
         $js = trim((string) ($_POST['generated_code'] ?? ''));
+
+        if (in_array($engine, ['p5', 'c2', 'three'], true)) {
+            $html = self::getStandardHtmlForEngine($engine);
+        }
 
         return [
             'html_code' => $html !== '' ? $html : null,
@@ -919,6 +944,9 @@ class PiecesAdminController
 
         $engine = (string) ($pending['engine'] ?? 'p5');
         $htmlCode = (string) ($pending['html_code'] ?? '');
+        if (in_array($engine, ['p5', 'c2', 'three'], true)) {
+            $htmlCode = self::getStandardHtmlForEngine($engine);
+        }
         $cssCode = (string) ($pending['css_code'] ?? '');
         $generatedCode = (string) ($pending['generated_code'] ?? '');
         $profile = [
@@ -966,6 +994,9 @@ class PiecesAdminController
             $status = $_POST['status'] ?? 'draft';
 
             $htmlCode = trim($_POST['html_code'] ?? '') ?: null;
+            if (in_array($engine, ['p5', 'c2', 'three'], true)) {
+                $htmlCode = self::getStandardHtmlForEngine($engine);
+            }
             $cssCode = trim($_POST['css_code'] ?? '') ?: null;
             $generatedCode = trim($_POST['generated_code'] ?? '') ?: null;
 
@@ -1451,6 +1482,9 @@ class PiecesAdminController
             }
 
             $extractedHtml = art_piece_apply_refine_patches($html, $patches['html']);
+            if (in_array($engine, ['p5', 'c2', 'three'], true)) {
+                $extractedHtml = self::getStandardHtmlForEngine($engine);
+            }
             $extractedCss = art_piece_apply_refine_patches($css, $patches['css']);
             $extractedJs = art_piece_apply_refine_patches($js, $patches['js']);
 
@@ -1664,6 +1698,9 @@ class PiecesAdminController
         try {
             $input = json_decode(file_get_contents('php://input'), true) ?? [];
             $html = (string) ($input['html_code'] ?? '');
+            if (in_array($piece['engine'] ?? 'p5', ['p5', 'c2', 'three'], true)) {
+                $html = self::getStandardHtmlForEngine($piece['engine']);
+            }
             $css = (string) ($input['css_code'] ?? '');
             $js = (string) ($input['generated_code'] ?? '');
             $refinementPrompt = trim((string) ($input['refinement_prompt'] ?? ''));

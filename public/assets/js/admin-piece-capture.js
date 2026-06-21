@@ -103,14 +103,14 @@
         var frame = document.createElement('iframe');
         var runtimeError = '';
 
-        // Positioned on top of everything (z-index: 999999) but virtually invisible
-        // (opacity: 0.002) and click-safe (pointer-events: none). WebKit/Safari and
-        // other modern engines aggressively throttle requestAnimationFrame (rAF) and
-        // suspend JavaScript/network execution in iframes that are completely
-        // occluded (e.g. z-index:-1 behind an opaque body) or have opacity:0.
-        // Putting the iframe on top with a non-zero opacity forces compositing culling
-        // to treat it as active/visible, while keeping it invisible to the user.
-        frame.style.cssText = 'position:fixed;left:0;top:0;width:' + width + 'px;height:' + height + 'px;border:none;pointer-events:none;z-index:999999;opacity:0.002;';
+        // Positioned at the back of everything (z-index: -999999) behind the page's
+        // opaque background, but fully opaque (opacity: 1) and click-safe (pointer-events: none).
+        // WebKit/Safari and other modern engines aggressively suspend network/module loading
+        // (dynamic imports) in iframes that have low opacity (e.g. opacity:0.002). Using a fully
+        // opaque iframe keeps the network pipeline active to load Three.js, while placing it
+        // behind the body layer keeps it visually hidden from the user. Throttling of the
+        // requestAnimationFrame loop is bypassed via our setTimeout polyfill.
+        frame.style.cssText = 'position:fixed;left:0;top:0;width:' + width + 'px;height:' + height + 'px;border:none;pointer-events:none;z-index:-999999;opacity:1;';
         frame.sandbox = 'allow-scripts allow-same-origin';
         document.body.appendChild(frame);
 

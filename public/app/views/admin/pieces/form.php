@@ -528,8 +528,19 @@ $preferredProfileId = $preferredProfileId ?? null;
                     <!-- HTML Tab -->
                     <div id="tab-html" class="piece-tab-panel is-hidden" role="tabpanel">
                         <div class="field">
+<?php
+$htmlCodeVal = $cv['html_code'] ?? '';
+$engineVal = $piece['engine'] ?? 'p5';
+if ($engineVal === 'p5') {
+    $htmlCodeVal = '<div id="canvas-container"></div>';
+} elseif ($engineVal === 'c2') {
+    $htmlCodeVal = '<canvas id="piece-canvas"></canvas>';
+} elseif ($engineVal === 'three') {
+    $htmlCodeVal = '<div id="container"></div>';
+}
+?>
                             <label for="html_code">HTML</label>
-                            <textarea id="html_code" name="html_code" rows="18" class="code-field" aria-describedby="html-desc"><?= e($cv['html_code'] ?? '') ?></textarea>
+                            <textarea id="html_code" name="html_code" rows="18" class="code-field" aria-describedby="html-desc"><?= e($htmlCodeVal) ?></textarea>
                             <small id="html-desc">
                                 <?php if ($versionNum): ?>
                                     Edits the current version (v<?= (int) $versionNum ?>) in place.
@@ -745,14 +756,43 @@ $preferredProfileId = $preferredProfileId ?? null;
         }, 500);
     }
 
+    function updateEngineHtmlVisibility(engine) {
+        var htmlTabButton = document.querySelector('.piece-edit-tabs button[data-tab="html"]');
+        if (!htmlTabButton) return;
+
+        if (engine === 'svg') {
+            htmlTabButton.style.display = '';
+        } else {
+            htmlTabButton.style.display = 'none';
+            if (htmlTabButton.classList.contains('active')) {
+                var metaTabButton = document.querySelector('.piece-edit-tabs button[data-tab="meta"]');
+                if (metaTabButton) {
+                    metaTabButton.click();
+                }
+            }
+
+            if (engine === 'p5') {
+                htmlField.value = '<div id="canvas-container"></div>';
+            } else if (engine === 'c2') {
+                htmlField.value = '<canvas id="piece-canvas"></canvas>';
+            } else if (engine === 'three') {
+                htmlField.value = '<div id="container"></div>';
+            }
+        }
+    }
+
     // Hook listeners
     htmlField.addEventListener('input', queuePreviewUpdate);
     cssField.addEventListener('input', queuePreviewUpdate);
     jsField.addEventListener('input', queuePreviewUpdate);
-    engineField.addEventListener('change', updateLivePreview);
+    engineField.addEventListener('change', function () {
+        updateEngineHtmlVisibility(engineField.value);
+        updateLivePreview();
+    });
     titleField.addEventListener('input', queuePreviewUpdate);
 
     // Initial load
+    updateEngineHtmlVisibility(engineField.value);
     updateLivePreview();
 
     // 3b. Line diff helper — lets the admin see exactly what an AI Refine
