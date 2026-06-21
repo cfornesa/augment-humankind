@@ -278,26 +278,17 @@ function art_piece_preflight_code(string $engine, string $code): string
             }
         }
 
-        // A loop creating one `new THREE.Mesh(...)` per iteration ("denser
-        // hair/beard/particles") for thousands of items produces thousands
-        // of individual geometry buffers and draw calls — this has been
-        // observed to exhaust WebGL resources (a silent context loss, with
-        // no error and no canvas ever marked ready) well within capture's
-        // timeout, on real saved pieces. Cap the total count rather than
-        // waiting longer for a renderer that will never come up.
-        //
-        // 1000 (not the original 150) is calibrated against real data: an
-        // audit of every currently-live Three.js piece in production found
-        // counts ranging 2-578, several already exceeding the original 150
-        // (up to 578) with confirmed-successful rendering/thumbnails. 150
-        // was rejecting already-working pieces; 1000 leaves real headroom
-        // above the observed working maximum while still firmly rejecting
-        // the kind of runaway case that motivated this check in the first
-        // place (2,388 objects from an uncontrolled "denser" loop).
-        $meshCount = art_piece_count_three_object_calls($validatedCode);
-        if ($meshCount > 1000) {
-            throw new RuntimeException("Generated Three.js code creates {$meshCount} individual mesh/points/line objects, which will exhaust WebGL resources on real devices. For repeated elements (hair strands, particles, etc.), use a single THREE.InstancedMesh or a merged BufferGeometry instead of one object per item.");
-        }
+        // No automatic rejection on individual mesh/points/line object
+        // count, by deliberate, explicit decision — tried at two different
+        // thresholds (150, then 1000) and both were directly falsified by
+        // live evidence: a 728-object piece under the 1000 cap still failed
+        // to render, while a 1400+ object piece rendered fine. Object count
+        // doesn't predict renderability (whether objects are instanced
+        // does), so no fixed number can work here. The person reviewing
+        // each piece decides whether it's workable, not a static check.
+        // art_piece_count_three_object_calls() still exists for optional
+        // non-blocking diagnostics (e.g. audit-log metadata) but must not
+        // gate or warn here.
     }
 
     // Static check for window.sketch definition. Requires an actual

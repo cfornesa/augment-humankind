@@ -1536,6 +1536,12 @@ class PiecesAdminController
                     'sequence_token' => $sequenceToken,
                     'draft_version_id' => $draftVersionId,
                     'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+                    // Silent diagnostic only — never gates or warns the
+                    // user (the mesh-count rejection was tried at two
+                    // thresholds and removed entirely; see DECISIONS.md).
+                    // Kept here so a future investigation has real numbers
+                    // without needing to reproduce this live again.
+                    'mesh_object_count' => $engine === 'three' ? art_piece_count_three_object_calls($extractedJs) : null,
                     // Truncated raw model response, so a future "succeeded
                     // but did nothing useful" report can be diagnosed from
                     // the log directly instead of by inference.
@@ -1556,6 +1562,10 @@ class PiecesAdminController
                     'draft_version_id' => $draftVersionId,
                     'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
                     'error' => $e->getMessage(),
+                    // Silent diagnostic only, same as the success path —
+                    // only available when extraction got far enough to
+                    // produce JS before the failure.
+                    'mesh_object_count' => (isset($engine, $extractedJs) && $engine === 'three') ? art_piece_count_three_object_calls($extractedJs) : null,
                     'raw_response' => mb_substr((string) ($previousRawResponse ?? ''), 0, 4000),
                 ],
             ]);

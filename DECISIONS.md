@@ -4215,5 +4215,68 @@ themselves miscalibrated — acted on real data this time, not estimates.
   did not address it and this needs another look at real data, not another
   guess.
 
+---
+
+## 2026-06-21 — Removed the AI Refine mesh-count validation entirely; no threshold of any kind
+
+### Context
+The 150→1000 recalibration in the entry above was tested live immediately
+and falsified on both sides: a 728-object piece under the 1000 cap still
+failed to render ("No canvas or svg element found after waiting" — the
+exact symptom this whole investigation started from), and separately the
+user confirmed a 1400+ object piece rendered fine in practice. Two data
+points landing on opposite sides of *every* number tried this session (150,
+then 1000) closes the case that object count predicts renderability at
+all — what actually matters is whether objects are instanced efficiently,
+not how many there are. Per explicit instruction, this mechanism is removed
+entirely, not retuned a third time: **no mesh/object-count threshold of any
+kind, ever, in AI Refine.** This is the final word on this specific
+mechanism for this project.
+
+### Implemented
+- **`art_piece_preflight_code()`** (`art-piece-generation.php`): deleted
+  the `if ($meshCount > 1000) { throw ...; }` block entirely from the
+  `'three'` branch. No replacement gate, warning, or softer variant of any
+  kind. `art_piece_count_three_object_calls()` itself is kept (a working,
+  already-tested, harmless pure function — deleting it outright would be
+  unnecessary churn) but is no longer called as a blocking or warning gate
+  anywhere.
+- **`refineAi()`**: optionally threads the same count into the existing
+  success/error `audit_log_event()` metadata as `mesh_object_count` —
+  purely a silent diagnostic field for future investigation, never surfaced
+  to the user, never blocks anything. Guarded so it's `null` when extraction
+  never got far enough to produce JS (e.g. a network/timeout failure with
+  no code at all).
+- The InstancedMesh guidance already in the `'three'` system prompt (added
+  two entries ago, extended one entry ago) is unchanged — it's still good
+  advice for the model to follow voluntarily; only the backend enforcement
+  is gone.
+
+### Ruled out
+- Any third threshold number, a percentage/ratio-based check, or a
+  "warn but allow" softer version — all explicitly rejected per direct
+  instruction, not just the literal number from the previous entry.
+- Touching piece generation's own control flow — this only removes a check
+  inside the shared validation function's Three.js branch, which generation
+  also calls into, so generation benefits from the same removal
+  automatically with no separate edit needed.
+
+### Verification
+- `php -l` on `art-piece-generation.php`, `PiecesAdminController.php`: both
+  clean.
+- `tests/art-piece-generation.php`: removed the two tests asserting the
+  threshold rejection/allowance (no longer applicable — there is no
+  rejection to test), replaced with one test asserting a very large count
+  (2,500 objects, comfortably above both retired thresholds) now passes
+  `art_piece_preflight_code()` cleanly — this regression-guards the removal
+  itself, not a number. Kept the direct unit test of
+  `art_piece_count_three_object_calls()`, since the utility itself is still
+  correct independent of whether anything gates on it. 58/58 pass.
+- `tests/ai-provider-client.php`: 11/11 still pass (untouched by this
+  change).
+- The real-world confirmation — does AI Refine now let dense-but-working
+  pieces through without a false rejection — requires the user's next live
+  AI Refine attempt; cannot be simulated here without spending real tokens.
+
 
 
