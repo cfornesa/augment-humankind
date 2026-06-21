@@ -1330,7 +1330,14 @@ class PiecesAdminController
     // have nothing concrete to persist and create no row.
     public static function refineAi(): void
     {
-        set_time_limit(150); // one attempt at this vendor/model's observed pace (~20-120s) + buffer
+        // 220s, not the AI call's own 180s timeout (see the AiProviderClient
+        // instantiation below) — real audit data showed repair attempts
+        // that restructure code (e.g. to InstancedMesh) taking up to 120s+
+        // and exceeding the AI client's old 120s ceiling; 180s gives that
+        // harder task real room, and this script's own limit needs enough
+        // buffer above 180s for validation/draft-persist/audit-log after
+        // the call returns.
+        set_time_limit(220);
         admin_check();
         header('Content-Type: application/json; charset=utf-8');
         $startedAt = microtime(true);
@@ -1386,7 +1393,13 @@ class PiecesAdminController
             }
 
             $apiKey = decrypt_string($keyRow['encrypted_api_key'], ai_encryption_key());
-            $aiClient = new \App\Lib\Ai\AiProviderClient($profile['vendor'], $profile['model'], $profile['endpoint_kind'], $apiKey);
+            // 180s, not the client's 120s default — real audit data showed
+            // repair attempts that restructure code (e.g. to InstancedMesh)
+            // consistently needing more than 120s. Passed explicitly only
+            // here; every other AiProviderClient caller (generation,
+            // ai_process_text, ai_describe_image) keeps the unchanged 120s
+            // default.
+            $aiClient = new \App\Lib\Ai\AiProviderClient($profile['vendor'], $profile['model'], $profile['endpoint_kind'], $apiKey, timeoutOverride: 180.0);
             $persona = self::findPersonaById($personaId);
 
             $systemPrompt = art_piece_refine_system_prompt($engine);

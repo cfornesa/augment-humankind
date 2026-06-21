@@ -61,7 +61,9 @@ function art_piece_generation_system_prompt(string $engine): string
             "CRITICAL: If you use MeshPhongMaterial, MeshLambertMaterial, or MeshStandardMaterial, you MUST add at least one light (e.g. AmbientLight + DirectionalLight). These materials are invisible without lights. MeshBasicMaterial does not need lights and is suitable for simple solid-colored objects.",
             "Use `startFrame(handler)` for animation and call `renderer.render(scene, camera)` yourself inside that handler. CRITICAL: `handler` is called with exactly ONE argument — an integer frame counter (`startFrame((frameCount) => { ... })`) — never elapsed time or delta time. If you need real elapsed time for `Math.sin`/`Math.cos` motion, create your own `const clock = new THREE.Clock();` inside the sketch and read `clock.getElapsedTime()` at the top of the handler; do NOT destructure a second parameter from the handler — it will always be `undefined` and corrupt every value computed from it.",
             "CRITICAL: Animations MUST be infinite. Use Math.sin/cos with elapsed time from a local `THREE.Clock` or the handler's frame counter to create periodic motion or pulsating effects. Ensure elements don't just disappear; the scene must remain visually active indefinitely.",
-            "CRITICAL: For any repeated small element — hair strands, particles, leaves, a swarm, grass, fur, etc. — numbering more than about 30-40 instances, you MUST use a single `THREE.InstancedMesh` with one shared `BufferGeometry`/material, never `new THREE.Mesh(...)` once per item; hundreds or thousands of individual mesh objects will exhaust WebGL resources and the piece will fail to render at all. Build it like this: `const geo = new THREE.CylinderGeometry(0.02, 0.01, 0.3, 4); const mat = new THREE.MeshStandardMaterial({ color: 0x1a0d0a }); const count = 600; const inst = new THREE.InstancedMesh(geo, mat, count); const dummy = new THREE.Object3D(); for (let i = 0; i < count; i++) { dummy.position.set(Math.random()-0.5, Math.random()-0.5, Math.random()-0.5); dummy.rotation.set(Math.random()*Math.PI, Math.random()*Math.PI, 0); dummy.scale.setScalar(0.8 + Math.random()*0.4); dummy.updateMatrix(); inst.setMatrixAt(i, dummy.matrix); } scene.add(inst);` — per-instance variation (position, rotation, scale, even per-instance color via `inst.setColorAt(i, color)` with `inst.instanceColor` if material has `vertexColors: true`) all happens through `setMatrixAt`/`setColorAt`, not by creating a new geometry or mesh per item.",
+            "CRITICAL: For any repeated small element — hair strands, particles, leaves, a swarm, grass, fur, etc. — numbering more than about 30-40 instances, you MUST use a single `THREE.InstancedMesh` with one shared `BufferGeometry`/material, never `new THREE.Mesh(...)` once per item; hundreds or thousands of individual mesh objects will exhaust WebGL resources and the piece will fail to render at all. Static (non-animated) instances: `const geo = new THREE.CylinderGeometry(0.02, 0.01, 0.3, 4); const mat = new THREE.MeshStandardMaterial({ color: 0x1a0d0a }); const count = 600; const inst = new THREE.InstancedMesh(geo, mat, count); const dummy = new THREE.Object3D(); for (let i = 0; i < count; i++) { dummy.position.set(Math.random()-0.5, Math.random()-0.5, Math.random()-0.5); dummy.rotation.set(Math.random()*Math.PI, Math.random()*Math.PI, 0); dummy.scale.setScalar(0.8 + Math.random()*0.4); dummy.updateMatrix(); inst.setMatrixAt(i, dummy.matrix); } scene.add(inst);` — per-instance variation (position, rotation, scale, even per-instance color via `inst.setColorAt(i, color)` with `inst.instanceColor` if material has `vertexColors: true`) all happens through `setMatrixAt`/`setColorAt`, never by creating a new geometry or mesh per item.",
+            "CRITICAL: A single shared geometry does NOT mean every instance must look identical — simulate per-instance SIZE/shape variation with non-uniform scale on the SAME base geometry instead of a different geometry per item: `dummy.scale.set(radiusFactor, heightFactor, radiusFactor);` (e.g. a base unit cylinder stretched/thinned per instance) covers the common 'each strand is a slightly different size' need without ever calling `new THREE.CylinderGeometry(...)` (or any geometry constructor) inside the per-instance loop.",
+            "CRITICAL: If repeated instances need their OWN per-instance animation (e.g. each hair strand swaying independently), do the per-instance setup ONCE outside any frame loop — storing each instance's base transform and a phase offset in a plain array, e.g. `const instanceData = []; for (let i = 0; i < count; i++) { instanceData.push({ basePos: new THREE.Vector3(...), phase: Math.random() * Math.PI * 2 }); }` — then inside `startFrame((frameCount) => { ... })`, loop over that array once per frame, compute each instance's updated matrix from its stored base data plus the current time/frameCount, call `inst.setMatrixAt(i, dummy.matrix)` for each one, and set `inst.instanceMatrix.needsUpdate = true;` once after the loop (not per instance) before `renderer.render(scene, camera)`. This is the instanced equivalent of updating each individual mesh's `.position`/`.rotation` per frame — never abandon instancing for repeated elements just because they need independent motion.",
             "Keep the scene self-contained."
         ]),
         'svg' => implode(' ', [
@@ -277,14 +279,23 @@ function art_piece_preflight_code(string $engine, string $code): string
         }
 
         // A loop creating one `new THREE.Mesh(...)` per iteration ("denser
-        // hair/beard/particles") for hundreds of items produces thousands
+        // hair/beard/particles") for thousands of items produces thousands
         // of individual geometry buffers and draw calls — this has been
         // observed to exhaust WebGL resources (a silent context loss, with
         // no error and no canvas ever marked ready) well within capture's
         // timeout, on real saved pieces. Cap the total count rather than
         // waiting longer for a renderer that will never come up.
+        //
+        // 1000 (not the original 150) is calibrated against real data: an
+        // audit of every currently-live Three.js piece in production found
+        // counts ranging 2-578, several already exceeding the original 150
+        // (up to 578) with confirmed-successful rendering/thumbnails. 150
+        // was rejecting already-working pieces; 1000 leaves real headroom
+        // above the observed working maximum while still firmly rejecting
+        // the kind of runaway case that motivated this check in the first
+        // place (2,388 objects from an uncontrolled "denser" loop).
         $meshCount = art_piece_count_three_object_calls($validatedCode);
-        if ($meshCount > 150) {
+        if ($meshCount > 1000) {
             throw new RuntimeException("Generated Three.js code creates {$meshCount} individual mesh/points/line objects, which will exhaust WebGL resources on real devices. For repeated elements (hair strands, particles, etc.), use a single THREE.InstancedMesh or a merged BufferGeometry instead of one object per item.");
         }
     }

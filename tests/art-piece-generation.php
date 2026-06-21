@@ -158,22 +158,28 @@ test('three rejects window.sketch that is referenced but never assigned', functi
     assert_throws(fn() => art_piece_preflight_code('three', "if (typeof window.sketch === 'function') { console.log('noop'); }"), 'window.sketch');
 });
 
-// 14. three rejects a loop that creates hundreds of mesh objects at runtime
+// 14. three rejects a loop that creates thousands of mesh objects at runtime
 // (regression guard: this is the real bug found on a saved piece — one
-// source-level `new THREE.Mesh(...)` call site inside
-// `for (let i = 0; i < 900; i++) { ... }` creates 900 objects at runtime,
-// which a flat source-text count of call sites would completely miss; this
-// has been observed to exhaust WebGL resources on real devices, a silent
-// context loss with no error and no canvas ever marked ready,
-// indistinguishable from a slow-loading CDN until you read the actual code)
-test('three rejects a loop creating hundreds of mesh objects at runtime', function () {
-    $code = "window.sketch = (runtime) => {\n  for (let i = 0; i < 900; i++) {\n    const strand = new THREE.Mesh(geo, mat);\n    root.add(strand);\n  }\n};";
+// source-level `new THREE.Mesh(...)` call site inside a large loop creates
+// that many objects at runtime, which a flat source-text count of call
+// sites would completely miss; this has been observed to exhaust WebGL
+// resources on real devices, a silent context loss with no error and no
+// canvas ever marked ready, indistinguishable from a slow-loading CDN until
+// you read the actual code. Threshold is 1000, not the original 150 — an
+// audit of every currently-live Three.js piece found real, already-working
+// pieces up to 578 objects, so the loop count here (1200) must clear 1000,
+// not just be "large")
+test('three rejects a loop creating thousands of mesh objects at runtime', function () {
+    $code = "window.sketch = (runtime) => {\n  for (let i = 0; i < 1200; i++) {\n    const strand = new THREE.Mesh(geo, mat);\n    root.add(strand);\n  }\n};";
     assert_throws(fn() => art_piece_preflight_code('three', $code), 'InstancedMesh');
 });
 
-// 15. three allows a reasonable number of mesh objects, looped or flat
-test('three allows a reasonable number of mesh objects', function () {
-    $code = "window.sketch = (runtime) => {\n  for (let i = 0; i < 20; i++) {\n    const m = new THREE.Mesh(geo, mat);\n  }\n};";
+// 15. three allows a real-world dense-but-working object count (regression
+// guard for the threshold recalibration: 578 is the actual highest mesh
+// count among currently-live, already-rendering Three.js pieces — must not
+// be rejected)
+test('three allows a real-world dense object count (578)', function () {
+    $code = "window.sketch = (runtime) => {\n  for (let i = 0; i < 578; i++) {\n    const m = new THREE.Mesh(geo, mat);\n  }\n};";
     $result = art_piece_preflight_code('three', $code);
     assert_contains($result, 'window.sketch');
 });

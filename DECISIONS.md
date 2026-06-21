@@ -4114,5 +4114,106 @@ were a confirmed fix.
   real tokens on a live call — explicitly not claimed as fixed. The next
   real AI Refine attempt on a dense-element prompt is the actual test.
 
+---
+
+## 2026-06-21 — Recalibrated the mesh-count threshold and AI-call timeout against real production data; extended the InstancedMesh example for animated/size-varying instances
+
+### Context
+A second real 5-attempt AI Refine sequence on piece 83 (same prompt as the
+entry above) failed all 5 attempts again, but this time gave concrete,
+checkable evidence that two of the previous entry's own fixes were
+themselves miscalibrated — acted on real data this time, not estimates.
+
+### Investigation (all verified directly against production, not assumed)
+- Pulled the 3 newest draft attempts that produced code: all 3 hashed to
+  genuinely different content (ruled out a caching/dedup bug) but converged
+  on an identical 578-object count — the model consistently regenerating a
+  stable design, not a bug.
+- **Audited every currently-live (non-draft, `current_version`) Three.js
+  piece in production**: 22 pieces, mesh counts ranging 2-578. **3 already
+  exceeded the 150 threshold** (175, 204, 578) — all with successful
+  thumbnails (confirmed rendering). Piece 83's own original, pre-validation,
+  already-working baseline is itself exactly 578 objects — the same count
+  the validator added last entry was rejecting on every refinement of that
+  same piece. The 150 figure had never been checked against any real piece.
+- Read the actual generated code for one 578-object attempt: the model DID
+  use `THREE.InstancedMesh`+`setMatrixAt` (the new guidance partially
+  worked) for the "top hair" element, but left beard (350) and mustache
+  (120) as individual `new THREE.Mesh()` per strand. Reading that loop body
+  showed exactly why: each strand has a *different geometry* (`size = 0.02
+  + Math.random() * 0.04`, varying radius/height) and per-strand animation
+  state (`strand.userData = { phase: Math.random() * Math.PI * 2, ... }`)
+  for individual sway — neither pattern was covered by the worked example
+  added last entry (which only showed static, one-time, uniform-scale
+  instance setup).
+- Cross-checked `audit_log_events` for the exact 5 attempts: attempts 2 and
+  4 (both repairs specifically asked to restructure to instancing) timed
+  out at exactly `120002ms` — Guzzle's configured ceiling, hit on the nose
+  both times. Attempts 1, 3, 5 (simpler "regenerate" tasks) completed in
+  45-87 seconds. Direct evidence the *harder* restructuring task is what's
+  consistently slow — not request timing/spacing. The user independently
+  tested waiting 60+ seconds between attempts 3 and 4 (well over the 30s
+  cooldown from last entry) and still hit the identical timeout, which on
+  its own conclusively disproves "retried too soon" — documented here so
+  it isn't re-litigated.
+
+### Implemented
+- **Mesh-count threshold** (`art_piece_preflight_code()`,
+  `art-piece-generation.php`): raised from 150 to **1000** — real headroom
+  above the observed working maximum (578), while still firmly rejecting
+  the earlier session's actual disaster case (2,388 objects).
+- **`AiProviderClient`** (`public/app/lib/Ai/AiProviderClient.php`): added
+  an optional `?float $timeoutOverride = null` constructor parameter,
+  defaulting to the exact existing `120.0` when omitted — every other
+  caller (piece generation, `ai_process_text`, `ai_describe_image`) is
+  completely unaffected. Only `refineAi()`'s instantiation passes `180.0`,
+  using a named argument (`timeoutOverride: 180.0`) specifically to avoid
+  needing to pass `null` positionally for the unrelated `$client`
+  dependency-injection parameter. `refineAi()`'s own `set_time_limit()`
+  raised from 150 to 220 to leave buffer above the longer AI-call ceiling.
+- **Worked InstancedMesh example** (same `'three'` system-prompt guidance):
+  extended with two more concrete patterns, directly targeting the gap
+  just read in the real code — (1) simulating per-instance geometry-size
+  variation via non-uniform `dummy.scale.set(x, y, z)` on a shared base
+  geometry instead of a different geometry per instance, and (2) updating
+  every instance's matrix once per frame inside `startFrame`'s handler
+  (`setMatrixAt` per instance, then a single `instanceMatrix.needsUpdate =
+  true`) for per-instance independent animation — the instanced equivalent
+  of updating each individual mesh's `.position`/`.rotation` per frame.
+
+### Ruled out
+- Pursuing the "retried too soon" theory further, or changing the cooldown
+  timer itself — the user's own 60+ second wait test directly disproved it;
+  no code change follows from a disproven premise. The cooldown stays as a
+  harmless, already-shipped debounce, with this finding documented so it
+  isn't mistaken for unresolved.
+- Raising `AiProviderClient`'s timeout globally — scoped to a per-call
+  override specifically so every other AI feature's behavior and timing
+  budget (e.g. `generate()`'s own 5-attempt loop and its separate 660s
+  limit) stays exactly as it was.
+
+### Verification
+- `php -l` on `art-piece-generation.php`, `AiProviderClient.php`,
+  `PiecesAdminController.php`: all clean.
+- `tests/art-piece-generation.php`: 59/59 pass — updated the existing
+  "rejects hundreds of mesh objects" regression test from a 900-loop (which
+  would no longer exceed the new 1000 threshold) to 1200, and replaced the
+  "allows a reasonable number" test with one asserting the real observed
+  maximum (578 objects) explicitly passes.
+- `tests/ai-provider-client.php`: 11/11 still pass — confirmed the new
+  optional constructor parameter doesn't disturb the existing
+  dependency-injected `$client` test path.
+- Directly re-ran `art_piece_count_three_object_calls()` and
+  `art_piece_preflight_code()` against piece 83's actual real, currently-
+  saved baseline code (pulled fresh from the DB, not the earlier session's
+  cached number) — confirmed it now passes at the new threshold.
+- Re-read the extended worked example for correctness; cannot verify the
+  model's actual compliance (does it now instance beard/mustache too; does
+  180s fully resolve the timeout) without spending the user's real tokens
+  on a live call. The next real AI Refine attempt on piece 83 is the actual
+  test — if it still fails identically, the threshold/timeout fixes above
+  did not address it and this needs another look at real data, not another
+  guess.
+
 
 

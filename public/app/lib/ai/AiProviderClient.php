@@ -18,7 +18,13 @@ class AiProviderClient
     private string $apiKey;
     private Client $client;
 
-    public function __construct(string $vendor, string $model, ?string $endpointKind, string $apiKey, ?Client $client = null)
+    // $timeoutOverride defaults to null, preserving the exact 120.0s
+    // default for every existing caller (piece generation, ai_process_text,
+    // ai_describe_image, etc.) — only callers that explicitly need more
+    // time for a genuinely harder request (AI Refine's repair-style
+    // attempts, which real timing data showed can need more than 120s to
+    // restructure code) pass a longer value.
+    public function __construct(string $vendor, string $model, ?string $endpointKind, string $apiKey, ?Client $client = null, ?float $timeoutOverride = null)
     {
         $this->vendor = $vendor;
         $this->model = $model;
@@ -28,7 +34,7 @@ class AiProviderClient
         }
         $this->apiKey = $apiKey;
         $this->client = $client ?? new Client([
-            'timeout' => 120.0,
+            'timeout' => $timeoutOverride ?? 120.0,
             'connect_timeout' => 10.0,
         ]);
     }
