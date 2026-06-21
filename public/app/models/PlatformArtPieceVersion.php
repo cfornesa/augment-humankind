@@ -9,13 +9,37 @@ class PlatformArtPieceVersion
                     v.generation_vendor, v.generation_model, v.validation_status,
                     v.generation_attempt_count, v.notes, v.created_at,
                     v.ai_profile_id, v.ai_persona_id,
+                    v.is_draft_attempt, v.attempt_sequence_token,
                     uavs.profile_name AS ai_profile_name,
                     ap.name AS ai_persona_name";
 
     private const SELECT_JOINS = "LEFT JOIN user_ai_vendor_settings uavs ON uavs.id = v.ai_profile_id
              LEFT JOIN ai_personas ap ON ap.id = v.ai_persona_id";
 
+    // Excludes is_draft_attempt rows by default — these are AI Refine
+    // scratch attempts (see the 2026-06-21 migration), not real version
+    // history, and must never appear to a non-admin audience (public piece
+    // pages, the API, the immersive viewer). The admin Versions list is the
+    // one place that intentionally wants to see them — use
+    // allForPieceIncludingDrafts() there instead.
     public static function allForPiece(int $pieceId): array
+    {
+        if (!self::tableExists()) {
+            return [];
+        }
+
+        $stmt = db()->prepare(
+            "SELECT " . self::SELECT_COLUMNS . "
+             FROM art_piece_versions v
+             " . self::SELECT_JOINS . "
+             WHERE v.art_piece_id = ? AND v.is_draft_attempt = 0
+             ORDER BY v.version_number DESC, v.created_at DESC"
+        );
+        $stmt->execute([$pieceId]);
+        return $stmt->fetchAll();
+    }
+
+    public static function allForPieceIncludingDrafts(int $pieceId): array
     {
         if (!self::tableExists()) {
             return [];
@@ -56,8 +80,9 @@ class PlatformArtPieceVersion
                 (art_piece_id, version_number, prompt, structured_spec,
                  html_code, css_code, generated_code, engine,
                  generation_vendor, generation_model, validation_status,
-                 generation_attempt_count, notes, ai_profile_id, ai_persona_id)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                 generation_attempt_count, notes, ai_profile_id, ai_persona_id,
+                 is_draft_attempt, attempt_sequence_token)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
         );
         $stmt->execute([
             $data['art_piece_id'],
@@ -73,8 +98,10 @@ class PlatformArtPieceVersion
             $data['validation_status'] ?? 'validated',
             $data['generation_attempt_count'] ?? 1,
             $data['notes'] ?? null,
-            $data['ai_profile_id'] ?: null,
-            $data['ai_persona_id'] ?: null,
+            isset($data['ai_profile_id']) ? ($data['ai_profile_id'] ?: null) : null,
+            isset($data['ai_persona_id']) ? ($data['ai_persona_id'] ?: null) : null,
+            isset($data['is_draft_attempt']) ? (int)(bool) $data['is_draft_attempt'] : 0,
+            $data['attempt_sequence_token'] ?? null,
         ]);
         return (int) db()->lastInsertId();
     }
@@ -102,8 +129,8 @@ class PlatformArtPieceVersion
             $data['validation_status'] ?? 'validated',
             $data['generation_attempt_count'] ?? 1,
             $data['notes'] ?? null,
-            $data['ai_profile_id'] ?: null,
-            $data['ai_persona_id'] ?: null,
+            isset($data['ai_profile_id']) ? ($data['ai_profile_id'] ?: null) : null,
+            isset($data['ai_persona_id']) ? ($data['ai_persona_id'] ?: null) : null,
             $id,
         ]);
     }
@@ -112,6 +139,33 @@ class PlatformArtPieceVersion
     {
         $stmt = db()->prepare('DELETE FROM art_piece_versions WHERE id = ?');
         $stmt->execute([$id]);
+    }
+
+    // Flips a draft-attempt row into a real, current-eligible version when
+    // the user accepts a successful AI Refine attempt — deliberately
+    // narrow (just is_draft_attempt + prompt) rather than reusing the
+    // generic update(), so the admin's hand-edit form's behavior can never
+    // be affected by this internal bookkeeping field.
+    public static function promoteDraftToCurrent(int $id, ?string $prompt): void
+    {
+        $stmt = db()->prepare(
+            'UPDATE art_piece_versions SET is_draft_attempt = 0, prompt = ? WHERE id = ?'
+        );
+        $stmt->execute([$prompt, $id]);
+    }
+
+    // Deletes every draft-attempt row sharing $sequenceToken except
+    // $exceptId (the attempt being promoted to current) — the "delete
+    // failed siblings once one succeeds" cleanup. Only ever targets rows
+    // still flagged is_draft_attempt = 1, so an already-promoted version
+    // can never be accidentally swept up.
+    public static function deleteBySequenceToken(int $pieceId, string $sequenceToken, int $exceptId): void
+    {
+        $stmt = db()->prepare(
+            'DELETE FROM art_piece_versions
+             WHERE art_piece_id = ? AND attempt_sequence_token = ? AND is_draft_attempt = 1 AND id != ?'
+        );
+        $stmt->execute([$pieceId, $sequenceToken, $exceptId]);
     }
 
     public static function nextVersionNumber(int $pieceId): int

@@ -317,6 +317,7 @@ $adminRoutes = [
     ['POST', '/admin/pieces/([0-9]+)/versions/([0-9]+)/edit', [PiecesAdminController::class, 'versionUpdate']],
     ['POST', '/admin/pieces/([0-9]+)/versions/([0-9]+)/delete', [PiecesAdminController::class, 'versionDelete']],
     ['POST', '/admin/pieces/([0-9]+)/versions/([0-9]+)/set-current', [PiecesAdminController::class, 'versionSetCurrent']],
+    ['POST', '/admin/pieces/([0-9]+)/versions/([0-9]+)/fork', [PiecesAdminController::class, 'versionFork']],
 
     ['GET',  '/admin/platform-collections',         [PlatformCollectionsAdminController::class, 'index']],
     ['POST', '/admin/platform-collections/reorder', [PlatformCollectionsAdminController::class, 'reorder']],

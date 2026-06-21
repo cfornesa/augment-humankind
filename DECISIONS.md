@@ -3888,5 +3888,130 @@ in this thread, and distinct from the earlier "Load failed" network error
   prompted this fix, which defeats the purpose. Flagging this explicitly:
   the next real AI Refine attempt on piece 83 is the actual verification.
 
+---
+
+## 2026-06-21 — Client-driven multi-attempt AI Refine retry, with every attempt persisted as a salvageable draft version
+
+### Context
+`refineAi()` previously burned up to 5 AI attempts automatically inside one
+HTTP request, with no visibility or control, and no record of a failed
+attempt's code once the request ended. The user wants explicit control over
+spending (a styled popup after each failure asking whether to spend
+another attempt, up to 5 total) and a guarantee that tokens spent on any
+attempt — successful or not — are never silently thrown away: every
+attempt's code is persisted as a real, viewable, editable version that can
+never become the piece's current version. Confirmed via planning Q&A: one
+version row per attempt (not one row overwritten across retries); on
+eventual Accept, the failed siblings from that same sequence are deleted.
+Explicitly scoped to AI Refine only this pass — piece generation's existing
+session-flash draft mechanism is untouched, though the new schema is named
+generically so generation can adopt the same pattern later.
+
+### Schema change (explicit sign-off obtained, then run live against production)
+`docs/migrations/2026-06-21-art-piece-version-draft-attempts.sql` adds two
+columns to `art_piece_versions`: `is_draft_attempt` (TINYINT(1), default 0)
+and `attempt_sequence_token` (VARCHAR(36), nullable, indexed) — both
+additive/defaulted, so every existing row is unaffected. Ran directly
+against the live production DB with explicit user approval (mirroring the
+2026-06-21 `art_piece_count_three_object_calls` migration's approval
+pattern); verified via `INFORMATION_SCHEMA` afterward.
+
+### Implemented
+- **`refineAi()`** (`PiecesAdminController.php`): removed the internal
+  `while` loop entirely (and the just-shipped 240s wall-clock guard, which
+  only existed to bound that loop — intentionally superseded, not an
+  oversight, since one attempt at this vendor/model's observed pace
+  comfortably fits inside both `set_time_limit` and the suspected
+  infrastructure timeout). Now does exactly one attempt per call, accepting
+  `attempt_number`/`previous_raw_response`/`last_error`/`sequence_token`/
+  `piece_id` from the client and building the attempt-1 or repair prompt
+  accordingly. Defensively re-caps `attempt_number` server-side rather than
+  trusting the client alone. As soon as code is actually extracted from the
+  AI's response (whether or not it then passes validation), persists it via
+  new `persistDraftAttempt()` as an `is_draft_attempt` version row — so a
+  rejected attempt (e.g. the mesh-count check from the prior entry firing)
+  still leaves something salvageable. Both success and failure JSON
+  responses now carry `draft_version_id`/`attempt_number`/`can_retry`.
+- **`refineSave()`**: on Accept, if a `draft_version_id` is supplied and
+  resolves to a usable draft row for this piece, re-writes its code (the
+  admin can hand-edit the proposed code in the textareas before accepting,
+  so the draft's originally-stored content isn't guaranteed to still
+  match) and promotes it via new `PlatformArtPieceVersion::promoteDraftToCurrent()`
+  instead of inserting a duplicate row. Falls back to the original
+  insert-new behavior if no usable draft is given (older client, or no
+  piece existed yet when the attempt ran). Deletes the sequence's other
+  draft rows via new `deleteBySequenceToken()` — only on this success path,
+  never on Reject or abandonment, per the explicit "never waste tokens"
+  intent.
+- **`versionSetCurrent()`**: added a defense-in-depth server-side guard
+  rejecting any attempt to revert to a draft-attempt row, independent of
+  the UI already hiding that button — a stale tab or direct POST must never
+  be able to make a draft current.
+- **New `versionFork()`** (+ route `POST /admin/pieces/{id}/versions/{vid}/fork`):
+  "revive it as a new piece" — copies a version's (typically a draft
+  attempt's) code into a brand-new, fully independent `art_pieces` row
+  (status `draft`, since the source may be an unvalidated failed attempt),
+  reusing `PlatformArtPiece::create()`/`PlatformArtPieceVersion::create()`
+  directly rather than any new abstraction.
+- **`versions.php`**: shows a "Draft attempt — not revertible" badge, hides
+  Revert, and adds "Fork as New Piece" for `is_draft_attempt` rows. Admin's
+  `versions()` controller method now calls new
+  `allForPieceIncludingDrafts()` instead of `allForPiece()` — the one place
+  that should see them.
+- **`form.php`**: `requestAiRefine()` now starts a sequence
+  (`crypto.randomUUID()` token, attempt 1) and hands off to new
+  `performRefineAttempt(ctx)`, which both the initial click and every "Try
+  Again" call into. A failed attempt shows a new
+  `dialog#refine-attempt-failed-dialog` (reusing the existing
+  `.inline-create-dialog` CSS/JS pattern from `exhibits/form.php`/`main.js`'s
+  `openInlineCreateDialog()` — no new visual design) with "Attempt N of 5
+  failed" and Try Again/Give Up. Give Up needs no field reset: confirmed by
+  reading the existing code that textareas are never written to until a
+  *successful* attempt's code is shown for review, so an abandoned sequence
+  already leaves them untouched. Accept now threads `draft_version_id`/
+  `sequence_token` through to `refine-save`.
+- **Audited every other read of `art_piece_versions`** for draft exposure:
+  the one real risk found was `PlatformArtPiece::attachCurrentVersion()` —
+  the shared loader behind nearly every piece-fetching method (admin and
+  public), with no draft filter and a `$versions[0]` fallback that could
+  have silently treated a draft as "current" for a piece where every
+  attempt so far had failed. Added `AND v.is_draft_attempt = 0` there,
+  fixing every caller (public pages, the embed API, the immersive viewer,
+  the admin edit form) from one place. By-id lookups (`find($versionId)`,
+  used for explicit Preview/Edit of a specific version including drafts)
+  were correctly left unfiltered — filtering those would have broken
+  Preview/Edit for draft rows entirely.
+- **Drive-by fix**: `PlatformArtPieceVersion::create()`/`update()` used
+  `$data['ai_profile_id'] ?: null` (and `ai_persona_id`) — `?:` doesn't
+  suppress the "undefined array key" warning the way `??` does, so any
+  caller omitting these keys (including the new test/verification script)
+  triggered PHP warnings. Found this firsthand while live-verifying the new
+  model methods, not by inspection; fixed both methods to check `isset()`
+  first while preserving the exact existing falsy-to-null behavior for
+  callers that do pass the key.
+
+### Verification
+- `php -l` on every touched PHP file; extracted and `node --check`'d the
+  JS inside `form.php` (PHP interpolations stubbed to literals first, since
+  `php -l` only validates the PHP tags and would not have caught a JS
+  syntax error in the embedded script).
+- `tests/art-piece-generation.php`: 59/59 still pass (this feature's PHP
+  changes are controller/model logic with real side effects, not new pure
+  functions — consistent with this project's existing testing convention,
+  DB-touching verification was done live rather than forced into that
+  harness).
+- With explicit user approval, ran a standalone script against the live
+  production DB: created a temporary test piece, simulated a failed +
+  successful draft attempt sharing one sequence token, verified
+  `allForPiece()` excludes both drafts while `allForPieceIncludingDrafts()`
+  includes both, verified `current_version`/`version_count` are draft-safe
+  even with drafts present, promoted the successful draft and confirmed the
+  failed sibling was deleted and `current_version_id` updated correctly,
+  then deleted the temporary piece. All assertions passed; this is also
+  what surfaced the `?:`-vs-`??` warning fixed above.
+- Could not exercise the new dialog UI or a live "Try Again" click flow in
+  a real browser this session — no browser automation tool was available.
+  The next real AI Refine attempt is the actual end-to-end verification.
+
 
 

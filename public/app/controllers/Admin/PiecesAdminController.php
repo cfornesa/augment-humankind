@@ -288,7 +288,7 @@ class PiecesAdminController
             header('Location: /admin/pieces');
             exit;
         }
-        $versions = PlatformArtPieceVersion::allForPiece((int) $id);
+        $versions = PlatformArtPieceVersion::allForPieceIncludingDrafts((int) $id);
         require dirname(__DIR__, 2) . '/views/admin/pieces/versions.php';
     }
 
@@ -387,8 +387,60 @@ class PiecesAdminController
     public static function versionSetCurrent(string $id, string $vid): void
     {
         admin_check();
+        // Defense in depth: the Versions UI already hides Revert for
+        // draft-attempt rows, but this guards the endpoint itself against
+        // a stale tab or a direct POST — an AI Refine draft attempt must
+        // never become the piece's current version except via the
+        // explicit Accept flow (refineSave(), which promotes it properly).
+        $version = PlatformArtPieceVersion::find((int) $vid);
+        if ($version && (int) ($version['is_draft_attempt'] ?? 0) === 1) {
+            header('Location: /admin/pieces/' . $id . '/versions');
+            exit;
+        }
         PlatformArtPiece::updateCurrentVersion((int) $id, (int) $vid);
         header('Location: /admin/pieces/' . $id . '/versions');
+        exit;
+    }
+
+    // "Revive it as a new piece" — lets the admin salvage a non-revertible
+    // draft attempt (or any version) by copying its code into a brand new,
+    // fully independent art_pieces row, rather than only being able to
+    // hand-edit it in place on the original piece. Created as 'draft'
+    // status (not immediately public) since the source code may be a
+    // failed attempt that was never validated as renderable.
+    public static function versionFork(string $id, string $vid): void
+    {
+        admin_check();
+        $piece = PlatformArtPiece::find((int) $id);
+        if (!$piece) {
+            header('Location: /admin/pieces');
+            exit;
+        }
+        $version = PlatformArtPieceVersion::find((int) $vid);
+        if (!$version || (int) $version['art_piece_id'] !== (int) $id) {
+            header('Location: /admin/pieces/' . $id . '/versions');
+            exit;
+        }
+
+        $engine = $version['engine'] ?? ($piece['engine'] ?? 'p5');
+        $newPieceId = PlatformArtPiece::create([
+            'title' => trim((string) ($piece['title'] ?? 'Untitled')) . ' (forked from v' . (int) $version['version_number'] . ')',
+            'prompt' => $version['prompt'] ?? null,
+            'engine' => $engine,
+            'status' => 'draft',
+        ]);
+        $newVersionId = PlatformArtPieceVersion::create([
+            'art_piece_id' => $newPieceId,
+            'version_number' => 1,
+            'prompt' => $version['prompt'] ?? null,
+            'html_code' => $version['html_code'] ?? null,
+            'css_code' => $version['css_code'] ?? null,
+            'generated_code' => $version['generated_code'] ?? null,
+            'engine' => $engine,
+        ]);
+        PlatformArtPiece::updateCurrentVersion($newPieceId, $newVersionId);
+
+        header('Location: /admin/pieces/' . $newPieceId . '/edit');
         exit;
     }
 
@@ -1256,9 +1308,29 @@ class PiecesAdminController
         }
     }
 
+    // Performs exactly ONE AI Refine attempt per call — the caller (the
+    // edit form's JS) drives whether to spend another attempt, showing the
+    // failure and asking before any further tokens are spent, instead of
+    // this method silently burning up to ART_PIECE_MAX_ATTEMPTS automatic
+    // retries in one request. This also incidentally fixes the risk of a
+    // long chained-attempts request outliving this app's hosting
+    // infrastructure's own connection timeout (previously mitigated with a
+    // 240s in-loop budget check, now moot since there is no more loop to
+    // bound — one attempt at this AI vendor/model's observed pace, ~20-120s
+    // per audit_log_events, comfortably fits inside both this script's own
+    // set_time_limit and that external timeout).
+    //
+    // Every attempt that produces extracted code — whether it then passes
+    // or fails validation — is persisted immediately as its own
+    // is_draft_attempt version row, grouped by the client-supplied
+    // sequence_token, so a partially-good failed attempt's tokens are never
+    // just thrown away (the user can inspect, hand-edit, or fork it later
+    // from the Versions list). Attempts that fail before producing any code
+    // at all (an API error, a truncated response with nothing extractable)
+    // have nothing concrete to persist and create no row.
     public static function refineAi(): void
     {
-        set_time_limit(660); // 5 attempts × 2 min + buffer
+        set_time_limit(150); // one attempt at this vendor/model's observed pace (~20-120s) + buffer
         admin_check();
         header('Content-Type: application/json; charset=utf-8');
         $startedAt = microtime(true);
@@ -1267,6 +1339,10 @@ class PiecesAdminController
         if (!$limit['allowed']) {
             self::emitRateLimitedJson('ai_refine_piece', (int) $limit['retry_after'], $actorId);
         }
+
+        $previousRawResponse = null;
+        $attemptNumber = 1;
+        $draftVersionId = null;
 
         try {
             $input = json_decode(file_get_contents('php://input'), true) ?? [];
@@ -1278,12 +1354,25 @@ class PiecesAdminController
             $css = (string) ($input['css_code'] ?? '');
             $js = (string) ($input['generated_code'] ?? '');
             $originalPrompt = trim((string) ($input['original_prompt'] ?? ''));
+            $pieceId = (int) ($input['piece_id'] ?? 0);
+            $attemptNumber = max(1, (int) ($input['attempt_number'] ?? 1));
+            $clientPreviousRawResponse = $input['previous_raw_response'] !== null && $input['previous_raw_response'] !== ''
+                ? (string) ($input['previous_raw_response'] ?? '')
+                : null;
+            $clientLastError = trim((string) ($input['last_error'] ?? ''));
+            $sequenceToken = trim((string) ($input['sequence_token'] ?? ''));
 
             if ($prompt === '') {
                 throw new InvalidArgumentException('Prompt is required.');
             }
             if ($profileId <= 0) {
                 throw new InvalidArgumentException('Please select an active AI profile.');
+            }
+            // Defensive cap — don't trust the client alone to stop at 5;
+            // a tampered or buggy client retrying past the limit would
+            // otherwise keep spending tokens indefinitely.
+            if ($attemptNumber > ART_PIECE_MAX_ATTEMPTS) {
+                throw new InvalidArgumentException("Maximum of " . ART_PIECE_MAX_ATTEMPTS . " attempts already reached.");
             }
 
             $profile = UserAiVendorSettings::find($profileId);
@@ -1300,148 +1389,115 @@ class PiecesAdminController
             $aiClient = new \App\Lib\Ai\AiProviderClient($profile['vendor'], $profile['model'], $profile['endpoint_kind'], $apiKey);
             $persona = self::findPersonaById($personaId);
 
-            $attemptCount = 0;
-            $success = false;
-            $htmlCode = '';
-            $cssCode = '';
-            $generatedCode = '';
-            $plan = '';
-            $previousRawResponse = null;
-            $lastError = '';
+            $systemPrompt = art_piece_refine_system_prompt($engine);
+            if ($persona) {
+                $systemPrompt .= "\n\nPersona guidance:\n" . trim((string) $persona['system_prompt']) . "\n\nUse the persona to influence style and creative direction, but still obey all engine, safety, and output-format requirements.";
+            }
 
-            while ($attemptCount < ART_PIECE_MAX_ATTEMPTS) {
-                // Real attempts on this AI vendor/model have taken anywhere
-                // from ~20s to ~120s each (per audit_log_events), so 5
-                // sequential attempts can run well past this app's hosting
-                // infrastructure's own proxy/PHP-FPM request timeout — a
-                // limit this script has no visibility into and cannot
-                // extend with set_time_limit() alone. When that external
-                // timeout fires mid-request, the connection gets killed and
-                // the client receives a non-JSON error page it can't parse
-                // (a cryptic browser-native error instead of a real
-                // message). Never skip the first attempt — only stop
-                // *starting new* attempts once already deep into the
-                // budget, so a slow-but-working single attempt always gets
-                // to finish and return clean, valid JSON well before any
-                // external timeout, even if that means fewer self-healing
-                // retries than the full 5.
-                if ($attemptCount >= 1 && (microtime(true) - $startedAt) > 240) {
-                    $lastError = $lastError !== ''
-                        ? $lastError . ' (stopped retrying after ~4 minutes total to return a response before an infrastructure timeout could cut the connection)'
-                        : 'The request ran too long without completing a usable attempt and was stopped to return a response before an infrastructure timeout could cut the connection.';
-                    break;
+            if ($attemptNumber === 1) {
+                $userPromptForApi = art_piece_refine_user_prompt($engine, $prompt, $html, $css, $js, $originalPrompt ?: null);
+            } else {
+                $userPromptForApi = art_piece_refine_repair_prompt($engine, $prompt, $clientPreviousRawResponse, $clientLastError !== '' ? $clientLastError : 'Unknown failure', $html, $css, $js);
+            }
+
+            // suppressPlanningPreamble=false: the PLAN+PATCH protocol
+            // requires a PLAN section — leaving the old "skip planning
+            // notes" instruction on (correct for fresh generation, which
+            // calls this same client) would directly contradict it.
+            // maxTokensOverride is raised because a patch's output cost
+            // is structurally higher than fresh generation's: every
+            // patch reproduces a verbatim SEARCH anchor on top of its
+            // REPLACE content.
+            $res = $aiClient->generate($systemPrompt, $userPromptForApi, suppressPlanningPreamble: false, maxTokensOverride: 24576);
+            if (!$res['ok']) {
+                throw new RuntimeException($res['error'] ?? 'API error');
+            }
+            if (\App\Lib\Ai\AiProviderClient::finishReasonMeansTruncated($res['finishReason'] ?? null)) {
+                $previousRawResponse = $res['text'];
+                throw new RuntimeException("The AI's response was cut off before finishing (token limit reached) — try a smaller, more specific instruction.");
+            }
+
+            $rawText = $res['text'];
+            $previousRawResponse = $rawText;
+
+            // Apply the AI's patches against the ORIGINAL code (not a
+            // regenerated file) — anything not named in a patch is
+            // carried forward unchanged, which is the actual guarantee
+            // that an unscoped refinement can't quietly rewrite the rest
+            // of the piece.
+            $patches = art_piece_extract_refine_patches($rawText);
+
+            // A response with zero patches across every file is not
+            // a legitimate "nothing needed changing" outcome here —
+            // the admin always asked for a real, visible change. Left
+            // unchecked this silently "succeeds" by returning the
+            // original code untouched, which is indistinguishable
+            // from the refinement never having happened at all.
+            if (!$patches['html'] && !$patches['css'] && !$patches['js']) {
+                throw new RuntimeException('AI response contained no valid PATCH blocks in the required format — at least one PATCH is required to make the requested change.');
+            }
+
+            $extractedHtml = art_piece_apply_refine_patches($html, $patches['html']);
+            $extractedCss = art_piece_apply_refine_patches($css, $patches['css']);
+            $extractedJs = art_piece_apply_refine_patches($js, $patches['js']);
+
+            // From this point on we have real extracted code, even if a
+            // validation check below ultimately rejects it — persist it as
+            // a draft attempt now so a rejection further down still leaves
+            // something salvageable, rather than only persisting on the
+            // success path.
+            $draftVersionId = self::persistDraftAttempt(
+                $pieceId, $engine, $prompt, $extractedHtml, $extractedCss, $extractedJs,
+                $profileId, $personaId, $sequenceToken, $attemptNumber, 'pending'
+            );
+
+            if ($extractedHtml === '' && $engine !== 'svg') {
+                throw new RuntimeException('HTML is empty after applying patches');
+            }
+            if ($extractedJs !== '') {
+                art_piece_preflight_code($engine, $extractedJs);
+            } elseif ($engine !== 'svg') {
+                throw new RuntimeException('JavaScript is empty after applying patches');
+            }
+
+            // Canvas & SVG Preservation Constraints
+            if (in_array($engine, ['p5', 'c2', 'three'], true)) {
+                if (!empty($patches['html'])) {
+                    throw new RuntimeException('HTML changes are not allowed for p5, c2, and three engine types. The canvas is automatically managed. Focus your edits on CSS or JS instead.');
                 }
-                $attemptCount++;
-                $systemPrompt = art_piece_refine_system_prompt($engine);
-                if ($persona) {
-                    $systemPrompt .= "\n\nPersona guidance:\n" . trim((string) $persona['system_prompt']) . "\n\nUse the persona to influence style and creative direction, but still obey all engine, safety, and output-format requirements.";
+                if (preg_match('/(?:canvas|#container|#scene|#c2-canvas)\s*\{[^}]*\bdisplay\s*:\s*none\b/i', $extractedCss)) {
+                    throw new RuntimeException('CSS cannot hide the canvas or container element (display: none is forbidden).');
                 }
-
-                if ($attemptCount === 1) {
-                    $userPromptForApi = art_piece_refine_user_prompt($engine, $prompt, $html, $css, $js, $originalPrompt ?: null);
-                } else {
-                    $userPromptForApi = art_piece_refine_repair_prompt($engine, $prompt, $previousRawResponse, $lastError, $html, $css, $js);
-                }
-
-                // suppressPlanningPreamble=false: the PLAN+PATCH protocol
-                // requires a PLAN section — leaving the old "skip planning
-                // notes" instruction on (correct for fresh generation, which
-                // calls this same client) would directly contradict it.
-                // maxTokensOverride is raised because a patch's output cost
-                // is structurally higher than fresh generation's: every
-                // patch reproduces a verbatim SEARCH anchor on top of its
-                // REPLACE content.
-                $res = $aiClient->generate($systemPrompt, $userPromptForApi, suppressPlanningPreamble: false, maxTokensOverride: 24576);
-                if (!$res['ok']) {
-                    $lastError = $res['error'] ?? 'API error';
-                    continue;
-                }
-                if (\App\Lib\Ai\AiProviderClient::finishReasonMeansTruncated($res['finishReason'] ?? null)) {
-                    $lastError = "The AI's response was cut off before finishing (token limit reached) — try a smaller, more specific instruction.";
-                    $previousRawResponse = $res['text'];
-                    continue;
-                }
-
-                $rawText = $res['text'];
-                $previousRawResponse = $rawText;
-
-                // Apply the AI's patches against the ORIGINAL code (not a
-                // regenerated file) — anything not named in a patch is
-                // carried forward unchanged, which is the actual guarantee
-                // that an unscoped refinement can't quietly rewrite the rest
-                // of the piece.
-                try {
-                    $patches = art_piece_extract_refine_patches($rawText);
-
-                    // A response with zero patches across every file is not
-                    // a legitimate "nothing needed changing" outcome here —
-                    // the admin always asked for a real, visible change. Left
-                    // unchecked this silently "succeeds" by returning the
-                    // original code untouched, which is indistinguishable
-                    // from the refinement never having happened at all.
-                    if (!$patches['html'] && !$patches['css'] && !$patches['js']) {
-                        throw new RuntimeException('AI response contained no valid PATCH blocks in the required format — at least one PATCH is required to make the requested change.');
-                    }
-
-                    $extractedHtml = art_piece_apply_refine_patches($html, $patches['html']);
-                    $extractedCss = art_piece_apply_refine_patches($css, $patches['css']);
-                    $extractedJs = art_piece_apply_refine_patches($js, $patches['js']);
-
-                    if ($extractedHtml === '' && $engine !== 'svg') {
-                        throw new RuntimeException('HTML is empty after applying patches');
-                    }
-                    if ($extractedJs !== '') {
-                        art_piece_preflight_code($engine, $extractedJs);
-                    } elseif ($engine !== 'svg') {
-                        throw new RuntimeException('JavaScript is empty after applying patches');
-                    }
-
-                    // Canvas & SVG Preservation Constraints
-                    if (in_array($engine, ['p5', 'c2', 'three'], true)) {
-                        if (!empty($patches['html'])) {
-                            throw new RuntimeException('HTML changes are not allowed for p5, c2, and three engine types. The canvas is automatically managed. Focus your edits on CSS or JS instead.');
-                        }
-                        if (preg_match('/(?:canvas|#container|#scene|#c2-canvas)\s*\{[^}]*\bdisplay\s*:\s*none\b/i', $extractedCss)) {
-                            throw new RuntimeException('CSS cannot hide the canvas or container element (display: none is forbidden).');
-                        }
-                        if (preg_match('/(?:canvas|#container|#scene|#c2-canvas)\s*\{[^}]*\bvisibility\s*:\s*hidden\b/i', $extractedCss)) {
-                            throw new RuntimeException('CSS cannot hide the canvas or container element (visibility: hidden is forbidden).');
-                        }
-                    }
-
-                    if ($engine === 'svg') {
-                        if (!preg_match('/<svg/i', $extractedHtml)) {
-                            throw new RuntimeException('HTML code must contain an <svg> element for SVG pieces.');
-                        }
-                        if (preg_match('/(?:svg|#container)\s*\{[^}]*\bdisplay\s*:\s*none\b/i', $extractedCss)) {
-                            throw new RuntimeException('CSS cannot hide the SVG or container element (display: none is forbidden).');
-                        }
-                        if (preg_match('/(?:svg|#container)\s*\{[^}]*\bvisibility\s*:\s*hidden\b/i', $extractedCss)) {
-                            throw new RuntimeException('CSS cannot hide the SVG or container element (visibility: hidden is forbidden).');
-                        }
-                    }
-
-                    // Success!
-                    $htmlCode = $extractedHtml;
-                    $cssCode = $extractedCss;
-                    $generatedCode = $extractedJs;
-                    $plan = art_piece_extract_refine_plan($rawText);
-                    $success = true;
-                    break;
-                } catch (Throwable $e) {
-                    $lastError = $e->getMessage();
+                if (preg_match('/(?:canvas|#container|#scene|#c2-canvas)\s*\{[^}]*\bvisibility\s*:\s*hidden\b/i', $extractedCss)) {
+                    throw new RuntimeException('CSS cannot hide the canvas or container element (visibility: hidden is forbidden).');
                 }
             }
 
-            if (!$success) {
-                throw new RuntimeException('All AI refinement attempts failed validation: ' . $lastError);
+            if ($engine === 'svg') {
+                if (!preg_match('/<svg/i', $extractedHtml)) {
+                    throw new RuntimeException('HTML code must contain an <svg> element for SVG pieces.');
+                }
+                if (preg_match('/(?:svg|#container)\s*\{[^}]*\bdisplay\s*:\s*none\b/i', $extractedCss)) {
+                    throw new RuntimeException('CSS cannot hide the SVG or container element (display: none is forbidden).');
+                }
+                if (preg_match('/(?:svg|#container)\s*\{[^}]*\bvisibility\s*:\s*hidden\b/i', $extractedCss)) {
+                    throw new RuntimeException('CSS cannot hide the SVG or container element (visibility: hidden is forbidden).');
+                }
             }
+
+            // Success! Mark the draft row's validation status accordingly —
+            // it stays a draft (is_draft_attempt = 1) until the user
+            // actually clicks Accept and refineSave() promotes it.
+            if ($draftVersionId !== null) {
+                self::updateDraftValidationStatus($draftVersionId, 'validated');
+            }
+            $plan = art_piece_extract_refine_plan($rawText);
 
             echo json_encode([
                 'success' => true,
-                'html_code' => $htmlCode,
-                'css_code' => $cssCode,
-                'generated_code' => $generatedCode,
+                'html_code' => $extractedHtml,
+                'css_code' => $extractedCss,
+                'generated_code' => $extractedJs,
                 // The AI's stated plan before patching, surfaced to the
                 // admin alongside the diff for the same before-acting
                 // visibility a plan gives.
@@ -1450,6 +1506,9 @@ class PiecesAdminController
                 // version that gets created when the accepted code is saved.
                 'profile_id' => $profileId,
                 'persona_id' => $personaId > 0 ? $personaId : null,
+                'draft_version_id' => $draftVersionId,
+                'sequence_token' => $sequenceToken,
+                'attempt_number' => $attemptNumber,
             ]);
             audit_log_event('ai_request', 'ai_refine_piece', 'success', [
                 'actor_admin_identity_id' => $actorId > 0 ? $actorId : null,
@@ -1460,7 +1519,9 @@ class PiecesAdminController
                     'model' => $profile['model'] ?? '',
                     'endpoint_kind' => $profile['endpoint_kind'] ?? '',
                     'engine' => $engine,
-                    'attempt_count' => $attemptCount,
+                    'attempt_number' => $attemptNumber,
+                    'sequence_token' => $sequenceToken,
+                    'draft_version_id' => $draftVersionId,
                     'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
                     // Truncated raw model response, so a future "succeeded
                     // but did nothing useful" report can be diagnosed from
@@ -1471,10 +1532,15 @@ class PiecesAdminController
             exit;
 
         } catch (Throwable $e) {
+            if ($draftVersionId !== null) {
+                self::updateDraftValidationStatus($draftVersionId, 'failed_attempt');
+            }
             audit_log_event('ai_request', 'ai_refine_piece', 'error', [
                 'actor_admin_identity_id' => $actorId > 0 ? $actorId : null,
                 'http_status' => 500,
                 'metadata' => [
+                    'attempt_number' => $attemptNumber,
+                    'draft_version_id' => $draftVersionId,
                     'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
                     'error' => $e->getMessage(),
                     'raw_response' => mb_substr((string) ($previousRawResponse ?? ''), 0, 4000),
@@ -1484,8 +1550,63 @@ class PiecesAdminController
             echo json_encode([
                 'success' => false,
                 'error' => $e->getMessage(),
+                'raw_response' => $previousRawResponse,
+                'draft_version_id' => $draftVersionId,
+                'attempt_number' => $attemptNumber,
+                'can_retry' => $attemptNumber < ART_PIECE_MAX_ATTEMPTS,
             ]);
             exit;
+        }
+    }
+
+    // Persists one AI Refine attempt's extracted code as a non-current,
+    // non-revertible draft version — called as soon as code has actually
+    // been extracted, before validation decides whether it's usable, so a
+    // later rejection still leaves something salvageable. Returns null
+    // (and persists nothing) when there's no piece to attach to yet, e.g.
+    // a not-yet-saved new piece — refine still works for that case, just
+    // without persistence, since there's nothing to attach a version to.
+    private static function persistDraftAttempt(
+        int $pieceId,
+        string $engine,
+        string $prompt,
+        string $html,
+        string $css,
+        string $js,
+        int $profileId,
+        int $personaId,
+        string $sequenceToken,
+        int $attemptNumber,
+        string $validationStatus
+    ): ?int {
+        if ($pieceId <= 0 || !PlatformArtPiece::find($pieceId)) {
+            return null;
+        }
+        return PlatformArtPieceVersion::create([
+            'art_piece_id' => $pieceId,
+            'version_number' => PlatformArtPieceVersion::nextVersionNumber($pieceId),
+            'prompt' => $prompt,
+            'html_code' => $html,
+            'css_code' => $css,
+            'generated_code' => $js,
+            'engine' => $engine,
+            'validation_status' => $validationStatus,
+            'generation_attempt_count' => $attemptNumber,
+            'ai_profile_id' => $profileId ?: null,
+            'ai_persona_id' => $personaId ?: null,
+            'is_draft_attempt' => true,
+            'attempt_sequence_token' => $sequenceToken ?: null,
+        ]);
+    }
+
+    private static function updateDraftValidationStatus(int $versionId, string $status): void
+    {
+        try {
+            db()->prepare('UPDATE art_piece_versions SET validation_status = ? WHERE id = ? AND is_draft_attempt = 1')
+                ->execute([$status, $versionId]);
+        } catch (Throwable) {
+            // Best-effort status label only — never let this break the
+            // actual refine response.
         }
     }
 
@@ -1525,6 +1646,15 @@ class PiecesAdminController
             $refinementPrompt = trim((string) ($input['refinement_prompt'] ?? ''));
             $profileId = (int) ($input['profile_id'] ?? 0) ?: null;
             $personaId = (int) ($input['persona_id'] ?? 0) ?: null;
+            // The successful attempt that produced this code already
+            // persisted itself as a draft version (refineAi()) — accepting
+            // it should promote that exact row to current rather than
+            // inserting a duplicate. Falls back to the legacy insert-new
+            // behavior below if no draft is given or it doesn't resolve
+            // (e.g. an older client, or the piece had no id yet when the
+            // attempt ran).
+            $draftVersionId = (int) ($input['draft_version_id'] ?? 0) ?: null;
+            $sequenceToken = trim((string) ($input['sequence_token'] ?? ''));
 
             if ($refinementPrompt === '') {
                 throw new InvalidArgumentException('Refinement prompt is required.');
@@ -1544,25 +1674,65 @@ class PiecesAdminController
                 exit;
             }
 
-            $versionNumber = PlatformArtPieceVersion::nextVersionNumber((int) $id);
-            $versionId = PlatformArtPieceVersion::create([
-                'art_piece_id' => (int) $id,
-                'version_number' => $versionNumber,
-                'prompt' => $refinementPrompt,
-                'structured_spec' => $currentVersion['structured_spec'] ?? null,
-                'html_code' => self::normalizeCode($html),
-                'css_code' => self::normalizeCode($css),
-                'generated_code' => self::normalizeCode($js),
-                'engine' => $currentVersion['engine'] ?? $piece['engine'],
-                'generation_vendor' => $currentVersion['generation_vendor'] ?? null,
-                'generation_model' => $currentVersion['generation_model'] ?? null,
-                'validation_status' => $currentVersion['validation_status'] ?? null,
-                'generation_attempt_count' => $currentVersion['generation_attempt_count'] ?? 0,
-                'notes' => 'Saved via AI Refine accept.',
-                'ai_profile_id' => $profileId,
-                'ai_persona_id' => $personaId,
-            ]);
-            PlatformArtPiece::updateCurrentVersion((int) $id, $versionId);
+            $draftVersion = $draftVersionId !== null ? PlatformArtPieceVersion::find($draftVersionId) : false;
+            $draftIsUsable = $draftVersion
+                && (int) $draftVersion['art_piece_id'] === (int) $id
+                && (int) ($draftVersion['is_draft_attempt'] ?? 0) === 1;
+
+            if ($draftIsUsable) {
+                // Re-write the draft's code too, not just promote it as-is —
+                // the admin can hand-edit the proposed code in the textareas
+                // before clicking Accept, so the draft's originally-stored
+                // attempt content isn't guaranteed to match what's being
+                // accepted here.
+                PlatformArtPieceVersion::update($draftVersionId, [
+                    'prompt' => $refinementPrompt,
+                    'structured_spec' => $currentVersion['structured_spec'] ?? null,
+                    'html_code' => self::normalizeCode($html),
+                    'css_code' => self::normalizeCode($css),
+                    'generated_code' => self::normalizeCode($js),
+                    'engine' => $draftVersion['engine'] ?? ($currentVersion['engine'] ?? $piece['engine']),
+                    'generation_vendor' => $currentVersion['generation_vendor'] ?? null,
+                    'generation_model' => $currentVersion['generation_model'] ?? null,
+                    'validation_status' => 'validated',
+                    'generation_attempt_count' => $draftVersion['generation_attempt_count'] ?? 1,
+                    'notes' => 'Saved via AI Refine accept.',
+                    'ai_profile_id' => $profileId,
+                    'ai_persona_id' => $personaId,
+                ]);
+                PlatformArtPieceVersion::promoteDraftToCurrent($draftVersionId, $refinementPrompt);
+                PlatformArtPiece::updateCurrentVersion((int) $id, $draftVersionId);
+                $versionId = $draftVersionId;
+                $versionNumber = (int) $draftVersion['version_number'];
+            } else {
+                $versionNumber = PlatformArtPieceVersion::nextVersionNumber((int) $id);
+                $versionId = PlatformArtPieceVersion::create([
+                    'art_piece_id' => (int) $id,
+                    'version_number' => $versionNumber,
+                    'prompt' => $refinementPrompt,
+                    'structured_spec' => $currentVersion['structured_spec'] ?? null,
+                    'html_code' => self::normalizeCode($html),
+                    'css_code' => self::normalizeCode($css),
+                    'generated_code' => self::normalizeCode($js),
+                    'engine' => $currentVersion['engine'] ?? $piece['engine'],
+                    'generation_vendor' => $currentVersion['generation_vendor'] ?? null,
+                    'generation_model' => $currentVersion['generation_model'] ?? null,
+                    'validation_status' => $currentVersion['validation_status'] ?? null,
+                    'generation_attempt_count' => $currentVersion['generation_attempt_count'] ?? 0,
+                    'notes' => 'Saved via AI Refine accept.',
+                    'ai_profile_id' => $profileId,
+                    'ai_persona_id' => $personaId,
+                ]);
+                PlatformArtPiece::updateCurrentVersion((int) $id, $versionId);
+            }
+
+            // Delete the failed-attempt siblings from this same retry
+            // sequence now that one of them succeeded and was accepted —
+            // per explicit instruction, only on success; a sequence that's
+            // abandoned without ever succeeding keeps all its drafts.
+            if ($sequenceToken !== '') {
+                PlatformArtPieceVersion::deleteBySequenceToken((int) $id, $sequenceToken, $versionId);
+            }
 
             echo json_encode([
                 'success' => true,

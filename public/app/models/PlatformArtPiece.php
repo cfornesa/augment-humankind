@@ -417,7 +417,7 @@ class PlatformArtPiece
              FROM art_piece_versions v
              LEFT JOIN user_ai_vendor_settings uavs ON uavs.id = v.ai_profile_id
              LEFT JOIN ai_personas ap ON ap.id = v.ai_persona_id
-             WHERE v.art_piece_id IN ($placeholders)"
+             WHERE v.art_piece_id IN ($placeholders) AND v.is_draft_attempt = 0"
         );
         $stmt->execute($ids);
 

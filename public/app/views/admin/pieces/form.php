@@ -370,6 +370,20 @@ $preferredProfileId = $preferredProfileId ?? null;
         <div id="ai-diff-container" class="ai-diff-container" aria-label="Code changes"></div>
     </div>
 
+    <dialog id="refine-attempt-failed-dialog" class="inline-create-dialog">
+        <div class="dialog-header">
+            <h2 id="refine-attempt-failed-title">Attempt 1 of 5 failed</h2>
+        </div>
+        <div class="dialog-body">
+            <p id="refine-attempt-failed-message"></p>
+            <p>This attempt's code has been saved as a non-current version you can review later, even if you stop here — nothing is lost. Spending another attempt will use more tokens.</p>
+        </div>
+        <div class="dialog-footer">
+            <button type="button" class="admin-btn admin-btn-ghost" id="refine-attempt-give-up-btn">Give Up</button>
+            <button type="button" class="admin-btn" id="refine-attempt-try-again-btn">Try Again</button>
+        </div>
+    </dialog>
+
     <div class="editor-workspace">
         <!-- Responsive toggle bar for mobile/tablet -->
         <div class="workspace-mobile-toggle" role="navigation" aria-label="Viewport Views">
@@ -650,6 +664,12 @@ $preferredProfileId = $preferredProfileId ?? null;
     var lastRefinePersonaId = null;
     var lastVisualDeltaLow = false;
     var lastRefineFeedback = '';
+    // Carries the successful attempt's persisted draft version forward to
+    // Accept, and the whole sequence's token forward so Accept can clean up
+    // the failed siblings from the same sequence.
+    var lastDraftVersionId = null;
+    var lastSequenceToken = '';
+    var ART_PIECE_MAX_ATTEMPTS = 5;
 
     // 1. Tab Switching
     tabs.forEach(function (tab) {
@@ -856,6 +876,14 @@ $preferredProfileId = $preferredProfileId ?? null;
     }
 
     // 4. AI Refinement (Reframe)
+    //
+    // requestAiRefine() starts a brand new retry sequence (its own
+    // sequence_token, attempt 1) and hands off to performRefineAttempt(),
+    // which both the initial click and every "Try Again" from the
+    // attempt-failed dialog call into — each one spends exactly one AI
+    // attempt server-side (refineAi() no longer loops internally) and the
+    // user explicitly decides whether to spend another after seeing a
+    // failure, instead of up to 5 being burned automatically and invisibly.
     function requestAiRefine(extraFeedback) {
         var prompt = aiPromptField.value.trim();
         var profileId = aiProfileField.value;
@@ -887,22 +915,6 @@ $preferredProfileId = $preferredProfileId ?? null;
         }
         lastRefineFeedback = extraFeedback || '';
 
-        // Set loading state
-        btnRefineAi.disabled = true;
-        if (btnAiStronger) btnAiStronger.disabled = true;
-        var refineStartedAt = Date.now();
-        function setRefineElapsed() {
-            if (!aiRefineStatusEl) return;
-            var totalSeconds = Math.floor((Date.now() - refineStartedAt) / 1000);
-            var minutes = Math.floor(totalSeconds / 60);
-            var seconds = totalSeconds % 60;
-            aiRefineStatusEl.textContent = 'Requesting AI Changes... ' + minutes + ':' + (seconds < 10 ? '0' : '') + seconds + ' elapsed';
-        }
-        setRefineElapsed();
-        var refineTimerInterval = setInterval(function () {
-            setRefineElapsed();
-        }, 1000);
-
         // Clear any old banner and leftover save-status message from a
         // previous attempt.
         aiBanner.style.display = 'none';
@@ -912,7 +924,7 @@ $preferredProfileId = $preferredProfileId ?? null;
         clearAiSuggestionUi();
 
         var pieceOriginalPromptField = document.getElementById('prompt');
-        var payload = {
+        var basePayload = {
             prompt: promptForRequest,
             engine: engine,
             profile_id: parseInt(profileId, 10),
@@ -922,26 +934,72 @@ $preferredProfileId = $preferredProfileId ?? null;
             generated_code: jsField.value,
             // The piece's own creative prompt, so the AI knows the original
             // intent it's refining, not just the raw code.
-            original_prompt: pieceOriginalPromptField ? pieceOriginalPromptField.value.trim() : ''
+            original_prompt: pieceOriginalPromptField ? pieceOriginalPromptField.value.trim() : '',
+            // Lets the server persist each attempt as a draft version —
+            // omitted (0) for a brand new, not-yet-saved piece, which the
+            // server treats as "nothing to attach a version to yet" rather
+            // than an error.
+            piece_id: currentPieceId || 0
         };
+
+        var sequenceToken = (window.crypto && window.crypto.randomUUID)
+            ? window.crypto.randomUUID()
+            : ('seq-' + Date.now() + '-' + Math.random().toString(36).slice(2));
+
+        btnRefineAi.disabled = true;
+        if (btnAiStronger) btnAiStronger.disabled = true;
+
+        performRefineAttempt({
+            basePayload: basePayload,
+            beforeRefine: beforeRefine,
+            sequenceToken: sequenceToken,
+            attemptNumber: 1,
+            previousRawResponse: null,
+            lastError: null
+        });
+    }
+
+    function performRefineAttempt(ctx) {
+        var refineStartedAt = Date.now();
+        function setRefineElapsed(label) {
+            if (!aiRefineStatusEl) return;
+            var totalSeconds = Math.floor((Date.now() - refineStartedAt) / 1000);
+            var minutes = Math.floor(totalSeconds / 60);
+            var seconds = totalSeconds % 60;
+            aiRefineStatusEl.textContent = (label || 'Requesting AI Changes') + ' (attempt ' + ctx.attemptNumber + ' of ' + ART_PIECE_MAX_ATTEMPTS + ')... ' + minutes + ':' + (seconds < 10 ? '0' : '') + seconds + ' elapsed';
+        }
+        setRefineElapsed();
+        var refineTimerInterval = setInterval(function () { setRefineElapsed(); }, 1000);
+
+        function stopAndReenable() {
+            clearInterval(refineTimerInterval);
+            if (aiRefineStatusEl) aiRefineStatusEl.textContent = '';
+            btnRefineAi.disabled = false;
+            if (btnAiStronger) btnAiStronger.disabled = false;
+        }
+
+        var payload = Object.assign({}, ctx.basePayload, {
+            attempt_number: ctx.attemptNumber,
+            previous_raw_response: ctx.previousRawResponse,
+            last_error: ctx.lastError,
+            sequence_token: ctx.sequenceToken
+        });
 
         // One-time retry on a network-level failure only (the fetch()
         // promise itself rejecting — e.g. "Load failed" — not a
-        // server-returned error). AI Refine calls run long (up to 5 AI
-        // attempts server-side), making a stale/dropped keep-alive
-        // connection just as likely here as it was for Save
+        // server-returned error). A single attempt is short now (one AI
+        // call, not a chain of up to 5), but a stale/dropped keep-alive
+        // connection is still possible exactly like it was for Save
         // (generate-preview.php's submitSave()), which a fresh fetch()
         // recovers from since it opens a new connection.
         function fetchRefine(isRetry) {
             return fetch('/admin/pieces/refine-ai', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             }).catch(function (networkErr) {
                 if (isRetry) throw networkErr;
-                if (aiRefineStatusEl) aiRefineStatusEl.textContent = 'Connection issue — retrying…';
+                setRefineElapsed('Connection issue — retrying');
                 return new Promise(function (resolve) {
                     setTimeout(resolve, 1000);
                 }).then(function () {
@@ -955,77 +1013,83 @@ $preferredProfileId = $preferredProfileId ?? null;
             // A response that isn't valid JSON (an HTML error page, an
             // empty body, etc.) means something between the browser and
             // this app's PHP — most likely the hosting infrastructure's own
-            // proxy/request timeout, which is outside this app's control
-            // and shorter than a slow multi-attempt AI Refine call can
-            // take — cut the connection before PHP ever got to respond.
-            // res.json() on that body throws a cryptic native browser
-            // error ("Unexpected token" in Chrome, "The string did not
-            // match the expected pattern." in Safari) that says nothing
-            // about what actually happened. Read the body as text first so
-            // a real, honest message can be shown instead.
+            // proxy/request timeout, which is outside this app's control —
+            // cut the connection before PHP ever got to respond. res.json()
+            // on that body throws a cryptic native browser error
+            // ("Unexpected token" in Chrome, "The string did not match the
+            // expected pattern." in Safari) that says nothing about what
+            // actually happened. Read the body as text first so this is
+            // treated as a normal, explainable attempt failure (offering
+            // Try Again/Give Up) instead of a dead end.
             return res.text().then(function (rawText) {
-                var data;
                 try {
-                    data = JSON.parse(rawText);
+                    return JSON.parse(rawText);
                 } catch (parseErr) {
-                    throw new Error('The server did not return a usable response (status ' + res.status + '). This usually means the request took too long and was cut off before finishing — try again, or use a shorter/simpler instruction.');
+                    return {
+                        success: false,
+                        error: 'The server did not return a usable response (status ' + res.status + '). This usually means the request took too long and was cut off before finishing.',
+                        attempt_number: ctx.attemptNumber,
+                        can_retry: ctx.attemptNumber < ART_PIECE_MAX_ATTEMPTS,
+                        draft_version_id: null,
+                        raw_response: null
+                    };
                 }
-                if (!res.ok) {
-                    throw new Error(data.error || 'AI Refinement failed.');
-                }
-                return data;
             });
         })
         .then(function (data) {
-            // Success! Store backup if not already in preview mode
-            if (!originalCode) {
-                originalCode = beforeRefine;
+            stopAndReenable();
+            if (!data.success) {
+                handleRefineAttemptFailure(ctx, data);
+                return;
             }
-
-            // Remember which profile/persona produced this suggestion, so
-            // accepting it can carry that attribution into the new version
-            // saved when the piece form is submitted.
-            lastRefineProfileId = data.profile_id || null;
-            lastRefinePersonaId = data.persona_id || null;
-            var proposedCode = {
-                html: data.html_code || '',
-                css: data.css_code || '',
-                js: data.generated_code || ''
-            };
-
-            return Promise.all([
-                window.CreatrPieceCapture.capture(buildCaptureSource(beforeRefine, 424242)),
-                window.CreatrPieceCapture.capture(buildCaptureSource(proposedCode, 424242))
-            ]).then(function (captures) {
-                var beforeCapture = captures[0];
-                var afterCapture = captures[1];
-                if (!beforeCapture.ok || !afterCapture.ok) {
-                    return {
-                        data: data,
-                        beforeRefine: beforeRefine,
-                        proposedCode: proposedCode,
-                        beforeCapture: beforeCapture,
-                        afterCapture: afterCapture,
-                        visualDiff: null
-                    };
-                }
-                return window.CreatrPieceCapture.diffImages(beforeCapture.dataUrl, afterCapture.dataUrl).then(function (visualDiff) {
-                    return {
-                        data: data,
-                        beforeRefine: beforeRefine,
-                        proposedCode: proposedCode,
-                        beforeCapture: beforeCapture,
-                        afterCapture: afterCapture,
-                        visualDiff: visualDiff
-                    };
-                });
-            });
+            handleRefineAttemptSuccess(ctx, data);
         })
-        .then(function (result) {
-            var data = result.data;
-            var beforeRefine = result.beforeRefine;
-            var proposedCode = result.proposedCode;
+        .catch(function (err) {
+            // A genuinely unexpected client-side error (e.g. the visual
+            // capture/diff step itself throwing) — distinct from an AI
+            // attempt failing, so it isn't routed through the retry
+            // dialog; nothing was written to the textareas, same as today.
+            stopAndReenable();
+            alert('AI Refinement Error: ' + err.message);
+        });
+    }
 
+    function handleRefineAttemptSuccess(ctx, data) {
+        // Store backup if not already in preview mode
+        if (!originalCode) {
+            originalCode = ctx.beforeRefine;
+        }
+
+        // Remember which profile/persona produced this suggestion, so
+        // accepting it can carry that attribution into the new version
+        // saved when the piece form is submitted — and which draft version
+        // row already holds this exact attempt, so Accept can promote it
+        // instead of inserting a duplicate.
+        lastRefineProfileId = data.profile_id || null;
+        lastRefinePersonaId = data.persona_id || null;
+        lastDraftVersionId = data.draft_version_id || null;
+        lastSequenceToken = data.sequence_token || ctx.sequenceToken;
+
+        var beforeRefine = ctx.beforeRefine;
+        var proposedCode = {
+            html: data.html_code || '',
+            css: data.css_code || '',
+            js: data.generated_code || ''
+        };
+
+        Promise.all([
+            window.CreatrPieceCapture.capture(buildCaptureSource(beforeRefine, 424242)),
+            window.CreatrPieceCapture.capture(buildCaptureSource(proposedCode, 424242))
+        ]).then(function (captures) {
+            var beforeCapture = captures[0];
+            var afterCapture = captures[1];
+            if (!beforeCapture.ok || !afterCapture.ok) {
+                return { visualDiff: null, beforeCapture: beforeCapture, afterCapture: afterCapture };
+            }
+            return window.CreatrPieceCapture.diffImages(beforeCapture.dataUrl, afterCapture.dataUrl).then(function (visualDiff) {
+                return { visualDiff: visualDiff, beforeCapture: beforeCapture, afterCapture: afterCapture };
+            });
+        }).then(function (result) {
             // Set suggested code to textareas
             htmlField.value = proposedCode.html;
             cssField.value = proposedCode.css;
@@ -1078,24 +1142,78 @@ $preferredProfileId = $preferredProfileId ?? null;
 
             // Display AI Suggestion banner
             aiBanner.style.display = 'flex';
-            
+
             // Switch tab to JS or HTML so user can inspect the suggestion
             var jsTab = document.querySelector('.piece-edit-tabs button[data-tab="js"]');
             if (jsTab) {
                 jsTab.click();
             }
-        })
-        .catch(function (err) {
+        }).catch(function (err) {
             alert('AI Refinement Error: ' + err.message);
-        })
-        .finally(function () {
-            clearInterval(refineTimerInterval);
-            btnRefineAi.disabled = false;
-            if (btnAiStronger) btnAiStronger.disabled = false;
-            if (aiRefineStatusEl) {
-                aiRefineStatusEl.textContent = '';
-            }
         });
+    }
+
+    // Shows the styled attempt-failed dialog (reusing the
+    // .inline-create-dialog pattern already used elsewhere in this app)
+    // instead of a native alert() — reports the failure and, unless the
+    // attempt cap is reached, offers to spend one more attempt with the
+    // AI's own previous response/error as repair context, exactly like the
+    // automatic internal retry used to do, just now an explicit choice.
+    function handleRefineAttemptFailure(ctx, data) {
+        var dialog = document.getElementById('refine-attempt-failed-dialog');
+        if (!dialog) {
+            alert('AI Refinement Error: ' + (data.error || 'Unknown error'));
+            return;
+        }
+
+        var titleEl = document.getElementById('refine-attempt-failed-title');
+        var messageEl = document.getElementById('refine-attempt-failed-message');
+        var tryAgainBtn = document.getElementById('refine-attempt-try-again-btn');
+        var giveUpBtn = document.getElementById('refine-attempt-give-up-btn');
+
+        var attemptNumber = data.attempt_number || ctx.attemptNumber;
+        var canRetry = data.can_retry !== false && attemptNumber < ART_PIECE_MAX_ATTEMPTS;
+
+        titleEl.textContent = 'Attempt ' + attemptNumber + ' of ' + ART_PIECE_MAX_ATTEMPTS + ' failed';
+        messageEl.textContent = data.error || 'Unknown error';
+        tryAgainBtn.hidden = !canRetry;
+
+        // Clone-and-replace to drop any listener from a previous failed
+        // attempt in this same sequence, matching this app's existing
+        // dialog pattern (openInlineCreateDialog() in main.js).
+        var newTryAgainBtn = tryAgainBtn.cloneNode(true);
+        tryAgainBtn.parentNode.replaceChild(newTryAgainBtn, tryAgainBtn);
+        var newGiveUpBtn = giveUpBtn.cloneNode(true);
+        giveUpBtn.parentNode.replaceChild(newGiveUpBtn, giveUpBtn);
+
+        newGiveUpBtn.addEventListener('click', function () {
+            dialog.close();
+            // Nothing to reset: the textareas were never written to until
+            // a successful attempt's code is shown for review, so a
+            // sequence that never succeeded already leaves them exactly as
+            // they were before "Request AI Changes" was clicked. The
+            // failed attempt's draft version (if one was created) remains
+            // in the Versions list for later review/fork — only deleted
+            // when a later attempt in the same sequence is accepted.
+        });
+
+        if (canRetry) {
+            newTryAgainBtn.addEventListener('click', function () {
+                dialog.close();
+                btnRefineAi.disabled = true;
+                if (btnAiStronger) btnAiStronger.disabled = true;
+                performRefineAttempt({
+                    basePayload: ctx.basePayload,
+                    beforeRefine: ctx.beforeRefine,
+                    sequenceToken: ctx.sequenceToken,
+                    attemptNumber: attemptNumber + 1,
+                    previousRawResponse: data.raw_response || null,
+                    lastError: data.error || null
+                });
+            });
+        }
+
+        dialog.showModal();
     }
 
     btnRefineAi.addEventListener('click', function () {
@@ -1158,7 +1276,13 @@ $preferredProfileId = $preferredProfileId ?? null;
                 generated_code: jsField.value,
                 refinement_prompt: refinementPrompt,
                 profile_id: lastRefineProfileId,
-                persona_id: lastRefinePersonaId
+                persona_id: lastRefinePersonaId,
+                // Promotes the exact draft version this successful attempt
+                // already persisted, instead of inserting a duplicate, and
+                // lets the server delete this sequence's failed-attempt
+                // siblings now that one of them is being accepted.
+                draft_version_id: lastDraftVersionId,
+                sequence_token: lastSequenceToken
             })
         })
         .then(function (res) {
@@ -1176,6 +1300,8 @@ $preferredProfileId = $preferredProfileId ?? null;
                 : 'No changes to save.';
             aiBanner.style.display = 'none';
             originalCode = null;
+            lastDraftVersionId = null;
+            lastSequenceToken = '';
             resetDirtyBaselines();
             clearAiSuggestionUi();
             setTimeout(clearAiSaveStatus, 6000);
@@ -1202,6 +1328,12 @@ $preferredProfileId = $preferredProfileId ?? null;
         }
         aiBanner.style.display = 'none';
         originalCode = null;
+        // The rejected attempt's draft version stays in the Versions list
+        // either way — only ever deleted on a later Accept in the same
+        // sequence — but clear these so a fresh "Request AI Changes" click
+        // starts its own sequence instead of reusing this one's ids.
+        lastDraftVersionId = null;
+        lastSequenceToken = '';
         clearAiSuggestionUi();
     });
 

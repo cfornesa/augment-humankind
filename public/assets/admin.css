@@ -562,6 +562,15 @@ tr.drag-over td {
     background: var(--orange);
 }
 
+.status-failed_attempt {
+    background: var(--orange);
+    margin-right: 0.35rem;
+}
+
+.version-row-draft-attempt {
+    background: rgba(254, 224, 72, 0.08);
+}
+
 .field {
     display: grid;
     gap: 0.4rem;

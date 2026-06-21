@@ -35,8 +35,11 @@ ob_start();
             </thead>
             <tbody>
                 <?php foreach ($versions as $version): ?>
-                    <?php $isCurrent = (int) ($piece['current_version_id'] ?? 0) === (int) $version['id']; ?>
-                    <tr>
+                    <?php
+                        $isCurrent = (int) ($piece['current_version_id'] ?? 0) === (int) $version['id'];
+                        $isDraftAttempt = (int) ($version['is_draft_attempt'] ?? 0) === 1;
+                    ?>
+                    <tr<?= $isDraftAttempt ? ' class="version-row-draft-attempt"' : '' ?>>
                         <td><?= (int) $version['version_number'] ?></td>
                         <td><?= e(strtoupper($version['engine'] ?? 'p5')) ?></td>
                         <td><?= e($version['generation_vendor'] ?? '—') ?></td>
@@ -44,6 +47,9 @@ ob_start();
                         <td><?= e($version['ai_profile_name'] ?? '(Blank)') ?></td>
                         <td><?= e($version['ai_persona_name'] ?? '(Blank)') ?></td>
                         <td>
+                            <?php if ($isDraftAttempt): ?>
+                                <span class="status-badge status-failed_attempt" title="An AI Refine attempt — viewable and editable, but can never become the current version.">Draft attempt — not revertible</span>
+                            <?php endif; ?>
                             <span class="status-badge status-<?= e($version['validation_status'] ?? 'validated') ?>">
                                 <?= e($version['validation_status'] ?? 'validated') ?>
                             </span>
@@ -57,9 +63,14 @@ ob_start();
                         <td>
                             <a href="/admin/pieces/<?= (int) $piece['id'] ?>/versions/<?= (int) $version['id'] ?>/edit" class="admin-link">Edit</a>
                             <a href="/immersive/pieces/<?= (int) $piece['id'] ?>?version=<?= (int) $version['id'] ?>" target="_blank" rel="noopener" class="admin-link">Preview</a>
-                            <?php if (!$isCurrent): ?>
+                            <?php if (!$isCurrent && !$isDraftAttempt): ?>
                                 <form method="post" action="/admin/pieces/<?= (int) $piece['id'] ?>/versions/<?= (int) $version['id'] ?>/set-current" class="inline-form" onsubmit="return confirm('Revert to version <?= (int) $version['version_number'] ?>? The current code will be replaced by this version\'s.')">
                                     <button type="submit" class="admin-link">Revert</button>
+                                </form>
+                            <?php endif; ?>
+                            <?php if ($isDraftAttempt): ?>
+                                <form method="post" action="/admin/pieces/<?= (int) $piece['id'] ?>/versions/<?= (int) $version['id'] ?>/fork" class="inline-form" onsubmit="return confirm('Create a brand new, independent piece starting from this attempt\'s code?')">
+                                    <button type="submit" class="admin-link">Fork as New Piece</button>
                                 </form>
                             <?php endif; ?>
                             <form method="post" action="/admin/pieces/<?= (int) $piece['id'] ?>/versions/<?= (int) $version['id'] ?>/delete" class="inline-form" onsubmit="return confirm('Delete this version permanently?')">
