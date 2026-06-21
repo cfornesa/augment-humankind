@@ -4280,3 +4280,74 @@ mechanism for this project.
 
 
 
+
+---
+
+## 2026-06-21 — Found the real "No canvas" cause: concurrent capture contention, not the code; "Internal server error" is the AI provider's own failure
+
+### Context
+Immediately after removing the mesh-count validation, the user ran AI
+Refine again: attempt 1 failed with a bare "Internal server error" (no
+further detail), attempt 2 succeeded — producing code that used
+`InstancedMesh` correctly (578 objects, instanced) — but the rendered
+comparison still failed with the exact same "No canvas or svg element
+found after waiting" that had been chased across the previous several
+entries. The user reasonably concluded the code itself was broken and
+stopped testing rather than spend more tokens.
+
+### Investigation
+- Checked `audit_log_events` directly: the "Internal server error" attempt
+  took 158.5s (not a timeout — those log a distinct cURL message) and
+  traced into `AiProviderClient::generate()` (line ~185): when the AI
+  provider's HTTP response status is outside 2xx, `readErrorMessage($json)`
+  extracts whatever message string the *provider* put in its own error
+  body. "Internal server error" is opencode.ai/zen's own message, not ours
+  — confirmed by grepping this entire codebase for that literal string and
+  finding zero matches anywhere in our code. This is provider-side
+  flakiness, already handled correctly by the existing retry-dialog
+  mechanism (which is exactly what happened — attempt 2 succeeded).
+- Checked piece 83's actual *current* (live, real, already-confirmed-
+  rendering-fine) version directly: still version 1, 578 objects, no
+  instancing — unchanged. The successful attempt's "before" side of the
+  comparison is this exact same code. If a piece's own known-good baseline
+  fails a comparison capture it isn't even new code for, the cause can't be
+  "the code is bad."
+- Read the actual comparison capture call in `form.php`
+  (`handleRefineAttemptSuccess()`): `Promise.all([capture(before),
+  capture(after)])` — runs two full Three.js captures *concurrently*, each
+  needing its own CDN fetch of `three.module.js` and its own WebGL context.
+  The single-capture "Generate Thumbnail" path (which has been reliable
+  throughout this session, including for this exact piece) never has this
+  concurrency. Two simultaneous heavy WebGL+CDN loads on a mobile
+  connection/device is a direct, sufficient explanation for why even a
+  known-good baseline fails specifically in the side-by-side comparison.
+
+### Implemented
+- **`form.php`**: changed `handleRefineAttemptSuccess()`'s before/after
+  capture from `Promise.all([...])` (concurrent) to sequential chained
+  `.then()` calls — capture "before" fully, then capture "after". Halves
+  the simultaneous CDN/GPU/bandwidth demand at any given moment; the second
+  capture also benefits from the browser's now-warm HTTP cache for the CDN
+  module fetched during the first. No change to capture logic itself, only
+  scheduling/timing — does not reintroduce any content-based check.
+
+### Ruled out
+- The mesh-count/InstancedMesh content of the generated code as the cause
+  of the render-comparison failure — directly disproven by the same
+  failure occurring on a piece's own unchanged, already-rendering baseline.
+- Treating "Internal server error" as a bug to fix in our code — it's the
+  AI provider's own error message, already surfaced and handled correctly
+  by the existing per-attempt retry dialog; no code change follows from a
+  third-party provider's intermittent failure beyond what's already built.
+
+### Verification
+- `php -l` on `form.php`; extracted and `node --check`'d the embedded JS
+  (PHP interpolations stubbed, same method as every prior entry this
+  session).
+- Could not verify this actually resolves the comparison capture on a real
+  mobile connection without the user running a live attempt — noted
+  explicitly, not claimed as fixed. If the same "No canvas" recurs after
+  this ships on a piece whose before-side is otherwise confirmed working,
+  the concurrency theory is also wrong and this needs a different real
+  signal (e.g. instrumenting which specific side — before or after —
+  failed, which the current error message doesn't distinguish).

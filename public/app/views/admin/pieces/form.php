@@ -1085,10 +1085,25 @@ $preferredProfileId = $preferredProfileId ?? null;
             js: data.generated_code || ''
         };
 
-        Promise.all([
-            window.CreatrPieceCapture.capture(buildCaptureSource(beforeRefine, 424242)),
-            window.CreatrPieceCapture.capture(buildCaptureSource(proposedCode, 424242))
-        ]).then(function (captures) {
+        // Captured sequentially, not via Promise.all in parallel — two
+        // concurrent Three.js captures each need their own CDN fetch of
+        // three.module.js plus their own WebGL context, doubling the
+        // simultaneous bandwidth/GPU load at the exact moment a mobile
+        // connection/device is least able to afford it. Real evidence: a
+        // piece's own already-confirmed-rendering baseline code (the
+        // "before" side here) still failed this comparison capture despite
+        // rendering fine standalone via the single-capture "Generate
+        // Thumbnail" path — pointing at concurrency contention, not the
+        // code. Sequential capture also lets the second capture's iframe
+        // reuse the browser's now-warm HTTP cache for the CDN module
+        // instead of re-fetching it.
+        window.CreatrPieceCapture.capture(buildCaptureSource(beforeRefine, 424242))
+        .then(function (beforeCapture) {
+            return window.CreatrPieceCapture.capture(buildCaptureSource(proposedCode, 424242))
+                .then(function (afterCapture) {
+                    return [beforeCapture, afterCapture];
+                });
+        }).then(function (captures) {
             var beforeCapture = captures[0];
             var afterCapture = captures[1];
             if (!beforeCapture.ok || !afterCapture.ok) {
