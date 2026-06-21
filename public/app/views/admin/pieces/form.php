@@ -114,21 +114,22 @@ $preferredProfileId = $preferredProfileId ?? null;
 
 .ai-banner-row {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.75rem;
 }
 
 .ai-banner span {
     font-size: 0.95rem;
     color: var(--ink);
+    line-height: 1.4;
 }
 
 .ai-banner-actions {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 0.5rem;
-    flex-shrink: 0;
 }
 
 .ai-save-status {
@@ -146,10 +147,14 @@ $preferredProfileId = $preferredProfileId ?? null;
 }
 
 .ai-banner .admin-btn {
+    display: inline-block;
+    vertical-align: middle;
+    text-align: center;
     min-height: 2.2rem;
     padding: 0.35rem 1rem;
     font-size: 0.9rem;
     box-shadow: 3px 3px 0 var(--line);
+    white-space: nowrap;
 }
 
 .ai-banner .admin-btn:hover {
@@ -864,6 +869,13 @@ $preferredProfileId = $preferredProfileId ?? null;
             alert('Please enter a refinement instruction.');
             return;
         }
+
+        // Switch to the AI Refine tab immediately so the loading indicator is visible
+        var aiTab = document.querySelector('.piece-edit-tabs button[data-tab="ai"]');
+        if (aiTab) {
+            aiTab.click();
+        }
+
         var beforeRefine = {
             html: htmlField.value,
             css: cssField.value,

@@ -179,9 +179,9 @@ class PiecesAdminController
             if (self::hasAnyVersionCode($code)) {
                 $currentVersion = $existing['current_version'] ?? null;
                 $codeChanged = !$currentVersion
-                    || $code['html_code'] !== ($currentVersion['html_code'] ?? null)
-                    || $code['css_code'] !== ($currentVersion['css_code'] ?? null)
-                    || ($code['generated_code'] ?? '') !== ($currentVersion['generated_code'] ?? '');
+                    || self::normalizeCode($code['html_code']) !== self::normalizeCode($currentVersion['html_code'] ?? null)
+                    || self::normalizeCode($code['css_code']) !== self::normalizeCode($currentVersion['css_code'] ?? null)
+                    || self::normalizeCode($code['generated_code']) !== self::normalizeCode($currentVersion['generated_code'] ?? null);
 
                 if ($currentVersion && !$codeChanged) {
                     // Code is unchanged (a metadata-only save) — leave the
@@ -199,9 +199,9 @@ class PiecesAdminController
                             ? $data['prompt']
                             : ($currentVersion['prompt'] ?? $data['title']),
                         'structured_spec' => $currentVersion['structured_spec'] ?? null,
-                        'html_code' => $code['html_code'],
-                        'css_code' => $code['css_code'],
-                        'generated_code' => $code['generated_code'] ?? ($currentVersion['generated_code'] ?? ''),
+                        'html_code' => self::normalizeCode($code['html_code']),
+                        'css_code' => self::normalizeCode($code['css_code']),
+                        'generated_code' => self::normalizeCode($code['generated_code'] ?? ($currentVersion['generated_code'] ?? '')),
                         'engine' => $data['engine'],
                         'generation_vendor' => $currentVersion['generation_vendor'] ?? null,
                         'generation_model' => $currentVersion['generation_model'] ?? null,
@@ -482,6 +482,14 @@ class PiecesAdminController
         ];
     }
 
+    private static function normalizeCode(?string $code): string
+    {
+        if ($code === null) {
+            return '';
+        }
+        return str_replace("\r\n", "\n", trim($code));
+    }
+
     private static function resolveVersionCodeFromPost(): array
     {
         $html = trim((string) ($_POST['html_code'] ?? ''));
@@ -726,6 +734,31 @@ class PiecesAdminController
                         art_piece_preflight_code($engine, $js);
                     } elseif ($engine !== 'svg') {
                         throw new RuntimeException('JavaScript block is empty');
+                    }
+
+                    // Canvas & SVG Preservation Constraints
+                    if (in_array($engine, ['p5', 'c2', 'three'], true)) {
+                        if (!preg_match('/id\s*=\s*["\'](?:container|canvas-container|sketch-container|runtime-root)["\']/i', $html) && !preg_match('/<canvas/i', $html)) {
+                            throw new RuntimeException('HTML block must contain a container element (e.g. <div id="container"></div> or a <canvas> element) to mount the canvas.');
+                        }
+                        if (preg_match('/(?:canvas|#container|#scene|#c2-canvas)\s*\{[^}]*\bdisplay\s*:\s*none\b/i', $css)) {
+                            throw new RuntimeException('CSS cannot hide the canvas or container element (display: none is forbidden).');
+                        }
+                        if (preg_match('/(?:canvas|#container|#scene|#c2-canvas)\s*\{[^}]*\bvisibility\s*:\s*hidden\b/i', $css)) {
+                            throw new RuntimeException('CSS cannot hide the canvas or container element (visibility: hidden is forbidden).');
+                        }
+                    }
+
+                    if ($engine === 'svg') {
+                        if (!preg_match('/<svg/i', $html)) {
+                            throw new RuntimeException('HTML code must contain an <svg> element for SVG pieces.');
+                        }
+                        if (preg_match('/(?:svg|#container)\s*\{[^}]*\bdisplay\s*:\s*none\b/i', $css)) {
+                            throw new RuntimeException('CSS cannot hide the SVG or container element (display: none is forbidden).');
+                        }
+                        if (preg_match('/(?:svg|#container)\s*\{[^}]*\bvisibility\s*:\s*hidden\b/i', $css)) {
+                            throw new RuntimeException('CSS cannot hide the SVG or container element (visibility: hidden is forbidden).');
+                        }
                     }
 
                     // Success!
@@ -1318,6 +1351,31 @@ class PiecesAdminController
                         throw new RuntimeException('JavaScript is empty after applying patches');
                     }
 
+                    // Canvas & SVG Preservation Constraints
+                    if (in_array($engine, ['p5', 'c2', 'three'], true)) {
+                        if (!empty($patches['html'])) {
+                            throw new RuntimeException('HTML changes are not allowed for p5, c2, and three engine types. The canvas is automatically managed. Focus your edits on CSS or JS instead.');
+                        }
+                        if (preg_match('/(?:canvas|#container|#scene|#c2-canvas)\s*\{[^}]*\bdisplay\s*:\s*none\b/i', $extractedCss)) {
+                            throw new RuntimeException('CSS cannot hide the canvas or container element (display: none is forbidden).');
+                        }
+                        if (preg_match('/(?:canvas|#container|#scene|#c2-canvas)\s*\{[^}]*\bvisibility\s*:\s*hidden\b/i', $extractedCss)) {
+                            throw new RuntimeException('CSS cannot hide the canvas or container element (visibility: hidden is forbidden).');
+                        }
+                    }
+
+                    if ($engine === 'svg') {
+                        if (!preg_match('/<svg/i', $extractedHtml)) {
+                            throw new RuntimeException('HTML code must contain an <svg> element for SVG pieces.');
+                        }
+                        if (preg_match('/(?:svg|#container)\s*\{[^}]*\bdisplay\s*:\s*none\b/i', $extractedCss)) {
+                            throw new RuntimeException('CSS cannot hide the SVG or container element (display: none is forbidden).');
+                        }
+                        if (preg_match('/(?:svg|#container)\s*\{[^}]*\bvisibility\s*:\s*hidden\b/i', $extractedCss)) {
+                            throw new RuntimeException('CSS cannot hide the SVG or container element (visibility: hidden is forbidden).');
+                        }
+                    }
+
                     // Success!
                     $htmlCode = $extractedHtml;
                     $cssCode = $extractedCss;
@@ -1427,9 +1485,9 @@ class PiecesAdminController
                 throw new InvalidArgumentException('Refinement prompt is required.');
             }
 
-            $codeChanged = $html !== ($currentVersion['html_code'] ?? null)
-                || $css !== ($currentVersion['css_code'] ?? null)
-                || $js !== ($currentVersion['generated_code'] ?? '');
+            $codeChanged = self::normalizeCode($html) !== self::normalizeCode($currentVersion['html_code'] ?? null)
+                || self::normalizeCode($css) !== self::normalizeCode($currentVersion['css_code'] ?? null)
+                || self::normalizeCode($js) !== self::normalizeCode($currentVersion['generated_code'] ?? null);
 
             if (!$codeChanged) {
                 echo json_encode([
@@ -1447,9 +1505,9 @@ class PiecesAdminController
                 'version_number' => $versionNumber,
                 'prompt' => $refinementPrompt,
                 'structured_spec' => $currentVersion['structured_spec'] ?? null,
-                'html_code' => $html,
-                'css_code' => $css,
-                'generated_code' => $js,
+                'html_code' => self::normalizeCode($html),
+                'css_code' => self::normalizeCode($css),
+                'generated_code' => self::normalizeCode($js),
                 'engine' => $currentVersion['engine'] ?? $piece['engine'],
                 'generation_vendor' => $currentVersion['generation_vendor'] ?? null,
                 'generation_model' => $currentVersion['generation_model'] ?? null,

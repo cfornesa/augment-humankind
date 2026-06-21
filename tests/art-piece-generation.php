@@ -214,12 +214,18 @@ echo "\n=== art_piece_refine_user_prompt ===\n";
 
 // 14. User prompt format
 test('User prompt includes all sections', function () {
-    $prompt = art_piece_refine_user_prompt('p5', 'Make it blue', '<div></div>', 'body{}', 'window.sketch = () => {};');
-    assert_contains($prompt, 'REFINEMENT INSTRUCTION');
-    assert_contains($prompt, 'Make it blue');
-    assert_contains($prompt, 'CURRENT HTML CODE');
-    assert_contains($prompt, 'CURRENT CSS CODE');
-    assert_contains($prompt, 'CURRENT JAVASCRIPT CODE');
+    // For SVG pieces, all sections including HTML are present
+    $svgPrompt = art_piece_refine_user_prompt('svg', 'Make it blue', '<div></div>', 'body{}', 'window.sketch = () => {};');
+    assert_contains($svgPrompt, 'CURRENT HTML CODE');
+    assert_contains($svgPrompt, 'CURRENT CSS CODE');
+    assert_contains($svgPrompt, 'CURRENT JAVASCRIPT CODE');
+
+    // For non-SVG pieces (like p5), HTML is excluded and forbidden reminder is added
+    $p5Prompt = art_piece_refine_user_prompt('p5', 'Make it blue', '<div></div>', 'body{}', 'window.sketch = () => {};');
+    assert_not_contains($p5Prompt, 'CURRENT HTML CODE');
+    assert_contains($p5Prompt, 'CURRENT CSS CODE');
+    assert_contains($p5Prompt, 'CURRENT JAVASCRIPT CODE');
+    assert_contains($p5Prompt, 'STRICTLY FORBIDDEN from editing or adding HTML patches');
 });
 
 test('User prompt repeats the minimal-edit reminder next to the instruction', function () {
@@ -236,10 +242,15 @@ test('User prompt includes the original creative prompt as context when given', 
 });
 
 test('User prompt handles null inputs', function () {
-    $prompt = art_piece_refine_user_prompt('p5', 'test', null, null, null);
-    assert_contains($prompt, '```html');
-    assert_contains($prompt, '```css');
-    assert_contains($prompt, '```javascript');
+    $svgPrompt = art_piece_refine_user_prompt('svg', 'test', null, null, null);
+    assert_contains($svgPrompt, '```html');
+    assert_contains($svgPrompt, '```css');
+    assert_contains($svgPrompt, '```javascript');
+
+    $p5Prompt = art_piece_refine_user_prompt('p5', 'test', null, null, null);
+    assert_not_contains($p5Prompt, '```html');
+    assert_contains($p5Prompt, '```css');
+    assert_contains($p5Prompt, '```javascript');
 });
 
 echo "\n=== art_piece_repair_prompt ===\n";
@@ -283,18 +294,23 @@ test('Refine repair prompt handles null previous response', function () {
 });
 
 test('Refine repair prompt re-includes the current code on retry', function () {
-    // Regression guard: every retry attempt (2-5) was sent without the
-    // current HTML/CSS/JS at all, so the AI was retrying blind from memory
-    // of its own previous wrong response instead of re-reading the real
-    // source to derive a correct verbatim SEARCH block — a likely
-    // contributor to repeated SEARCH-mismatch failures across all attempts.
-    $prompt = art_piece_refine_repair_prompt('three', 'darken the skin', 'bad response', 'mismatch', '<div id="container"></div>', 'body{}', 'const x = 1;');
-    assert_contains($prompt, 'CURRENT HTML CODE');
-    assert_contains($prompt, '<div id="container"></div>');
-    assert_contains($prompt, 'CURRENT CSS CODE');
-    assert_contains($prompt, 'body{}');
-    assert_contains($prompt, 'CURRENT JAVASCRIPT CODE');
-    assert_contains($prompt, 'const x = 1;');
+    // For SVG pieces, HTML is included
+    $svgPrompt = art_piece_refine_repair_prompt('svg', 'darken the skin', 'bad response', 'mismatch', '<div id="container"></div>', 'body{}', 'const x = 1;');
+    assert_contains($svgPrompt, 'CURRENT HTML CODE');
+    assert_contains($svgPrompt, '<div id="container"></div>');
+    assert_contains($svgPrompt, 'CURRENT CSS CODE');
+    assert_contains($svgPrompt, 'body{}');
+    assert_contains($svgPrompt, 'CURRENT JAVASCRIPT CODE');
+    assert_contains($svgPrompt, 'const x = 1;');
+
+    // For non-SVG pieces (like three), HTML is excluded
+    $threePrompt = art_piece_refine_repair_prompt('three', 'darken the skin', 'bad response', 'mismatch', '<div id="container"></div>', 'body{}', 'const x = 1;');
+    assert_not_contains($threePrompt, 'CURRENT HTML CODE');
+    assert_not_contains($threePrompt, '<div id="container"></div>');
+    assert_contains($threePrompt, 'CURRENT CSS CODE');
+    assert_contains($threePrompt, 'body{}');
+    assert_contains($threePrompt, 'CURRENT JAVASCRIPT CODE');
+    assert_contains($threePrompt, 'const x = 1;');
 });
 
 echo "\n=== art_piece_extract_refine_plan ===\n";

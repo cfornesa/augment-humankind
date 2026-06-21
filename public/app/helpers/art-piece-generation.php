@@ -256,9 +256,18 @@ function art_piece_repair_prompt(string $engine, string $originalPrompt, ?string
 function art_piece_refine_system_prompt(string $engine): string
 {
     $baseRules = art_piece_generation_system_prompt($engine);
+    $isSvg = ($engine === 'svg');
+    $htmlContextDesc = $isSvg 
+        ? "the current HTML, CSS, and JS code blocks" 
+        : "the current CSS and JS code blocks (excluding the static HTML block which is managed automatically and must not be edited)";
+    
+    $engineConstraint = $isSvg
+        ? "CRITICAL: For svg engine pieces, the HTML code MUST retain the <svg> element. The CSS must never hide the SVG or container (display: none and visibility: hidden on svg or container elements are strictly forbidden)."
+        : "CRITICAL: For {$engine} engine pieces, HTML changes are STRICTLY FORBIDDEN. The HTML container is managed automatically. Do not write a 'PATCH html:' block. Focus your edits solely on CSS or JS. The CSS must never hide the canvas or container (display: none and visibility: hidden on canvas or container elements are strictly forbidden).";
+
     return implode(' ', [
         "You are an AI assistant making a SINGLE, NARROWLY SCOPED edit to an existing interactive generative art piece, following a strict two-step process.",
-        "You will receive the original creative prompt (if available), the current HTML, CSS, and JS code blocks of the art piece, and a refinement instruction.",
+        "You will receive the original creative prompt (if available), {$htmlContextDesc} of the art piece, and a refinement instruction.",
         "STEP 1 — PLAN: before writing any code, identify exactly which specific existing elements (a named SVG path/element, a CSS rule, a function or variable) are relevant to the refinement instruction. For each one, quote a short identifying fragment of the CURRENT code and state in one line what you will change about it and why. Name only elements the instruction is actually about — do not plan to touch anything it did not name.",
         "STEP 2 — PATCH: express every change ONLY as an exact find-and-replace edit against the current code. NEVER rewrite or regenerate a file in full, even partially. For each element from your plan, write a PATCH block naming the file (html, css, or js), then a SEARCH section containing the EXISTING text copied VERBATIM — character-for-character, including whitespace and indentation, exactly as it appears in the current code below — and a REPLACE section with the new text to put in its place. A SEARCH block that does not match the current code (even allowing minor whitespace differences) will be rejected.",
         "Prefer a SHORT, single-purpose SEARCH block — ideally one line, or the smallest span of text that uniquely identifies the one location you mean — over a large multi-line block. A shorter exact-match target is far less likely to contain a transcription mistake.",
@@ -267,6 +276,7 @@ function art_piece_refine_system_prompt(string $engine): string
         art_piece_refine_patch_format_example(),
         "Everything outside a matched SEARCH region is preserved exactly as it is today — you are never regenerating the whole file, only patching the specific elements named in your own plan.",
         "Ensure all constraints of the {$engine} engine are strictly maintained in anything you write inside a REPLACE section.",
+        $engineConstraint,
         "Here are the engine-specific rules for {$engine} that you MUST follow: ",
         $baseRules
     ]);
@@ -322,9 +332,15 @@ function art_piece_refine_user_prompt(string $engine, string $refinementPrompt, 
     $sections[] = "### REFINEMENT INSTRUCTION";
     $sections[] = $refinementPrompt;
     $sections[] = "### REMINDER";
-    $sections[] = "Apply ONLY the change named above, as PATCH blocks against the exact current code below — never as a rewritten file. Every color, shape, decoration, and detail not mentioned in the instruction must not appear in any SEARCH/REPLACE pair at all.";
-    $sections[] = "### CURRENT HTML CODE";
-    $sections[] = "```html\n" . ($html ?? '') . "\n```";
+    if ($engine === 'svg') {
+        $sections[] = "Apply ONLY the change named above, as PATCH blocks against the exact current code below — never as a rewritten file. Every color, shape, decoration, and detail not mentioned in the instruction must not appear in any SEARCH/REPLACE pair at all.";
+    } else {
+        $sections[] = "Apply ONLY the change named above, as PATCH blocks against the exact current code below — never as a rewritten file. Every color, shape, decoration, and detail not mentioned in the instruction must not appear in any SEARCH/REPLACE pair at all. You are STRICTLY FORBIDDEN from editing or adding HTML patches. Focus your edits solely on JS or CSS.";
+    }
+    if ($engine === 'svg') {
+        $sections[] = "### CURRENT HTML CODE";
+        $sections[] = "```html\n" . ($html ?? '') . "\n```";
+    }
     $sections[] = "### CURRENT CSS CODE";
     $sections[] = "```css\n" . ($css ?? '') . "\n```";
     $sections[] = "### CURRENT JAVASCRIPT CODE";
@@ -495,14 +511,20 @@ function art_piece_refine_repair_prompt(string $engine, string $refinementPrompt
         "Target engine: {$engine}",
         "Refinement instruction: {$refinementPrompt}",
         "Your previous response could not be applied: {$failureMessage}",
-        "Respond again in the exact PLAN: / PATCH <file>: / <<<<<<< SEARCH / ======= / >>>>>>> REPLACE format. Every SEARCH block must be copied character-for-character from the CURRENT code below, including whitespace and indentation — do not paraphrase, reformat, or reproduce it from memory of your previous attempt. Re-read the current code below and copy directly from it.",
-        "### CURRENT HTML CODE",
-        "```html\n" . ($html ?? '') . "\n```",
-        "### CURRENT CSS CODE",
-        "```css\n" . ($css ?? '') . "\n```",
-        "### CURRENT JAVASCRIPT CODE",
-        "```javascript\n" . ($js ?? '') . "\n```",
     ];
+    if ($engine === 'svg') {
+        $segments[] = "Respond again in the exact PLAN: / PATCH <file>: / <<<<<<< SEARCH / ======= / >>>>>>> REPLACE format. Every SEARCH block must be copied character-for-character from the CURRENT code below, including whitespace and indentation — do not paraphrase, reformat, or reproduce it from memory of your previous attempt. Re-read the current code below and copy directly from it.";
+    } else {
+        $segments[] = "Respond again in the exact PLAN: / PATCH <file>: / <<<<<<< SEARCH / ======= / >>>>>>> REPLACE format. Every SEARCH block must be copied character-for-character from the CURRENT code below, including whitespace and indentation — do not paraphrase, reformat, or reproduce it from memory of your previous attempt. Re-read the current code below and copy directly from it. Remember: You are STRICTLY FORBIDDEN from editing HTML. Only edit JS or CSS.";
+    }
+    if ($engine === 'svg') {
+        $segments[] = "### CURRENT HTML CODE";
+        $segments[] = "```html\n" . ($html ?? '') . "\n```";
+    }
+    $segments[] = "### CURRENT CSS CODE";
+    $segments[] = "```css\n" . ($css ?? '') . "\n```";
+    $segments[] = "### CURRENT JAVASCRIPT CODE";
+    $segments[] = "```javascript\n" . ($js ?? '') . "\n```";
     if ($previousRawResponse !== null && $previousRawResponse !== '') {
         $segments[] = "Your previous response: {$previousRawResponse}";
     }

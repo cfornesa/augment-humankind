@@ -189,3 +189,8 @@ Enables reasoning-heavy models (e.g. minimax-m3) to fully output PLAN and SEARCH
 2026-06-20 CORRECTION AI piece generation and preview save are now fetch/session-based in the PHP Hostinger app: generation returns JSON, progress is session-polled, preview is a one-time session flash route, and Save has no native form POST path to the JSON endpoint.
 
 2026-06-20 CONSTRAINT augmenthumankind.com production runs on Hostinger/PHP; the platform/Replit app is reference-only and must not be treated as the runtime target.
+
+2026-06-20 DECISION AI Refinement and generation have been strengthened: (1) HTML code is isolated and excluded from refinement for non-SVG pieces (p5, c2, three), guaranteeing canvas container preservation; (2) SVG pieces use adaptive checks to prevent removing the <svg> element; (3) CSS checks prevent hiding the canvas/SVG; (4) line endings (\r\n vs \n) are normalized in all controller saves, preventing duplicate version generation on edit forms.
+
+2026-06-20 DECISION AI Refine banner was made responsive (placing text above action buttons, wrapping buttons, styling as inline-block) and the active tab now switches to "AI Refine" on request to keep status loading text visible.
+

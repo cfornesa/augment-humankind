@@ -3544,4 +3544,36 @@ same flow in production and confirm the retry either succeeds transparently
 or surfaces a clear error instead of the raw browser-level connection
 error.
 
+## 2026-06-20 — Refined AI Refine and Piece Generation Processes
+
+### Context
+Multiple layout, tracking, and integrity issues were identified in the AI Refinement and piece generation flows:
+- Buttons in the AI suggestion banner were not styled as `inline-block`, causing wrapping/distortion, and the explanation text was side-by-side with them instead of above.
+- Triggering a refinement request switched the active tab away from the loader, hiding progress tracking.
+- Line-ending discrepancies (`\r\n` vs `\n`) between the browser's form submission and the database caused false-positive dirty checks, generating near-identical duplicate versions.
+- Canvas/SVG elements were sometimes broken/deleted by the AI during refinement or generation, leading to missing thumbnail errors.
+
+### Ruled out directly (not assumed)
+- **Soft Prompting**: We ruled out relying solely on prompt instructions to preserve the canvas wrapper or SVG elements. Prompts alone could not guarantee LLM output compliance, requiring strict backend-enforced structural validation.
+- **Failure Options**: We ruled out treating validation failure as an acceptable end-state. The system must actively prevent failures by isolating HTML where possible (for non-SVG engines) and adaptively validating SVG structure.
+
+### Implemented
+- **UI & Styling Improvements**:
+  - Updated `.ai-banner-row` in `public/app/views/admin/pieces/form.php` to use `flex-direction: column`, positioning description text above the buttons.
+  - Restyled `.ai-banner .admin-btn` as `display: inline-block` with `white-space: nowrap` and enabled wrapping on `.ai-banner-actions`.
+  - Modified the click handler in `form.php` to automatically switch the active tab to the "AI Refine ✨" tab when starting a refinement request, keeping the loader and elapsed-time ticker visible.
+- **Line Endings Normalization**:
+  - Created `normalizeCode(?string $code)` helper in `PiecesAdminController.php` to strip trailing spaces and map all CRLF (`\r\n`) sequences to LF (`\n`).
+  - Normalized code inputs before database dirty-check comparisons in both `update()` and `refineSave()`, preventing duplicate version row creations.
+- **Canvas/SVG Preservation & HTML Isolation**:
+  - Excluded the HTML block entirely from prompt structures for `p5`, `c2`, and `three` engine types (Isolation Approach) in `public/app/helpers/art-piece-generation.php`.
+  - Added backend validation in `PiecesAdminController::refineAi()` and `generate()` to reject patches attempting to modify HTML for non-SVG pieces.
+  - Added adaptive checks for SVG pieces to verify the root `<svg>` tag remains present in the code.
+  - Checked that CSS rules do not hide canvas or SVG elements using `display: none` or `visibility: hidden`.
+
+### Verification
+- Updated test suites in `tests/art-piece-generation.php` and `tests/three-runtime-consistency.php`.
+- Verified that all **110/110** tests (55/55 in each suite) pass cleanly.
+
+
 
