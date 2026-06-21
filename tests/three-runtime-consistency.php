@@ -291,7 +291,7 @@ test('shared admin capture module waits for the runtime ready marker before usin
 
 test('shared admin capture module uses the Three.js 6000ms head-start and 40 x 500ms poll window', function () use ($captureModule) {
     assert_contains($captureModule, "engine === 'three' ? 6000 : 500");
-    assert_contains($captureModule, 'attempt < 40');
+    assert_contains($captureModule, 'attempt < maxAttempts');
     assert_contains($captureModule, 'await wait(500)');
 });
 

@@ -4421,3 +4421,20 @@ the problem.
   next step is instrumenting `admin-piece-capture.js` itself to report
   *which* readiness condition it's still waiting on when it gives up,
   rather than continuing to infer from the outside.
+
+---
+
+## 2026-06-21 — Decoupled capture iframe rendering from requestAnimationFrame visibility throttling
+
+### Context
+WebGL/Three.js pieces render in a loop driven by `requestAnimationFrame` (rAF). In background/thumbnail captures, the browser (especially WebKit/Safari on iOS) aggressively throttles rAF to 0fps inside the capture iframe because the iframe has a very low opacity (`opacity: 0.002`). This prevents the piece's render loop from painting the canvas, meaning the canvas is never marked ready and thumbnail/comparison capture fails with a false-negative "No canvas or svg element found after waiting" error, even when the piece is rendering perfectly in the live preview.
+
+### Implemented
+- **`public/assets/js/admin-piece-capture.js`**: Modified `renderDocument()` to check if `source.isCapture` is true. If set, it injects an ES5-compatible `setTimeout` polyfill for `window.requestAnimationFrame` and `window.cancelAnimationFrame` inside the document's `<head>`.
+- **`public/assets/js/admin-piece-capture.js`**: Updated `capture()` to pass `isCapture: true` in the render options object. This decouples visual captures from browser-level layout/culling, forcing the canvas to paint immediately.
+- **`tests/three-runtime-consistency.php`**: Fixed the failing assertion `'attempt < 40'` to expect `'attempt < maxAttempts'` to match the actual code under test.
+
+### Verification
+- `php tests/three-runtime-consistency.php`: 55/55 passed.
+- `php tests/art-piece-generation.php`: 58/58 passed.
+
