@@ -100,20 +100,23 @@
         var width = source.width || 960;
         var height = source.height || 540;
         var engine = source.engine || 'p5';
+        var container = document.createElement('div');
         var frame = document.createElement('iframe');
         var runtimeError = '';
 
-        // Positioned on top (z-index: 999999) but scaled down to virtually zero size
-        // (transform: scale(0.001)), fully opaque (opacity: 1), and click-safe (pointer-events: none).
-        // WebKit/Safari and other modern engines aggressively suspend network/module loading
-        // (dynamic imports) in iframes that are completely occluded (e.g. z-index:-999999 behind
-        // an opaque background) or have low opacity (e.g. opacity:0.002). Using a fully
-        // opaque iframe kept on top (z-index: 999999) but scaled down by CSS transform keeps the
-        // network and rendering pipelines fully active inside the viewport, while keeping it
-        // completely invisible to the user.
-        frame.style.cssText = 'position:fixed;left:0;top:0;width:' + width + 'px;height:' + height + 'px;border:none;pointer-events:none;z-index:999999;opacity:1;transform:scale(0.001);transform-origin:0 0;';
+        // Positioned on top (z-index: 999999) inside a 1px by 1px overflow-hidden
+        // container. WebKit/Safari aggressively suspends network/module loading (dynamic imports)
+        // and throttles rendering in hidden, occluded, or extremely scaled-down (e.g. scale(0.001))
+        // iframes. By placing the iframe inside a 1x1 visible, opaque parent container on top,
+        // WebKit sees the element as active and intersecting the viewport, preventing culling.
+        // The iframe inside it is styled with its full size (960x540) to prevent layout collapsing,
+        // while the container hides it visually and keeps it completely click-safe.
+        container.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;overflow:hidden;z-index:999999;pointer-events:none;opacity:1;';
+        frame.style.cssText = 'position:absolute;left:0;top:0;width:' + width + 'px;height:' + height + 'px;border:none;pointer-events:none;';
         frame.sandbox = 'allow-scripts allow-same-origin';
-        document.body.appendChild(frame);
+        
+        container.appendChild(frame);
+        document.body.appendChild(container);
 
         function onMessage(event) {
             if (!event || !event.data || event.source !== frame.contentWindow) return;
@@ -186,7 +189,9 @@
             return { ok: false, dataUrl: '', kind: null, error: error.message || String(error) };
         } finally {
             window.removeEventListener('message', onMessage);
-            if (frame.parentNode) {
+            if (container && container.parentNode) {
+                container.parentNode.removeChild(container);
+            } else if (frame.parentNode) {
                 frame.parentNode.removeChild(frame);
             }
         }

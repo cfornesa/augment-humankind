@@ -300,7 +300,7 @@ test('shared admin capture module keeps capture iframes in the viewport', functi
     assert_contains($captureModule, 'position:fixed;left:0;top:0');
     assert_contains($captureModule, 'opacity:1');
     assert_contains($captureModule, 'z-index:999999');
-    assert_contains($captureModule, 'transform:scale(0.001)');
+    assert_contains($captureModule, 'overflow:hidden');
 });
 
 test('shared admin capture module supports SVG conversion and deterministic capture seeds', function () use ($captureModule) {
