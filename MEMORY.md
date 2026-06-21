@@ -224,3 +224,9 @@ Enforces `<div id="canvas-container"></div>` for p5, `<canvas id="piece-canvas">
 
 2026-06-21 CORRECTION WebKit occlusion culling of the capture iframe on iOS Safari was resolved by wrapping the 960x540 iframe inside a 1px by 1px overflow-hidden parent div on top.
 Bypasses compositing culling while avoiding viewport dimension collapsing caused by CSS scaling.
+
+2026-06-21 CORRECTION Overhauled `window.CreatrPieceCapture.capture` to extract canvas data/SVG directly from the active live preview iframe before falling back to background iframe creation, preventing Safari/WebKit resource culling timeouts on form saves.
+
+2026-06-21 CORRECTION Implemented `lastDialogClosedAt` timing checks in `form.php` to discard synthesized click events within 500ms of closing the failure dialog, preventing ghost clicks from launching concurrent AI refinement attempts.
+
+2026-06-21 CORRECTION Reinforced disabled button styling in `admin.css` with `pointer-events: none !important` to ensure disabled buttons are unclickable and visually inert on mobile browsers.

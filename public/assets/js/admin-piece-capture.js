@@ -100,6 +100,34 @@
         var width = source.width || 960;
         var height = source.height || 540;
         var engine = source.engine || 'p5';
+
+        // Direct capture from live preview iframe if available
+        if (source.liveIframe) {
+            try {
+                var iframe = source.liveIframe;
+                var doc = iframe.contentDocument || (iframe.contentWindow ? iframe.contentWindow.document : null);
+                if (doc) {
+                    var canvas = doc.querySelector('canvas');
+                    if (canvas && typeof canvas.toDataURL === 'function') {
+                        var dataUrl = canvas.toDataURL('image/png');
+                        if (dataUrl && dataUrl !== 'data:,' && dataUrl.length > 100) {
+                            return { ok: true, dataUrl: dataUrl, kind: 'live-canvas', error: null };
+                        }
+                    }
+                    var svg = doc.querySelector('svg');
+                    if (svg) {
+                        var canvasFromSvg = await convertSvgToCanvas(svg, width, height);
+                        var dataUrlFromSvg = canvasFromSvg.toDataURL('image/png');
+                        if (dataUrlFromSvg && dataUrlFromSvg !== 'data:,' && dataUrlFromSvg.length > 100) {
+                            return { ok: true, dataUrl: dataUrlFromSvg, kind: 'live-svg', error: null };
+                        }
+                    }
+                }
+            } catch (e) {
+                console.warn('Live preview direct capture failed, falling back to background capture:', e);
+            }
+        }
+
         var container = document.createElement('div');
         var frame = document.createElement('iframe');
         var runtimeError = '';

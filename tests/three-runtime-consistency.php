@@ -333,12 +333,11 @@ test('generate-preview no longer uses old single-delay direct canvas capture', f
 });
 
 $formView = file_get_contents(__DIR__ . '/../public/app/views/admin/pieces/form.php');
-test('AI Refine render gate shows before/after snapshots and low-delta Accept Anyway path', function () use ($formView) {
+test('AI Refine render gate shows visual toggle and option to request stronger changes', function () use ($formView) {
     assert_contains($formView, 'ai-visual-container');
-    assert_contains($formView, 'Before refine');
-    assert_contains($formView, 'After refine');
-    assert_contains($formView, 'Rendered result appears nearly unchanged');
-    assert_contains($formView, 'Accept Anyway');
+    assert_contains($formView, 'Show Refined (Live Preview)');
+    assert_contains($formView, 'Show Original (Live Preview)');
+    assert_contains($formView, 'Currently showing:');
     assert_contains($formView, 'Request Stronger Change');
 });
 

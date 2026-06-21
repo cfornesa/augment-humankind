@@ -236,7 +236,12 @@ $defaultTitle = 'AI ' . strtoupper($engine) . ' Piece - ' . date('M d, Y H:i');
 
             setStatus(reason || 'Capturing thumbnail…');
             var revisionAtStart = thumbnailRevision;
-            inFlight = window.CreatrPieceCapture.capture(source()).then(function (result) {
+            var wrapper = document.getElementById('preview-iframe-wrapper');
+            var liveIframe = wrapper ? wrapper.querySelector('iframe') : null;
+            var sourceObj = source();
+            sourceObj.liveIframe = liveIframe;
+
+            inFlight = window.CreatrPieceCapture.capture(sourceObj).then(function (result) {
                 if (revisionAtStart !== thumbnailRevision) {
                     return { ok: false, dataUrl: '', kind: null, error: 'Capture was superseded by a newer preview.' };
                 }

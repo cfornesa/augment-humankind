@@ -145,6 +145,17 @@
     transform: translate(3px, 3px);
 }
 
+.admin-btn:disabled,
+.admin-btn.is-disabled {
+    background: var(--line) !important;
+    color: var(--ink-soft) !important;
+    border-color: var(--line) !important;
+    box-shadow: none !important;
+    transform: none !important;
+    cursor: not-allowed;
+    pointer-events: none !important;
+}
+
 .admin-btn-ghost {
     background: var(--white);
 }

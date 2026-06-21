@@ -675,6 +675,9 @@ if ($engineVal === 'p5') {
     var lastRefinePersonaId = null;
     var lastVisualDeltaLow = false;
     var lastRefineFeedback = '';
+    var lastProposedCode = null;
+    var isAiRequestInFlight = false;
+    var lastDialogClosedAt = 0;
     // Carries the successful attempt's persisted draft version forward to
     // Accept, and the whole sequence's token forward so Accept can clean up
     // the failed siblings from the same sequence.
@@ -876,51 +879,67 @@ if ($engineVal === 'p5') {
         if (btnAiAccept) btnAiAccept.textContent = 'Accept Changes';
     }
 
-    function renderVisualComparison(beforeResult, afterResult, diffResult, warningText) {
+    function renderVisualComparison() {
         var visualContainer = document.getElementById('ai-visual-container');
         visualContainer.innerHTML = '';
 
-        if (!beforeResult || !afterResult || !beforeResult.ok || !afterResult.ok) {
-            var captureWarning = document.createElement('div');
-            captureWarning.className = 'ai-visual-warning';
-            var captureHeading = document.createElement('strong');
-            captureHeading.textContent = 'Rendered comparison unavailable';
-            captureWarning.appendChild(captureHeading);
-            captureWarning.appendChild(document.createTextNode(warningText || 'One of the rendered snapshots could not be captured. Review the code diff and live preview before accepting.'));
-            visualContainer.appendChild(captureWarning);
-            return;
-        }
+        // Create the Toggle Bar Container
+        var toggleBar = document.createElement('div');
+        toggleBar.className = 'ai-visual-toggle-bar';
+        toggleBar.style.cssText = 'display:flex;gap:0.75rem;margin-bottom:1rem;';
 
-        var grid = document.createElement('div');
-        grid.className = 'ai-visual-grid';
-        [
-            { label: 'Before refine', dataUrl: beforeResult.dataUrl },
-            { label: 'After refine', dataUrl: afterResult.dataUrl }
-        ].forEach(function (shot) {
-            var block = document.createElement('div');
-            block.className = 'ai-visual-shot';
-            var heading = document.createElement('strong');
-            heading.textContent = shot.label;
-            var img = document.createElement('img');
-            img.src = shot.dataUrl;
-            img.alt = shot.label + ' rendered snapshot';
-            block.appendChild(heading);
-            block.appendChild(img);
-            grid.appendChild(block);
+        var btnShowRefined = document.createElement('button');
+        btnShowRefined.type = 'button';
+        btnShowRefined.className = 'admin-btn active';
+        btnShowRefined.style.cssText = 'flex:1;justify-content:center;background:var(--green);';
+        btnShowRefined.textContent = 'Show Refined (Live Preview)';
+
+        var btnShowOriginal = document.createElement('button');
+        btnShowOriginal.type = 'button';
+        btnShowOriginal.className = 'admin-btn admin-btn-ghost';
+        btnShowOriginal.style.cssText = 'flex:1;justify-content:center;background:var(--white);';
+        btnShowOriginal.textContent = 'Show Original (Live Preview)';
+
+        toggleBar.appendChild(btnShowRefined);
+        toggleBar.appendChild(btnShowOriginal);
+        visualContainer.appendChild(toggleBar);
+
+        // Add visual indicator / label
+        var statusLabel = document.createElement('div');
+        statusLabel.style.cssText = 'font-size:0.875rem;color:var(--ink-soft);margin-bottom:1rem;text-align:center;font-weight:bold;';
+        statusLabel.textContent = 'Currently showing: REFINED preview (with proposed changes).';
+        visualContainer.appendChild(statusLabel);
+
+        // Click listeners to toggle between original and proposed code in the editor textareas and live preview
+        btnShowRefined.addEventListener('click', function () {
+            btnShowRefined.classList.add('active');
+            btnShowRefined.classList.remove('admin-btn-ghost');
+            btnShowRefined.style.background = 'var(--green)';
+            btnShowOriginal.classList.remove('active');
+            btnShowOriginal.classList.add('admin-btn-ghost');
+            btnShowOriginal.style.background = 'var(--white)';
+            statusLabel.textContent = 'Currently showing: REFINED preview (with proposed changes).';
+            
+            htmlField.value = lastProposedCode.html;
+            cssField.value = lastProposedCode.css;
+            jsField.value = lastProposedCode.js;
+            updateLivePreview();
         });
-        visualContainer.appendChild(grid);
 
-        if (diffResult) {
-            var summary = document.createElement('div');
-            summary.className = 'ai-visual-warning' + (diffResult.significant ? '' : ' is-low');
-            var summaryHeading = document.createElement('strong');
-            summaryHeading.textContent = diffResult.significant ? 'Rendered change detected' : 'Rendered result appears nearly unchanged';
-            summary.appendChild(summaryHeading);
-            var percent = Number(diffResult.percent || 0).toFixed(2);
-            var changed = Number(diffResult.changedPixelPercent || 0).toFixed(2);
-            summary.appendChild(document.createTextNode('Average delta ' + percent + '%, changed pixels ' + changed + '%.'));
-            visualContainer.appendChild(summary);
-        }
+        btnShowOriginal.addEventListener('click', function () {
+            btnShowOriginal.classList.add('active');
+            btnShowOriginal.classList.remove('admin-btn-ghost');
+            btnShowOriginal.style.background = 'var(--green)';
+            btnShowRefined.classList.remove('active');
+            btnShowRefined.classList.add('admin-btn-ghost');
+            btnShowRefined.style.background = 'var(--white)';
+            statusLabel.textContent = 'Currently showing: ORIGINAL preview (before changes).';
+            
+            htmlField.value = originalCode.html;
+            cssField.value = originalCode.css;
+            jsField.value = originalCode.js;
+            updateLivePreview();
+        });
     }
 
     // 4. AI Refinement (Reframe)
@@ -933,6 +952,13 @@ if ($engineVal === 'p5') {
     // user explicitly decides whether to spend another after seeing a
     // failure, instead of up to 5 being burned automatically and invisibly.
     function requestAiRefine(extraFeedback) {
+        if (isAiRequestInFlight) {
+            return;
+        }
+        if (Date.now() - lastDialogClosedAt < 500) {
+            return;
+        }
+
         var prompt = aiPromptField.value.trim();
         var profileId = aiProfileField.value;
         var engine = engineField.value;
@@ -945,6 +971,8 @@ if ($engineVal === 'p5') {
             alert('Please enter a refinement instruction.');
             return;
         }
+
+        isAiRequestInFlight = true;
 
         // Switch to the AI Refine tab immediately so the loading indicator is visible
         var aiTab = document.querySelector('.piece-edit-tabs button[data-tab="ai"]');
@@ -1008,6 +1036,7 @@ if ($engineVal === 'p5') {
     }
 
     function performRefineAttempt(ctx) {
+        isAiRequestInFlight = true;
         var refineStartedAt = Date.now();
         function setRefineElapsed(label) {
             if (!aiRefineStatusEl) return;
@@ -1022,6 +1051,7 @@ if ($engineVal === 'p5') {
         function stopAndReenable() {
             clearInterval(refineTimerInterval);
             if (aiRefineStatusEl) aiRefineStatusEl.textContent = '';
+            isAiRequestInFlight = false;
             btnRefineAi.disabled = false;
             if (btnAiStronger) btnAiStronger.disabled = false;
         }
@@ -1120,104 +1150,72 @@ if ($engineVal === 'p5') {
         lastDraftVersionId = data.draft_version_id || null;
         lastSequenceToken = data.sequence_token || ctx.sequenceToken;
 
-        var beforeRefine = ctx.beforeRefine;
         var proposedCode = {
             html: data.html_code || '',
             css: data.css_code || '',
             js: data.generated_code || ''
         };
 
-        // Captured sequentially, not via Promise.all in parallel — two
-        // concurrent Three.js captures each need their own CDN fetch of
-        // three.module.js plus their own WebGL context, doubling the
-        // simultaneous bandwidth/GPU load at the exact moment a mobile
-        // connection/device is least able to afford it. Real evidence: a
-        // piece's own already-confirmed-rendering baseline code (the
-        // "before" side here) still failed this comparison capture despite
-        // rendering fine standalone via the single-capture "Generate
-        // Thumbnail" path — pointing at concurrency contention, not the
-        // code. Sequential capture also lets the second capture's iframe
-        // reuse the browser's now-warm HTTP cache for the CDN module
-        // instead of re-fetching it.
-        window.CreatrPieceCapture.capture(buildCaptureSource(beforeRefine, 424242))
-        .then(function (beforeCapture) {
-            return window.CreatrPieceCapture.capture(buildCaptureSource(proposedCode, 424242))
-                .then(function (afterCapture) {
-                    return [beforeCapture, afterCapture];
-                });
-        }).then(function (captures) {
-            var beforeCapture = captures[0];
-            var afterCapture = captures[1];
-            if (!beforeCapture.ok || !afterCapture.ok) {
-                return { visualDiff: null, beforeCapture: beforeCapture, afterCapture: afterCapture };
-            }
-            return window.CreatrPieceCapture.diffImages(beforeCapture.dataUrl, afterCapture.dataUrl).then(function (visualDiff) {
-                return { visualDiff: visualDiff, beforeCapture: beforeCapture, afterCapture: afterCapture };
-            });
-        }).then(function (result) {
-            // Set suggested code to textareas
-            htmlField.value = proposedCode.html;
-            cssField.value = proposedCode.css;
-            jsField.value = proposedCode.js;
+        // Cache the proposed code for toggle comparisons
+        lastProposedCode = proposedCode;
 
-            lastVisualDeltaLow = !!(result.visualDiff && !result.visualDiff.significant);
-            renderVisualComparison(
-                result.beforeCapture,
-                result.afterCapture,
-                result.visualDiff,
-                (result.beforeCapture && result.beforeCapture.error) || (result.afterCapture && result.afterCapture.error) || ''
-            );
-            if (lastVisualDeltaLow) {
-                btnAiAccept.textContent = 'Accept Anyway';
-                if (btnAiStronger) btnAiStronger.hidden = false;
-            }
+        // Set suggested code to textareas immediately
+        htmlField.value = proposedCode.html;
+        cssField.value = proposedCode.css;
+        jsField.value = proposedCode.js;
 
-            // Render the AI's stated plan (which specific elements it
-            // intended to touch, decided before it wrote any patch) — the
-            // same before-acting visibility a plan gives, shown above the
-            // diff so its intent can be sanity-checked alongside the result.
-            var planContainer = document.getElementById('ai-plan-container');
-            planContainer.innerHTML = '';
-            if (data.plan) {
-                var planHeading = document.createElement('strong');
-                planHeading.textContent = "AI's plan";
-                var planPre = document.createElement('pre');
-                planPre.textContent = data.plan;
-                planContainer.appendChild(planHeading);
-                planContainer.appendChild(planPre);
-            }
+        // Render live preview immediately
+        updateLivePreview();
 
-            // Render a line diff so unrequested changes (e.g. to decorations,
-            // colors, or anything the instruction didn't name) are visible
-            // before deciding to accept — a prompt instruction alone can't
-            // guarantee the AI left everything else untouched.
-            var diffContainer = document.getElementById('ai-diff-container');
-            diffContainer.innerHTML = '';
-            renderDiffBlock(diffContainer, 'HTML', beforeRefine.html, htmlField.value);
-            renderDiffBlock(diffContainer, 'CSS', beforeRefine.css, cssField.value);
-            renderDiffBlock(diffContainer, 'JS', beforeRefine.js, jsField.value);
-            if (!diffContainer.children.length) {
-                var noChange = document.createElement('p');
-                noChange.textContent = 'No code differences detected.';
-                diffContainer.appendChild(noChange);
-            }
+        // Render the toggle compare bar
+        renderVisualComparison();
 
-            // Update live preview
-            updateLivePreview();
+        // Always show the AI Accept button and Request Stronger button
+        btnAiAccept.textContent = 'Accept Changes';
+        if (btnAiStronger) {
+            btnAiStronger.hidden = false;
+        }
 
-            // Display AI Suggestion banner
-            aiBanner.style.display = 'flex';
+        // Render the AI's stated plan (which specific elements it
+        // intended to touch, decided before it wrote any patch) — the
+        // same before-acting visibility a plan gives, shown above the
+        // diff so its intent can be sanity-checked alongside the result.
+        var planContainer = document.getElementById('ai-plan-container');
+        planContainer.innerHTML = '';
+        if (data.plan) {
+            var planHeading = document.createElement('strong');
+            planHeading.textContent = "AI's plan";
+            var planPre = document.createElement('pre');
+            planPre.textContent = data.plan;
+            planContainer.appendChild(planHeading);
+            planContainer.appendChild(planPre);
+        }
 
-            // Switch tab to JS or HTML so user can inspect the suggestion
-            var jsTab = document.querySelector('.piece-edit-tabs button[data-tab="js"]');
-            if (jsTab) {
-                jsTab.click();
-            }
-            if (onComplete) onComplete();
-        }).catch(function (err) {
-            if (onComplete) onComplete();
-            alert('AI Refinement Error: ' + err.message);
-        });
+        // Render a line diff so unrequested changes (e.g. to decorations,
+        // colors, or anything the instruction didn't name) are visible
+        // before deciding to accept — a prompt instruction alone can't
+        // guarantee the AI left everything else untouched.
+        var diffContainer = document.getElementById('ai-diff-container');
+        diffContainer.innerHTML = '';
+        var beforeRefine = ctx.beforeRefine;
+        renderDiffBlock(diffContainer, 'HTML', beforeRefine.html, htmlField.value);
+        renderDiffBlock(diffContainer, 'CSS', beforeRefine.css, cssField.value);
+        renderDiffBlock(diffContainer, 'JS', beforeRefine.js, jsField.value);
+        if (!diffContainer.children.length) {
+            var noChange = document.createElement('p');
+            noChange.textContent = 'No code differences detected.';
+            diffContainer.appendChild(noChange);
+        }
+
+        // Display AI Suggestion banner
+        aiBanner.style.display = 'flex';
+
+        // Switch tab to JS or HTML so user can inspect the suggestion
+        var jsTab = document.querySelector('.piece-edit-tabs button[data-tab="js"]');
+        if (jsTab) {
+            jsTab.click();
+        }
+        if (onComplete) onComplete();
     }
 
     // Shows the styled attempt-failed dialog (reusing the
@@ -1274,6 +1272,9 @@ if ($engineVal === 'p5') {
 
         if (canRetry) {
             newTryAgainBtn.addEventListener('click', function () {
+                if (isAiRequestInFlight) {
+                    return;
+                }
                 dialog.close();
                 if (cooldownInterval) clearInterval(cooldownInterval);
                 btnRefineAi.disabled = true;
@@ -1309,6 +1310,13 @@ if ($engineVal === 'p5') {
     btnRefineAi.addEventListener('click', function () {
         requestAiRefine('');
     });
+
+    var failedDialog = document.getElementById('refine-attempt-failed-dialog');
+    if (failedDialog) {
+        failedDialog.addEventListener('close', function () {
+            lastDialogClosedAt = Date.now();
+        });
+    }
 
     if (btnAiStronger) {
         btnAiStronger.addEventListener('click', function () {
@@ -1451,10 +1459,12 @@ if ($engineVal === 'p5') {
             throw new Error('Add HTML and JS code in the code tabs before capturing a thumbnail.');
         }
 
+        var liveIframe = previewStage ? previewStage.querySelector('iframe') : null;
         var capture = await window.CreatrPieceCapture.capture(buildCaptureSource({
             html: htmlField.value || '',
             css: cssField.value || '',
-            js: jsField.value || ''
+            js: jsField.value || '',
+            liveIframe: liveIframe
         }, 8383));
         if (!capture.ok) {
             throw new Error(capture.error || 'Thumbnail capture failed.');
