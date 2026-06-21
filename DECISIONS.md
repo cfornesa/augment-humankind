@@ -4351,3 +4351,73 @@ stopped testing rather than spend more tokens.
   the concurrency theory is also wrong and this needs a different real
   signal (e.g. instrumenting which specific side — before or after —
   failed, which the current error message doesn't distinguish).
+
+---
+
+## 2026-06-21 — Found the actual cause of "No canvas or svg" via direct side-by-side comparison: opacity:0 on the capture iframe
+
+### Context
+The sequential-capture fix from the entry above did not resolve the
+problem — the user's next test still hit "No canvas or svg element found
+after waiting" on a successful, correctly-instanced attempt. But this time
+the user also showed the *exact same* generated code rendering fine and
+interactively in the edit form's own "Interactive Live Canvas" preview pane
+on the same page load. Same code, same browser, same moment — one
+rendering pathway works, the other doesn't. That is as close to a
+controlled, isolating comparison as this investigation has had.
+
+### Investigation
+Compared the two rendering pathways directly:
+- `updateLivePreview()` (`form.php`) builds its iframe via
+  `window.CreatrPieceCapture.renderDocument()` (the same HTML-building
+  function `admin-piece-capture.js` uses) and appends it with normal
+  layout sizing (`width/height: 100%`), default opacity, **no** `opacity:0`.
+  This is the one that worked.
+- `admin-piece-capture.js`'s `capture()` builds its iframe with
+  `position:fixed;left:0;top:0;...;opacity:0;pointer-events:none;z-index:-1;`
+  — added several sessions ago specifically to move it from a literal
+  off-screen position (which some browsers throttle `requestAnimationFrame`
+  for) into "in-viewport but invisible." This is the one that failed.
+
+`opacity:0` was the only material difference between an iframe that worked
+and one that didn't, for byte-identical code. WebKit/Safari is known to
+treat `opacity: 0` elements as "provably invisible, not worth compositing"
+for some expensive resources — plausibly including skipping a real WebGL
+backing-store allocation for a canvas inside such an element, even though
+the element is technically positioned in the viewport. The earlier fix
+correctly identified that literal off-screen positioning gets throttled,
+but swapped it for a different optimization-skip path instead of removing
+the problem.
+
+### Implemented
+- **`admin-piece-capture.js`**: removed `opacity:0` from the capture
+  iframe's inline style, keeping `position:fixed;left:0;top:0;
+  pointer-events:none;z-index:-1;`. `z-index:-1` alone is sufficient for
+  real invisibility to the user — confirmed the page body has its own
+  non-transparent background (checked `styles.css`), so a `z-index:-1`
+  element is painted behind it regardless of its own opacity. This is the
+  one shared `capture()` function used by both the AI Refine comparison
+  *and* the regular "Generate Thumbnail"/Save flows, so the fix applies
+  uniformly everywhere a piece gets captured, not just AI Refine.
+
+### Ruled out
+- Concurrency (the previous entry's sequential-capture fix) — confirmed
+  not the cause by this same direct comparison; kept anyway since running
+  two heavy WebGL captures one at a time is still a reasonable
+  resource-use improvement on its own merits, just not the actual bug.
+- Mesh count / instancing — already ruled out two entries ago; this
+  entry's evidence (same code, two pathways) makes that conclusion airtight
+  rather than merely likely.
+
+### Verification
+- `node --check` on `admin-piece-capture.js`: clean.
+- `tests/art-piece-generation.php` (58/58) and `tests/ai-provider-client.php`
+  (11/11): both still pass — this change doesn't touch PHP, run only to
+  confirm no incidental breakage.
+- Could not verify this resolves the real capture on a live mobile session
+  without the user's next test — this is a strong, directly-evidenced
+  hypothesis (not a guess), but still unverified end-to-end. If "No canvas"
+  recurs after this specific fix, the opacity theory is also wrong and the
+  next step is instrumenting `admin-piece-capture.js` itself to report
+  *which* readiness condition it's still waiting on when it gives up,
+  rather than continuing to infer from the outside.
