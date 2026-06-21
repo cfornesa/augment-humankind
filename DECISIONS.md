@@ -4438,3 +4438,15 @@ WebGL/Three.js pieces render in a loop driven by `requestAnimationFrame` (rAF). 
 - `php tests/three-runtime-consistency.php`: 55/55 passed.
 - `php tests/art-piece-generation.php`: 58/58 passed.
 
+## 2026-06-21 — Fix WebKit Occlusion Culling for Capture Iframe
+
+### Context
+On iOS Safari, placing the capture iframe behind the page body (`z-index: -999999`) or setting its opacity to a low value (`opacity: 0.002`) causes WebKit to treat the iframe as completely occluded or invisible. Consequently, WebKit aggressively suspends layout rendering and network loading of dynamic ES modules (like `import('three')` in `bootThree()`). The script inside the iframe hangs indefinitely at the top-level import statement without throwing any error, resulting in a false-negative "No canvas or svg element found after waiting" timeout even when the piece runs perfectly in the live preview.
+
+### Implemented
+- **`public/assets/js/admin-piece-capture.js`**: Updated the capture iframe style to use `z-index: 999999; opacity: 1; transform: scale(0.001); transform-origin: 0 0;`. This positions the iframe on top of everything and fully opaque so WebKit does not cull or suspend it, but scales it down to less than 1px in size to remain visually hidden and click-safe for the user.
+- **`tests/three-runtime-consistency.php`**: Updated the test assertions to verify that the iframe has `opacity: 1`, `z-index: 999999`, and `transform: scale(0.001)` styles.
+
+### Verification
+- Ran `php tests/three-runtime-consistency.php && php tests/art-piece-generation.php && php tests/ai-provider-client.php`: 124/124 tests passed successfully.
+

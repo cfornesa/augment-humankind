@@ -222,5 +222,5 @@ Enables reasoning-heavy models (e.g. minimax-m3) to fully output PLAN and SEARCH
 2026-06-21 DECISION Non-SVG engines (p5, c2, three) have their HTML containers locked backend and frontend to standard boilerplate, hiding the HTML editing tab in admin views.
 Enforces `<div id="canvas-container"></div>` for p5, `<canvas id="piece-canvas"></canvas>` for c2, and `<div id="container"></div>` for three.
 
-2026-06-21 CORRECTION WebKit culling of low-opacity capture iframes was resolved by using opacity: 1 with z-index: -999999 to prevent network suspension of dynamic module imports.
-Keeps the capture iframe active in the compositing engine while hiding it behind the page body.
+2026-06-21 CORRECTION WebKit occlusion culling of the capture iframe on iOS Safari was resolved by using opacity: 1 with z-index: 999999 and transform: scale(0.001).
+Keeps the iframe fully visible and active in the viewport to load CDNs, while rendering it at less than 1px to be invisible.

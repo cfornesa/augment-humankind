@@ -103,14 +103,15 @@
         var frame = document.createElement('iframe');
         var runtimeError = '';
 
-        // Positioned at the back of everything (z-index: -999999) behind the page's
-        // opaque background, but fully opaque (opacity: 1) and click-safe (pointer-events: none).
+        // Positioned on top (z-index: 999999) but scaled down to virtually zero size
+        // (transform: scale(0.001)), fully opaque (opacity: 1), and click-safe (pointer-events: none).
         // WebKit/Safari and other modern engines aggressively suspend network/module loading
-        // (dynamic imports) in iframes that have low opacity (e.g. opacity:0.002). Using a fully
-        // opaque iframe keeps the network pipeline active to load Three.js, while placing it
-        // behind the body layer keeps it visually hidden from the user. Throttling of the
-        // requestAnimationFrame loop is bypassed via our setTimeout polyfill.
-        frame.style.cssText = 'position:fixed;left:0;top:0;width:' + width + 'px;height:' + height + 'px;border:none;pointer-events:none;z-index:-999999;opacity:1;';
+        // (dynamic imports) in iframes that are completely occluded (e.g. z-index:-999999 behind
+        // an opaque background) or have low opacity (e.g. opacity:0.002). Using a fully
+        // opaque iframe kept on top (z-index: 999999) but scaled down by CSS transform keeps the
+        // network and rendering pipelines fully active inside the viewport, while keeping it
+        // completely invisible to the user.
+        frame.style.cssText = 'position:fixed;left:0;top:0;width:' + width + 'px;height:' + height + 'px;border:none;pointer-events:none;z-index:999999;opacity:1;transform:scale(0.001);transform-origin:0 0;';
         frame.sandbox = 'allow-scripts allow-same-origin';
         document.body.appendChild(frame);
 
