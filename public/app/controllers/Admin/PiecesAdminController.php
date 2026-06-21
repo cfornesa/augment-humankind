@@ -1478,6 +1478,17 @@ class PiecesAdminController
             // original code untouched, which is indistinguishable
             // from the refinement never having happened at all.
             if (!$patches['html'] && !$patches['css'] && !$patches['js']) {
+                // Confirmed in production (audit log events #141, #147): the
+                // model sometimes ignores the PLAN/PATCH protocol entirely
+                // and dumps full-file fenced code blocks instead of a diff.
+                // That's a different mistake from "responded with nothing
+                // usable" — naming it specifically here lets the repair
+                // prompt below call out the exact violation instead of
+                // repeating the same generic instruction that already
+                // failed to prevent it once.
+                if (preg_match('/```(?:css|javascript|js)\b/i', $rawText) && !preg_match('/\bPATCH\s/i', $rawText)) {
+                    throw new RuntimeException('AI ignored the required PATCH format and returned full rewritten files in fenced code blocks instead of a diff.');
+                }
                 throw new RuntimeException('AI response contained no valid PATCH blocks in the required format — at least one PATCH is required to make the requested change.');
             }
 

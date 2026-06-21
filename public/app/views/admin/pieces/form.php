@@ -1402,7 +1402,23 @@ if ($engineVal === 'p5') {
             lastSequenceToken = '';
             resetDirtyBaselines();
             clearAiSuggestionUi();
-            setTimeout(clearAiSaveStatus, 6000);
+
+            // The version is already saved above, so unlike the Save-Changes
+            // submit handler (which captures before submit and can still
+            // abort), a capture failure here just gets reported — there is
+            // nothing left to roll back.
+            if (data.changed && currentPieceId) {
+                aiSaveStatus.textContent += ' Capturing thumbnail…';
+                performCapture(currentPieceId).then(function () {
+                    aiSaveStatus.textContent = aiSaveStatus.textContent.replace(' Capturing thumbnail…', ' Thumbnail updated.');
+                    setTimeout(clearAiSaveStatus, 6000);
+                }).catch(function (captureErr) {
+                    aiSaveStatus.textContent = aiSaveStatus.textContent.replace(' Capturing thumbnail…', ' Thumbnail capture failed: ' + captureErr.message);
+                    setTimeout(clearAiSaveStatus, 6000);
+                });
+            } else {
+                setTimeout(clearAiSaveStatus, 6000);
+            }
         })
         .catch(function (err) {
             // Keep the banner open on failure so the admin can retry Accept

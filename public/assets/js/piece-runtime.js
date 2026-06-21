@@ -99,25 +99,46 @@ function bootC2() {
   document.head.appendChild(script);
 }
 async function bootThree() {
+  // Created and inserted before the CDN imports below resolve, so a slow
+  // network never makes capture/diagnostics see "no canvas at all" — only
+  // the data-creatr-ready marker (set once the piece actually renders) is
+  // gated on the imports finishing.
+  const canvas = findCanvas('scene');
+  canvas.style.cssText = 'display:block;width:100%;height:100%;';
+  sizeCanvas(canvas);
+  // A scene with too many individual draw calls (thousands of separate
+  // meshes) can exhaust WebGL resources and lose its context — this
+  // doesn't throw and doesn't touch window.sketch's contract, so neither
+  // the global error handler nor the typeof check below ever sees it;
+  // left unhandled, the canvas just never gets marked ready and capture
+  // times out with no explanation. Surface it as a real error instead.
+  canvas.addEventListener('webglcontextlost', (event) => {
+    event.preventDefault();
+    showPieceError('WebGL context was lost — the scene is likely too complex to render (too many individual objects/draw calls).');
+  });
+
+  // Without this, a stalled/blocked CDN fetch (slow mobile network, or
+  // WebKit throttling dynamic imports in a sandboxed/occluded iframe) never
+  // throws — the import promise just sits pending — so capture's polling
+  // loop times out with a generic "no canvas" message that misreports a
+  // network stall as the piece having no canvas at all.
+  let importsSettled = false;
+  const importStallTimer = setTimeout(() => {
+    if (!importsSettled) {
+      showPieceError('Three.js failed to load from the CDN within 20s (slow or blocked network) — the piece itself was not the problem.');
+    }
+  }, 20000);
+
   try {
-    const mod = await import('https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js');
-    const { OrbitControls } = await import('https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js');
+    const [mod, { OrbitControls }] = await Promise.all([
+      import('https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js'),
+      import('https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js'),
+    ]);
+    importsSettled = true;
+    clearTimeout(importStallTimer);
     window.THREE = mod;
     runPieceCode();
     if (typeof window.sketch !== 'function') return;
-    const canvas = findCanvas('scene');
-    canvas.style.cssText = 'display:block;width:100%;height:100%;';
-    sizeCanvas(canvas);
-    // A scene with too many individual draw calls (thousands of separate
-    // meshes) can exhaust WebGL resources and lose its context — this
-    // doesn't throw and doesn't touch window.sketch's contract, so neither
-    // the global error handler nor the typeof check above ever sees it;
-    // left unhandled, the canvas just never gets marked ready and capture
-    // times out with no explanation. Surface it as a real error instead.
-    canvas.addEventListener('webglcontextlost', (event) => {
-      event.preventDefault();
-      showPieceError('WebGL context was lost — the scene is likely too complex to render (too many individual objects/draw calls).');
-    });
     const state = { scene: null, camera: null, renderer: null };
     let controls = null;
     let rafIds = [];
@@ -309,6 +330,7 @@ async function bootThree() {
     // capture doesn't wait forever for a frame that will never come.
     signalThreeReadyOnce();
   } catch (error) {
+    clearTimeout(importStallTimer);
     showPieceError(error);
   }
 }

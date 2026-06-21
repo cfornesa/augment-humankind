@@ -4450,3 +4450,45 @@ On iOS Safari, placing the capture iframe behind the page body (`z-index: -99999
 ### Verification
 - Ran `php tests/three-runtime-consistency.php && php tests/art-piece-generation.php && php tests/ai-provider-client.php`: 124/124 tests passed successfully.
 
+---
+
+## 2026-06-21 — Overhaul Visual Verification with Direct Live Preview Capture and Concurrency Guards
+
+### Context
+To resolve recurring false-positive canvas/SVG timeouts on mobile Safari (where background iframes are culled/throttled) and fix a concurrency regression where tap-throughs (ghost clicks) could launch concurrent refinement attempts out of order, we undertook a systemic overhaul of the visual capture and attempt retry architecture.
+
+### Implemented
+- **`admin-piece-capture.js`**: Extended `capture()` to check for `source.liveIframe`. If present, it attempts to directly read from the active preview's canvas via `.toDataURL()` or serialize its SVG, resolving immediately and avoiding background capture overhead entirely. Fallback to background rendering is retained automatically as a safety net.
+- **`form.php`**: Introduced `lastDialogClosedAt` timing check to block any AI refinement click triggered within 500ms of dialog closure, absorbing synthesized touch tap-throughs on mobile. Passed the live preview iframe as `liveIframe` parameter to `performCapture()`.
+- **`generate-preview.php`**: Hooked the active preview iframe into `ensurePreviewThumbnail()` capture options.
+- **`admin.css`**: Added `pointer-events: none !important;` to disabled admin buttons to prevent any touch interactions while they are disabled.
+- **`three-runtime-consistency.php`**: Updated assertions to match the visual toggle bar interface instead of the obsolete static before/after images check.
+
+### Verification
+- Ran `php tests/three-runtime-consistency.php && php tests/art-piece-generation.php && php tests/ai-provider-client.php`: 125/125 tests passed successfully.
+
+
+---
+
+## 2026-06-21 — Fix Thumbnail Capture Misdiagnosis and Missing Auto-Capture on AI Refine Accept
+
+### Context
+Piece ID 40 (Three.js) reported "Thumbnail generation failed: No canvas or svg element found after waiting" via the Edit page's manual Generate Thumbnail button, despite the piece visibly rendering a canvas in the live preview — described by the reporter as the system "hallucinating" that no canvas exists. Investigated against piece 40's actual production data (MySQL `art_piece_versions`, `audit_log_events`) and the real capture/runtime source, not just the error string, to find root causes rather than guessing.
+
+### Findings
+- `bootThree()` in `piece-runtime.js` created the `<canvas>` element only after two sequential `await import(...)` CDN calls (three.module.js, then OrbitControls). On a slow/WebKit-throttled connection there genuinely was no canvas in the DOM yet when capture's polling loop gave up, producing a generic, misleading "no canvas" message instead of naming the real cause (a CDN stall).
+- The AI Refine "Accept Changes" path (`form.php`'s `btnAiAccept` handler → `/refine-save`) never called the existing `performCapture()` helper that the regular "Save Changes" submit already uses — so every accepted AI refinement left a stale thumbnail, recoverable only via the manual button (which then hit the bug above for `three` pieces).
+- Production audit logs (`ai_refine_piece` events #141, #147) confirmed one real, evidenced AI Refine defect: the model occasionally ignores the mandatory PLAN/PATCH/SEARCH/REPLACE format and returns full-file fenced code blocks instead, which the parser correctly rejects but with a generic message that doesn't help the repair-retry correct the specific mistake.
+- The server-side HTML-edit prohibition for `p5`/`c2`/`three` engines (`PiecesAdminController.php` refineAi validation) was confirmed already correct and was not touched.
+
+### Implemented
+- **`piece-runtime.js`**: `bootThree()` now creates the canvas and attaches the `webglcontextlost` listener *before* the CDN imports start (only the `creatrReady` marker still waits on them); the two imports now run in parallel via `Promise.all` instead of sequentially; a 20s stall timer posts a specific "Three.js failed to load from the CDN within 20s" error via `sketch-status` if the imports haven't resolved by then.
+- **`form.php`**: `btnAiAccept`'s `/refine-save` success handler now calls the existing `performCapture(currentPieceId)` helper when the save actually changed something, reporting capture success/failure as a non-blocking status message (the version is already saved either way, so there is nothing to roll back).
+- **`PiecesAdminController.php`**: the zero-patches branch in `refineAi()` now detects the fenced-full-file-rewrite failure shape (raw response contains ` ```css `/` ```javascript ` but no `PATCH ` marker) and throws a distinct message naming that specific violation, which flows automatically into the next repair prompt's "your previous attempt failed" line via the existing `$failureMessage` plumbing — no change needed to `art_piece_refine_repair_prompt()` itself.
+- **`docs/api.md`**: updated the capture-thumbnail, refine-ai, and refine-save sections to describe the new auto-capture-on-accept behavior, the canvas-before-import ordering, and the distinguished zero-patches error.
+- **`tests/three-runtime-consistency.php`**: updated one assertion (`await import('https://...` → `import('https://...`) to match the new `Promise.all`-based import call shape; the actual regression guard it protects (absolute CDN URLs, not bare/relative specifiers) is unchanged.
+
+### Verification
+- Ran `php tests/three-runtime-consistency.php && php tests/art-piece-generation.php && php tests/ai-provider-client.php`: 124/124 tests passed (55 + 58 + 11).
+- `php -l` clean on all touched PHP files; `node --check` clean on `piece-runtime.js`.
+- Live end-to-end verification against piece 40 (accept a refinement and confirm thumbnail auto-updates; trigger Generate Thumbnail under throttled network and confirm the error now names a specific cause) still pending — not yet run in this session.

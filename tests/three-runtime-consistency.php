@@ -103,8 +103,8 @@ test('Three.js/OrbitControls load from absolute https:// CDN URLs, not relative/
     // was fixed. The fix is specifically importing from an ABSOLUTE
     // https:// URL; reverting to a relative path or a bare specifier like
     // import('three') would silently reintroduce the blank-on-iPhone bug.
-    assert_contains($runtime, "await import('https://cdn.jsdelivr.net/npm/three@");
-    assert_contains($runtime, "await import('https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js')");
+    assert_contains($runtime, "import('https://cdn.jsdelivr.net/npm/three@");
+    assert_contains($runtime, "import('https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js')");
 });
 
 echo "\n=== PHP views load the shared runtime (not an inline copy) ===\n";

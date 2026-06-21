@@ -230,3 +230,12 @@ Bypasses compositing culling while avoiding viewport dimension collapsing caused
 2026-06-21 CORRECTION Implemented `lastDialogClosedAt` timing checks in `form.php` to discard synthesized click events within 500ms of closing the failure dialog, preventing ghost clicks from launching concurrent AI refinement attempts.
 
 2026-06-21 CORRECTION Reinforced disabled button styling in `admin.css` with `pointer-events: none !important` to ensure disabled buttons are unclickable and visually inert on mobile browsers.
+
+2026-06-21 DECISION bootThree() must create the canvas before its CDN imports, not after.
+Otherwise capture can't tell a slow CDN apart from a piece with no canvas — see [piece-runtime.js](public/assets/js/piece-runtime.js).
+
+2026-06-21 DECISION performCapture() must run on every path that saves new piece code, not just one.
+Save Changes and AI Refine Accept both create new code; AI Refine Accept previously skipped thumbnail capture entirely.
+
+2026-06-21 CORRECTION "No canvas or svg element found" from admin-piece-capture.js is a fallback timeout message, not a real claim about the piece.
+Check piece-runtime.js's CDN import path and any sketch-status runtimeError before trusting it at face value.
