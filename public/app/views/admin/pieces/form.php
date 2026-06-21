@@ -670,6 +670,14 @@ $preferredProfileId = $preferredProfileId ?? null;
     var lastDraftVersionId = null;
     var lastSequenceToken = '';
     var ART_PIECE_MAX_ATTEMPTS = 5;
+    // PRELIMINARY value — not evidence-based (the two real timeouts seen so
+    // far were 2-3 minutes apart, not rapid-fire, and this app's own
+    // ai_refine_piece rate limit has no minimum-spacing rule, just a
+    // 6-per-15-minutes cap) — a debounce against accidental rapid
+    // clicking regardless of cause. Needs a real re-test: if AI Refine
+    // still hits the same 120s provider timeout pattern after this ships,
+    // 30s did not address it and the actual cause is still unknown.
+    var REFINE_RETRY_COOLDOWN_SECONDS = 30;
 
     // 1. Tab Switching
     tabs.forEach(function (tab) {
@@ -1186,8 +1194,16 @@ $preferredProfileId = $preferredProfileId ?? null;
         var newGiveUpBtn = giveUpBtn.cloneNode(true);
         giveUpBtn.parentNode.replaceChild(newGiveUpBtn, giveUpBtn);
 
+        // Cooldown: disable Try Again with a visible countdown before the
+        // next attempt can be spent, regardless of why this one failed
+        // (see REFINE_RETRY_COOLDOWN_SECONDS — preliminary). Declared
+        // before both listeners so Give Up can stop it if the dialog is
+        // dismissed mid-countdown, rather than leaking the interval.
+        var cooldownInterval = null;
+
         newGiveUpBtn.addEventListener('click', function () {
             dialog.close();
+            if (cooldownInterval) clearInterval(cooldownInterval);
             // Nothing to reset: the textareas were never written to until
             // a successful attempt's code is shown for review, so a
             // sequence that never succeeded already leaves them exactly as
@@ -1200,6 +1216,7 @@ $preferredProfileId = $preferredProfileId ?? null;
         if (canRetry) {
             newTryAgainBtn.addEventListener('click', function () {
                 dialog.close();
+                if (cooldownInterval) clearInterval(cooldownInterval);
                 btnRefineAi.disabled = true;
                 if (btnAiStronger) btnAiStronger.disabled = true;
                 performRefineAttempt({
@@ -1211,6 +1228,20 @@ $preferredProfileId = $preferredProfileId ?? null;
                     lastError: data.error || null
                 });
             });
+
+            var cooldownRemaining = REFINE_RETRY_COOLDOWN_SECONDS;
+            newTryAgainBtn.disabled = true;
+            newTryAgainBtn.textContent = 'Try Again (' + cooldownRemaining + 's)';
+            cooldownInterval = setInterval(function () {
+                cooldownRemaining--;
+                if (cooldownRemaining <= 0) {
+                    clearInterval(cooldownInterval);
+                    newTryAgainBtn.disabled = false;
+                    newTryAgainBtn.textContent = 'Try Again';
+                } else {
+                    newTryAgainBtn.textContent = 'Try Again (' + cooldownRemaining + 's)';
+                }
+            }, 1000);
         }
 
         dialog.showModal();

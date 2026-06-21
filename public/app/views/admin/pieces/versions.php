@@ -68,11 +68,9 @@ ob_start();
                                     <button type="submit" class="admin-link">Revert</button>
                                 </form>
                             <?php endif; ?>
-                            <?php if ($isDraftAttempt): ?>
-                                <form method="post" action="/admin/pieces/<?= (int) $piece['id'] ?>/versions/<?= (int) $version['id'] ?>/fork" class="inline-form" onsubmit="return confirm('Create a brand new, independent piece starting from this attempt\'s code?')">
-                                    <button type="submit" class="admin-link">Fork as New Piece</button>
-                                </form>
-                            <?php endif; ?>
+                            <form method="post" action="/admin/pieces/<?= (int) $piece['id'] ?>/versions/<?= (int) $version['id'] ?>/fork" class="inline-form" onsubmit="return confirm('Create a brand new, independent piece starting from this version\'s code?')">
+                                <button type="submit" class="admin-link">Fork as New Piece</button>
+                            </form>
                             <form method="post" action="/admin/pieces/<?= (int) $piece['id'] ?>/versions/<?= (int) $version['id'] ?>/delete" class="inline-form" onsubmit="return confirm('Delete this version permanently?')">
                                 <button type="submit" class="admin-link danger">Delete</button>
                             </form>

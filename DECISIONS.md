@@ -4013,5 +4013,106 @@ pattern); verified via `INFORMATION_SCHEMA` afterward.
   a real browser this session — no browser automation tool was available.
   The next real AI Refine attempt is the actual end-to-end verification.
 
+---
+
+## 2026-06-21 — Improved AI Refine prompt quality from real failure evidence; extended Fork to all versions
+
+### Context
+The new multi-attempt retry feature (previous entry) worked exactly as
+designed end to end — dialog, attempt counter, and draft persistence all
+functioned correctly across a real 5-attempt sequence on piece 83. But all
+5 attempts failed: 3 rejected by the mesh-count validator (1528, 1318, 1328
+objects, all over the 150 threshold), 2 failed on a 120s outbound timeout
+to the AI provider before any code was generated. This entry acts on what
+the actual evidence shows, not just the error text, plus extends "Fork as
+New Piece" to every version per explicit instruction.
+
+### Investigation (grounded in the real failed code, not just error messages)
+Pulled all 3 draft versions with extractable code directly from production
+(piece 83, read-only). Across all three, loop bounds were reshuffled each
+attempt (600+120+40+500 → 450+160+600+40 → 600+120+40+700) but
+`InstancedMesh`/`mergeGeometries`/`BufferGeometryUtils` appeared **zero
+times** in any of them — the model never once attempted instancing, only
+varied per-loop counts. Reading the actual prompt functions explained why:
+neither `art_piece_generation_system_prompt()`'s `'three'` branch nor
+`art_piece_refine_repair_prompt()` ever mentioned instancing or merged
+geometry as an option — the model had no idea it existed until a rejection
+mentioned it once, in an unframed aside it then ignored on retry.
+
+Checked the user's alternative hypothesis (attempts retried too soon,
+provoking the timeout) against the actual screenshot timestamps: attempts
+were 2-3 minutes apart, not rapid-fire, and this app's own `ai_refine_piece`
+rate limiter (`rate-limit.php`) only caps total requests per 15-minute
+window (6 max) with no minimum-spacing rule at all — neither supports "too
+soon" as the cause of these two specific timeouts. Documented this
+explicitly rather than silently building the requested cooldown as if it
+were a confirmed fix.
+
+### Implemented
+- **`art_piece_generation_system_prompt()`** (`'three'` branch,
+  `art-piece-generation.php`): added explicit instancing guidance — for any
+  repeated small element (hair, particles, leaves, swarms, etc.) numbering
+  more than ~30-40, use a single `THREE.InstancedMesh` with one shared
+  geometry/material via `setMatrixAt`, never one `new THREE.Mesh` per item —
+  with a short worked code snippet, mirroring how this file already
+  includes a worked PLAN/PATCH example elsewhere. Because
+  `art_piece_refine_system_prompt()` embeds this exact function's output
+  verbatim ("Here are the engine-specific rules... that you MUST follow"),
+  this benefits AI Refine *and* initial generation from one change, with no
+  separate edit to generation's prompt or control flow.
+- **`art_piece_refine_repair_prompt()`**: changed the bare, unframed
+  `"Your previous response could not be applied: {$failureMessage}"` to
+  `"CRITICAL — your previous attempt failed: \"{$failureMessage}\" You MUST
+  directly address this specific problem in your PLAN section before
+  writing any PATCH — state the new approach you will use to avoid it, not
+  just adjusted numbers or a smaller version of the same approach."` —
+  generic, helps every repair-prompt failure, not just mesh-count.
+- **`form.php`**: added a (flagged-preliminary) 30-second cooldown on the
+  "Try Again" button — disabled with a live countdown ("Try Again (29s)"
+  → ... → "Try Again") via the same `setInterval` pattern already used for
+  the elapsed-time status line, applied uniformly to every failure
+  regardless of type, cleared properly if Give Up is clicked mid-countdown.
+  `REFINE_RETRY_COOLDOWN_SECONDS = 30` is explicitly commented as
+  unverified — the user wants to re-test live AI Refine before treating 30s
+  as correct; if the same 120s-timeout pattern recurs after this ships, 30s
+  did not address it and the real cause is still open.
+- **`versions.php`**: removed the `is_draft_attempt`-only gate around "Fork
+  as New Piece" so it renders for every version row, not just failed
+  attempts. The separate Revert gate (`!$isCurrent && !$isDraftAttempt`) is
+  untouched — confirmed via direct code read that `versionFork()` and its
+  route already contained zero draft-specific logic, so no controller or
+  route change was needed, only the view's button-visibility condition.
+
+### Ruled out
+- Raising or lowering the 150-object mesh-count threshold — the evidence
+  points to a prompting gap (the model doesn't know instancing is an
+  option), not a too-strict limit; loosening it would just let
+  worse-performing pieces through without fixing the actual problem.
+- A transparent server-side retry-once-on-timeout mechanism (considered and
+  presented as an option) — dropped in favor of the cooldown-timer approach
+  actually requested; `AiProviderClient`'s 120s timeout and `refineAi()`'s
+  `set_time_limit` are unchanged.
+
+### Verification
+- `php -l` on every touched PHP file; extracted and `node --check`'d the
+  JS inside `form.php` (PHP interpolations stubbed, same method as prior
+  entries).
+- `tests/art-piece-generation.php`: 59/59 still pass — checked first that
+  existing repair-prompt tests use substring assertions
+  (`assert_contains`), not full-string equality, so the strengthened
+  framing didn't break anything.
+- Directly verified via a standalone script (not just reading the diff)
+  that `art_piece_generation_system_prompt('three')` now contains
+  `InstancedMesh` and `setMatrixAt`, that `art_piece_refine_system_prompt()`
+  inherits it through the shared base rules, and that
+  `art_piece_refine_repair_prompt()` produces the new `CRITICAL`/"state the
+  new approach" framing.
+- Confirmed via direct code read (not assumption) that `versionFork()` and
+  its route have no draft-specific logic, before editing only the view.
+- **Could not verify the model's actual compliance** (does it now reach for
+  InstancedMesh; is 30s an adequate cooldown) without spending the user's
+  real tokens on a live call — explicitly not claimed as fixed. The next
+  real AI Refine attempt on a dense-element prompt is the actual test.
+
 
 
