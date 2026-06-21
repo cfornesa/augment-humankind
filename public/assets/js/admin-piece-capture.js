@@ -98,18 +98,14 @@
         var frame = document.createElement('iframe');
         var runtimeError = '';
 
-        // Hidden via z-index:-1 behind the page's own opaque background,
-        // deliberately NOT opacity:0 — WebKit/Safari has been observed to
-        // skip allocating a real WebGL backing store (or otherwise
-        // throttle rendering) for opacity:0 content as a "provably
-        // invisible, not worth compositing" optimization, even though the
-        // element is in the viewport. Confirmed directly: the exact same
-        // piece code rendered fine in the visible (full-opacity) live
-        // preview iframe elsewhere on this page, but failed in this
-        // capture iframe — the opacity was the only material difference.
-        // z-index:-1 alone is sufficient for invisibility to the user
-        // since the page body has its own non-transparent background.
-        frame.style.cssText = 'position:fixed;left:0;top:0;width:' + width + 'px;height:' + height + 'px;border:none;pointer-events:none;z-index:-1;';
+        // Positioned on top of everything (z-index: 999999) but virtually invisible
+        // (opacity: 0.002) and click-safe (pointer-events: none). WebKit/Safari and
+        // other modern engines aggressively throttle requestAnimationFrame (rAF) and
+        // suspend JavaScript/network execution in iframes that are completely
+        // occluded (e.g. z-index:-1 behind an opaque body) or have opacity:0.
+        // Putting the iframe on top with a non-zero opacity forces compositing culling
+        // to treat it as active/visible, while keeping it invisible to the user.
+        frame.style.cssText = 'position:fixed;left:0;top:0;width:' + width + 'px;height:' + height + 'px;border:none;pointer-events:none;z-index:999999;opacity:0.002;';
         frame.sandbox = 'allow-scripts allow-same-origin';
         document.body.appendChild(frame);
 

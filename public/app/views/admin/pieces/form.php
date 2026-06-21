@@ -1045,12 +1045,14 @@ $preferredProfileId = $preferredProfileId ?? null;
             });
         })
         .then(function (data) {
-            stopAndReenable();
             if (!data.success) {
+                stopAndReenable();
                 handleRefineAttemptFailure(ctx, data);
                 return;
             }
-            handleRefineAttemptSuccess(ctx, data);
+            ctx.statusLabel = 'Generating preview snapshots';
+            setRefineElapsed('Generating preview snapshots');
+            handleRefineAttemptSuccess(ctx, data, stopAndReenable);
         })
         .catch(function (err) {
             // A genuinely unexpected client-side error (e.g. the visual
@@ -1062,7 +1064,7 @@ $preferredProfileId = $preferredProfileId ?? null;
         });
     }
 
-    function handleRefineAttemptSuccess(ctx, data) {
+    function handleRefineAttemptSuccess(ctx, data, onComplete) {
         // Store backup if not already in preview mode
         if (!originalCode) {
             originalCode = ctx.beforeRefine;
@@ -1171,7 +1173,9 @@ $preferredProfileId = $preferredProfileId ?? null;
             if (jsTab) {
                 jsTab.click();
             }
+            if (onComplete) onComplete();
         }).catch(function (err) {
+            if (onComplete) onComplete();
             alert('AI Refinement Error: ' + err.message);
         });
     }
