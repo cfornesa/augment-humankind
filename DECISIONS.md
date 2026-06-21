@@ -3811,5 +3811,82 @@ user was explicit that a repeat failure after a "fixed" bug is unacceptable.
   this exact codebase; the mesh-count fix was verified against the actual
   failing piece's real code rather than a synthetic guess.
 
+---
+
+## 2026-06-21 — Diagnosed and mitigated a likely hosting-infrastructure timeout cutting off long AI Refine requests
+
+### Context
+Immediately after the mesh-count fix above shipped, a fresh AI Refine
+attempt on piece 83 failed with a new, more cryptic error: "AI Refinement
+Error: The string did not match the expected pattern." — never seen before
+in this thread, and distinct from the earlier "Load failed" network error
+(already retried).
+
+### Investigation
+- Identified via web search (not guessed) that "The string did not match
+  the expected pattern." is Safari/WebKit's generic SyntaxError (DOM
+  Exception 12), thrown by many unrelated APIs for malformed input — one of
+  its most common, documented causes is specifically "JSON parsing of
+  non-JSON responses."
+- Checked `audit_log_events` directly (continuing the same user-approved DB
+  read from earlier entries): zero new rows of any scope in 46 minutes of
+  DB time, despite the user actively watching "3:00 elapsed." Both of
+  `refineAi()`'s try/catch blocks log to `audit_log_events` *before*
+  responding, on both success and failure — so a row's total absence means
+  the request never reached either one.
+- Since the error text changed from a `fetch()`-level network rejection
+  ("Load failed," already mitigated with a retry) to a JSON-parse failure,
+  the browser DID get a response body back this time — just not valid
+  JSON. Combined with the missing audit row, the most likely explanation:
+  this app's hosting infrastructure (Hostinger shared hosting, per
+  `CONSTRAINTS.md`) enforces its own proxy/PHP-FPM request timeout,
+  independent of and shorter than this script's own
+  `set_time_limit(660)` — and when that external timeout fires, the
+  connection gets killed and a non-JSON error page is returned, which
+  PHP's own code never gets a chance to log or shape into real JSON.
+- Real per-attempt durations for this exact piece/model (opencode-go /
+  minimax-m3), pulled from `audit_log_events`: ranged from ~20s to ~119s
+  across ten recent successful refine calls. Five sequential attempts at
+  that pace can plausibly exceed an external timeout well under the 660s
+  PHP limit the code assumes it has.
+- Confirmed there is no nginx/Apache/proxy config for this in the repo —
+  Hostinger's actual front-end timeout value is managed server-side and
+  not inspectable or changeable from here.
+
+### Implemented
+- **`PiecesAdminController::refineAi()`**: the retry loop now stops
+  *starting new* attempts (never aborts one already in flight) once total
+  elapsed time exceeds ~240 seconds, returning a clean, valid JSON error
+  response well inside the existing 660s PHP limit instead of letting up
+  to 5 slow attempts run unbounded. The first attempt is never skipped
+  regardless of timing.
+- **`form.php`**'s `fetchRefine()` consumer: now reads the response body as
+  text and attempts `JSON.parse()` itself, rather than calling `res.json()`
+  directly. On a parse failure, surfaces an honest, specific message ("the
+  request took too long and was cut off") instead of the cryptic native
+  browser error — this closes the gap for *any* future non-JSON response,
+  not just the specific timeout value guessed at above.
+
+### Ruled out
+- Could not directly confirm or change Hostinger's actual proxy/PHP-FPM
+  timeout value — no access to that layer from this repo. The fix is
+  therefore a mitigation against an unverified-but-well-evidenced external
+  constraint, not a definitive root-cause fix; if requests are still being
+  cut off shorter than ~240s, the client-side honest-error fix is the
+  fallback that keeps the failure mode from being cryptic, but the
+  underlying frequency of failures would need a shorter server-side budget
+  or a faster AI vendor/model to actually resolve.
+
+### Verification
+- `php -l` on `PiecesAdminController.php`; `php -l` on `form.php`: both
+  clean.
+- `tests/art-piece-generation.php`: 59/59 still pass (this change doesn't
+  touch validation logic).
+- Deliberately did **not** re-trigger a live AI Refine call against
+  production to verify either fix end-to-end — doing so would spend more
+  of the user's real tokens/time chasing the exact same failure that
+  prompted this fix, which defeats the purpose. Flagging this explicitly:
+  the next real AI Refine attempt on piece 83 is the actual verification.
+
 
 

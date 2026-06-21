@@ -952,7 +952,24 @@ $preferredProfileId = $preferredProfileId ?? null;
 
         fetchRefine(false)
         .then(function (res) {
-            return res.json().then(function (data) {
+            // A response that isn't valid JSON (an HTML error page, an
+            // empty body, etc.) means something between the browser and
+            // this app's PHP — most likely the hosting infrastructure's own
+            // proxy/request timeout, which is outside this app's control
+            // and shorter than a slow multi-attempt AI Refine call can
+            // take — cut the connection before PHP ever got to respond.
+            // res.json() on that body throws a cryptic native browser
+            // error ("Unexpected token" in Chrome, "The string did not
+            // match the expected pattern." in Safari) that says nothing
+            // about what actually happened. Read the body as text first so
+            // a real, honest message can be shown instead.
+            return res.text().then(function (rawText) {
+                var data;
+                try {
+                    data = JSON.parse(rawText);
+                } catch (parseErr) {
+                    throw new Error('The server did not return a usable response (status ' + res.status + '). This usually means the request took too long and was cut off before finishing — try again, or use a shorter/simpler instruction.');
+                }
                 if (!res.ok) {
                     throw new Error(data.error || 'AI Refinement failed.');
                 }

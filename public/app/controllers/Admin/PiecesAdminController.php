@@ -1310,6 +1310,27 @@ class PiecesAdminController
             $lastError = '';
 
             while ($attemptCount < ART_PIECE_MAX_ATTEMPTS) {
+                // Real attempts on this AI vendor/model have taken anywhere
+                // from ~20s to ~120s each (per audit_log_events), so 5
+                // sequential attempts can run well past this app's hosting
+                // infrastructure's own proxy/PHP-FPM request timeout — a
+                // limit this script has no visibility into and cannot
+                // extend with set_time_limit() alone. When that external
+                // timeout fires mid-request, the connection gets killed and
+                // the client receives a non-JSON error page it can't parse
+                // (a cryptic browser-native error instead of a real
+                // message). Never skip the first attempt — only stop
+                // *starting new* attempts once already deep into the
+                // budget, so a slow-but-working single attempt always gets
+                // to finish and return clean, valid JSON well before any
+                // external timeout, even if that means fewer self-healing
+                // retries than the full 5.
+                if ($attemptCount >= 1 && (microtime(true) - $startedAt) > 240) {
+                    $lastError = $lastError !== ''
+                        ? $lastError . ' (stopped retrying after ~4 minutes total to return a response before an infrastructure timeout could cut the connection)'
+                        : 'The request ran too long without completing a usable attempt and was stopped to return a response before an infrastructure timeout could cut the connection.';
+                    break;
+                }
                 $attemptCount++;
                 $systemPrompt = art_piece_refine_system_prompt($engine);
                 if ($persona) {
