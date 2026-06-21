@@ -108,6 +108,16 @@ async function bootThree() {
     const canvas = findCanvas('scene');
     canvas.style.cssText = 'display:block;width:100%;height:100%;';
     sizeCanvas(canvas);
+    // A scene with too many individual draw calls (thousands of separate
+    // meshes) can exhaust WebGL resources and lose its context — this
+    // doesn't throw and doesn't touch window.sketch's contract, so neither
+    // the global error handler nor the typeof check above ever sees it;
+    // left unhandled, the canvas just never gets marked ready and capture
+    // times out with no explanation. Surface it as a real error instead.
+    canvas.addEventListener('webglcontextlost', (event) => {
+      event.preventDefault();
+      showPieceError('WebGL context was lost — the scene is likely too complex to render (too many individual objects/draw calls).');
+    });
     const state = { scene: null, camera: null, renderer: null };
     let controls = null;
     let rafIds = [];

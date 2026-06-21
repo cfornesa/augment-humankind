@@ -174,6 +174,70 @@ function validate_art_piece_code(string $code): string
 }
 
 /**
+ * Estimates how many THREE.Mesh/Points/Line objects the code will actually
+ * create at runtime — not just how many `new THREE.Mesh(...)` call sites
+ * appear in the source. A single call site inside `for (let i = 0; i < 900;
+ * i++) { ... new THREE.Mesh(...) ... }` creates 900 objects at runtime, and
+ * a flat source-text count would miss that entirely (it would see "1").
+ * Detects simple bounded for-loops with a literal numeric comparison bound,
+ * multiplies any mesh-creation calls found in that loop's body by the
+ * bound, and adds any remaining calls found outside a detected loop body at
+ * face value. Not a full JS parser — covers the common
+ * `for (...; i < N; ...) { ... }` / `for (...; i <= N; ...) { ... }`
+ * generative-art pattern this check exists to catch, not every possible
+ * loop construct.
+ */
+function art_piece_count_three_object_calls(string $code): int
+{
+    $callPattern = '/\bnew\s+THREE\s*\.\s*(?:Mesh|Points|Line)\s*\(/i';
+    $total = 0;
+    $consumedRanges = [];
+
+    if (preg_match_all('/for\s*\([^;{}]*;\s*\w+\s*(?:<=?|>=?)\s*(\d+)\s*;[^)]*\)\s*\{/i', $code, $loopMatches, PREG_OFFSET_CAPTURE)) {
+        foreach ($loopMatches[0] as $idx => $fullMatch) {
+            $bound = (int) $loopMatches[1][$idx][0];
+            $bodyStart = $fullMatch[1] + strlen($fullMatch[0]);
+            $depth = 1;
+            $pos = $bodyStart;
+            $len = strlen($code);
+            while ($pos < $len && $depth > 0) {
+                if ($code[$pos] === '{') {
+                    $depth++;
+                } elseif ($code[$pos] === '}') {
+                    $depth--;
+                }
+                $pos++;
+            }
+            $bodyEnd = $pos - 1;
+            $body = substr($code, $bodyStart, $bodyEnd - $bodyStart);
+            $callsInBody = preg_match_all($callPattern, $body);
+            if ($callsInBody > 0) {
+                $total += $bound * $callsInBody;
+                $consumedRanges[] = [$bodyStart, $bodyEnd];
+            }
+        }
+    }
+
+    if (preg_match_all($callPattern, $code, $allMatches, PREG_OFFSET_CAPTURE)) {
+        foreach ($allMatches[0] as $match) {
+            $pos = $match[1];
+            $insideConsumed = false;
+            foreach ($consumedRanges as [$rangeStart, $rangeEnd]) {
+                if ($pos >= $rangeStart && $pos < $rangeEnd) {
+                    $insideConsumed = true;
+                    break;
+                }
+            }
+            if (!$insideConsumed) {
+                $total++;
+            }
+        }
+    }
+
+    return $total;
+}
+
+/**
  * Validates art piece code based on its engine type.
  */
 function art_piece_preflight_code(string $engine, string $code): string
@@ -209,6 +273,18 @@ function art_piece_preflight_code(string $engine, string $code): string
             if (preg_match($rule['pattern'], $validatedCode)) {
                 throw new RuntimeException($rule['message']);
             }
+        }
+
+        // A loop creating one `new THREE.Mesh(...)` per iteration ("denser
+        // hair/beard/particles") for hundreds of items produces thousands
+        // of individual geometry buffers and draw calls — this has been
+        // observed to exhaust WebGL resources (a silent context loss, with
+        // no error and no canvas ever marked ready) well within capture's
+        // timeout, on real saved pieces. Cap the total count rather than
+        // waiting longer for a renderer that will never come up.
+        $meshCount = art_piece_count_three_object_calls($validatedCode);
+        if ($meshCount > 150) {
+            throw new RuntimeException("Generated Three.js code creates {$meshCount} individual mesh/points/line objects, which will exhaust WebGL resources on real devices. For repeated elements (hair strands, particles, etc.), use a single THREE.InstancedMesh or a merged BufferGeometry instead of one object per item.");
         }
     }
 

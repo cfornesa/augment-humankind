@@ -161,8 +161,22 @@ class PiecesAdminController
     public static function update(string $id): void
     {
         admin_check();
+        // form.php's main Save submit uses fetch() (not a traditional form
+        // POST) specifically so a stale/dropped connection after a long
+        // preceding AI Refine + capture sequence can be retried — the same
+        // reason generate-preview.php's Save and the AI Refine request
+        // itself use fetch(). A JSON response is required for that caller;
+        // a non-JS form POST still gets the original redirect/inline-error
+        // behavior untouched below.
+        $wantsJson = ($_SERVER['HTTP_X_REQUESTED_WITH'] ?? '') === 'XMLHttpRequest';
+
         $existing = PlatformArtPiece::find((int) $id);
         if (!$existing) {
+            if ($wantsJson) {
+                header('Content-Type: application/json');
+                echo json_encode(['success' => false, 'error' => 'Piece not found.']);
+                exit;
+            }
             header('Location: /admin/pieces');
             exit;
         }
@@ -215,8 +229,18 @@ class PiecesAdminController
                 }
             }
 
-            header('Location: /admin/pieces');
+            if ($wantsJson) {
+                header('Content-Type: application/json');
+                echo json_encode(['success' => true, 'redirect' => '/admin/pieces']);
+            } else {
+                header('Location: /admin/pieces');
+            }
         } catch (Throwable $e) {
+            if ($wantsJson) {
+                header('Content-Type: application/json');
+                echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+                exit;
+            }
             $piece = self::draftPieceFromPost((int) $id);
             $error = $e->getMessage();
             $artMedia = Category::all();

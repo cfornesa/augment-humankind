@@ -3704,5 +3704,112 @@ both failures are robustness bugs, not AI-output defects.
   available; the fix mirrors an already-shipped, already-effective pattern
   (Save's retry) rather than a novel untested mechanism.
 
+---
+
+## 2026-06-21 — Fixed Save's ERR_CONNECTION_CLOSED + the real cause of capture failures: WebGL resource exhaustion, not timing
+
+### Context
+After the previous entry's fixes, the user re-ran AI Refine + "Stronger
+Change" on piece 83 — refinement itself succeeded this time (version 2,
+`id=155`, saved and validated). But two new failures followed: clicking the
+main "Update Piece" Save button hit `ERR_CONNECTION_CLOSED` instead of
+redirecting, and the "Generate Thumbnail" button on the Pieces list still
+failed with "No canvas or svg element found" — on WiFi, with the raised
+70-attempt budget already in place, reproducing again on a later retry. The
+user was explicit that a repeat failure after a "fixed" bug is unacceptable.
+
+### Investigation
+- **Save's ERR_CONNECTION_CLOSED**: `form.php`'s main edit-form submit
+  handler still called native `form.submit()` with zero retry logic — the
+  exact same failure class already fixed twice elsewhere in this codebase
+  (`generate-preview.php`'s `submitSave()`, and this session's
+  `fetchRefine()`), just never applied to the main Save submit itself.
+- **"No canvas" on capture**: read piece 83 version 2's actual
+  `generated_code` directly from the production DB (continuing the
+  user-approved DB read from the previous entry). The code was completely
+  valid — one correct `window.sketch` assignment, proper `startFrame` usage.
+  This ruled out a code-validity bug. The real issue: the refined scene
+  built "denser hair/beard" by looping `new THREE.Mesh(geometry, material)`
+  900 times (beard) + 280 times (mustache) + 1100 times (top hair) — ~2,388
+  individual mesh objects (confirmed via a loop-aware static count, see
+  below), each its own geometry buffer and draw call. This plausibly
+  exhausts WebGL resources / triggers a context loss during scene
+  construction, which `piece-runtime.js` had **no listener for at all** — it
+  fails with no error and no `creatrReady` signal, exactly matching the
+  symptom and explaining why raising the poll ceiling (previous entry)
+  didn't help: the renderer never comes up regardless of how long the
+  capture waits, and bandwidth was never the bottleneck (hence reproducing
+  on WiFi).
+- **Self-caught bug while building the fix**: my first attempt at a
+  mesh-count check used a flat `preg_match_all('/new THREE\.Mesh\(/')`
+  source-text count — which only finds **call sites**, not how many objects
+  get created at runtime. A single call site inside
+  `for (let i = 0; i < 900; i++) { ... new THREE.Mesh(...) ... }` is one
+  source occurrence but 900 runtime objects; the flat count returned 28 for
+  piece 83's actual code and would have silently passed it. Caught this by
+  testing the new check against the real saved code before trusting it, not
+  by inspection alone — replaced it with a loop-aware count.
+
+### Implemented
+- **`PiecesAdminController::update()`** (`public/app/controllers/Admin/PiecesAdminController.php`):
+  added a `$wantsJson` branch (`HTTP_X_REQUESTED_WITH === 'XMLHttpRequest'`)
+  that returns JSON for both the existing success path (redirect) and the
+  existing catch-and-re-render-form path (error message), leaving the
+  original redirect/inline-render behavior completely untouched for any
+  non-JS caller.
+- **`form.php`**: converted the main Save submit's final `form.submit()`
+  into a `submitFormViaFetch()` call — POSTs via `fetch()` with
+  `X-Requested-With: XMLHttpRequest`, one retry on a network-level failure
+  only (same pattern as `fetchRefine()` and `generate-preview.php`'s
+  `submitSave()`), then `window.location.href` on success. Only the
+  "code changed" (dirty) submit branch was converted — the only one that
+  does the long preceding capture/AI work that makes a stale connection
+  plausible; the simple metadata-only save still uses the native submit it
+  already used, unchanged.
+- **`art_piece_preflight_code()`** (`public/app/helpers/art-piece-generation.php`):
+  added `art_piece_count_three_object_calls()`, a loop-aware static count
+  that detects bounded `for` loops with a literal numeric comparison and
+  multiplies any `new THREE.Mesh/Points/Line(...)` calls found in the loop
+  body by the bound, adding any remaining calls outside a detected loop body
+  at face value. If the total exceeds 150, throws a `RuntimeException`
+  instructing the AI to use `THREE.InstancedMesh` or a merged
+  `BufferGeometry` instead. Runs inside the same 5-attempt self-healing
+  retry loop as every other `art_piece_preflight_code()` check (window.sketch,
+  multi-param startFrame), so a future "denser" request gets an automatic
+  chance at a real fix instead of silently saving an unrenderable scene.
+- **`piece-runtime.js`** (`bootThree()`): added a `webglcontextlost`
+  listener on the canvas that calls `showPieceError()` with a clear message
+  if a context loss happens anyway (e.g. from heavy textures rather than
+  mesh count, which the new ceiling doesn't catch) — converts any future
+  recurrence of this failure mode into an immediate, actionable error
+  instead of a silent timeout.
+
+### Ruled out
+- Raising the capture timeout further — already tried once (40→70 attempts,
+  previous entry) and directly disproven by reading the actual code: the
+  renderer never comes up at all for this scene, regardless of how long
+  capture waits.
+
+### Verification
+- `php -l` on `art-piece-generation.php`, `PiecesAdminController.php`,
+  `form.php`; `node --check` on `piece-runtime.js`: all clean.
+- `tests/art-piece-generation.php`: 59/59 pass (55 prior + 1 from the
+  previous session's entry + 3 new: loop-multiplied rejection, a reasonable
+  count still passing, and a direct unit test of
+  `art_piece_count_three_object_calls()` asserting it returns 901 for
+  `for (...; i < 900; ...) { new THREE.Mesh(...) }` plus one flat call —
+  not just "28" the way the first, wrong implementation would have.
+- Replayed the new check directly against piece 83 version 2's actual saved
+  JS (already pulled from the DB): loop-aware count = 2,388, correctly
+  rejected with the `InstancedMesh` guidance message. The flawed first
+  version of this same check was caught the same way — passed the real code
+  through it before trusting it, not by code review alone.
+- Could not exercise a live Save round-trip under a real stale-connection
+  condition, nor a live capture of a heavy Three.js scene on a real mobile
+  device, in this session — no browser automation tool is available. The
+  Save fix mirrors two already-shipped, already-effective precedents in
+  this exact codebase; the mesh-count fix was verified against the actual
+  failing piece's real code rather than a synthetic guess.
+
 
 

@@ -1296,7 +1296,55 @@ $preferredProfileId = $preferredProfileId ?? null;
                     }
                 }
 
-                form.submit();
+                if (submitBtn) submitBtn.textContent = 'Saving…';
+
+                // fetch() instead of a traditional form.submit() — by this
+                // point the tab may have already sat through a long AI
+                // Refine + capture sequence, making a stale/dropped
+                // keep-alive connection just as likely here as it was for
+                // the AI Refine request itself (fetchRefine() above) and
+                // for the initial-generation Save flow
+                // (generate-preview.php's submitSave()). A fresh fetch()
+                // opens a new connection instead of reusing a dead one; one
+                // retry on a network-level failure only, mirroring those
+                // same precedents.
+                function submitFormViaFetch(isRetry) {
+                    return fetch(form.action || window.location.href, {
+                        method: 'POST',
+                        headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                        body: new FormData(form)
+                    }).catch(function (networkErr) {
+                        if (isRetry) throw networkErr;
+                        if (submitBtn) submitBtn.textContent = 'Connection issue — retrying…';
+                        return new Promise(function (resolve) {
+                            setTimeout(resolve, 1000);
+                        }).then(function () {
+                            return submitFormViaFetch(true);
+                        });
+                    });
+                }
+
+                try {
+                    var saveRes = await submitFormViaFetch(false);
+                    var saveData = await saveRes.json();
+                    if (saveData.success) {
+                        window.location.href = saveData.redirect || '/admin/pieces';
+                    } else {
+                        alert('Save failed: ' + (saveData.error || 'Unknown error'));
+                        if (submitBtn) {
+                            submitBtn.disabled = false;
+                            submitBtn.textContent = origText;
+                        }
+                        isSubmitting = false;
+                    }
+                } catch (err) {
+                    alert('Save failed: the connection was lost. Please try again.');
+                    if (submitBtn) {
+                        submitBtn.disabled = false;
+                        submitBtn.textContent = origText;
+                    }
+                    isSubmitting = false;
+                }
             }
         });
     }
