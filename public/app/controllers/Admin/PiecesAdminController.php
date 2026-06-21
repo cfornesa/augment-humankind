@@ -1435,6 +1435,7 @@ class PiecesAdminController
                 echo json_encode([
                     'success' => true,
                     'changed' => false,
+                    'version_id' => (int) $currentVersion['id'],
                     'version_number' => (int) $currentVersion['version_number'],
                 ]);
                 exit;
@@ -1463,6 +1464,7 @@ class PiecesAdminController
             echo json_encode([
                 'success' => true,
                 'changed' => true,
+                'version_id' => $versionId,
                 'version_number' => $versionNumber,
             ]);
         } catch (Throwable $e) {

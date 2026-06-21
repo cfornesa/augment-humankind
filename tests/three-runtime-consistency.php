@@ -111,8 +111,6 @@ echo "\n=== PHP views load the shared runtime (not an inline copy) ===\n";
 
 foreach ([
     'piece-render.php' => __DIR__ . '/../public/app/helpers/piece-render.php',
-    'form.php' => __DIR__ . '/../public/app/views/admin/pieces/form.php',
-    'generate-preview.php' => __DIR__ . '/../public/app/views/admin/pieces/generate-preview.php',
 ] as $label => $path) {
     $src = file_get_contents($path);
     test("{$label} references /assets/js/piece-runtime.js", function () use ($src) {
@@ -137,6 +135,23 @@ foreach ([
         // from the actual request ($_SERVER['HTTP_HOST']), not seo_origin()
         // (the configured canonical URL, which can differ from the actual
         // host) and not window.location.origin.
+        assert_not_contains($src, '= window.location.origin');
+        assert_not_contains($src, 's.src=window.location.origin');
+        assert_contains($src, "HTTP_HOST");
+    });
+}
+
+foreach ([
+    'form.php' => __DIR__ . '/../public/app/views/admin/pieces/form.php',
+    'generate-preview.php' => __DIR__ . '/../public/app/views/admin/pieces/generate-preview.php',
+] as $label => $path) {
+    $src = file_get_contents($path);
+    test("{$label} delegates admin preview/capture rendering through admin-piece-capture.js", function () use ($src) {
+        assert_contains($src, '/assets/js/admin-piece-capture.js');
+        assert_contains($src, 'CreatrPieceCapture.renderDocument');
+        assert_not_contains($src, 'async function bootThree');
+    });
+    test("{$label} still passes the actual request host to srcdoc rendering", function () use ($src) {
         assert_not_contains($src, '= window.location.origin');
         assert_not_contains($src, 's.src=window.location.origin');
         assert_contains($src, "HTTP_HOST");
@@ -236,6 +251,8 @@ foreach ([
 
 echo "\n=== thumbnail capture readiness signal (P5/C2/Three) ===\n";
 
+$captureModule = file_get_contents(__DIR__ . '/../public/assets/js/admin-piece-capture.js');
+
 test('bootP5 waits for instance.frameCount before signaling ready, not right after setup', function () use ($runtime) {
     // Regression guard: createCanvas() runs synchronously inside setup(),
     // before draw() ever paints anything — signaling readiness right after
@@ -265,37 +282,74 @@ test('bootThree signals ready from an actual render call, not unconditionally ri
     }
 });
 
-test('index.php inline bootstrap copy mirrors the same readiness signal (its one allowed inline copy)', function () {
-    $src = file_get_contents(__DIR__ . '/../public/app/views/admin/pieces/index.php');
-    assert_contains($src, 'function signalCanvasReady(canvas)');
-    assert_contains($src, 'instance.frameCount >= 1');
-    assert_contains($src, 'function signalThreeReadyOnce()');
-    $count = substr_count($src, 'signalThreeReadyOnce();');
-    if ($count < 3) {
-        throw new RuntimeException("Expected signalThreeReadyOnce() called from all 3 sites, found {$count}");
-    }
+test('shared admin capture module waits for the runtime ready marker before using canvas pixels', function () use ($captureModule) {
+    assert_contains($captureModule, "dataset.creatrReady === '1'");
+    assert_contains($captureModule, "engine === 'p5'");
+    assert_contains($captureModule, "engine === 'c2'");
+    assert_contains($captureModule, "engine === 'three'");
+});
+
+test('shared admin capture module uses the Three.js 6000ms head-start and 40 x 500ms poll window', function () use ($captureModule) {
+    assert_contains($captureModule, "engine === 'three' ? 6000 : 500");
+    assert_contains($captureModule, 'attempt < 40');
+    assert_contains($captureModule, 'await wait(500)');
+});
+
+test('shared admin capture module keeps capture iframes in the viewport', function () use ($captureModule) {
+    assert_not_contains($captureModule, 'left:-9999px');
+    assert_contains($captureModule, 'position:fixed;left:0;top:0');
+    assert_contains($captureModule, 'opacity:0');
+});
+
+test('shared admin capture module supports SVG conversion and deterministic capture seeds', function () use ($captureModule) {
+    assert_contains($captureModule, 'function convertSvgToCanvas');
+    assert_contains($captureModule, 'Math.random = function()');
+    assert_contains($captureModule, 'diffImages');
 });
 
 foreach ([
     'form.php' => __DIR__ . '/../public/app/views/admin/pieces/form.php',
     'index.php' => __DIR__ . '/../public/app/views/admin/pieces/index.php',
+    'generate-preview.php' => __DIR__ . '/../public/app/views/admin/pieces/generate-preview.php',
 ] as $label => $path) {
     $src = file_get_contents($path);
-    test("{$label} manual thumbnail capture requires the ready marker for p5/c2/three, not just canvas existence", function () use ($src) {
-        assert_contains($src, "dataset.creatrReady === '1'");
-        assert_contains($src, "engine === 'p5'");
-        assert_contains($src, "engine === 'c2'");
-        assert_contains($src, "engine === 'three'");
+    test("{$label} loads and calls the shared admin capture module", function () use ($src) {
+        assert_contains($src, '/assets/js/admin-piece-capture.js');
+        assert_contains($src, 'CreatrPieceCapture');
     });
-    test("{$label} capture iframe stays within the viewport instead of being positioned off-screen", function () use ($src) {
-        // Regression guard: requestAnimationFrame is throttled or skipped by
-        // some browsers for elements positioned outside the viewport as a
-        // power-saving measure, which would stop p5/c2's own draw loop from
-        // ever running regardless of how long the capture code waits.
-        assert_not_contains($src, 'left:-9999px');
-        assert_contains($src, 'opacity:0');
+    test("{$label} does not carry a duplicated capture runtime bootstrap", function () use ($src) {
+        assert_not_contains($src, 'function convertSvgToCanvas');
+        assert_not_contains($src, 'async function bootThree');
     });
 }
+
+$generatePreview = file_get_contents(__DIR__ . '/../public/app/views/admin/pieces/generate-preview.php');
+test('generate-preview no longer uses old single-delay direct canvas capture', function () use ($generatePreview) {
+    assert_not_contains($generatePreview, "engine === 'three' ? 3500 : 2000");
+    assert_not_contains($generatePreview, 'setTimeout(function () { if (!captured) capture(); }, 10000)');
+    assert_contains($generatePreview, 'Save Without Thumbnail');
+});
+
+$formView = file_get_contents(__DIR__ . '/../public/app/views/admin/pieces/form.php');
+test('AI Refine render gate shows before/after snapshots and low-delta Accept Anyway path', function () use ($formView) {
+    assert_contains($formView, 'ai-visual-container');
+    assert_contains($formView, 'Before refine');
+    assert_contains($formView, 'After refine');
+    assert_contains($formView, 'Rendered result appears nearly unchanged');
+    assert_contains($formView, 'Accept Anyway');
+    assert_contains($formView, 'Request Stronger Change');
+});
+
+test('Accepting AI Refine resets dirty baselines so a later Update is not a duplicate version', function () use ($formView) {
+    assert_contains($formView, 'function resetDirtyBaselines()');
+    assert_contains($formView, 'resetDirtyBaselines();');
+});
+
+$controller = file_get_contents(__DIR__ . '/../public/app/Controllers/Admin/PiecesAdminController.php');
+test('refineSave JSON includes version_id for changed and unchanged saves', function () use ($controller) {
+    assert_contains($controller, "'version_id' => (int) \$currentVersion['id']");
+    assert_contains($controller, "'version_id' => \$versionId");
+});
 
 echo "\n=== CreatrImmersiveImage embedded Expand button (iOS Safari) ===\n";
 

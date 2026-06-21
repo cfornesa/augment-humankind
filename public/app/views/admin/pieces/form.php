@@ -158,6 +158,7 @@ $preferredProfileId = $preferredProfileId ?? null;
 }
 
 .ai-plan-container,
+.ai-visual-container,
 .ai-diff-container {
     display: flex;
     flex-direction: column;
@@ -166,8 +167,50 @@ $preferredProfileId = $preferredProfileId ?? null;
 }
 
 .ai-plan-container:empty,
+.ai-visual-container:empty,
 .ai-diff-container:empty {
     display: none;
+}
+
+.ai-visual-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem;
+}
+
+.ai-visual-shot {
+    background: var(--white);
+    border: 2px solid var(--line);
+    padding: 0.5rem;
+}
+
+.ai-visual-shot strong,
+.ai-visual-warning strong {
+    display: block;
+    margin-bottom: 0.35rem;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--ink);
+}
+
+.ai-visual-shot img {
+    width: 100%;
+    display: block;
+    border: 1px solid var(--line);
+    background: #0d0d0f;
+}
+
+.ai-visual-warning {
+    background: var(--white);
+    border: 2px solid var(--line);
+    padding: 0.5rem 0.75rem;
+    color: var(--ink);
+    font-weight: 700;
+}
+
+.ai-visual-warning.is-low {
+    border-color: #b3261e;
 }
 
 .ai-plan-container {
@@ -264,6 +307,10 @@ $preferredProfileId = $preferredProfileId ?? null;
 }
 
 @media (max-width: 1023px) {
+    .ai-visual-grid {
+        grid-template-columns: 1fr;
+    }
+
     .workspace-mobile-toggle {
         display: flex;
     }
@@ -308,10 +355,12 @@ $preferredProfileId = $preferredProfileId ?? null;
             <span>AI suggested changes are loaded. Review the plan and diff below, code tabs, and preview before deciding:</span>
             <div class="ai-banner-actions">
                 <button type="button" id="btn-ai-accept" class="admin-btn">Accept Changes</button>
+                <button type="button" id="btn-ai-stronger" class="admin-btn admin-btn-ghost" hidden>Request Stronger Change</button>
                 <button type="button" id="btn-ai-reject" class="admin-btn admin-btn-ghost">Reject</button>
                 <span id="ai-save-status" class="ai-save-status" role="status" aria-live="polite"></span>
             </div>
         </div>
+        <div id="ai-visual-container" class="ai-visual-container" aria-label="Rendered comparison"></div>
         <div id="ai-plan-container" class="ai-plan-container" aria-label="AI's stated plan"></div>
         <div id="ai-diff-container" class="ai-diff-container" aria-label="Code changes"></div>
     </div>
@@ -546,6 +595,7 @@ $preferredProfileId = $preferredProfileId ?? null;
     </div>
 </div>
 
+<script src="/assets/js/admin-piece-capture.js?v=<?= (int) @filemtime(dirname(__DIR__, 4) . '/assets/js/admin-piece-capture.js') ?>"></script>
 <script>
 (function () {
     // Computed server-side from the actual request (not window.location.origin):
@@ -555,62 +605,6 @@ $preferredProfileId = $preferredProfileId ?? null;
     var RUNTIME_ORIGIN = <?= json_encode(
         ((!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http') . '://' . ($_SERVER['HTTP_HOST'] ?? 'localhost')
     ) ?>;
-    async function convertSvgToCanvas(svgElement, width, height) {
-        return new Promise(function (resolve, reject) {
-            try {
-                var svgClone = svgElement.cloneNode(true);
-                svgClone.setAttribute('width', width);
-                svgClone.setAttribute('height', height);
-                if (!svgClone.getAttribute('viewBox')) {
-                    var w = svgElement.getAttribute('width') || svgElement.clientWidth || width;
-                    var h = svgElement.getAttribute('height') || svgElement.clientHeight || height;
-                    svgClone.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
-                }
-
-                // Copy computed styles for accurate vector rendering
-                var liveEls = [svgElement].concat(Array.from(svgElement.querySelectorAll("*")));
-                var cloneEls = [svgClone].concat(Array.from(svgClone.querySelectorAll("*")));
-                var props = ["transform", "transform-origin", "opacity", "fill", "stroke", "stroke-width", "cx", "cy", "r", "x", "y", "width", "height", "d", "stop-color", "offset", "filter", "display"];
-                liveEls.forEach(function (liveEl, i) {
-                    var cloneEl = cloneEls[i];
-                    if (!cloneEl) return;
-                    var s = window.getComputedStyle(liveEl);
-                    props.forEach(function (p) {
-                        var val = s.getPropertyValue(p);
-                        if (val) cloneEl.style.setProperty(p, val);
-                    });
-                });
-
-                // Disable animations and transitions in the cloned SVG during capture
-                var styleEl = document.createElementNS("http://www.w3.org/2000/svg", "style");
-                styleEl.textContent = "* { animation: none !important; transition: none !important; }";
-                svgClone.insertBefore(styleEl, svgClone.firstChild);
-
-                var serialized = new XMLSerializer().serializeToString(svgClone);
-                var svgData = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(serialized);
-                var img = new Image();
-                img.onload = function () {
-                    var canvas = document.createElement('canvas');
-                    canvas.width = width;
-                    canvas.height = height;
-                    var ctx = canvas.getContext('2d');
-                    if (ctx) {
-                        ctx.fillStyle = '#0d0d0f';
-                        ctx.fillRect(0, 0, width, height);
-                        ctx.drawImage(img, 0, 0, width, height);
-                    }
-                    resolve(canvas);
-                };
-                img.onerror = function () {
-                    reject(new Error('Failed to load SVG image source.'));
-                };
-                img.src = svgData;
-            } catch (e) {
-                reject(e);
-            }
-        });
-    }
-
     // DOM Elements
     var tabs = document.querySelectorAll('.piece-edit-tabs .admin-tab');
     var panels = {
@@ -637,6 +631,7 @@ $preferredProfileId = $preferredProfileId ?? null;
 
     var aiBanner = document.getElementById('ai-suggestion-banner');
     var btnAiAccept = document.getElementById('btn-ai-accept');
+    var btnAiStronger = document.getElementById('btn-ai-stronger');
     var btnAiReject = document.getElementById('btn-ai-reject');
 
     var toggleEditor = document.getElementById('toggle-view-editor');
@@ -648,6 +643,8 @@ $preferredProfileId = $preferredProfileId ?? null;
     var previewTimeout = null;
     var lastRefineProfileId = null;
     var lastRefinePersonaId = null;
+    var lastVisualDeltaLow = false;
+    var lastRefineFeedback = '';
 
     // 1. Tab Switching
     tabs.forEach(function (tab) {
@@ -670,10 +667,15 @@ $preferredProfileId = $preferredProfileId ?? null;
 
     // 2. Render Helper
     function renderDocumentJS(title, engine, html, css, js, preserveDrawingBuffer) {
-        var jsonEngine = JSON.stringify(engine);
-        var jsonCode = JSON.stringify(js);
-        var jsonPreserve = JSON.stringify(!!preserveDrawingBuffer);
-        return '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>' + title + '</title>\n<script type="importmap">\n{\n  "imports": {\n    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",\n    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"\n  }\n}\n<\/script>\n<style>\nhtml,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#0d0d0f;color:#fff;}\nbody{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}\n#runtime-root{width:100vw;height:100vh;overflow:hidden;}\n#piece-error{position:fixed;inset:auto 1rem 1rem 1rem;z-index:9999;padding:1rem;border:1px solid #fca5a5;background:#450a0a;color:#fee2e2;font:14px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;display:none;}\ncanvas{display:block;width:100%;height:100%;}\n' + css + '\n</style>\n</head>\n<body>\n<div id="runtime-root">' + html + '</div>\n<div id="piece-error" role="alert"></div>\n<script>\nconst PIECE_ENGINE = ' + jsonEngine + ';\nconst PIECE_CODE = ' + jsonCode + ';\nconst PIECE_PRESERVE_DRAWING_BUFFER = ' + jsonPreserve + ';\n<\/script>\n<script src="' + RUNTIME_ORIGIN + '/assets/js/piece-runtime.js"><\/script>\n</body>\n</html>';
+        return window.CreatrPieceCapture.renderDocument({
+            title: title,
+            engine: engine,
+            html: html,
+            css: css,
+            js: js,
+            runtimeOrigin: RUNTIME_ORIGIN,
+            preserveDrawingBuffer: preserveDrawingBuffer !== false
+        });
     }
 
     // 3. Update Live Preview function
@@ -776,8 +778,80 @@ $preferredProfileId = $preferredProfileId ?? null;
         container.appendChild(blockEl);
     }
 
+    function buildCaptureSource(code, seed) {
+        return {
+            title: titleField.value || 'Art piece',
+            engine: engineField.value || 'p5',
+            html: code.html || '',
+            css: code.css || '',
+            js: code.js || '',
+            runtimeOrigin: RUNTIME_ORIGIN,
+            preserveDrawingBuffer: true,
+            seed: seed || 424242,
+            width: 960,
+            height: 540
+        };
+    }
+
+    function clearAiSuggestionUi() {
+        document.getElementById('ai-diff-container').innerHTML = '';
+        document.getElementById('ai-plan-container').innerHTML = '';
+        document.getElementById('ai-visual-container').innerHTML = '';
+        lastVisualDeltaLow = false;
+        lastRefineFeedback = '';
+        if (btnAiStronger) btnAiStronger.hidden = true;
+        if (btnAiAccept) btnAiAccept.textContent = 'Accept Changes';
+    }
+
+    function renderVisualComparison(beforeResult, afterResult, diffResult, warningText) {
+        var visualContainer = document.getElementById('ai-visual-container');
+        visualContainer.innerHTML = '';
+
+        if (!beforeResult || !afterResult || !beforeResult.ok || !afterResult.ok) {
+            var captureWarning = document.createElement('div');
+            captureWarning.className = 'ai-visual-warning';
+            var captureHeading = document.createElement('strong');
+            captureHeading.textContent = 'Rendered comparison unavailable';
+            captureWarning.appendChild(captureHeading);
+            captureWarning.appendChild(document.createTextNode(warningText || 'One of the rendered snapshots could not be captured. Review the code diff and live preview before accepting.'));
+            visualContainer.appendChild(captureWarning);
+            return;
+        }
+
+        var grid = document.createElement('div');
+        grid.className = 'ai-visual-grid';
+        [
+            { label: 'Before refine', dataUrl: beforeResult.dataUrl },
+            { label: 'After refine', dataUrl: afterResult.dataUrl }
+        ].forEach(function (shot) {
+            var block = document.createElement('div');
+            block.className = 'ai-visual-shot';
+            var heading = document.createElement('strong');
+            heading.textContent = shot.label;
+            var img = document.createElement('img');
+            img.src = shot.dataUrl;
+            img.alt = shot.label + ' rendered snapshot';
+            block.appendChild(heading);
+            block.appendChild(img);
+            grid.appendChild(block);
+        });
+        visualContainer.appendChild(grid);
+
+        if (diffResult) {
+            var summary = document.createElement('div');
+            summary.className = 'ai-visual-warning' + (diffResult.significant ? '' : ' is-low');
+            var summaryHeading = document.createElement('strong');
+            summaryHeading.textContent = diffResult.significant ? 'Rendered change detected' : 'Rendered result appears nearly unchanged';
+            summary.appendChild(summaryHeading);
+            var percent = Number(diffResult.percent || 0).toFixed(2);
+            var changed = Number(diffResult.changedPixelPercent || 0).toFixed(2);
+            summary.appendChild(document.createTextNode('Average delta ' + percent + '%, changed pixels ' + changed + '%.'));
+            visualContainer.appendChild(summary);
+        }
+    }
+
     // 4. AI Refinement (Reframe)
-    btnRefineAi.addEventListener('click', function () {
+    function requestAiRefine(extraFeedback) {
         var prompt = aiPromptField.value.trim();
         var profileId = aiProfileField.value;
         var engine = engineField.value;
@@ -790,9 +864,20 @@ $preferredProfileId = $preferredProfileId ?? null;
             alert('Please enter a refinement instruction.');
             return;
         }
+        var beforeRefine = {
+            html: htmlField.value,
+            css: cssField.value,
+            js: jsField.value
+        };
+        var promptForRequest = prompt;
+        if (extraFeedback) {
+            promptForRequest += "\n\nAdditional rendered-output feedback: " + extraFeedback;
+        }
+        lastRefineFeedback = extraFeedback || '';
 
         // Set loading state
         btnRefineAi.disabled = true;
+        if (btnAiStronger) btnAiStronger.disabled = true;
         var refineStartedAt = Date.now();
         function setRefineElapsed() {
             if (!aiRefineStatusEl) return;
@@ -812,10 +897,11 @@ $preferredProfileId = $preferredProfileId ?? null;
         var aiSaveStatusEl = document.getElementById('ai-save-status');
         aiSaveStatusEl.textContent = '';
         aiSaveStatusEl.className = 'ai-save-status';
+        clearAiSuggestionUi();
 
         var pieceOriginalPromptField = document.getElementById('prompt');
         var payload = {
-            prompt: prompt,
+            prompt: promptForRequest,
             engine: engine,
             profile_id: parseInt(profileId, 10),
             persona_id: aiPersonaField && aiPersonaField.value ? parseInt(aiPersonaField.value, 10) : 0,
@@ -843,15 +929,6 @@ $preferredProfileId = $preferredProfileId ?? null;
             });
         })
         .then(function (data) {
-            // Snapshot what was there immediately before this suggestion, so
-            // the diff view below shows exactly what THIS refine changed —
-            // not the cumulative change across multiple refine attempts.
-            var beforeRefine = {
-                html: htmlField.value,
-                css: cssField.value,
-                js: jsField.value
-            };
-
             // Success! Store backup if not already in preview mode
             if (!originalCode) {
                 originalCode = beforeRefine;
@@ -862,11 +939,61 @@ $preferredProfileId = $preferredProfileId ?? null;
             // saved when the piece form is submitted.
             lastRefineProfileId = data.profile_id || null;
             lastRefinePersonaId = data.persona_id || null;
+            var proposedCode = {
+                html: data.html_code || '',
+                css: data.css_code || '',
+                js: data.generated_code || ''
+            };
+
+            return Promise.all([
+                window.CreatrPieceCapture.capture(buildCaptureSource(beforeRefine, 424242)),
+                window.CreatrPieceCapture.capture(buildCaptureSource(proposedCode, 424242))
+            ]).then(function (captures) {
+                var beforeCapture = captures[0];
+                var afterCapture = captures[1];
+                if (!beforeCapture.ok || !afterCapture.ok) {
+                    return {
+                        data: data,
+                        beforeRefine: beforeRefine,
+                        proposedCode: proposedCode,
+                        beforeCapture: beforeCapture,
+                        afterCapture: afterCapture,
+                        visualDiff: null
+                    };
+                }
+                return window.CreatrPieceCapture.diffImages(beforeCapture.dataUrl, afterCapture.dataUrl).then(function (visualDiff) {
+                    return {
+                        data: data,
+                        beforeRefine: beforeRefine,
+                        proposedCode: proposedCode,
+                        beforeCapture: beforeCapture,
+                        afterCapture: afterCapture,
+                        visualDiff: visualDiff
+                    };
+                });
+            });
+        })
+        .then(function (result) {
+            var data = result.data;
+            var beforeRefine = result.beforeRefine;
+            var proposedCode = result.proposedCode;
 
             // Set suggested code to textareas
-            htmlField.value = data.html_code || '';
-            cssField.value = data.css_code || '';
-            jsField.value = data.generated_code || '';
+            htmlField.value = proposedCode.html;
+            cssField.value = proposedCode.css;
+            jsField.value = proposedCode.js;
+
+            lastVisualDeltaLow = !!(result.visualDiff && !result.visualDiff.significant);
+            renderVisualComparison(
+                result.beforeCapture,
+                result.afterCapture,
+                result.visualDiff,
+                (result.beforeCapture && result.beforeCapture.error) || (result.afterCapture && result.afterCapture.error) || ''
+            );
+            if (lastVisualDeltaLow) {
+                btnAiAccept.textContent = 'Accept Anyway';
+                if (btnAiStronger) btnAiStronger.hidden = false;
+            }
 
             // Render the AI's stated plan (which specific elements it
             // intended to touch, decided before it wrote any patch) — the
@@ -916,11 +1043,22 @@ $preferredProfileId = $preferredProfileId ?? null;
         .finally(function () {
             clearInterval(refineTimerInterval);
             btnRefineAi.disabled = false;
+            if (btnAiStronger) btnAiStronger.disabled = false;
             if (aiRefineStatusEl) {
                 aiRefineStatusEl.textContent = '';
             }
         });
+    }
+
+    btnRefineAi.addEventListener('click', function () {
+        requestAiRefine('');
     });
+
+    if (btnAiStronger) {
+        btnAiStronger.addEventListener('click', function () {
+            requestAiRefine('The previous patch rendered too similarly to the current piece. Make the requested change visibly stronger while preserving unrelated behavior and only editing what the instruction asks to change.');
+        });
+    }
 
     // 5. Accept / Reject AI suggest actions.
     // Accepting immediately saves the change as a new version — no separate
@@ -953,8 +1091,7 @@ $preferredProfileId = $preferredProfileId ?? null;
             // Changes" submit creates the piece and its first version.
             aiBanner.style.display = 'none';
             originalCode = null;
-            document.getElementById('ai-diff-container').innerHTML = '';
-            document.getElementById('ai-plan-container').innerHTML = '';
+            clearAiSuggestionUi();
             return;
         }
 
@@ -991,8 +1128,8 @@ $preferredProfileId = $preferredProfileId ?? null;
                 : 'No changes to save.';
             aiBanner.style.display = 'none';
             originalCode = null;
-            document.getElementById('ai-diff-container').innerHTML = '';
-            document.getElementById('ai-plan-container').innerHTML = '';
+            resetDirtyBaselines();
+            clearAiSuggestionUi();
             setTimeout(clearAiSaveStatus, 6000);
         })
         .catch(function (err) {
@@ -1017,8 +1154,7 @@ $preferredProfileId = $preferredProfileId ?? null;
         }
         aiBanner.style.display = 'none';
         originalCode = null;
-        document.getElementById('ai-diff-container').innerHTML = '';
-        document.getElementById('ai-plan-container').innerHTML = '';
+        clearAiSuggestionUi();
     });
 
     // 6. Mobile toggle view
@@ -1041,76 +1177,21 @@ $preferredProfileId = $preferredProfileId ?? null;
 
     // 7. Reusable performCapture helper
     async function performCapture(pieceId) {
-        var engine = engineField.value || 'p5';
-        var html = htmlField.value || '';
-        var css = cssField.value || '';
-        var js = jsField.value || '';
-
-        if (!html && !js) {
+        if (!htmlField.value && !jsField.value) {
             throw new Error('Add HTML and JS code in the code tabs before capturing a thumbnail.');
         }
 
-        var srcdoc = renderDocumentJS(titleField.value || 'Art piece', engine, html, css, js, true);
-
-        // Mount an invisible-but-in-viewport iframe — genuinely off-screen
-        // positioning (large negative left/top) is throttled or skipped for
-        // requestAnimationFrame by some browsers as a power-saving measure,
-        // which would stop p5/c2's own draw loop from ever running here
-        // regardless of how long this code waits.
-        var captureFrame = document.createElement('iframe');
-        captureFrame.style.cssText = 'position:fixed;left:0;top:0;width:960px;height:540px;border:none;opacity:0;pointer-events:none;z-index:-1;';
-        captureFrame.sandbox = 'allow-scripts allow-same-origin';
-        document.body.appendChild(captureFrame);
-
-        captureFrame.srcdoc = srcdoc;
-        await new Promise(function (resolve) {
-            captureFrame.onload = resolve;
-            setTimeout(resolve, 800);
-        });
-
-        // Match the list-page capture timing: Three.js loads a larger runtime
-        // and needs the same head-start before the shared ready-marker poll.
-        var initialWait = (engine === 'three') ? 6000 : 500;
-        await new Promise(function (resolve) { setTimeout(resolve, initialWait); });
-
-        // For p5/c2, a canvas element existing isn't enough — it's created
-        // before the first real draw() call, so require the ready marker
-        // piece-runtime.js sets once something's actually been painted.
-        // Other engines keep relying on the poll window itself.
-        var requireReadyMarker = (engine === 'p5' || engine === 'c2' || engine === 'three');
-        var canvas = null;
-        for (var attempt = 0; attempt < 40 && !canvas; attempt++) {
-            await new Promise(function (resolve) { setTimeout(resolve, 500); });
-            var iframeDoc = captureFrame.contentDocument;
-            var foundCanvas = iframeDoc && iframeDoc.querySelector('canvas');
-            if (foundCanvas && (!requireReadyMarker || foundCanvas.dataset.creatrReady === '1')) {
-                canvas = foundCanvas;
-            }
-            if (!canvas) {
-                var svg = iframeDoc && iframeDoc.querySelector('svg');
-                if (svg) {
-                    canvas = await convertSvgToCanvas(svg, 960, 540);
-                }
-            }
+        var capture = await window.CreatrPieceCapture.capture(buildCaptureSource({
+            html: htmlField.value || '',
+            css: cssField.value || '',
+            js: jsField.value || ''
+        }, 8383));
+        if (!capture.ok) {
+            throw new Error(capture.error || 'Thumbnail capture failed.');
         }
-
-        if (!canvas) {
-            document.body.removeChild(captureFrame);
-            throw new Error('No canvas found. Make sure the piece renders to a canvas or svg element.');
-        }
-
-        var imageData;
-        try {
-            imageData = canvas.toDataURL('image/png');
-        } catch (e) {
-            document.body.removeChild(captureFrame);
-            throw new Error('Canvas capture failed: ' + e.message);
-        }
-
-        document.body.removeChild(captureFrame);
 
         var formData = new FormData();
-        formData.append('image_data', imageData);
+        formData.append('image_data', capture.dataUrl);
 
         var resp = await fetch('/admin/pieces/' + pieceId + '/capture-thumbnail', {
             method: 'POST',
@@ -1130,6 +1211,13 @@ $preferredProfileId = $preferredProfileId ?? null;
     var initialCSS = cssField.value;
     var initialJS = jsField.value;
     var initialEngine = engineField.value;
+
+    function resetDirtyBaselines() {
+        initialHTML = htmlField.value;
+        initialCSS = cssField.value;
+        initialJS = jsField.value;
+        initialEngine = engineField.value;
+    }
 
     var form = document.getElementById('piece-editor-form');
     var isSubmitting = false;

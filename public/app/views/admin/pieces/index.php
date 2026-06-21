@@ -135,71 +135,9 @@ ob_start();
     <?php endif; ?>
 </div>
 
+<script src="/assets/js/admin-piece-capture.js?v=<?= (int) @filemtime(dirname(__DIR__, 4) . '/assets/js/admin-piece-capture.js') ?>"></script>
 <script>
 (function () {
-    async function convertSvgToCanvas(svgElement, width, height) {
-        return new Promise(function (resolve, reject) {
-            try {
-                var svgClone = svgElement.cloneNode(true);
-                svgClone.setAttribute('width', width);
-                svgClone.setAttribute('height', height);
-                if (!svgClone.getAttribute('viewBox')) {
-                    var w = svgElement.getAttribute('width') || svgElement.clientWidth || width;
-                    var h = svgElement.getAttribute('height') || svgElement.clientHeight || height;
-                    svgClone.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
-                }
-
-                // Copy computed styles for accurate vector rendering
-                var liveEls = [svgElement].concat(Array.from(svgElement.querySelectorAll("*")));
-                var cloneEls = [svgClone].concat(Array.from(svgClone.querySelectorAll("*")));
-                var props = ["transform", "transform-origin", "opacity", "fill", "stroke", "stroke-width", "cx", "cy", "r", "x", "y", "width", "height", "d", "stop-color", "offset", "filter", "display"];
-                liveEls.forEach(function (liveEl, i) {
-                    var cloneEl = cloneEls[i];
-                    if (!cloneEl) return;
-                    var s = window.getComputedStyle(liveEl);
-                    props.forEach(function (p) {
-                        var val = s.getPropertyValue(p);
-                        if (val) cloneEl.style.setProperty(p, val);
-                    });
-                });
-
-                // Disable animations and transitions in the cloned SVG during capture
-                var styleEl = document.createElementNS("http://www.w3.org/2000/svg", "style");
-                styleEl.textContent = "* { animation: none !important; transition: none !important; }";
-                svgClone.insertBefore(styleEl, svgClone.firstChild);
-
-                var serialized = new XMLSerializer().serializeToString(svgClone);
-                var svgData = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(serialized);
-                var img = new Image();
-                img.onload = function () {
-                    var canvas = document.createElement('canvas');
-                    canvas.width = width;
-                    canvas.height = height;
-                    var ctx = canvas.getContext('2d');
-                    if (ctx) {
-                        ctx.fillStyle = '#0d0d0f';
-                        ctx.fillRect(0, 0, width, height);
-                        ctx.drawImage(img, 0, 0, width, height);
-                    }
-                    resolve(canvas);
-                };
-                img.onerror = function () {
-                    reject(new Error('Failed to load SVG image source.'));
-                };
-                img.src = svgData;
-            } catch (e) {
-                reject(e);
-            }
-        });
-    }
-
-    // 1. Render Helper (identical to form.php)
-    function renderDocumentJS(title, engine, html, css, js) {
-        var jsonEngine = JSON.stringify(engine);
-        var jsonCode = JSON.stringify(js);
-        return '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>' + title + '</title>\n<script type="importmap">\n{\n  "imports": {\n    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",\n    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"\n  }\n}\n<\/script>\n<style>\nhtml,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#0d0d0f;color:#fff;}\nbody{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}\n#runtime-root{width:100vw;height:100vh;overflow:hidden;}\n#piece-error{position:fixed;inset:auto 1rem 1rem 1rem;z-index:9999;padding:1rem;border:1px solid #fca5a5;background:#450a0a;color:#fee2e2;font:14px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;display:none;}\ncanvas{display:block;width:100%;height:100%;}\n' + css + '\n</style>\n</head>\n<body>\n<div id="runtime-root">' + html + '</div>\n<div id="piece-error" role="alert"></div>\n<script>\nconst PIECE_ENGINE = ' + jsonEngine + ';\nconst PIECE_CODE = ' + jsonCode + ';\nfunction showPieceError(error) {\n  const el = document.getElementById("piece-error");\n  if (!el) return;\n  el.textContent = (error && (error.stack || error.message)) ? (error.stack || error.message) : String(error);\n  el.style.display = "block";\n}\nwindow.addEventListener("error", (event) => showPieceError(event.error || event.message));\nwindow.addEventListener("unhandledrejection", (event) => showPieceError(event.reason || "Unhandled promise rejection"));\nfunction runPieceCode() {\n  try {\n    const fn = new Function(PIECE_CODE + "\\n//# sourceURL=piece-runtime.js");\n    fn();\n  } catch (error) {\n    showPieceError(error);\n  }\n}\nfunction findCanvas(id) {\n  return document.getElementById(id) || document.querySelector("canvas") || (() => {\n    const canvas = document.createElement("canvas");\n    canvas.id = id;\n    const parent = document.getElementById("canvas-container") || document.getElementById("sketch-container") || document.getElementById("runtime-root");\n    parent.appendChild(canvas);\n    return canvas;\n  })();\n}\nfunction sizeCanvas(canvas) {\n  const w = Math.max(1, canvas.parentElement?.clientWidth || window.innerWidth || 1280);\n  const h = Math.max(1, canvas.parentElement?.clientHeight || window.innerHeight || 720);\n  canvas.width = w;\n  canvas.height = h;\n}\nfunction startFrame(callback) {\n  let count = 0;\n  function tick() {\n    count++;\n    try { callback(count); } catch (error) { showPieceError(error); return; }\n    requestAnimationFrame(tick);\n  }\n  requestAnimationFrame(tick);\n}\nfunction signalCanvasReady(canvas) {\n  if (canvas) canvas.dataset.creatrReady = "1";\n  try { window.parent.postMessage({ type: "sketch-status", valid: true }, "*"); } catch (_) {}\n}\nfunction bootCanvasRuntime(extra) {\n  runPieceCode();\n  if (typeof window.sketch !== "function") return;\n  const canvas = findCanvas(PIECE_ENGINE === "c2" ? "c2-canvas" : "scene");\n  canvas.style.cssText = "display:block;width:100%;height:100%;";\n  sizeCanvas(canvas);\n  window.addEventListener("resize", () => sizeCanvas(canvas));\n  let readySignaled = false;\n  function instrumentedStartFrame(callback) {\n    return startFrame((count) => {\n      callback(count);\n      if (!readySignaled) { readySignaled = true; signalCanvasReady(canvas); }\n    });\n  }\n  try { window.sketch({ canvas, startFrame: instrumentedStartFrame, ...(extra || {}) }); } catch (error) { showPieceError(error); }\n}\nfunction bootP5() {\n  const script = document.createElement("script");\n  script.src = "https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js";\n  script.onload = () => {\n    runPieceCode();\n    try {\n      if (typeof window.sketch === "function" && typeof window.p5 === "function") {\n        const parent = document.getElementById("canvas-container") || document.getElementById("sketch-container") || document.getElementById("runtime-root");\n        const instance = new window.p5(window.sketch, parent);\n        const waitForFirstDraw = () => {\n          if (instance.frameCount >= 1) {\n            signalCanvasReady(parent.querySelector("canvas") || document.querySelector("canvas"));\n          } else {\n            requestAnimationFrame(waitForFirstDraw);\n          }\n        };\n        requestAnimationFrame(waitForFirstDraw);\n      }\n    } catch (error) { showPieceError(error); }\n  };\n  script.onerror = () => showPieceError("Could not load p5.js runtime.");\n  document.head.appendChild(script);\n}\nfunction bootC2() {\n  const script = document.createElement("script");\n  script.src = "https://cdn.jsdelivr.net/npm/c2.js@1.0.9/dist/c2.min.js";\n  script.onload = () => {\n    bootCanvasRuntime({ c2: window.c2 });\n  };\n  script.onerror = () => showPieceError("Could not load c2.js runtime.");\n  document.head.appendChild(script);\n}\nasync function bootThree() {\n  try {\n    const mod = await import("https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js");\n    const { OrbitControls } = await import("https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js");\n    window.THREE = mod;\n    runPieceCode();\n    if (typeof window.sketch !== "function") return;\n    const canvas = findCanvas("scene");\n    canvas.style.cssText = "display:block;width:100%;height:100%;";\n    sizeCanvas(canvas);\n    const state = { scene: null, camera: null, renderer: null };\n    let controls = null;\n    let rafIds = [];\n    let threeReadySignaled = false;\n    function signalThreeReadyOnce() {\n      if (threeReadySignaled) return;\n      threeReadySignaled = true;\n      signalCanvasReady(canvas);\n    }\n    const instrumentedThree = { ...mod };\n    instrumentedThree.Scene = class extends mod.Scene {\n      constructor() { super(); state.scene = this; }\n    };\n    instrumentedThree.PerspectiveCamera = class extends mod.PerspectiveCamera {\n      constructor(...args) { super(...args); state.camera = this; }\n    };\n    instrumentedThree.WebGLRenderer = class extends mod.WebGLRenderer {\n      constructor(params) {\n        super({ ...(params || {}), canvas });\n        state.renderer = this;\n        const _origSetSize = this.setSize.bind(this);\n        this.setSize = (w, h) => _origSetSize(w, h, false);\n        const _origRender = this.render.bind(this);\n        this.render = (sc, cam) => {\n          if (sc) state.scene = sc;\n          if (cam) state.camera = cam;\n          return _origRender(sc, cam);\n        };\n      }\n    };\n    const width = canvas.width || window.innerWidth || 1280;\n    const height = canvas.height || window.innerHeight || 720;\n    function autoFit() {\n      if (!state.scene || !state.camera) return;\n      const box = new mod.Box3();\n      state.scene.traverse((obj) => {\n        if (obj.isHelper || obj.isLight || obj.isCamera) return;\n        if (obj.isPoints) return;\n        if (obj.material) {\n          const mat = obj.material;\n          if (mat.side === 1 || (Array.isArray(mat) && mat.some(m => m.side === 1))) return;\n        }\n        const name = (obj.name || "").toLowerCase();\n        if (name.includes("sky") || name.includes("background") || name.includes("env") || name.includes("floor") || name.includes("ground") || name.includes("grid") || name.includes("dome") || name.includes("space") || name.includes("star")) return;\n        if ((obj.isMesh || obj.isLine || obj.isSprite) && obj.geometry) {\n          obj.geometry.computeBoundingBox?.();\n          if (obj.geometry.boundingBox) {\n            const worldBox = obj.geometry.boundingBox.clone().applyMatrix4(obj.matrixWorld);\n            const worldSize = new mod.Vector3();\n            worldBox.getSize(worldSize);\n            if (worldSize.x >= 30 || worldSize.y >= 30 || worldSize.z >= 30) return;\n            if (obj.geometry.type === "PlaneGeometry" || obj.geometry.type === "PlaneBufferGeometry") {\n              if (worldSize.x >= 15 || worldSize.y >= 15 || worldSize.z >= 15) return;\n            }\n            box.union(worldBox);\n          }\n        }\n      });\n      if (box.isEmpty()) return;\n      const center = new mod.Vector3(); box.getCenter(center);\n      const size = new mod.Vector3();   box.getSize(size);\n      if (state.camera.position.lengthSq() > 0.01) {\n        if (controls) { controls.target.copy(center); controls.update(); }\n        return;\n      }\n      const maxDim = Math.max(size.x, size.y, size.z) || 1;\n      const fov = state.camera.fov * (Math.PI / 180);\n      const dist = Math.abs(maxDim / 2 / Math.tan(fov / 2)) * 0.63;\n      state.camera.position.set(center.x + dist, center.y + dist * 0.4, center.z + dist);\n      state.camera.lookAt(center);\n      state.camera.updateMatrixWorld(true);\n      if (controls) { controls.target.copy(center); controls.update(); }\n    }\n    function ensureFallbackLighting() {\n      if (!state.scene?.traverse) return;\n      let hasRealLight = false;\n      let hasFallback = false;\n      const fallbacks = [];\n      state.scene.traverse((obj) => {\n        if (!obj.isLight) return;\n        if (obj.name?.startsWith("__viewer_fallback_")) { hasFallback = true; fallbacks.push(obj); }\n        else hasRealLight = true;\n      });\n      if (hasRealLight) {\n        fallbacks.forEach((obj) => state.scene.remove(obj));\n        return;\n      }\n      if (hasFallback) return;\n      const amb = new mod.AmbientLight(0xffffff, 0.7);\n      amb.name = "__viewer_fallback_ambient__";\n      state.scene.add(amb);\n      const dir = new mod.DirectionalLight(0xffffff, 0.8);\n      dir.position.set(5, 10, 7.5);\n      dir.name = "__viewer_fallback_dir__";\n      state.scene.add(dir);\n    }\n    function startFrame(handler) {\n      let count = 0;\n      function tick() {\n        count++;\n        try { handler(count); } catch (error) { showPieceError(error); return; }\n        signalThreeReadyOnce();\n        if (count === 15) autoFit();\n        const id = requestAnimationFrame(tick);\n        rafIds.push(id);\n      }\n      const id = requestAnimationFrame(tick);\n      rafIds.push(id);\n      return () => { rafIds.forEach((rafId) => cancelAnimationFrame(rafId)); rafIds = []; };\n    }\n    window.THREE = instrumentedThree;\n    window.sketch({ THREE: instrumentedThree, canvas, startFrame, width, height, size: { width, height }, OrbitControls });\n    ensureFallbackLighting();\n    autoFit();\n\n    if (state.camera && state.renderer) {\n      controls = new OrbitControls(state.camera, canvas);\n      controls.enableDamping = true;\n      controls.enablePan = true;\n      const camDir = new mod.Vector3();\n      state.camera.getWorldDirection(camDir);\n      const camLen = state.camera.position.length();\n      controls.target.copy(state.camera.position).addScaledVector(camDir, Math.max(camLen * 0.8, 3));\n      autoFit();\n      controls.update();\n\n      let consecutiveErrors = 0;\n      const animateControls = () => {\n        const id = requestAnimationFrame(animateControls);\n        rafIds.push(id);\n        try {\n          ensureFallbackLighting();\n          controls.update();\n          state.renderer.render(state.scene, state.camera);\n          signalThreeReadyOnce();\n          consecutiveErrors = 0;\n        } catch (renderError) {\n          consecutiveErrors++;\n          if (consecutiveErrors === 1) showPieceError(renderError);\n          if (consecutiveErrors >= 5) cancelAnimationFrame(id);\n        }\n      };\n      animateControls();\n    }\n\n    window.addEventListener("resize", () => {\n      sizeCanvas(canvas);\n      if (state.renderer && state.camera) {\n        state.camera.aspect = canvas.width / canvas.height;\n        state.camera.updateProjectionMatrix();\n        state.renderer.setSize(canvas.width, canvas.height, false);\n      }\n    });\n\n    signalThreeReadyOnce();\n  } catch (error) {\n    showPieceError(error);\n  }\n}\nif (PIECE_ENGINE === "p5") {\n  bootP5();\n} else if (PIECE_ENGINE === "three") {\n  bootThree();\n} else if (PIECE_ENGINE === "c2") {\n  bootC2();\n} else {\n  runPieceCode();\n  if (typeof window.sketch === "function") {\n    try { window.sketch(); } catch (error) { showPieceError(error); }\n  }\n}\n<\/script>\n</body>\n</html>';
-    }
-
     // Reusable core capture and upload routine
     async function runCaptureForId(id, cellThumb, btnIndividual) {
         var originalText = btnIndividual ? btnIndividual.textContent : '';
@@ -216,7 +154,6 @@ ob_start();
             }
         }
 
-        var captureFrame = null;
         try {
             // Fetch piece details
             var resp = await fetch('/embed/pieces/' + id + '/data');
@@ -229,75 +166,25 @@ ob_start();
                 throw new Error('This piece has no code yet — open it in Edit and add JS/HTML before generating a thumbnail.');
             }
 
-            var srcdoc = renderDocumentJS(
-                data.title || 'Art piece',
-                data.engine || 'p5',
-                data.htmlCode || '',
-                data.cssCode || '',
-                data.generatedCode || ''
-            );
-
-            // Inject preserveDrawingBuffer:true for Three.js
-            if (data.engine === 'three') {
-                srcdoc = srcdoc.replace(
-                    'super({ ...(params || {}), canvas });',
-                    'super({ ...(params || {}), canvas, preserveDrawingBuffer: true });'
-                );
-            }
-
-            // Mount an invisible-but-in-viewport iframe — genuinely off-screen
-            // positioning (large negative left/top) is throttled or skipped
-            // for requestAnimationFrame by some browsers as a power-saving
-            // measure, which would stop p5/c2's own draw loop from ever
-            // running here regardless of how long this code waits.
-            captureFrame = document.createElement('iframe');
-            captureFrame.style.cssText = 'position:fixed;left:0;top:0;width:960px;height:540px;border:none;opacity:0;pointer-events:none;z-index:-1;';
-            captureFrame.sandbox = 'allow-scripts allow-same-origin';
-            document.body.appendChild(captureFrame);
-
-            captureFrame.srcdoc = srcdoc;
-            await new Promise(function (resolve) {
-                captureFrame.onload = resolve;
-                setTimeout(resolve, 800);
+            var capture = await window.CreatrPieceCapture.capture({
+                title: data.title || 'Art piece',
+                engine: data.engine || 'p5',
+                html: data.htmlCode || '',
+                css: data.cssCode || '',
+                js: data.generatedCode || '',
+                runtimeOrigin: window.location.origin,
+                preserveDrawingBuffer: true,
+                seed: 8383,
+                width: 960,
+                height: 540
             });
-
-            // Three.js loads ~1MB from CDN cold; give it an extra head-start before polling
-            var initialWait = (data.engine === 'three') ? 6000 : 500;
-            await new Promise(function (resolve) { setTimeout(resolve, initialWait); });
-
-            // For p5/c2, a canvas element existing isn't enough — it's
-            // created before the first real draw() call, so require the
-            // ready marker piece-runtime.js sets once something's actually
-            // been painted. Three.js/SVG already have their own reliable
-            // timing (the initial wait above, or no canvas at all).
-            var requireReadyMarker = (data.engine === 'p5' || data.engine === 'c2' || data.engine === 'three');
-            var canvas = null;
-            for (var attempt = 0; attempt < 40 && !canvas; attempt++) {
-                await new Promise(function (resolve) { setTimeout(resolve, 500); });
-                var iframeDoc = captureFrame.contentDocument;
-                var foundCanvas = iframeDoc && iframeDoc.querySelector('canvas');
-                if (foundCanvas && (!requireReadyMarker || foundCanvas.dataset.creatrReady === '1')) {
-                    canvas = foundCanvas;
-                }
-                if (!canvas) {
-                    var svg = iframeDoc && iframeDoc.querySelector('svg');
-                    if (svg) {
-                        canvas = await convertSvgToCanvas(svg, 960, 540);
-                    }
-                }
+            if (!capture.ok) {
+                throw new Error(capture.error || 'Thumbnail capture failed.');
             }
-
-            if (!canvas) {
-                throw new Error('No canvas or svg element found after waiting.');
-            }
-
-            var imageData = canvas.toDataURL('image/png');
-            document.body.removeChild(captureFrame);
-            captureFrame = null;
 
             // Upload
             var formData = new FormData();
-            formData.append('image_data', imageData);
+            formData.append('image_data', capture.dataUrl);
 
             var uploadResp = await fetch('/admin/pieces/' + id + '/capture-thumbnail', {
                 method: 'POST',
@@ -345,10 +232,6 @@ ob_start();
                 }, 3000);
             }
             throw err;
-        } finally {
-            if (captureFrame && captureFrame.parentNode) {
-                document.body.removeChild(captureFrame);
-            }
         }
     }
 

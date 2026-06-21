@@ -108,11 +108,13 @@ $defaultTitle = 'AI ' . strtoupper($engine) . ' Piece - ' . date('M d, Y H:i');
         <div class="form-actions" style="margin-top: 2rem; display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem;">
             <span id="save-status" role="status" aria-live="polite" style="width:100%; font-size: 0.8rem; color: var(--ink-soft);"></span>
             <button type="button" class="admin-btn" id="save-insert-btn">Save and Insert (Create Version 1)</button>
+            <button type="button" class="admin-btn admin-btn-ghost" id="save-without-thumbnail-btn" hidden>Save Without Thumbnail</button>
             <a href="/admin/pieces/generate" class="admin-btn admin-btn-ghost">Discard &amp; Restart</a>
             <span id="thumbnail-status" style="font-size: 0.8rem; color: var(--ink-soft);">Waiting for piece to render…</span>
         </div>
     </form>
 
+    <script src="/assets/js/admin-piece-capture.js?v=<?= (int) @filemtime(dirname(__DIR__, 4) . '/assets/js/admin-piece-capture.js') ?>"></script>
     <script>
     // Computed server-side from the actual request (not window.location.origin):
     // the preview iframes below use srcdoc, which gets an opaque origin —
@@ -154,49 +156,33 @@ $defaultTitle = 'AI ' . strtoupper($engine) . ' Piece - ' . date('M d, Y H:i');
     }
 
     var updateTimeout = null;
+    var thumbnailRevision = 0;
     function updatePreview() {
         clearTimeout(updateTimeout);
         updateTimeout = setTimeout(function () {
+            thumbnailRevision++;
+            var thumbnailInput = document.getElementById('thumbnail_data');
+            var thumbnailStatus = document.getElementById('thumbnail-status');
+            if (thumbnailInput) thumbnailInput.value = '';
+            if (thumbnailStatus) {
+                thumbnailStatus.textContent = 'Waiting for updated piece to render…';
+                thumbnailStatus.style.color = 'var(--ink-soft)';
+            }
+
             var html = document.getElementById('html_code').value;
             var css = document.getElementById('css_code').value;
             var js = document.getElementById('generated_code').value;
             var engine = document.querySelector('input[name="engine"]').value;
 
-            // Call backend endpoint or rebuild local srcdoc structure
-            var docTemplate = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AI Generation Preview</title>
-<style>
-html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#0d0d0f;color:#fff;}
-body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}
-#runtime-root{width:100vw;height:100vh;overflow:hidden;}
-#piece-error{position:fixed;inset:auto 1rem 1rem 1rem;z-index:9999;padding:1rem;border:1px solid #fca5a5;background:#450a0a;color:#fee2e2;font:14px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;display:none;}
-canvas{display:block;width:100%;height:100%;}
-\${css}
-</style>
-</head>
-<body>
-<div id="runtime-root">\${html}</div>
-<div id="piece-error" role="alert"></div>
-<script type="importmap">
-{
-  "imports": {
-    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
-  }
-}
-<\/script>
-<script>
-const PIECE_ENGINE = \${JSON.stringify(engine)};
-const PIECE_CODE = \${JSON.stringify(js)};
-const PIECE_PRESERVE_DRAWING_BUFFER = true;
-<\/script>
-<script src="${RUNTIME_ORIGIN}/assets/js/piece-runtime.js"><\/script>
-</body>
-</html>`;
+            var docTemplate = window.CreatrPieceCapture.renderDocument({
+                title: 'AI Generation Preview',
+                engine: engine,
+                html: html,
+                css: css,
+                js: js,
+                runtimeOrigin: RUNTIME_ORIGIN,
+                preserveDrawingBuffer: true
+            });
 
             var wrapper = document.getElementById('preview-iframe-wrapper');
             if (wrapper) {
@@ -208,57 +194,63 @@ const PIECE_PRESERVE_DRAWING_BUFFER = true;
         }, 600);
     }
 
-    // Auto-capture thumbnail from the preview iframe once the piece renders
-    (function () {
-        var captured = false;
+    // Auto-capture thumbnail using the same browser-side capture path as the
+    // edit form and Pieces list.
+    var ensurePreviewThumbnail = (function () {
         var thumbnailInput = document.getElementById('thumbnail_data');
         var statusEl = document.getElementById('thumbnail-status');
-        var engine = document.querySelector('input[name="engine"]').value;
+        var inFlight = null;
 
         function setStatus(msg, ok) {
             if (!statusEl) return;
             statusEl.textContent = msg;
-            statusEl.style.color = ok ? '#10b981' : 'var(--ink-soft)';
+            statusEl.style.color = ok ? '#10b981' : (ok === false ? '#ef4444' : 'var(--ink-soft)');
         }
 
-        function capture() {
-            if (captured) return;
-            captured = true;
-            setTimeout(function () {
-                try {
-                    var wrapper = document.getElementById('preview-iframe-wrapper');
-                    var iframe = wrapper ? wrapper.querySelector('iframe') : null;
-                    if (!iframe || !iframe.contentDocument) {
-                        setStatus('Thumbnail: preview not accessible');
-                        return;
-                    }
-                    var canvas = iframe.contentDocument.querySelector('canvas');
-                    if (!canvas) {
-                        setStatus('Thumbnail: no canvas (SVG pieces use manual capture)');
-                        return;
-                    }
-                    var dataUrl = canvas.toDataURL('image/png');
-                    if (!dataUrl || dataUrl === 'data:,') {
-                        setStatus('Thumbnail: canvas empty — will need manual capture');
-                        return;
-                    }
-                    if (thumbnailInput) thumbnailInput.value = dataUrl;
-                    setStatus('Thumbnail captured ✓', true);
-                } catch (e) {
-                    setStatus('Thumbnail: capture failed (' + e.message + ')');
-                }
-            }, engine === 'three' ? 3500 : 2000);
+        function source() {
+            return {
+                title: document.getElementById('title').value || 'AI Generation Preview',
+                engine: document.querySelector('input[name="engine"]').value || 'p5',
+                html: document.getElementById('html_code').value || '',
+                css: document.getElementById('css_code').value || '',
+                js: document.getElementById('generated_code').value || '',
+                runtimeOrigin: RUNTIME_ORIGIN,
+                preserveDrawingBuffer: true,
+                seed: 8383,
+                width: 960,
+                height: 540
+            };
         }
 
-        window.addEventListener('message', function (event) {
-            if (event.data && event.data.type === 'sketch-status' && event.data.valid) {
-                capture();
+        return function (reason) {
+            if (thumbnailInput && thumbnailInput.value) {
+                return Promise.resolve({ ok: true, dataUrl: thumbnailInput.value, kind: 'cached', error: null });
             }
-        });
+            if (inFlight) return inFlight;
 
-        // Fallback for engines that don't post sketch-status (e.g. SVG or p5 race)
-        setTimeout(function () { if (!captured) capture(); }, 10000);
+            setStatus(reason || 'Capturing thumbnail…');
+            var revisionAtStart = thumbnailRevision;
+            inFlight = window.CreatrPieceCapture.capture(source()).then(function (result) {
+                if (revisionAtStart !== thumbnailRevision) {
+                    return { ok: false, dataUrl: '', kind: null, error: 'Capture was superseded by a newer preview.' };
+                }
+                if (result.ok && thumbnailInput) {
+                    thumbnailInput.value = result.dataUrl;
+                    setStatus('Thumbnail captured', true);
+                } else {
+                    setStatus('Thumbnail capture failed: ' + (result.error || 'Unknown error'), false);
+                }
+                return result;
+            }).finally(function () {
+                inFlight = null;
+            });
+            return inFlight;
+        };
     })();
+
+    window.addEventListener('load', function () {
+        setTimeout(function () { ensurePreviewThumbnail('Capturing thumbnail…'); }, 250);
+    });
 
     // Save as fetch() with a one-time retry on a network-level failure only
     // (the connection itself dying, not a server-returned error) — a stale
@@ -270,9 +262,11 @@ const PIECE_PRESERVE_DRAWING_BUFFER = true;
         var form = document.querySelector('form.admin-form');
         if (!form) return;
         var saveBtn = document.getElementById('save-insert-btn');
+        var saveWithoutThumbBtn = document.getElementById('save-without-thumbnail-btn');
         var saveStatusEl = document.getElementById('save-status');
         var timerInterval = null;
         var startedAt = null;
+        var allowSaveWithoutThumbnail = false;
 
         function formatElapsed(ms) {
             var totalSeconds = Math.floor(ms / 1000);
@@ -328,9 +322,30 @@ const PIECE_PRESERVE_DRAWING_BUFFER = true;
         saveBtn.addEventListener('click', function () {
             if (!form.reportValidity()) return;
             if (saveBtn) saveBtn.disabled = true;
-            startTimer('Saving…');
-            submitSave(new FormData(form), false);
+            startTimer('Capturing thumbnail…');
+            ensurePreviewThumbnail('Capturing thumbnail before save…').then(function (result) {
+                if (!result.ok && !allowSaveWithoutThumbnail) {
+                    stopTimer();
+                    setSaveStatus('Thumbnail capture failed: ' + (result.error || 'Unknown error') + '. Use Save Without Thumbnail only if this is intentional.', true);
+                    if (saveWithoutThumbBtn) saveWithoutThumbBtn.hidden = false;
+                    if (saveBtn) saveBtn.disabled = false;
+                    return;
+                }
+                startTimer('Saving…');
+                submitSave(new FormData(form), false);
+            });
         });
+
+        if (saveWithoutThumbBtn) {
+            saveWithoutThumbBtn.addEventListener('click', function () {
+                if (!form.reportValidity()) return;
+                allowSaveWithoutThumbnail = true;
+                saveWithoutThumbBtn.disabled = true;
+                if (saveBtn) saveBtn.disabled = true;
+                startTimer('Saving without thumbnail…');
+                submitSave(new FormData(form), false);
+            });
+        }
     })();
     </script>
 </div>
