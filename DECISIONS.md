@@ -3575,5 +3575,64 @@ Multiple layout, tracking, and integrity issues were identified in the AI Refine
 - Updated test suites in `tests/art-piece-generation.php` and `tests/three-runtime-consistency.php`.
 - Verified that all **110/110** tests (55/55 in each suite) pass cleanly.
 
+---
+
+## 2026-06-20 — Fixed silent "No canvas or svg element found" on AI Refine
+
+### Context
+Piece ID 83 (Three.js) hit "RENDERED COMPARISON UNAVAILABLE — No canvas or
+svg element found after waiting" on a second "Request Stronger Change" AI
+Refine iteration, with no other indication of failure — the code "looked
+good" but the preview/thumbnail capture timed out after ~20+ seconds.
+
+### Investigation
+- Confirmed HTML isolation for p5/c2/three (logged 2026-06-20 above) is
+  working correctly and unchanged across iterations — the AI is never shown
+  HTML for these engines, and any HTML patch is rejected outright in
+  `refineAi()`. Ruled out as the cause.
+- Root cause: `art_piece_preflight_code()`'s `window.sketch` check in
+  `public/app/helpers/art-piece-generation.php` only verified the substring
+  `window.sketch` appeared anywhere in the code, not that it was actually
+  *assigned* as a function. A refine patch that left `window.sketch` merely
+  *referenced* (e.g. a `typeof window.sketch === 'function'` guard with no
+  real assignment elsewhere) passed this check. The client runtime
+  (`piece-runtime.js`, `bootThree()`/`bootCanvasRuntime()`) does a strict
+  `typeof window.sketch !== 'function'` check and silently returns with no
+  canvas and no error if it fails — which is exactly what
+  `admin-piece-capture.js`'s 20-second polling loop times out on.
+- This validation already runs inside the existing 5-attempt self-healing
+  retry loop in `refineAi()` (same mechanism as the HTML-patch-rejection and
+  CSS-canvas-hiding checks) and also gates initial generation — fixing it in
+  one place benefits both flows and gets automatic AI repair-retry for free.
+
+### Implemented
+- Tightened the regex in `art_piece_preflight_code()`
+  (`public/app/helpers/art-piece-generation.php`) from
+  `/window\s*\.\s*sketch/i` to `/window\s*\.\s*sketch\s*=(?!=)/i` — requires
+  an actual single `=` assignment, explicitly excluding `==`/`===`
+  comparisons. Matches the assignment shape every engine's system prompt
+  already documents (`window.sketch = (p) => {...}` for p5,
+  `window.sketch = (runtime) => {...}` for c2/three,
+  `window.sketch = () => {};` for the SVG no-op case).
+- Added a regression test in `tests/art-piece-generation.php`: a
+  `typeof window.sketch === 'function'` guard with no real assignment now
+  correctly throws `RuntimeException` instead of passing.
+
+### Ruled out
+- Fixing at the capture/runtime layer (clearer timeout error in
+  `admin-piece-capture.js`/`piece-runtime.js`) instead of the validation
+  layer — would improve diagnostics but wouldn't stop bad code from being
+  saved, and wouldn't get the automatic AI repair-retry that the validation
+  layer gets for free from the existing 5-attempt loop.
+
+### Verification
+- `tests/art-piece-generation.php`: 56/56 passed (55 existing + 1 new).
+- Manually verified the new regex against representative strings (real
+  assignment passes; `===` comparison and bare reference both fail) via a
+  standalone PHP one-liner, not just inferred from the pattern.
+- Could not exercise a live AI Refine "Stronger Change" round-trip against
+  a real Three.js piece in this session — no browser automation tool was
+  available.
+
 
 

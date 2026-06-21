@@ -212,9 +212,14 @@ function art_piece_preflight_code(string $engine, string $code): string
         }
     }
 
-    // Static check for window.sketch definition
+    // Static check for window.sketch definition. Requires an actual
+    // assignment (a single `=` not followed by another `=`) rather than
+    // just the identifier appearing anywhere — a stray
+    // `typeof window.sketch === 'function'` guard with no real assignment
+    // elsewhere must still fail, since the runtime silently no-ops (no
+    // canvas, no error) when window.sketch isn't actually a function.
     if ($engine !== 'svg' || $validatedCode !== 'window.sketch = () => {};') {
-        if (!preg_match('/window\s*\.\s*sketch/i', $validatedCode)) {
+        if (!preg_match('/window\s*\.\s*sketch\s*=(?!=)/i', $validatedCode)) {
             throw new RuntimeException('Generated code did not define window.sketch');
         }
     }

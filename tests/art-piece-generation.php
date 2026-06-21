@@ -151,6 +151,13 @@ test('three with window.sketch passes', function () {
     assert_contains($result, 'window.sketch');
 });
 
+// 13. window.sketch referenced but never assigned still fails (regression
+// guard: the runtime requires typeof window.sketch === 'function', and
+// silently no-ops with no error and no canvas if it's only read, not set)
+test('three rejects window.sketch that is referenced but never assigned', function () {
+    assert_throws(fn() => art_piece_preflight_code('three', "if (typeof window.sketch === 'function') { console.log('noop'); }"), 'window.sketch');
+});
+
 echo "\n=== art_piece_refine_system_prompt ===\n";
 
 // 13. System prompts exist for all engines
