@@ -128,23 +128,50 @@
             // clipped background iframe needed a long fixed warm-up for —
             // these windows are deliberately shorter.
             await wait(engine === 'three' ? 1000 : 300);
-            var maxAttempts = engine === 'three' ? 40 : 20;
-            for (var attempt = 0; attempt < maxAttempts; attempt++) {
-                await wait(300);
-                var doc = iframe.contentDocument;
-                if (!doc) continue;
-                var canvas = doc.querySelector('canvas');
-                if (canvas && (!requireReadyMarker || canvas.dataset.creatrReady === '1')) {
-                    return;
+
+            // Checked from inside the iframe's own requestAnimationFrame
+            // callback, not a setTimeout poll — a live device repro showed
+            // a visually-correct render still come back solid black moments
+            // later, consistent with WebKit discarding the WebGL buffer on
+            // any brief backgrounding (app-switcher gestures, the system
+            // screenshot UI, etc.) during a setTimeout-based gap. Resolving
+            // synchronously inside the rAF callback that confirms readiness
+            // means the caller's immediate toDataURL() read lands a
+            // microtask later, not a poll-interval later.
+            // Counted in animation frames (~16.67ms each at 60Hz), not ms —
+            // chosen to preserve roughly the same total wait budget the old
+            // 300ms-interval poll loop had (40x300ms=12s for three,
+            // 20x300ms=6s otherwise), not the same attempt count.
+            var maxAttempts = engine === 'three' ? 720 : 360;
+            await new Promise(function (resolve, reject) {
+                var attempt = 0;
+                var raf = (iframe.contentWindow && iframe.contentWindow.requestAnimationFrame) || window.requestAnimationFrame;
+                function checkOnFrame() {
+                    attempt++;
+                    var doc = iframe.contentDocument;
+                    if (doc) {
+                        var canvas = doc.querySelector('canvas');
+                        if (canvas && (!requireReadyMarker || canvas.dataset.creatrReady === '1')) {
+                            resolve();
+                            return;
+                        }
+                        if (doc.querySelector('svg')) {
+                            resolve();
+                            return;
+                        }
+                    }
+                    if (runtimeError) {
+                        reject(new Error(runtimeError));
+                        return;
+                    }
+                    if (attempt >= maxAttempts) {
+                        reject(new Error(runtimeError || 'Piece did not finish rendering in time.'));
+                        return;
+                    }
+                    raf(checkOnFrame);
                 }
-                if (doc.querySelector('svg')) {
-                    return;
-                }
-                if (runtimeError) {
-                    throw new Error(runtimeError);
-                }
-            }
-            throw new Error(runtimeError || 'Piece did not finish rendering in time.');
+                raf(checkOnFrame);
+            });
         } finally {
             window.removeEventListener('message', onMessage);
         }

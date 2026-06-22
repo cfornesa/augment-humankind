@@ -4575,3 +4575,18 @@ A second live reproduction (same iPhone + Mac inspector setup, now with `piece-r
 - Ran `php tests/three-runtime-consistency.php && php tests/art-piece-generation.php && php tests/ai-provider-client.php`: 124/124 tests passed (55 + 58 + 11), including the existing "index.php loads and calls the shared admin capture module" guard.
 - `php -l` clean on `index.php`; `node --check` clean on `admin-piece-capture.js`.
 - Live verification (does a new `media_files` row actually get created on the reporter's iPhone) not yet done — pending deploy and a live click-through of "Generate Thumbnail" on piece 40 or 59.
+
+---
+
+## 2026-06-22 — Close the Gap Between a Confirmed-Ready Frame and Reading Its Pixels
+
+### Context
+Round 4's live test of the real-visible-iframe fix (previous entry) showed the overlay rendering the piece correctly on-screen, and `capture()`'s direct-capture branch running without error — but the actual saved image came back genuinely solid black (0,0,0 across every sampled pixel, confirmed via direct inspection), not just dark content. So the bug didn't go away with a visible iframe; it moved to the gap between "a frame is confirmed ready" and "the moment `toDataURL()` reads it." The previous `waitForRender()` confirmed readiness via a `setTimeout`-based poll loop (every 300ms), leaving a real, indeterminate-length window during which something — most plausibly iOS Safari/WebKit discarding the WebGL drawing buffer on any brief backgrounding (app-switcher gestures, the system screenshot UI, etc.) — could clear the canvas back to black before the read happened.
+
+### Implemented
+- **`admin-piece-capture.js`**: `waitForRender()` now checks readiness from inside the capture iframe's own `requestAnimationFrame` callback (via `iframe.contentWindow.requestAnimationFrame`) instead of a `setTimeout` poll, and resolves synchronously within that same callback. The caller's subsequent `capture()` call then lands a JS microtask later, not a poll-interval later — as tight as the gap can reasonably be made without restructuring capture to happen inside the iframe itself. Caught before deploying: switching from 300ms intervals to ~16.67ms animation-frame ticks while keeping the same attempt count would have silently shrunk the total timeout budget by roughly 18x (40 attempts × 300ms = 12s vs. 40 frames × 16.67ms ≈ 670ms) — attempt counts were rescaled (`three`: 40 → 720, others: 20 → 360) to preserve the original wait budgets.
+
+### Verification
+- Ran `php tests/three-runtime-consistency.php && php tests/art-piece-generation.php && php tests/ai-provider-client.php`: 124/124 tests passed (55 + 58 + 11).
+- `node --check` clean on `admin-piece-capture.js`.
+- Live verification (does the resulting thumbnail actually show real content, not solid black, on the reporter's iPhone) not yet done — per the reporter's standing preference, I'll ask before independently re-checking the result myself rather than doing so unprompted; their own visual read is the primary signal.
