@@ -39,6 +39,22 @@ function findCanvas(id) {
   })();
 }
 function sizeCanvas(canvas) {
+  if (PIECE_ENGINE === 'c2') {
+    // Fixed canonical intrinsic resolution, matching what the Immersive
+    // gallery view already hardcodes for c2 pieces (immersive-gallery.js's
+    // runtimeSize). c2 sketches draw with literal screen-pixel coordinates,
+    // and AI-generated code reliably mixes a few absolute-pixel touches
+    // (confirmed in a real piece's code: `cx + 30`, fixed particle counts)
+    // alongside otherwise-proportional ones — those only produce a visibly
+    // different composition when canvas.width/height itself varies across
+    // surfaces, as it did before this fix (320 on the thumbnail vs 1280 in
+    // Immersive). canvas.style.width/height (set elsewhere) still fills
+    // whatever container each surface provides — only the *intrinsic*
+    // resolution the piece draws into is now fixed.
+    canvas.width = 1280;
+    canvas.height = 720;
+    return;
+  }
   const w = Math.max(1, canvas.parentElement?.clientWidth || window.innerWidth || 1280);
   const h = Math.max(1, canvas.parentElement?.clientHeight || window.innerHeight || 720);
   canvas.width = w;

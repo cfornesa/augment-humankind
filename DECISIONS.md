@@ -4649,3 +4649,23 @@ Reporter observed an AI Refine Accept's auto-captured thumbnail not surviving. C
 - Ran `php tests/three-runtime-consistency.php && php tests/art-piece-generation.php && php tests/ai-provider-client.php`: 124/124 tests passed (55 + 58 + 11).
 - `php -l` clean on `form.php`.
 - Live verification (Accept then immediate Update with no further edits; Accept then an additional manual edit then Update; metadata-only edit then Update; DB check confirming the saved thumbnail is timestamped after the Update click, not stale) not yet done — pending deploy and a live pass on the reporter's iPhone.
+
+---
+
+## 2026-06-22 — Give C2 Pieces a Canonical Intrinsic Resolution Across Every Surface
+
+### Context
+Reporter observed C2.js pieces rendering "drastically different" appearances across viewing surfaces (admin Edit preview, public view, Immersive VR, thumbnail) — far worse than Three.js/SVG (consistent) or P5.js (mildly inconsistent, same composition just cropped/resized).
+
+Mapped every rendering surface directly: public view and admin preview derive `canvas.width`/`height` from whatever the actual container happens to be (560px-tall iframe; sidebar-width-dependent), thumbnail capture is a fixed 320×180, while Immersive VR (`immersive-gallery.js`, a separate hand-written reimplementation, not `piece-runtime.js`) already hardcodes a fixed 1280×720 `runtimeSize` for c2. Pulled an actual C2 piece's current code (piece 82) to confirm this isn't theoretical: most of it is correctly proportional (`faceRX = w * 0.18`), but real exceptions exist in the same file (`drawFragmentedLayer(cx + 30, cy - 20, w * 0.5, h * 0.5, 200, ...)`) — fixed-pixel position offsets and fixed particle counts that read very differently when spread across a 320×180 canvas (57,600px²) vs. a 1280×720 one (921,600px², 16× the area).
+
+Checked (not assumed, per the reporter's explicit ask) why Three.js and SVG are immune despite the reporter's stated hypothesis ("lack of a gallery view"/"lack of a canvas") being wrong on the specific mechanism: Three.js does have its own Immersive mounting function and resizes its camera/renderer correctly on every container change — it's immune because a 3D perspective camera's projection is resolution-independent by construction (world-unit positions, aspect-ratio-aware projection), not because it lacks a view. SVG does get rasterized into a canvas in Immersive too — it's immune because SVG content lives in its own `viewBox`-relative coordinate space, so it scales uniformly to any raster target; there's no way for correct SVG markup to have an equivalent of a literal screen-pixel offset. The real dividing line is whether a rendering model's coordinates are inherently absolute screen pixels (procedural 2D canvas — c2, and to a lesser extent p5) or resolution-independent by construction (3D camera projection; vector `viewBox` space).
+
+### Implemented
+- **`piece-runtime.js`**: `sizeCanvas()` now branches on `PIECE_ENGINE` — for `c2`, sets a fixed canonical intrinsic resolution (1280×720, matching what Immersive already hardcodes) instead of deriving it from the actual container; `canvas.style.width/height` (set elsewhere, unchanged) still fills whatever container each surface provides via ordinary CSS bitmap scaling, so only the *intrinsic* resolution a c2 piece draws into — not its on-screen display size — is now fixed across the public view, admin preview, and thumbnail capture, converging with what Immersive already uses. The `three` branch (and the existing container-driven fallback for any other engine) is unchanged.
+- Did not touch `immersive-gallery.js` (already canonical for c2), any existing piece's `generated_code` (no piece needs editing/regenerating — this is purely a shared-runtime change), or P5 (its sizing mechanism is architecturally different — p5 sketches call `createCanvas()` themselves based on the container, and `sizeCanvas()` isn't even invoked for the `p5` engine in `bootP5()` — flagged as a distinct, deferred follow-up, not bundled into this fix).
+
+### Verification
+- Ran `php tests/three-runtime-consistency.php && php tests/art-piece-generation.php && php tests/ai-provider-client.php`: 124/124 tests passed (55 + 58 + 11).
+- `node --check` clean on `piece-runtime.js`.
+- Live verification (comparing the same C2 piece — e.g. piece 82 or another tested piece — across public view, admin preview, thumbnail, and Immersive to confirm matching composition/density; spot-checking a Three.js piece for no regression) not yet done — pending deploy and a live pass on the reporter's device.
