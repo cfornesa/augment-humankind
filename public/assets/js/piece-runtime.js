@@ -6,6 +6,11 @@
 function diag(label, data) {
   try { console.log('[DIAG]', label, data || ''); } catch (_) {}
   try { window.parent.postMessage({ type: 'creatr-diag', label, data: data || null, t: performance.now() }, '*'); } catch (_) {}
+  // DOM-based fallback so a parent that never receives the postMessage
+  // above (relay broken, sandboxing quirk, etc.) can still read the last
+  // diagnostic stage reached by polling the iframe's own DOM directly —
+  // no cross-window messaging involved at all.
+  try { document.documentElement.dataset.creatrDiagLast = label; } catch (_) {}
 }
 function showPieceError(error) {
   const el = document.getElementById('piece-error');

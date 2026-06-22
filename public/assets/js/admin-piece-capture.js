@@ -106,7 +106,7 @@
             try {
                 var iframe = source.liveIframe;
                 var doc = iframe.contentDocument || (iframe.contentWindow ? iframe.contentWindow.document : null);
-                console.log('[DIAG] live-direct-capture-attempt', { hasDoc: !!doc, hasCanvas: !!(doc && doc.querySelector('canvas')), creatrReady: doc && doc.querySelector('canvas') ? doc.querySelector('canvas').dataset.creatrReady : null });
+                console.log('[DIAG] live-direct-capture-attempt', { hasDoc: !!doc, hasCanvas: !!(doc && doc.querySelector('canvas')), creatrReady: doc && doc.querySelector('canvas') ? doc.querySelector('canvas').dataset.creatrReady : null, lastDiagStage: doc && doc.documentElement ? doc.documentElement.dataset.creatrDiagLast : null });
                 if (doc) {
                     var canvas = doc.querySelector('canvas');
                     if (canvas && typeof canvas.toDataURL === 'function') {
@@ -155,6 +155,24 @@
             console.log('[DIAG]', label, Math.round(performance.now() - captureStartedAt) + 'ms', data || '');
         }
 
+        // TEMPORARY DIAGNOSTIC — logs every raw message this window receives
+        // while capture is running, before any filtering, to tell apart
+        // "piece-runtime.js's postMessage never arrived" from "it arrived
+        // but was filtered out by the source/shape check below."
+        var rawMessageCount = 0;
+        function onAnyMessageDiag(event) {
+            rawMessageCount++;
+            if (rawMessageCount <= 30) {
+                diagLog('raw-message', {
+                    n: rawMessageCount,
+                    type: event && event.data ? event.data.type : typeof (event && event.data),
+                    sourceMatchesFrame: !!(event && event.source === frame.contentWindow),
+                    origin: event ? event.origin : null
+                });
+            }
+        }
+        window.addEventListener('message', onAnyMessageDiag);
+
         function onMessage(event) {
             if (!event || !event.data || event.source !== frame.contentWindow) return;
             if (event.data.type === 'creatr-diag') {
@@ -199,7 +217,14 @@
 
                 var foundCanvas = doc.querySelector('canvas');
                 if (attempt < 10 || attempt % 10 === 0) {
-                    diagLog('poll-attempt', { attempt: attempt, foundCanvas: !!foundCanvas, creatrReady: foundCanvas ? foundCanvas.dataset.creatrReady : null });
+                    diagLog('poll-attempt', {
+                        attempt: attempt,
+                        foundCanvas: !!foundCanvas,
+                        creatrReady: foundCanvas ? foundCanvas.dataset.creatrReady : null,
+                        // DOM-read fallback — see piece-runtime.js's diag() —
+                        // independent of whether postMessage relay works.
+                        lastDiagStage: doc.documentElement ? doc.documentElement.dataset.creatrDiagLast : null
+                    });
                 }
                 if (foundCanvas && (!requireReadyMarker || foundCanvas.dataset.creatrReady === '1')) {
                     canvas = foundCanvas;
@@ -239,6 +264,7 @@
             return { ok: false, dataUrl: '', kind: null, error: error.message || String(error) };
         } finally {
             window.removeEventListener('message', onMessage);
+            window.removeEventListener('message', onAnyMessageDiag);
             if (container && container.parentNode) {
                 container.parentNode.removeChild(container);
             } else if (frame.parentNode) {

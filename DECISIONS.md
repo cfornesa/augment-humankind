@@ -4517,3 +4517,24 @@ Piece 59 (Three.js, lighting-only AI Refine) reproduced the *exact same* "No can
 - Ran `php tests/three-runtime-consistency.php && php tests/art-piece-generation.php && php tests/ai-provider-client.php`: 124/124 tests passed (55 + 58 + 11).
 - `node --check` clean on both touched JS files.
 - Live diagnostic reproduction on the reporter's iPhone with Mac inspector: pending, to be done after this commit deploys.
+
+---
+
+## 2026-06-21 — First Live Diagnostic Run: Capture Logs Present, piece-runtime.js Logs Absent
+
+### Context
+Reporter reproduced the blank-thumbnail case live on their iPhone (Mac Safari inspector connected) using the diagnostic instrumentation from the prior entry. The console showed `admin-piece-capture.js`'s own logs (`raf-shim-installed`, 5× `raf-shim-tick` within 426ms, then `poll-attempt`/`canvas-accepted`/`capture-complete` at ~6.8s) — but **none** of `piece-runtime.js`'s relayed diagnostics (`canvas-created`, `signalThreeReadyOnce`, `piece-startFrame-tick`, `animateControls-tick`, `safety-net-reached`) appeared anywhere, despite both being relayed through the same `postMessage` → parent `diagLog` path. Confirmed with the reporter this was the complete log from a fresh page load (the "Console cleared" line was just the page refresh, not a mid-run clear), so the absence is real, not a missing screenshot.
+
+### Findings
+- `capture-complete` reported `dataUrlLength: 270` — consistent with a genuinely blank/never-drawn-to canvas (a real rendered 960×540 WebGL scene would be many KB), corroborating the visually blank thumbnail.
+- `creatrReady` was already `"1"` on the very first poll attempt (6800ms, i.e. right after the fixed 6s warm-up wait) — the marker was set well before that, sometime in the unobserved gap between the shim's last logged tick (426ms) and the first poll.
+- The total absence of `piece-runtime.js`'s relayed messages, despite the marker having been set (which only `piece-runtime.js` code can do), means either the postMessage relay itself is silently failing for that script's messages specifically, or something else is preventing those calls from running — this is now as important a question as the original timing theory, since it could mean the actual bug is in cross-frame messaging reliability under WebKit's sandboxed/clipped-iframe handling, not (or not only) the safety-net race condition first suspected.
+
+### Implemented
+- **`piece-runtime.js`**: `diag()` now also writes `document.documentElement.dataset.creatrDiagLast` on every call — a same-DOM fallback signal that doesn't depend on `postMessage` delivery at all, so the parent can read the last diagnostic stage reached by direct DOM access regardless of whether the message relay works.
+- **`admin-piece-capture.js`**: added a second, unfiltered `message` listener (`onAnyMessageDiag`) that logs every raw message this window receives during capture (count, `type`, whether `event.source` matches the capture iframe, `origin`) before any filtering — to tell apart "the message never arrived" from "it arrived but was filtered out by the source/shape check." Also reads the new `creatrDiagLast` DOM marker directly in both the background-iframe poll loop and the live-iframe direct-capture path.
+
+### Verification
+- Ran `php tests/three-runtime-consistency.php && php tests/art-piece-generation.php && php tests/ai-provider-client.php`: 124/124 tests passed (55 + 58 + 11).
+- `node --check` clean on both touched JS files.
+- Next live reproduction (same iPhone + Mac inspector setup) pending, to determine whether `piece-runtime.js`'s diagnostics were silently dropped in transit or never ran at all.
