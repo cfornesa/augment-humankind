@@ -1476,6 +1476,14 @@ if ($engineVal === 'p5') {
         }
 
         var liveIframe = previewStage ? previewStage.querySelector('iframe') : null;
+        // Without this, capture()'s direct-capture branch can run before the
+        // live iframe has actually painted a frame, silently fall through to
+        // the broken clipped background-iframe path, and return a blank
+        // image with no error at all — confirmed live (the index.php
+        // "Generate Thumbnail" button already does this same wait first).
+        if (liveIframe) {
+            await window.CreatrPieceCapture.waitForRender(liveIframe, engineField.value || 'p5');
+        }
         var capture = await window.CreatrPieceCapture.capture(buildCaptureSource({
             html: htmlField.value || '',
             css: cssField.value || '',

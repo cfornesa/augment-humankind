@@ -4590,3 +4590,20 @@ Round 4's live test of the real-visible-iframe fix (previous entry) showed the o
 - Ran `php tests/three-runtime-consistency.php && php tests/art-piece-generation.php && php tests/ai-provider-client.php`: 124/124 tests passed (55 + 58 + 11).
 - `node --check` clean on `admin-piece-capture.js`.
 - Live verification (does the resulting thumbnail actually show real content, not solid black, on the reporter's iPhone) not yet done — per the reporter's standing preference, I'll ask before independently re-checking the result myself rather than doing so unprompted; their own visual read is the primary signal.
+
+---
+
+## 2026-06-22 — Apply the Proven Capture Fix to Every Other Call Site
+
+### Context
+Live testing on piece 59 confirmed the "Generate Thumbnail" button fix (real visible iframe + rAF-aligned `waitForRender()` before `capture()`) works correctly — a real, large (50646-char) capture, and the result held across pieces 73, 40, and 59. The same test surfaced one remaining gap: an AI Refine Accept on the Edit page produced `raf-shim-installed`/`raf-shim-tick` log lines and a blank (`dataUrlLength: 270`) result — log lines that only ever come from the old clipped 1px×1px background-iframe fallback. Verified directly against the current source (per the reporter's request, not assumed from the conversation narrative): `grep -n "waitForRender"` across `form.php`, `generate-preview.php`, and `index.php` found exactly one call site, in `index.php`. `admin-piece-capture.js`'s `capture()` only `return`s from its `liveIframe` branch on success; on failure it falls through, with no guard, into the background-iframe path that unconditionally sets `isCapture: true` — the only place that injects the shim script producing those exact log lines.
+
+### Implemented
+- **`form.php`**: `performCapture()` now calls `window.CreatrPieceCapture.waitForRender(liveIframe, engineField.value || 'p5')` before `capture()`, when a `liveIframe` is present — mirroring `index.php`'s already-proven order. Since `performCapture()` is the single shared helper, this one change fixes all three of its call sites: AI Refine Accept's auto-capture, the regular Save-Changes submit's auto-capture, and the Edit page's dedicated "Capture Thumbnail" button. A `waitForRender()` failure propagates as a normal thrown error, surfaced identically to an existing `capture.ok === false` result in each call site's existing error handling — no error-UX change.
+- **`generate-preview.php`**: `ensurePreviewThumbnail()` gets the same fix — `waitForRender(liveIframe, sourceObj.engine)` runs before `capture(sourceObj)` when a live iframe exists, with a rejection converted into the same `{ok:false, error}` shape the existing `.then()` chain already expects, so a newly-generated AI piece's first auto-captured thumbnail no longer depends on coincidental timing.
+- Did not touch `index.php`'s `runCaptureForId()`/`createCaptureOverlay()` (explicitly the reference implementation, out of scope) or `admin-piece-capture.js`'s `capture()`/`waitForRender()` themselves (no changes needed — this was purely about every caller using them in the already-proven order).
+
+### Verification
+- Ran `php tests/three-runtime-consistency.php && php tests/art-piece-generation.php && php tests/ai-provider-client.php`: 124/124 tests passed (55 + 58 + 11).
+- `php -l` clean on `form.php` and `generate-preview.php`.
+- Live verification (AI Refine Accept, manual Save, the Edit page's Capture Thumbnail button, and a freshly-generated AI piece all producing real, non-blank thumbnails) not yet done — pending deploy and a live pass on the reporter's iPhone.
