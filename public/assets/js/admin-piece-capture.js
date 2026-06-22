@@ -177,6 +177,46 @@
         }
     }
 
+    // Builds a small, genuinely visible (not clipped, not inside any
+    // display:none ancestor) overlay containing a fresh iframe, waits for
+    // the piece to actually render, captures it via the proven liveIframe
+    // path, then tears the overlay down. For every capture call site OTHER
+    // than the Pieces list "Generate Thumbnail" button (index.php has its
+    // own independent, already-proven overlay implementation — this
+    // function does not call or share code with it, by design, so nothing
+    // here can affect that button). Never throws; mirrors capture()'s own
+    // {ok, dataUrl, kind, error} contract.
+    async function captureWithOverlay(source) {
+        var width = source.width || 320;
+        var height = source.height || 180;
+        var engine = source.engine || 'p5';
+
+        var overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:999999;display:flex;align-items:center;justify-content:center;';
+        var box = document.createElement('div');
+        box.style.cssText = 'background:#0d0d0f;border:1px solid #333;border-radius:4px;padding:0.75rem;box-shadow:0 8px 24px rgba(0,0,0,0.4);';
+        var label = document.createElement('div');
+        label.textContent = 'Capturing thumbnail…';
+        label.style.cssText = 'color:#a1a1aa;font-size:0.8rem;margin-bottom:0.5rem;text-align:center;';
+        var iframe = document.createElement('iframe');
+        iframe.style.cssText = 'width:' + width + 'px;height:' + height + 'px;border:0;display:block;';
+        iframe.sandbox = 'allow-scripts allow-same-origin';
+        box.appendChild(label);
+        box.appendChild(iframe);
+        overlay.appendChild(box);
+        document.body.appendChild(overlay);
+
+        try {
+            iframe.srcdoc = renderDocument(Object.assign({}, source, { width: width, height: height }));
+            await waitForRender(iframe, engine);
+            return await capture(Object.assign({}, source, { liveIframe: iframe, width: width, height: height }));
+        } catch (error) {
+            return { ok: false, dataUrl: '', kind: null, error: error && error.message ? error.message : String(error) };
+        } finally {
+            if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+        }
+    }
+
     async function capture(source) {
         var width = source.width || 960;
         var height = source.height || 540;
@@ -403,6 +443,7 @@
         diffImages: diffImages,
         renderDocument: renderDocument,
         seededRandom: seededRandom,
-        waitForRender: waitForRender
+        waitForRender: waitForRender,
+        captureWithOverlay: captureWithOverlay
     };
 })();

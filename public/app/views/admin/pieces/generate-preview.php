@@ -236,26 +236,13 @@ $defaultTitle = 'AI ' . strtoupper($engine) . ' Piece - ' . date('M d, Y H:i');
 
             setStatus(reason || 'Capturing thumbnail…');
             var revisionAtStart = thumbnailRevision;
-            var wrapper = document.getElementById('preview-iframe-wrapper');
-            var liveIframe = wrapper ? wrapper.querySelector('iframe') : null;
-            var sourceObj = source();
-            sourceObj.liveIframe = liveIframe;
+            var sourceObj = Object.assign(source(), { width: 320, height: 180 });
 
-            // Without this, capture()'s direct-capture branch can run before
-            // the live iframe has actually painted a frame, silently fall
-            // through to the broken clipped background-iframe path, and
-            // return a blank image with no error at all — confirmed live
-            // (the index.php "Generate Thumbnail" button already does this
-            // same wait first).
-            var captureChain = liveIframe
-                ? window.CreatrPieceCapture.waitForRender(liveIframe, sourceObj.engine).then(function () {
-                    return window.CreatrPieceCapture.capture(sourceObj);
-                }, function (err) {
-                    return { ok: false, dataUrl: '', kind: null, error: err && err.message ? err.message : String(err) };
-                })
-                : window.CreatrPieceCapture.capture(sourceObj);
-
-            inFlight = captureChain.then(function (result) {
+            // Builds its own genuinely visible overlay rather than reusing
+            // #preview-iframe-wrapper's iframe — applied for uniformity with
+            // every other non-"Generate Thumbnail" capture call site, not
+            // because this wrapper was found hidden (it isn't).
+            inFlight = window.CreatrPieceCapture.captureWithOverlay(sourceObj).then(function (result) {
                 if (revisionAtStart !== thumbnailRevision) {
                     return { ok: false, dataUrl: '', kind: null, error: 'Capture was superseded by a newer preview.' };
                 }

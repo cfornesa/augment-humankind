@@ -1475,21 +1475,21 @@ if ($engineVal === 'p5') {
             throw new Error('Add HTML and JS code in the code tabs before capturing a thumbnail.');
         }
 
-        var liveIframe = previewStage ? previewStage.querySelector('iframe') : null;
-        // Without this, capture()'s direct-capture branch can run before the
-        // live iframe has actually painted a frame, silently fall through to
-        // the broken clipped background-iframe path, and return a blank
-        // image with no error at all — confirmed live (the index.php
-        // "Generate Thumbnail" button already does this same wait first).
-        if (liveIframe) {
-            await window.CreatrPieceCapture.waitForRender(liveIframe, engineField.value || 'p5');
-        }
-        var capture = await window.CreatrPieceCapture.capture(buildCaptureSource({
-            html: htmlField.value || '',
-            css: cssField.value || '',
-            js: jsField.value || '',
-            liveIframe: liveIframe
-        }, 8383));
+        // Builds its own genuinely visible overlay instead of relying on
+        // previewStage's iframe — that iframe lives inside the mobile
+        // "Preview" tab pane, which is display:none until the admin
+        // explicitly taps it. Script execution there runs fine regardless
+        // (so the old waitForRender-on-previewStage version still reported
+        // "ready"), but the GPU paint never happens under display:none,
+        // same as the clipped background-iframe bug this was meant to fix.
+        var capture = await window.CreatrPieceCapture.captureWithOverlay(Object.assign(
+            buildCaptureSource({
+                html: htmlField.value || '',
+                css: cssField.value || '',
+                js: jsField.value || ''
+            }, 8383),
+            { width: 320, height: 180 }
+        ));
         if (!capture.ok) {
             throw new Error(capture.error || 'Thumbnail capture failed.');
         }

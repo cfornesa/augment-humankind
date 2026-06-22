@@ -4607,3 +4607,27 @@ Live testing on piece 59 confirmed the "Generate Thumbnail" button fix (real vis
 - Ran `php tests/three-runtime-consistency.php && php tests/art-piece-generation.php && php tests/ai-provider-client.php`: 124/124 tests passed (55 + 58 + 11).
 - `php -l` clean on `form.php` and `generate-preview.php`.
 - Live verification (AI Refine Accept, manual Save, the Edit page's Capture Thumbnail button, and a freshly-generated AI piece all producing real, non-blank thumbnails) not yet done — pending deploy and a live pass on the reporter's iPhone.
+
+---
+
+## 2026-06-22 — One Shared Guaranteed-Visible Capture Helper for Every Use Case Except "Generate Thumbnail"
+
+### Context
+The previous round's fix (`waitForRender()` before `capture()` in `performCapture()`) deployed correctly but didn't help — a live test still showed the old clipped-background-iframe fallback firing from the Edit page (`raf-shim-tick`, `dataUrlLength: 1182`) right before "Generate Thumbnail" on the same piece produced a real 85170-length capture. The actual cause wasn't timing: `previewStage`'s iframe lives inside `<div class="workspace-pane pane-preview is-hidden-mobile">`, and `is-hidden-mobile` is `display: none !important` on mobile by default until the admin explicitly taps "Preview". Script execution (timers, `requestAnimationFrame`, the `creatrReady` marker) keeps running fine under `display:none`, so `waitForRender()` correctly reported "ready" — while the GPU paint never happened. Same underlying WebKit behavior already confirmed for the clipped-iframe case, reached through a different door `waitForRender()` has no way to detect.
+
+The reporter asked for the same guaranteed-visible surface across every *code* update (AI Refine, manual code edits, piece generation — AI or manual) — explicitly excluding metadata-only edits, which correctly continue to trigger no capture at all — and was explicit that "Generate Thumbnail" (`index.php`'s `runCaptureForId()`/`createCaptureOverlay()`/`runAutoCaptureQueue()`) must not be touched in any way, since it's the only confirmed-working mechanism.
+
+### Findings
+- Checked directly, not assumed: `generate-preview.php`'s live iframe wrapper (`#preview-iframe-wrapper`) carries no hidden/mobile-toggle class, so it isn't exposed to this specific bug — fixed anyway for uniformity, per the reporter's explicit ask for one consistent mechanism rather than a different fix per file.
+- Checked directly, not assumed: the non-AI "Create Piece" flow (`PiecesAdminController::create()`/`store()`) is a traditional server-side POST with no JS capture step, redirecting to `/admin/pieces` on success — where `index.php`'s existing, untouched `runAutoCaptureQueue()` already auto-captures any piece with an empty thumbnail on page load. No new code needed for this path.
+
+### Implemented
+- **`admin-piece-capture.js`**: added `captureWithOverlay(source)` — an independent implementation (does not call or share code with `index.php`'s overlay) that builds a small, genuinely visible (not clipped, not inside any `display:none` ancestor) overlay iframe anywhere in `document.body`, calls `waitForRender()` on it, then `capture({ liveIframe })`, tears the overlay down, and returns the same `{ok, dataUrl, kind, error}` shape `capture()` already returns. Exported alongside the existing functions.
+- **`form.php`**: `performCapture()` now calls `captureWithOverlay()` instead of depending on `previewStage.querySelector('iframe')` — fixes AI Refine Accept's auto-capture, the Save-Changes submit's auto-capture, and the Edit page's dedicated "Capture Thumbnail" button in one place. The existing `isDirty` code-vs-metadata gating ([form.php:1539-1546](public/app/views/admin/pieces/form.php:1539)) is untouched — this only changes *how* a capture happens once one is already going to happen, never *whether* one happens.
+- **`generate-preview.php`**: `ensurePreviewThumbnail()` switched to `captureWithOverlay()` the same way, for uniformity.
+- **`index.php`**: confirmed zero changes via `git diff --stat` before committing — `runCaptureForId()`, `createCaptureOverlay()`, and `runAutoCaptureQueue()` are untouched, not refactored, not calling the new shared helper.
+
+### Verification
+- Ran `php tests/three-runtime-consistency.php && php tests/art-piece-generation.php && php tests/ai-provider-client.php`: 124/124 tests passed (55 + 58 + 11).
+- `node --check` clean on `admin-piece-capture.js`; `php -l` clean on `form.php` and `generate-preview.php`.
+- Live verification (AI Refine Accept, manual Save, the Capture Thumbnail button, new AI piece generation, and manual piece creation, all tested *without* tapping the "Preview" toggle first) not yet done — pending deploy and a live pass on the reporter's iPhone.
