@@ -77,7 +77,20 @@ function bootCanvasRuntime(extra) {
   runPieceCode();
   if (typeof window.sketch !== 'function') return;
   const canvas = findCanvas(PIECE_ENGINE === 'c2' ? 'c2-canvas' : 'scene');
-  canvas.style.cssText = 'display:block;width:100%;height:100%;';
+  // For c2, the canvas now has a fixed intrinsic resolution (sizeCanvas())
+  // regardless of surface — but plain width:100%;height:100% still
+  // non-uniformly stretches that bitmap to fill whatever shape box each
+  // surface's container happens to be (a phone's narrow/tall public-view
+  // iframe vs. a 16:9 thumbnail vs. a squarer admin preview pane). Confirmed
+  // in a real piece's code (id 72): a face shape with a fixed 1:1.5
+  // width:height ratio in canvas-pixel-space looked square in one surface,
+  // oval in another, and severely vertically elongated in a third — same
+  // underlying drawing, different non-uniform CSS stretch per box.
+  // object-fit:contain preserves the canvas's native aspect ratio when
+  // scaling to fit any container, eliminating that distortion.
+  canvas.style.cssText = PIECE_ENGINE === 'c2'
+    ? 'display:block;width:100%;height:100%;object-fit:contain;object-position:center;'
+    : 'display:block;width:100%;height:100%;';
   sizeCanvas(canvas);
   window.addEventListener('resize', () => sizeCanvas(canvas));
   // Only the piece's own first real draw means there's something worth

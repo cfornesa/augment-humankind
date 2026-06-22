@@ -4669,3 +4669,22 @@ Checked (not assumed, per the reporter's explicit ask) why Three.js and SVG are 
 - Ran `php tests/three-runtime-consistency.php && php tests/art-piece-generation.php && php tests/ai-provider-client.php`: 124/124 tests passed (55 + 58 + 11).
 - `node --check` clean on `piece-runtime.js`.
 - Live verification (comparing the same C2 piece — e.g. piece 82 or another tested piece — across public view, admin preview, thumbnail, and Immersive to confirm matching composition/density; spot-checking a Three.js piece for no regression) not yet done — pending deploy and a live pass on the reporter's device.
+
+---
+
+## 2026-06-22 — Fix C2 Display Aspect-Ratio Stretching (the Canvas-Resolution Fix Alone Wasn't Enough)
+
+### Context
+The prior round's fix (fixed 1280×720 intrinsic resolution for c2 in `sizeCanvas()`) deployed and was confirmed live, but the reporter still saw the same piece (id 72) look completely different across surfaces — a square-ish blocky thumbnail, a smoother oval on one view, and a severely vertically-elongated shape on the public view. Ruled out genuine randomness first (checked piece 72's code directly: only a deterministic coordinate-hash `noise()`, no `Math.random()` calls).
+
+Pulled piece 72's actual code and found the real remaining cause: `const faceW = w * 0.28; const faceH = faceW * 1.5;` — the face shape's height is derived from its own width, not from canvas height `h`, so it draws a fixed 1:1.5 (width:height) rectangle in canvas-pixel-space *consistently*, regardless of canvas resolution (the prior fix already made that resolution consistent). What's still inconsistent is `canvas.style.cssText = 'display:block;width:100%;height:100%;'` — plain `width:100%;height:100%` non-uniformly stretches the canvas's 16:9 (1280×720) bitmap to fill whatever shape box each surface's container happens to be: a phone's narrow/tall public-view iframe (~560px-tall) stretches it vertically far more than a 320×180 thumbnail (already 16:9, no distortion) or a squarer admin-preview pane. Same underlying drawing, different non-uniform stretch per surface — exactly matching the three screenshots.
+
+### Implemented
+- **`piece-runtime.js`**: `bootCanvasRuntime()`'s canvas CSS now uses `object-fit:contain;object-position:center;` in addition to `width:100%;height:100%` for the `c2` engine specifically — this preserves the canvas's native (now-fixed 16:9) aspect ratio when scaling to fit any container, instead of stretching non-uniformly. The non-c2 branch (only reachable by `c2` in this codebase's current dispatch, but kept as a explicit fallback) is unchanged.
+- Did not touch `three`'s canvas styling — its intrinsic resolution already always matches its container (unchanged branch in `sizeCanvas()`), so its CSS aspect and canvas aspect are always equal; `object-fit` would be a no-op there and isn't needed.
+- Did not touch p5 — still out of scope per the prior round's deferral (p5 doesn't go through `bootCanvasRuntime()`/`sizeCanvas()` at all).
+
+### Verification
+- Ran `php tests/three-runtime-consistency.php && php tests/art-piece-generation.php && php tests/ai-provider-client.php`: 124/124 tests passed (55 + 58 + 11).
+- `node --check` clean on `piece-runtime.js`.
+- Live verification (comparing piece 72 — or another C2 piece — across the public view, admin preview, and thumbnail to confirm the same proportions, no more square/oval/elongated discrepancy) not yet done — pending deploy and a live pass on the reporter's device.
