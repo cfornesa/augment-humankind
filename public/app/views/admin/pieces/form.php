@@ -1403,22 +1403,18 @@ if ($engineVal === 'p5') {
             resetDirtyBaselines();
             clearAiSuggestionUi();
 
-            // The version is already saved above, so unlike the Save-Changes
-            // submit handler (which captures before submit and can still
-            // abort), a capture failure here just gets reported — there is
-            // nothing left to roll back.
-            if (data.changed && currentPieceId) {
-                aiSaveStatus.textContent += ' Capturing thumbnail…';
-                performCapture(currentPieceId).then(function () {
-                    aiSaveStatus.textContent = aiSaveStatus.textContent.replace(' Capturing thumbnail…', ' Thumbnail updated.');
-                    setTimeout(clearAiSaveStatus, 6000);
-                }).catch(function (captureErr) {
-                    aiSaveStatus.textContent = aiSaveStatus.textContent.replace(' Capturing thumbnail…', ' Thumbnail capture failed: ' + captureErr.message);
-                    setTimeout(clearAiSaveStatus, 6000);
-                });
-            } else {
-                setTimeout(clearAiSaveStatus, 6000);
+            // Thumbnail capture happens only at "Update" now, not here —
+            // capturing immediately on Accept used to upload straight to the
+            // server without updating the page's own #thumbnail_url field,
+            // so a later "Update" click with no further edits (isDirty now
+            // false, since resetDirtyBaselines() above just matched it)
+            // would resubmit that stale field and overwrite what Accept had
+            // just saved. Flagging it here means "Update" always knows a
+            // capture is owed, with fresh data, right before it submits.
+            if (data.changed) {
+                pendingThumbnailCapture = true;
             }
+            setTimeout(clearAiSaveStatus, 6000);
         })
         .catch(function (err) {
             // Keep the banner open on failure so the admin can retry Accept
@@ -1515,6 +1511,15 @@ if ($engineVal === 'p5') {
     var initialCSS = cssField.value;
     var initialJS = jsField.value;
     var initialEngine = engineField.value;
+    // Set by a successful AI Refine Accept instead of capturing immediately
+    // there — Accept's own capture used to upload straight to the server
+    // without ever touching the #thumbnail_url hidden field, so a later
+    // "Update" click with no further edits would see isDirty===false (Accept
+    // already reset the dirty baselines) and submit the form normally,
+    // resubmitting that stale hidden field and silently overwriting what
+    // Accept had just correctly saved. Tracked separately from isDirty so
+    // "Update" always knows a capture is owed regardless of baseline resets.
+    var pendingThumbnailCapture = false;
 
     function resetDirtyBaselines() {
         initialHTML = htmlField.value;
@@ -1543,7 +1548,7 @@ if ($engineVal === 'p5') {
                 engineField.value !== initialEngine
             );
 
-            if (isDirty) {
+            if (isDirty || pendingThumbnailCapture) {
                 e.preventDefault();
                 isSubmitting = true;
 
@@ -1557,6 +1562,7 @@ if ($engineVal === 'p5') {
                 try {
                     var result = await performCapture(pieceId);
                     document.getElementById('thumbnail_url').value = result.url;
+                    pendingThumbnailCapture = false;
                 } catch (err) {
                     console.error('Auto thumbnail capture failed:', err);
                     if (!confirm('Auto thumbnail capture failed: ' + err.message + '\n\nDo you want to save the changes anyway without updating the thumbnail?')) {

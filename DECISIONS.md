@@ -4631,3 +4631,21 @@ The reporter asked for the same guaranteed-visible surface across every *code* u
 - Ran `php tests/three-runtime-consistency.php && php tests/art-piece-generation.php && php tests/ai-provider-client.php`: 124/124 tests passed (55 + 58 + 11).
 - `node --check` clean on `admin-piece-capture.js`; `php -l` clean on `form.php` and `generate-preview.php`.
 - Live verification (AI Refine Accept, manual Save, the Capture Thumbnail button, new AI piece generation, and manual piece creation, all tested *without* tapping the "Preview" toggle first) not yet done — pending deploy and a live pass on the reporter's iPhone.
+
+---
+
+## 2026-06-22 — Move Thumbnail Capture to "Update" Only, Not AI Refine Accept
+
+### Context
+Reporter observed an AI Refine Accept's auto-captured thumbnail not surviving. Checked piece 40's database, as invited: the current state was actually correct (a real, non-blank, recently-saved image) — the exact transient glitch wasn't reproducible from the DB alone. But the code shows a real, identifiable race consistent with the report: the AI Refine Accept success handler called `performCapture()` directly, uploading straight to the server without ever updating the page's own `#thumbnail_url` hidden field. Separately, `resetDirtyBaselines()` runs right after Accept, which makes the Save-Changes submit handler's `isDirty` check compare against the just-accepted code. So clicking "Update" right after Accept with no further edits would see `isDirty === false`, skip the capture-and-submit path entirely, and submit the form normally — including whatever stale value had been sitting in `#thumbnail_url` since page load, silently overwriting whatever Accept's own capture had just saved seconds earlier.
+
+### Implemented
+- **`form.php`**: AI Refine Accept's success handler no longer calls `performCapture()` at all — it sets a new page-level flag, `pendingThumbnailCapture = true`, when `data.changed`, instead of capturing immediately. The "Capturing thumbnail…"/"Thumbnail updated." status messaging that went with the old immediate capture was removed along with it.
+- The Save-Changes submit handler's gating condition changed from `if (isDirty)` to `if (isDirty || pendingThumbnailCapture)`, so clicking "Update" always captures-then-submits whenever either a manual edit changed code *or* an AI Refine was accepted since page load — even if no further edits happened afterward. The flag is reset to `false` right after a successful capture, in the same place the hidden `#thumbnail_url` field already gets set before the fetch-based submit that triggers the redirect.
+- Metadata-only edits (no code change, no Accept) leave both flags `false`, so "Update" still submits with no capture at all — unchanged from before this round.
+- Did not touch `index.php` (confirmed via `git diff --stat` before committing), `captureWithOverlay()`, the capture-thumbnail upload endpoint, or `generate-preview.php` — none of those are implicated in this Accept-vs-Update sequencing issue.
+
+### Verification
+- Ran `php tests/three-runtime-consistency.php && php tests/art-piece-generation.php && php tests/ai-provider-client.php`: 124/124 tests passed (55 + 58 + 11).
+- `php -l` clean on `form.php`.
+- Live verification (Accept then immediate Update with no further edits; Accept then an additional manual edit then Update; metadata-only edit then Update; DB check confirming the saved thumbnail is timestamped after the Update click, not stale) not yet done — pending deploy and a live pass on the reporter's iPhone.
