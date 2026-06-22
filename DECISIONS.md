@@ -4558,3 +4558,20 @@ Second live reproduction (Mac inspector + iPhone), now with the raw-message list
 - Ran `php tests/three-runtime-consistency.php && php tests/art-piece-generation.php && php tests/ai-provider-client.php`: 124/124 tests passed (55 + 58 + 11).
 - `php -l` clean on `piece-render.php`; `node --check` clean on `admin-piece-capture.js`.
 - Next live reproduction (same iPhone + Mac inspector) pending, to confirm the diagnostic messages from the two prior rounds now actually appear — which would confirm current code is finally running, and let us read the real readiness-signal timeline for the first time.
+
+---
+
+## 2026-06-22 — Replace the Clipped Background Capture Iframe With a Real Visible One
+
+### Context
+A second live reproduction (same iPhone + Mac inspector setup, now with `piece-runtime.js`'s diagnostics finally reaching the console after the cache-busting fix) ruled out the premature-safety-net-signal theory: `piece-startFrame-tick` kept firing normally for the full ~6.5s wait before capture sampled the canvas, yet the result was still blank (`dataUrlLength: 270`). Script execution (timers, `requestAnimationFrame`, `render()` calls) was confirmed working normally inside the 1px×1px clipped background iframe — but the actual GPU paint apparently never reaches the canvas regardless. This is consistent with WebKit treating "script-active" and "worth actually compositing" as separate heuristics, and the 1×1-clipped-but-CSS-visible trick (already patched 16+ times across recent commits) only ever satisfied the first one.
+
+### Implemented
+- **`admin-piece-capture.js`**: added `waitForRender(iframe, engine)` — waits for a piece inside a real, normally-sized iframe to actually finish its first render (polls for the canvas + `creatrReady` marker, or an `<svg>`, or a `sketch-status` error), with shorter timeouts than the old background-iframe path since a genuinely visible iframe isn't subject to the same throttling. Exported alongside the existing `capture`/`renderDocument`/etc.
+- **`index.php`**: `runCaptureForId()` (used by the individual "Generate Thumbnail" button, "Regenerate All Thumbnails", and the on-load auto-capture queue for empty placeholders) now shows a small "Capturing thumbnail…" overlay containing a real, visible 320×180 iframe, waits for it via `waitForRender()`, then calls `capture({ liveIframe })` — the same direct-capture branch `generate-preview.php` and the editor's live preview already use successfully — instead of the clipped background iframe. The overlay is removed in a `finally` block regardless of success or failure. Updated the "Regenerate All Thumbnails" confirm-dialog text to match (no longer claims a "background frame").
+- Did **not** yet remove the old clipped-background-iframe code path from `admin-piece-capture.js`, the temporary `diag()`/`diagLog()` instrumentation from the last two rounds, or address the (confirmed-present but confirmed-not-blocking) premature safety-net signal — per the approved plan, those are deliberately deferred until this fix is verified live.
+
+### Verification
+- Ran `php tests/three-runtime-consistency.php && php tests/art-piece-generation.php && php tests/ai-provider-client.php`: 124/124 tests passed (55 + 58 + 11), including the existing "index.php loads and calls the shared admin capture module" guard.
+- `php -l` clean on `index.php`; `node --check` clean on `admin-piece-capture.js`.
+- Live verification (does a new `media_files` row actually get created on the reporter's iPhone) not yet done — pending deploy and a live click-through of "Generate Thumbnail" on piece 40 or 59.

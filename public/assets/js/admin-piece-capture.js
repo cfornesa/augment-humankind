@@ -96,6 +96,60 @@
         return new Promise(function (resolve) { setTimeout(resolve, ms); });
     }
 
+    // Waits for a piece rendering inside a REAL, genuinely visible iframe
+    // (not the clipped 1px background one) to finish its first render —
+    // WebKit reliably executes script (timers, requestAnimationFrame,
+    // render() calls) inside a visible iframe, but was found to silently
+    // skip the actual GPU paint for a canvas clipped into a near-zero-area
+    // container, no matter how long capture waited or how correct the
+    // script-side timing was. Call this before capture({ liveIframe }) so
+    // that branch's immediate toDataURL() grabs a frame that has actually
+    // been painted, instead of polling/guessing.
+    async function waitForRender(iframe, engine) {
+        var requireReadyMarker = (engine === 'p5' || engine === 'c2' || engine === 'three');
+        var runtimeError = '';
+        function onMessage(event) {
+            if (!event || !event.data || event.source !== iframe.contentWindow) return;
+            if (event.data.type === 'sketch-status' && event.data.valid === false) {
+                runtimeError = event.data.error || 'Piece runtime failed.';
+            }
+        }
+        window.addEventListener('message', onMessage);
+        try {
+            await new Promise(function (resolve) {
+                if (iframe.contentDocument && iframe.contentDocument.readyState === 'complete') {
+                    resolve();
+                    return;
+                }
+                iframe.onload = resolve;
+                setTimeout(resolve, 800);
+            });
+            // A genuinely visible iframe isn't subject to the throttling the
+            // clipped background iframe needed a long fixed warm-up for —
+            // these windows are deliberately shorter.
+            await wait(engine === 'three' ? 1000 : 300);
+            var maxAttempts = engine === 'three' ? 40 : 20;
+            for (var attempt = 0; attempt < maxAttempts; attempt++) {
+                await wait(300);
+                var doc = iframe.contentDocument;
+                if (!doc) continue;
+                var canvas = doc.querySelector('canvas');
+                if (canvas && (!requireReadyMarker || canvas.dataset.creatrReady === '1')) {
+                    return;
+                }
+                if (doc.querySelector('svg')) {
+                    return;
+                }
+                if (runtimeError) {
+                    throw new Error(runtimeError);
+                }
+            }
+            throw new Error(runtimeError || 'Piece did not finish rendering in time.');
+        } finally {
+            window.removeEventListener('message', onMessage);
+        }
+    }
+
     async function capture(source) {
         var width = source.width || 960;
         var height = source.height || 540;
@@ -321,6 +375,7 @@
         capture: capture,
         diffImages: diffImages,
         renderDocument: renderDocument,
-        seededRandom: seededRandom
+        seededRandom: seededRandom,
+        waitForRender: waitForRender
     };
 })();

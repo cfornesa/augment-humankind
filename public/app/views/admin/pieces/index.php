@@ -138,6 +138,36 @@ ob_start();
 <script src="/assets/js/admin-piece-capture.js?v=<?= (int) @filemtime(dirname(__DIR__, 4) . '/assets/js/admin-piece-capture.js') ?>"></script>
 <script>
 (function () {
+    // A real, genuinely visible iframe — WebKit was found to silently skip
+    // the actual GPU paint for a canvas clipped into a near-zero-area
+    // container (the old background-capture approach), even while running
+    // that iframe's script normally. Capturing from a real visible iframe
+    // is the one mechanism already proven reliable (generate-preview.php,
+    // the editor's live preview) — this gives this page the same thing,
+    // sized small enough to stay out of the way on mobile.
+    function createCaptureOverlay() {
+        var overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:99999;display:flex;align-items:center;justify-content:center;';
+        var box = document.createElement('div');
+        box.style.cssText = 'background:var(--ink,#0d0d0f);border:1px solid var(--line,#333);border-radius:4px;padding:0.75rem;box-shadow:0 8px 24px rgba(0,0,0,0.4);';
+        var label = document.createElement('div');
+        label.textContent = 'Capturing thumbnail…';
+        label.style.cssText = 'color:var(--ink-soft,#a1a1aa);font-size:0.8rem;margin-bottom:0.5rem;text-align:center;';
+        var iframe = document.createElement('iframe');
+        iframe.style.cssText = 'width:320px;height:180px;border:0;display:block;';
+        iframe.sandbox = 'allow-scripts allow-same-origin';
+        box.appendChild(label);
+        box.appendChild(iframe);
+        overlay.appendChild(box);
+        document.body.appendChild(overlay);
+        return {
+            iframe: iframe,
+            remove: function () {
+                if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+            }
+        };
+    }
+
     // Reusable core capture and upload routine
     async function runCaptureForId(id, cellThumb, btnIndividual) {
         var originalText = btnIndividual ? btnIndividual.textContent : '';
@@ -154,6 +184,7 @@ ob_start();
             }
         }
 
+        var overlay = null;
         try {
             // Fetch piece details
             var resp = await fetch('/embed/pieces/' + id + '/data');
@@ -166,17 +197,27 @@ ob_start();
                 throw new Error('This piece has no code yet — open it in Edit and add JS/HTML before generating a thumbnail.');
             }
 
-            var capture = await window.CreatrPieceCapture.capture({
+            var engine = data.engine || 'p5';
+            overlay = createCaptureOverlay();
+            overlay.iframe.srcdoc = window.CreatrPieceCapture.renderDocument({
                 title: data.title || 'Art piece',
-                engine: data.engine || 'p5',
+                engine: engine,
                 html: data.htmlCode || '',
                 css: data.cssCode || '',
                 js: data.generatedCode || '',
                 runtimeOrigin: window.location.origin,
                 preserveDrawingBuffer: true,
                 seed: 8383,
-                width: 960,
-                height: 540
+                width: 320,
+                height: 180
+            });
+            await window.CreatrPieceCapture.waitForRender(overlay.iframe, engine);
+
+            var capture = await window.CreatrPieceCapture.capture({
+                engine: engine,
+                liveIframe: overlay.iframe,
+                width: 320,
+                height: 180
             });
             if (!capture.ok) {
                 throw new Error(capture.error || 'Thumbnail capture failed.');
@@ -232,6 +273,8 @@ ob_start();
                 }, 3000);
             }
             throw err;
+        } finally {
+            if (overlay) overlay.remove();
         }
     }
 
@@ -277,7 +320,7 @@ ob_start();
             return;
         }
 
-        if (!confirm('Are you sure you want to regenerate thumbnails for all ' + pieceIds.length + ' pieces sequentially? This renders each piece in a background frame.')) {
+        if (!confirm('Are you sure you want to regenerate thumbnails for all ' + pieceIds.length + ' pieces sequentially? A brief preview overlay will show each piece rendering as its thumbnail is captured.')) {
             console.log('Regeneration cancelled by user.');
             return;
         }
