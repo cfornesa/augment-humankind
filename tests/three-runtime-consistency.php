@@ -275,10 +275,10 @@ test('bootThree signals ready from an actual render call, not unconditionally ri
     // itself still posts the message (legitimately, once) — the guard here
     // is that bootThree() only triggers it via signalThreeReadyOnce(), from
     // an actual render path, not as an unconditional line at setup's end.
-    assert_contains($runtime, 'function signalThreeReadyOnce()');
-    $count = substr_count($runtime, 'signalThreeReadyOnce();');
-    if ($count < 3) {
-        throw new RuntimeException("Expected signalThreeReadyOnce() called from all 3 sites (startFrame tick, animateControls, end-of-function fallback), found {$count}");
+    assert_contains($runtime, 'function signalThreeReadyOnce(source)');
+    $count = preg_match_all('/signalThreeReadyOnce\(/', $runtime);
+    if ($count < 4) {
+        throw new RuntimeException("Expected signalThreeReadyOnce(...) called from all 3 sites (startFrame tick, animateControls, end-of-function fallback) plus its own definition, found {$count}");
     }
 });
 

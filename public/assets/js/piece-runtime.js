@@ -1,3 +1,12 @@
+// TEMPORARY DIAGNOSTIC — forwards timing events to the parent page's
+// console (visible even when the iframe's own console context isn't
+// selected) so a live device reproduction can show the real sequence of
+// canvas-ready signals vs. actual rendered frames. Remove once the root
+// cause of blank/premature thumbnail captures is confirmed and fixed.
+function diag(label, data) {
+  try { console.log('[DIAG]', label, data || ''); } catch (_) {}
+  try { window.parent.postMessage({ type: 'creatr-diag', label, data: data || null, t: performance.now() }, '*'); } catch (_) {}
+}
 function showPieceError(error) {
   const el = document.getElementById('piece-error');
   if (!el) return;
@@ -104,6 +113,7 @@ async function bootThree() {
   // the data-creatr-ready marker (set once the piece actually renders) is
   // gated on the imports finishing.
   const canvas = findCanvas('scene');
+  diag('canvas-created');
   canvas.style.cssText = 'display:block;width:100%;height:100%;';
   sizeCanvas(canvas);
   // A scene with too many individual draw calls (thousands of separate
@@ -144,9 +154,10 @@ async function bootThree() {
     let rafIds = [];
     let pieceDrivesOwnRender = false;
     let readySignaled = false;
-    function signalThreeReadyOnce() {
+    function signalThreeReadyOnce(source) {
       if (readySignaled) return;
       readySignaled = true;
+      diag('signalThreeReadyOnce', { source: source || 'unknown' });
       signalCanvasReady(canvas);
     }
     const instrumentedThree = { ...mod };
@@ -241,6 +252,7 @@ async function bootThree() {
       let count = 0;
       function tick() {
         count++;
+        if (count <= 5) diag('piece-startFrame-tick', { count });
         try {
           handler(count);
         } catch (error) {
@@ -251,7 +263,7 @@ async function bootThree() {
           showPieceError(error);
           return;
         }
-        signalThreeReadyOnce();
+        signalThreeReadyOnce('piece-startFrame-tick-' + count);
         if (count === 15) autoFit();
         const id = requestAnimationFrame(tick);
         rafIds.push(id);
@@ -294,7 +306,10 @@ async function bootThree() {
       // latch a forced bootstrap render for the rest of the session so user
       // input reliably wins from then on (mirrors immersive-gallery.js).
       let consecutiveErrors = 0;
+      let animateControlsTick = 0;
       const animateControls = () => {
+        animateControlsTick++;
+        if (animateControlsTick <= 5) diag('animateControls-tick', { count: animateControlsTick, pieceDrivesOwnRender, userHasInteracted });
         const id = requestAnimationFrame(animateControls);
         rafIds.push(id);
         try {
@@ -303,7 +318,7 @@ async function bootThree() {
           if (isOrbitActive) userHasInteracted = true;
           if (!pieceDrivesOwnRender || userHasInteracted) {
             state.renderer.render(state.scene, state.camera);
-            signalThreeReadyOnce();
+            signalThreeReadyOnce('animateControls-tick-' + animateControlsTick);
           }
           consecutiveErrors = 0;
         } catch (renderError) {
@@ -328,7 +343,8 @@ async function bootThree() {
     // bootstrap's own animateControls() loop (e.g. it never constructs a
     // THREE.PerspectiveCamera/WebGLRenderer at all), signal anyway so
     // capture doesn't wait forever for a frame that will never come.
-    signalThreeReadyOnce();
+    diag('safety-net-reached', { readySignaled });
+    signalThreeReadyOnce('safety-net');
   } catch (error) {
     clearTimeout(importStallTimer);
     showPieceError(error);

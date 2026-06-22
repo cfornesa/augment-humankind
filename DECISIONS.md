@@ -4492,3 +4492,28 @@ Piece ID 40 (Three.js) reported "Thumbnail generation failed: No canvas or svg e
 - Ran `php tests/three-runtime-consistency.php && php tests/art-piece-generation.php && php tests/ai-provider-client.php`: 124/124 tests passed (55 + 58 + 11).
 - `php -l` clean on all touched PHP files; `node --check` clean on `piece-runtime.js`.
 - Live end-to-end verification against piece 40 (accept a refinement and confirm thumbnail auto-updates; trigger Generate Thumbnail under throttled network and confirm the error now names a specific cause) still pending — not yet run in this session.
+
+---
+
+## 2026-06-21 — Live-Verify the Prior Thumbnail Fix and Diagnose the Real Blank-Capture Cause
+
+### Context
+Piece 59 (Three.js, lighting-only AI Refine) reproduced the *exact same* "No canvas or svg element found after waiting" failure the prior round fixed — with none of that fix's new diagnostic message ever appearing. That's conclusive evidence the CDN-import-stall theory from the prior entry was never the actual blocking cause here, so this round live-verified instead of guessing again.
+
+### Findings
+- Queried production `media_files` directly: highest row ID was 100, created 2026-06-20 23:20:26 — **no thumbnail capture of any kind, for any piece, had succeeded since then**, including the auto-capture-on-Accept path from the prior fix, already confirmed deployed live.
+- `git log` on the capture-related files showed **16 separate commits** in the ~20 hours around and after that timestamp, each targeting a different hypothesized cause (WebGL resource exhaustion, WebKit occlusion culling, rAF throttling, sequential-vs-parallel CDN imports, mesh-count thresholds, readiness-marker timing) — none had produced a confirmed successful capture.
+- Live-reproduced via the Claude in Chrome MCP (desktop Chrome): capture **succeeded immediately** — `POST /admin/pieces/59/capture-thumbnail` returned 200 and created a new `media_files` row (ID 101) with a real, non-blank thumbnail. This ruled out a universally-broken mechanism and pointed at a WebKit/mobile-specific cause, consistent with the entire prior commit history's framing.
+- The reporter then reproduced live on their iPhone (Chrome-on-iOS, which is WebKit under Apple's policy) with Safari's remote Web Inspector connected to a Mac: **zero thrown errors, zero failed network requests, capture reported success** — but the resulting thumbnail was a blank/empty image. This is a different failure mode than the "no canvas" error: the mechanism completes successfully but reads pixels before anything has been painted.
+- Re-reading `bootThree()` in `piece-runtime.js` located a plausible mechanism: an unconditional "safety net" call to `signalThreeReadyOnce()` fires immediately after `window.sketch()` returns, but the piece's own `startFrame()` only *schedules* the first `requestAnimationFrame` — it does not await it. The safety net can therefore mark the canvas `data-creatr-ready` before a single frame has actually rendered. This usually doesn't matter on desktop because capture's own polling delay is generous enough that real frames have already happened by the time pixels are sampled; under WebKit's more aggressive throttling of timers/rAF in non-foreground iframes on mobile, that race can resolve the other way.
+- The existing regression test (`three-runtime-consistency.php`, "bootThree signals ready from an actual render call, not unconditionally right after setup") only checks that `signalThreeReadyOnce()` is called from 3 call sites textually — it does not check that the third (safety-net) call site is actually gated on a real frame, so it did not catch this.
+
+### Implemented
+- **`piece-runtime.js`** and **`admin-piece-capture.js`**: added temporary, clearly-marked diagnostic instrumentation (`diag()` / `diagLog()` helpers using `console.log` and `postMessage`, no behavior change) logging: canvas creation, which of the 3 ready-signal call sites fires first and when, the first 5 frame ticks from both the piece's own render loop and the bootstrap's `animateControls` loop, the capture-shim's `requestAnimationFrame` tick count, and the background-iframe poll loop's per-attempt canvas/ready-marker state — all forwarded to the parent page's console so a live device reproduction surfaces the real sequence of events instead of guessing again.
+- **`tests/three-runtime-consistency.php`**: updated one assertion to match the new `signalThreeReadyOnce(source)` signature (diagnostic-only change, same invariant checked).
+- Did not yet implement the actual fix — waiting on the reporter's next live reproduction (Mac inspector connected to iPhone) with this instrumentation active to confirm which of the 3 ready-signal sources actually fires, and how many real frame ticks (if any) happen before it does, before committing to a specific fix.
+
+### Verification
+- Ran `php tests/three-runtime-consistency.php && php tests/art-piece-generation.php && php tests/ai-provider-client.php`: 124/124 tests passed (55 + 58 + 11).
+- `node --check` clean on both touched JS files.
+- Live diagnostic reproduction on the reporter's iPhone with Mac inspector: pending, to be done after this commit deploys.

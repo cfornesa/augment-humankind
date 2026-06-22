@@ -24,7 +24,7 @@
 
         var shimScript = '';
         if (source.isCapture) {
-            shimScript = '\n<script>\n(function() {\n  var activeTimers = {};\n  var timerId = 0;\n  window.requestAnimationFrame = function(callback) {\n    var id = ++timerId;\n    activeTimers[id] = setTimeout(function() {\n      delete activeTimers[id];\n      callback(typeof performance !== "undefined" && performance.now ? performance.now() : Date.now());\n    }, 16);\n    return id;\n  };\n  window.cancelAnimationFrame = function(id) {\n    if (activeTimers[id] !== undefined) {\n      clearTimeout(activeTimers[id]);\n      delete activeTimers[id];\n    }\n  };\n})();\n<\/script>\n';
+            shimScript = '\n<script>\n(function() {\n  var activeTimers = {};\n  var timerId = 0;\n  var shimTicks = 0;\n  function diagPost(label, data) {\n    try { window.parent.postMessage({ type: "creatr-diag", label: label, data: data || null, t: performance.now() }, "*"); } catch (e) {}\n  }\n  diagPost("raf-shim-installed");\n  window.requestAnimationFrame = function(callback) {\n    var id = ++timerId;\n    activeTimers[id] = setTimeout(function() {\n      delete activeTimers[id];\n      shimTicks++;\n      if (shimTicks <= 5) diagPost("raf-shim-tick", { count: shimTicks });\n      callback(typeof performance !== "undefined" && performance.now ? performance.now() : Date.now());\n    }, 16);\n    return id;\n  };\n  window.cancelAnimationFrame = function(id) {\n    if (activeTimers[id] !== undefined) {\n      clearTimeout(activeTimers[id]);\n      delete activeTimers[id];\n    }\n  };\n})();\n<\/script>\n';
         }
 
         return '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>' + escapeHtml(title) + '</title>' + shimScript + '\n<script type="importmap">\n{\n  "imports": {\n    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",\n    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"\n  }\n}\n<\/script>\n<style>\nhtml,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#0d0d0f;color:#fff;}\nbody{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}\n#runtime-root{width:100vw;height:100vh;overflow:hidden;}\n#piece-error{position:fixed;inset:auto 1rem 1rem 1rem;z-index:9999;padding:1rem;border:1px solid #fca5a5;background:#450a0a;color:#fee2e2;font:14px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;display:none;}\ncanvas{display:block;width:100%;height:100%;}\n' + css + '\n</style>\n</head>\n<body>\n<div id="runtime-root">' + html + '</div>\n<div id="piece-error" role="alert"></div>\n<script>\n(function(){\n  var state = ' + JSON.stringify(randomSeed >>> 0) + ';\n  Math.random = function(){\n    state += 0x6D2B79F5;\n    var t = state;\n    t = Math.imul(t ^ (t >>> 15), t | 1);\n    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);\n    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;\n  };\n})();\nconst PIECE_ENGINE = ' + JSON.stringify(engine) + ';\nconst PIECE_CODE = ' + JSON.stringify(js) + ';\nconst PIECE_PRESERVE_DRAWING_BUFFER = ' + JSON.stringify(!!preserve) + ';\n<\/script>\n<script src="' + runtimeOrigin + '/assets/js/piece-runtime.js"><\/script>\n</body>\n</html>';
@@ -106,10 +106,12 @@
             try {
                 var iframe = source.liveIframe;
                 var doc = iframe.contentDocument || (iframe.contentWindow ? iframe.contentWindow.document : null);
+                console.log('[DIAG] live-direct-capture-attempt', { hasDoc: !!doc, hasCanvas: !!(doc && doc.querySelector('canvas')), creatrReady: doc && doc.querySelector('canvas') ? doc.querySelector('canvas').dataset.creatrReady : null });
                 if (doc) {
                     var canvas = doc.querySelector('canvas');
                     if (canvas && typeof canvas.toDataURL === 'function') {
                         var dataUrl = canvas.toDataURL('image/png');
+                        console.log('[DIAG] live-direct-capture-dataurl', { length: dataUrl ? dataUrl.length : 0 });
                         if (dataUrl && dataUrl !== 'data:,' && dataUrl.length > 100) {
                             return { ok: true, dataUrl: dataUrl, kind: 'live-canvas', error: null };
                         }
@@ -146,8 +148,19 @@
         container.appendChild(frame);
         document.body.appendChild(container);
 
+        // TEMPORARY DIAGNOSTIC — remove alongside piece-runtime.js's diag()
+        // calls once the blank/premature-capture root cause is confirmed.
+        var captureStartedAt = performance.now();
+        function diagLog(label, data) {
+            console.log('[DIAG]', label, Math.round(performance.now() - captureStartedAt) + 'ms', data || '');
+        }
+
         function onMessage(event) {
             if (!event || !event.data || event.source !== frame.contentWindow) return;
+            if (event.data.type === 'creatr-diag') {
+                diagLog(event.data.label, event.data.data);
+                return;
+            }
             if (event.data.type === 'sketch-status' && event.data.valid === false) {
                 runtimeError = event.data.error || 'Piece runtime failed.';
             }
@@ -185,9 +198,13 @@
                 if (!doc) continue;
 
                 var foundCanvas = doc.querySelector('canvas');
+                if (attempt < 10 || attempt % 10 === 0) {
+                    diagLog('poll-attempt', { attempt: attempt, foundCanvas: !!foundCanvas, creatrReady: foundCanvas ? foundCanvas.dataset.creatrReady : null });
+                }
                 if (foundCanvas && (!requireReadyMarker || foundCanvas.dataset.creatrReady === '1')) {
                     canvas = foundCanvas;
                     kind = 'canvas';
+                    diagLog('canvas-accepted', { attempt: attempt });
                     break;
                 }
 
@@ -211,6 +228,11 @@
             if (!dataUrl || dataUrl === 'data:,') {
                 throw new Error('Canvas capture returned empty image data.');
             }
+            // Rough proxy only: a near-blank/solid-color PNG compresses far
+            // smaller than an actually-rendered scene — not proof on its
+            // own, but a small dataUrlLength alongside a screenshot of the
+            // resulting thumbnail is enough to confirm blankness.
+            diagLog('capture-complete', { dataUrlLength: dataUrl.length });
 
             return { ok: true, dataUrl: dataUrl, kind: kind, error: null };
         } catch (error) {
