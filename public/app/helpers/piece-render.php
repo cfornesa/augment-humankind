@@ -27,7 +27,15 @@ function piece_render_document(array $piece, array $version): string
     // Computing it server-side from the actual request avoids both traps.
     $requestScheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
     $requestHost = $_SERVER['HTTP_HOST'] ?? 'localhost';
-    $runtimeScriptUrl = htmlspecialchars($requestScheme . '://' . $requestHost . '/assets/js/piece-runtime.js', ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    // Cache-busted by file mtime, matching the ?v= pattern already used for
+    // admin-piece-capture.js's own <script> tags. Without this, browsers
+    // (WebKit/Safari especially) can keep serving a stale cached copy of
+    // piece-runtime.js indefinitely after a deploy, since this URL was
+    // previously requested with no version hint at all — every fix to the
+    // runtime since whenever a device first cached it would silently never
+    // take effect on that device.
+    $runtimeVersion = (int) @filemtime(dirname(__DIR__, 2) . '/assets/js/piece-runtime.js');
+    $runtimeScriptUrl = htmlspecialchars($requestScheme . '://' . $requestHost . '/assets/js/piece-runtime.js?v=' . $runtimeVersion, ENT_QUOTES | ENT_HTML5, 'UTF-8');
 
     return <<<HTML
 <!DOCTYPE html>

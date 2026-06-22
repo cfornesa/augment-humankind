@@ -4538,3 +4538,23 @@ Reporter reproduced the blank-thumbnail case live on their iPhone (Mac Safari in
 - Ran `php tests/three-runtime-consistency.php && php tests/art-piece-generation.php && php tests/ai-provider-client.php`: 124/124 tests passed (55 + 58 + 11).
 - `node --check` clean on both touched JS files.
 - Next live reproduction (same iPhone + Mac inspector setup) pending, to determine whether `piece-runtime.js`'s diagnostics were silently dropped in transit or never ran at all.
+
+---
+
+## 2026-06-22 — Found It: piece-runtime.js Was Never Cache-Busted
+
+### Context
+Second live reproduction (Mac inspector + iPhone), now with the raw-message listener from the prior entry, showed every message the parent received during the run — and confirmed a hard ~6.4s gap with *zero* messages of any kind, not just zero filtered ones. `creatrReady` still ended up set by the time polling found the canvas. The only way that's possible is if `signalCanvasReady()` ran without going through the instrumented `signalThreeReadyOnce()` wrapper at all — meaning the `piece-runtime.js` actually executing in that capture iframe was not the version just deployed.
+
+### Findings
+- `<script src="...piece-runtime.js">` — in **both** `admin-piece-capture.js`'s `renderDocument()` (the capture path) and `piece-render.php`'s `piece_render_document()` (the real public piece viewer) — has **never carried a cache-busting query parameter**, unlike `admin-piece-capture.js` itself, which the page already loads with `?v=<?= filemtime(...) ?>`.
+- This means any browser with even mildly aggressive HTTP caching (iOS Safari/WebKit is known for this) could keep serving an old cached copy of `piece-runtime.js` indefinitely after every deploy, on a per-device basis, with no way to detect it from the server side. The reporter's iPhone returning inconsistent results across attempts (a "no canvas" error, a fully blank capture, a partial-foreground capture) over the last two days is far more consistent with **three different stale cached versions of the runtime being served nondeterministically** than with three different live bugs — and would explain why the prior 16 commits targeting this symptom never seemed to land: each fix may have been correct and deployed, but never actually reached the device that was being used to test it.
+
+### Implemented
+- **`piece-render.php`**: `$runtimeScriptUrl` now appends `?v=<filemtime of piece-runtime.js>`, matching the existing versioning convention used for `admin-piece-capture.js`'s own script tag.
+- **`admin-piece-capture.js`**: the capture-iframe's `piece-runtime.js` script tag now appends `?v=<Date.now()>` — always-fresh rather than file-mtime-based, since a capture/diagnostic action has no caching benefit to preserve and should always run current code.
+
+### Verification
+- Ran `php tests/three-runtime-consistency.php && php tests/art-piece-generation.php && php tests/ai-provider-client.php`: 124/124 tests passed (55 + 58 + 11).
+- `php -l` clean on `piece-render.php`; `node --check` clean on `admin-piece-capture.js`.
+- Next live reproduction (same iPhone + Mac inspector) pending, to confirm the diagnostic messages from the two prior rounds now actually appear — which would confirm current code is finally running, and let us read the real readiness-signal timeline for the first time.
