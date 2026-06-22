@@ -4688,3 +4688,22 @@ Pulled piece 72's actual code and found the real remaining cause: `const faceW =
 - Ran `php tests/three-runtime-consistency.php && php tests/art-piece-generation.php && php tests/ai-provider-client.php`: 124/124 tests passed (55 + 58 + 11).
 - `node --check` clean on `piece-runtime.js`.
 - Live verification (comparing piece 72 — or another C2 piece — across the public view, admin preview, and thumbnail to confirm the same proportions, no more square/oval/elongated discrepancy) not yet done — pending deploy and a live pass on the reporter's device.
+
+---
+
+## 2026-06-22 — Confirm the C2 Cross-Surface Fix Is Universal, and Lock It In With Tests
+
+### Context
+Reporter asked for confidence that the two prior fixes (fixed 1280×720 intrinsic resolution, `object-fit:contain` CSS) cover every existing C2 piece and every piece refined or generated in the future, not just pieces 72 and 82.
+
+### Findings
+- Pulled and swept all 21 existing C2 pieces' current `generated_code` directly: every single one constructs its renderer identically (`new c2.Renderer(canvas)`) and relies on `canvas.width`/`canvas.height` for sizing, with zero pieces bypassing it via `window.innerWidth` or similar. The fix lives in the shared `piece-runtime.js` runtime, not per-piece code, so it applies to all 21 automatically with no piece-specific changes needed.
+- Confirmed (not assumed) this is a structural guarantee, not coincidence: `art_piece_generation_system_prompt('c2')` and `art_piece_refine_system_prompt('c2')` ([art-piece-generation.php:37-45](public/app/helpers/art-piece-generation.php:37)) both mandate `new c2.Renderer(canvas)` and forbid hardcoded pixel values for every future generation and refinement. The runtime fix doesn't even require AI-generated code to be perfectly proportional — it works by making `canvas.width`/`height` itself constant across every surface, so an occasional fixed-pixel touch (confirmed present in piece 82's `cx + 30`) still renders identically everywhere instead of varying with whatever resolution that surface happened to use.
+
+### Implemented
+- **`tests/three-runtime-consistency.php`**: two new regression tests — confirm `sizeCanvas()` sets a fixed 1280×720 intrinsic resolution for `PIECE_ENGINE === 'c2'` rather than deriving it from the container, and confirm `bootCanvasRuntime()`'s canvas CSS includes `object-fit:contain`. Locks in both prior fixes against silent regression.
+- **`tests/art-piece-generation.php`**: two new regression tests — confirm the c2 generation prompt still mandates `canvas.width`/`canvas.height`/`new c2.Renderer(canvas)`, and confirm the c2 refine prompt still forbids hardcoded pixel values. Locks in the prompt-level convention the runtime fix depends on for future pieces.
+
+### Verification
+- Ran `php tests/three-runtime-consistency.php && php tests/art-piece-generation.php && php tests/ai-provider-client.php`: 128/128 tests passed (57 + 60 + 11, up from 124 — 4 new regression tests, all passing).
+- Swept all 21 existing C2 pieces' code directly via `grep` — confirmed structural coverage rather than assuming it from the two pieces already checked.

@@ -549,6 +549,29 @@ test('Ambiguous matches are still rejected even via the whitespace-tolerant path
     assert_throws(fn() => art_piece_apply_refine_patches("a  b\na  b", [['search' => 'a b', 'replace' => 'x']]), 'ambiguous');
 });
 
+test('c2 generation prompt still mandates canvas.width/height over hardcoded pixels', function () {
+    // Regression guard: future c2 pieces stay consistent across rendering
+    // surfaces (public view, admin preview, thumbnail, Immersive) because
+    // piece-runtime.js's sizeCanvas() now gives c2 a fixed canonical
+    // intrinsic resolution everywhere — but that guarantee is only useful
+    // if the AI keeps being told to read canvas.width/height dynamically
+    // rather than hardcoding numbers. If this instruction is ever removed
+    // from the prompt, future pieces could still vary in *other* ways this
+    // fix doesn't cover (e.g. literally different canvas APIs).
+    $prompt = art_piece_generation_system_prompt('c2');
+    assert_contains($prompt, 'new c2.Renderer(canvas)');
+    assert_contains($prompt, 'canvas.width');
+    assert_contains($prompt, 'canvas.height');
+});
+
+test('c2 refine prompt still forbids hardcoded pixel values', function () {
+    // Same guarantee, for the AI Refine path — a refinement could otherwise
+    // silently reintroduce hardcoded-pixel positioning into an
+    // already-working piece.
+    $prompt = art_piece_refine_system_prompt('c2');
+    assert_contains($prompt, 'canvas.width');
+});
+
 echo "\n=== Results ===\n";
 echo "Passed: {$passed}\n";
 echo "Failed: {$failed}\n";

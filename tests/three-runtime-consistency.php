@@ -367,6 +367,35 @@ test('CreatrImmersiveImage installs the same fullscreen wrapper protocol as Crea
     assert_contains($classBody, ':host(.creatr-fullscreen)');
 });
 
+test('sizeCanvas gives c2 a fixed canonical intrinsic resolution, not container-derived', function () use ($runtime) {
+    // Regression guard: c2 pieces draw with literal screen-pixel
+    // coordinates (canvas.width/canvas.height), and AI-generated code
+    // reliably mixes a few fixed-pixel touches into otherwise-proportional
+    // code (confirmed in real pieces). Those only produce a visibly
+    // different composition across surfaces when canvas.width/height
+    // itself varies by container, as it did before this fix (320 on the
+    // thumbnail vs 1280 in Immersive). Matches Immersive's own hardcoded
+    // runtimeSize so every surface converges on the same value.
+    $sizeCanvasBody = substr($runtime, strpos($runtime, 'function sizeCanvas('));
+    $sizeCanvasBody = substr($sizeCanvasBody, 0, strpos($sizeCanvasBody, "\n}\n"));
+    assert_contains($sizeCanvasBody, "PIECE_ENGINE === 'c2'");
+    assert_contains($sizeCanvasBody, 'canvas.width = 1280');
+    assert_contains($sizeCanvasBody, 'canvas.height = 720');
+});
+
+test('c2 canvas CSS preserves aspect ratio via object-fit instead of stretching', function () use ($runtime) {
+    // Regression guard: a fixed intrinsic resolution alone isn't enough —
+    // plain width:100%;height:100% still non-uniformly stretches the
+    // canvas's 16:9 bitmap to fill whatever shape box each surface's
+    // container happens to be (a phone's narrow/tall public-view iframe vs.
+    // an already-16:9 thumbnail vs. a squarer admin preview pane).
+    // Confirmed live: the same piece looked square, oval, and severely
+    // vertically elongated across three surfaces from this exact cause.
+    $bootCanvasRuntimeBody = substr($runtime, strpos($runtime, 'function bootCanvasRuntime('));
+    $bootCanvasRuntimeBody = substr($bootCanvasRuntimeBody, 0, strpos($bootCanvasRuntimeBody, "\n}\n"));
+    assert_contains($bootCanvasRuntimeBody, "object-fit:contain");
+});
+
 echo "\n=== Results ===\n";
 echo "Passed: {$passed}\n";
 echo "Failed: {$failed}\n";
