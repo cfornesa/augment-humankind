@@ -11,24 +11,6 @@ function slugify(string $text): string
     return trim($text, '-');
 }
 
-function unique_slug(string $title, int $excludeId = 0): string
-{
-    $base = slugify($title);
-    $slug = $base;
-    $i = 2;
-    while (true) {
-        $stmt = db()->prepare(
-            'SELECT id FROM artworks WHERE slug = ? AND id != ?'
-        );
-        $stmt->execute([$slug, $excludeId]);
-        if (!$stmt->fetch()) {
-            break;
-        }
-        $slug = $base . '-' . $i++;
-    }
-    return $slug;
-}
-
 function unique_category_slug(string $name, int $excludeId = 0): string
 {
     $base = slugify($name);
@@ -55,6 +37,24 @@ function unique_exhibit_slug(string $name, int $excludeId = 0): string
     while (true) {
         $stmt = db()->prepare(
             'SELECT id FROM exhibits WHERE slug = ? AND id != ?'
+        );
+        $stmt->execute([$slug, $excludeId]);
+        if (!$stmt->fetch()) {
+            break;
+        }
+        $slug = $base . '-' . $i++;
+    }
+    return $slug;
+}
+
+function unique_collection_slug(string $name, int $excludeId = 0): string
+{
+    $base = slugify($name);
+    $slug = $base;
+    $i = 2;
+    while (true) {
+        $stmt = db()->prepare(
+            'SELECT id FROM collections WHERE slug = ? AND id != ?'
         );
         $stmt->execute([$slug, $excludeId]);
         if (!$stmt->fetch()) {

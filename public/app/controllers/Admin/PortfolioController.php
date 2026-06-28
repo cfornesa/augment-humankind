@@ -408,7 +408,7 @@ class PortfolioAdminController
         }
 
         try {
-            $slug = unique_exhibit_slug($name); // keeps exhibit slug helper in slugify helper
+            $slug = unique_collection_slug($name);
             $id = Collection::create([
                 'name' => $name,
                 'slug' => $slug,
@@ -727,7 +727,7 @@ class PortfolioAdminController
         $postedSlug = trim($_POST['slug'] ?? '');
         return $postedSlug !== ''
             ? slugify($postedSlug)
-            : unique_slug($title, $existingId ?? 0);
+            : unique_exhibit_slug($title, $existingId ?? 0);
     }
 
     private static function resolvedCategorySlug(string $name, ?int $existingId): string
@@ -743,6 +743,6 @@ class PortfolioAdminController
         $postedSlug = trim($_POST['slug'] ?? '');
         return $postedSlug !== ''
             ? slugify($postedSlug)
-            : unique_exhibit_slug($name, $existingId ?? 0);
+            : unique_collection_slug($name, $existingId ?? 0);
     }
 }
