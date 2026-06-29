@@ -103,12 +103,18 @@ ob_start();
             </div>
 
             <div class="field">
-                <label for="engine">Art Engine / Runtime Environment</label>
-                <select id="engine" name="engine" required>
-                    <option value="p5" <?= ($engine ?? 'p5') === 'p5' ? 'selected' : '' ?>>P5.js (Interactive canvas drawing)</option>
-                    <option value="c2" <?= ($engine ?? '') === 'c2' ? 'selected' : '' ?>>C2.js (Physics-based drawing &amp; geometry)</option>
-                    <option value="three" <?= ($engine ?? '') === 'three' ? 'selected' : '' ?>>Three.js (3D WebGL scenes &amp; lights)</option>
-                    <option value="svg" <?= ($engine ?? '') === 'svg' ? 'selected' : '' ?>>SVG (Vector paths &amp; CSS animation)</option>
+                <label for="generation_mode">Art Engine / Runtime Environment</label>
+                <select id="generation_mode" name="generation_mode" required>
+                    <optgroup label="Stable engines">
+                        <option value="p5" <?= ($generationMode ?? $engine ?? 'p5') === 'p5' ? 'selected' : '' ?>>P5.js (Interactive canvas drawing)</option>
+                        <option value="c2" <?= ($generationMode ?? $engine ?? '') === 'c2' ? 'selected' : '' ?>>C2.js (Animated drawing &amp; geometry)</option>
+                        <option value="c2_interactive" <?= ($generationMode ?? '') === 'c2_interactive' ? 'selected' : '' ?>>C2.js Interactive (Click, touch &amp; drag)</option>
+                        <option value="three" <?= ($generationMode ?? $engine ?? '') === 'three' ? 'selected' : '' ?>>Three.js (3D WebGL scenes &amp; lights)</option>
+                        <option value="svg" <?= ($generationMode ?? $engine ?? '') === 'svg' ? 'selected' : '' ?>>SVG (Vector paths &amp; CSS animation)</option>
+                    </optgroup>
+                    <optgroup label="Experimental engines">
+                        <option value="aframe" <?= ($generationMode ?? $engine ?? '') === 'aframe' ? 'selected' : '' ?>>A-Frame Experimental (Self-contained 3D scene)</option>
+                    </optgroup>
                 </select>
             </div>
 

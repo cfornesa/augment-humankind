@@ -141,6 +141,50 @@ function bootC2() {
   script.onerror = () => showPieceError('Could not load c2.js runtime.');
   document.head.appendChild(script);
 }
+function bootAFrame() {
+  const runtimeScript = document.currentScript && document.currentScript.src ? document.currentScript.src : window.location.href;
+  const script = document.createElement('script');
+  script.src = new URL('/assets/js/aframe.min.js', runtimeScript).toString();
+  script.onload = () => {
+    try {
+      let scene = document.querySelector('a-scene#scene') || document.querySelector('a-scene');
+      if (!scene) {
+        throw new Error('A-Frame piece did not provide an <a-scene id="scene"> root.');
+      }
+      if (!scene.id) scene.id = 'scene';
+      if (!scene.hasAttribute('embedded')) scene.setAttribute('embedded', '');
+      scene.style.width = '100%';
+      scene.style.height = '100%';
+      scene.style.display = 'block';
+
+      runPieceCode();
+      if (typeof window.sketch === 'function') {
+        window.sketch({ AFRAME: window.AFRAME, scene, startFrame });
+      }
+
+      let readySignaled = false;
+      function signalAFrameReadyOnce() {
+        if (readySignaled) return;
+        const canvas = scene.canvas || scene.querySelector('canvas') || document.querySelector('canvas');
+        if (!canvas) return;
+        readySignaled = true;
+        canvas.dataset.creatrReady = '1';
+        signalCanvasReady(canvas);
+      }
+
+      scene.addEventListener('renderstart', signalAFrameReadyOnce, { once: true });
+      scene.addEventListener('loaded', () => {
+        requestAnimationFrame(() => requestAnimationFrame(signalAFrameReadyOnce));
+      }, { once: true });
+      startFrame(() => signalAFrameReadyOnce());
+      setTimeout(signalAFrameReadyOnce, 2500);
+    } catch (error) {
+      showPieceError(error);
+    }
+  };
+  script.onerror = () => showPieceError('Could not load self-hosted A-Frame runtime.');
+  document.head.appendChild(script);
+}
 async function bootThree() {
   // Created and inserted before the CDN imports below resolve, so a slow
   // network never makes capture/diagnostics see "no canvas at all" — only
@@ -390,6 +434,8 @@ if (PIECE_ENGINE === 'p5') {
   bootThree();
 } else if (PIECE_ENGINE === 'c2') {
   bootC2();
+} else if (PIECE_ENGINE === 'aframe') {
+  bootAFrame();
 } else {
   runPieceCode();
   if (typeof window.sketch === 'function') {

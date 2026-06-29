@@ -4707,3 +4707,24 @@ Reporter asked for confidence that the two prior fixes (fixed 1280×720 intrinsi
 ### Verification
 - Ran `php tests/three-runtime-consistency.php && php tests/art-piece-generation.php && php tests/ai-provider-client.php`: 128/128 tests passed (57 + 60 + 11, up from 124 — 4 new regression tests, all passing).
 - Swept all 21 existing C2 pieces' code directly via `grep` — confirmed structural coverage rather than assuming it from the two pieces already checked.
+
+---
+
+## 2026-06-29 — Add Experimental A-Frame Generation and C2 Interactive Generation Mode
+
+### Context
+Reporter asked to restore A-Frame cautiously as an experimental generated-piece mode, using the working historical A-Frame fullscreen behavior as the reference point, and to add a separate C2 generation option that prompts for real click/touch/drag interactivity without creating a new persisted engine value.
+
+### Implemented
+- **A-Frame Experimental generation mode**: added `generation_mode='aframe'` to the admin generation form and prompt/validation pipeline. Generated A-Frame drafts must provide exactly one `<a-scene id="scene" embedded>` root and are statically preflighted against external assets, media capture, script/link tags, hidden scene/canvas CSS, navigation/storage, and parent/top access.
+- **Self-hosted A-Frame runtime**: vendored A-Frame 1.6.0 as `public/assets/js/aframe.min.js` and documented it in `docs/dependencies.md`. Public render, embeds, admin preview/capture, filters, labels, version editing, and immersive views recognize `engine='aframe'`.
+- **A-Frame save gate**: generated A-Frame pieces become durable only after preview save receives a successful browser-side thumbnail capture; the preview/capture path waits for an A-Frame canvas readiness marker before saving.
+- **Live A-Frame immersive route**: `/immersive/pieces/{id}` mounts `engine='aframe'` pieces as a live `<a-scene>` directly inside `#immersive-stage` using `mountAFrameImmersivePiece()`, rather than projecting them as a framed gallery texture. This reuses the same fullscreen shell and viewport-resize protocol as the existing Three.js immersive page while keeping Three.js, P5, C2, and SVG branches unchanged.
+- **C2.js Interactive generation mode**: added `generation_mode='c2_interactive'`, which uses stricter prompt rules for native `canvas.addEventListener()` pointer/click/touch/drag behavior but still persists generated pieces as `engine='c2'`.
+- **Scoped non-regression work**: A-Frame-specific sizing CSS is emitted only for A-Frame render/capture documents. Existing generation clients that still post `engine` remain compatible because `POST /admin/pieces/generate` falls back to `engine` when `generation_mode` is absent.
+
+### Verification
+- Ran `php tests/art-piece-generation.php`: 68/68 tests passed.
+- Ran `php tests/three-runtime-consistency.php`: 60/60 tests passed, including new checks that A-Frame immersive pieces mount as live scenes and that A-Frame sizing CSS is A-Frame-scoped.
+- `php -l` clean on touched PHP files; `node --check` clean on touched JS files; `git diff --check` clean.
+- Browser-smoked local A-Frame runtime and immersive mounting through the PHP server: the shared runtime created a ready A-Frame canvas and advanced the generated `startFrame` loop; the immersive mount inserted a live `<a-scene>` and canvas into `#immersive-stage`. That smoke surfaced and fixed an A-Frame resize timing bug by only calling `scene.resize()` after A-Frame has attached `scene.renderer`.

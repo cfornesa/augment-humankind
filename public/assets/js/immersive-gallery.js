@@ -428,6 +428,7 @@ export function engineLabel(engine) {
   if (engine === "c2") return "C2.js";
   if (engine === "three") return "Three.js";
   if (engine === "svg") return "SVG";
+  if (engine === "aframe") return "A-Frame";
   return engine;
 }
 
@@ -557,6 +558,26 @@ export function resolveSketchFactory(code) {
       window.sketch = previousSketch;
     }
   }
+}
+
+let aframeRuntimePromise = null;
+function loadAFrameRuntime() {
+  if (window.AFRAME) return Promise.resolve(window.AFRAME);
+  if (aframeRuntimePromise) return aframeRuntimePromise;
+  aframeRuntimePromise = new Promise((resolve, reject) => {
+    const existing = Array.from(document.scripts).find((script) => script.src && script.src.endsWith("/assets/js/aframe.min.js"));
+    if (existing) {
+      existing.addEventListener("load", () => resolve(window.AFRAME), { once: true });
+      existing.addEventListener("error", () => reject(new Error("Could not load self-hosted A-Frame runtime.")), { once: true });
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = "/assets/js/aframe.min.js";
+    script.onload = () => resolve(window.AFRAME);
+    script.onerror = () => reject(new Error("Could not load self-hosted A-Frame runtime."));
+    document.head.appendChild(script);
+  });
+  return aframeRuntimePromise;
 }
 
 export function createFrameLabel(title, subtitle) {
@@ -1305,6 +1326,115 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
   } catch (err) {
     onError(err);
   }
+}
+
+export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onError = console.error) {
+  stageEl.innerHTML = "";
+
+  const host = document.createElement("div");
+  host.style.cssText = "position:absolute;inset:0;width:100%;height:100%;overflow:hidden;background:#000;";
+
+  const style = document.createElement("style");
+  style.textContent = `
+    a-scene {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+    .a-canvas {
+      display: block;
+      width: 100% !important;
+      height: 100% !important;
+    }
+    ${cssCode || ""}
+  `;
+  host.appendChild(style);
+
+  const mount = document.createElement("div");
+  mount.style.cssText = "position:absolute;inset:0;width:100%;height:100%;overflow:hidden;";
+  host.appendChild(mount);
+  stageEl.appendChild(host);
+
+  let disposed = false;
+  let scene = null;
+  let resizeObserver = null;
+  const stopFrameHandles = [];
+
+  const startFrame = (handler) => {
+    let frameCount = 0;
+    let rafId = 0;
+    function tick() {
+      if (disposed) return;
+      frameCount += 1;
+      try {
+        handler(frameCount);
+      } catch (err) {
+        onError(err);
+        return;
+      }
+      rafId = requestAnimationFrame(tick);
+    }
+    rafId = requestAnimationFrame(tick);
+    const stop = () => cancelAnimationFrame(rafId);
+    stopFrameHandles.push(stop);
+    return stop;
+  };
+
+  function resizeScene() {
+    if (!scene) return;
+    scene.style.width = `${Math.max(stageEl.clientWidth, 1)}px`;
+    scene.style.height = `${Math.max(stageEl.clientHeight, 1)}px`;
+    if (scene.renderer && typeof scene.resize === "function") {
+      try {
+        scene.resize();
+      } catch (err) {
+        onError(err);
+      }
+    }
+    window.dispatchEvent(new Event("resize"));
+  }
+
+  loadAFrameRuntime().then(() => {
+    if (disposed) return;
+    mount.innerHTML = htmlCode?.trim() ? htmlCode : '<a-scene id="scene" embedded><a-sky color="#10151f"></a-sky><a-entity camera position="0 1.6 4"></a-entity></a-scene>';
+    scene = mount.querySelector("a-scene#scene") || mount.querySelector("a-scene");
+    if (!scene) {
+      throw new Error('This A-Frame piece did not provide an <a-scene id="scene"> root.');
+    }
+    if (!scene.id) scene.id = "scene";
+    if (!scene.hasAttribute("embedded")) scene.setAttribute("embedded", "");
+    scene.style.display = "block";
+    scene.style.width = "100%";
+    scene.style.height = "100%";
+
+    if ((code || "").trim()) {
+      const sketchFactory = resolveSketchFactory(code);
+      const cleanup = sketchFactory({
+        AFRAME: window.AFRAME,
+        scene,
+        startFrame,
+        size: { width: Math.max(stageEl.clientWidth, 1), height: Math.max(stageEl.clientHeight, 1) },
+      });
+      if (typeof cleanup === "function") {
+        stopFrameHandles.push(cleanup);
+      }
+    }
+
+    resizeObserver = new ResizeObserver(resizeScene);
+    resizeObserver.observe(stageEl);
+    requestAnimationFrame(resizeScene);
+  }).catch(onError);
+
+  return () => {
+    disposed = true;
+    resizeObserver?.disconnect();
+    stopFrameHandles.forEach((stop) => stop());
+    try {
+      scene?.pause?.();
+    } catch (e) {}
+    host.remove();
+    stageEl.innerHTML = "";
+  };
 }
 
 // Phase 2 Entry Point: mountGalleryPiece

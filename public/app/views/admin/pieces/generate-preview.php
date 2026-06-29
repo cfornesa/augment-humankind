@@ -126,7 +126,7 @@ $defaultTitle = 'AI ' . strtoupper($engine) . ' Piece - ' . date('M d, Y H:i');
     (function () {
         var engine = <?= json_encode($engine) ?>;
         var htmlTabButton = document.querySelector('.piece-preview-tabs button[data-tab="html"]');
-        if (htmlTabButton && engine !== 'svg') {
+        if (htmlTabButton && engine !== 'svg' && engine !== 'aframe') {
             htmlTabButton.style.display = 'none';
         }
 

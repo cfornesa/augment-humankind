@@ -178,7 +178,7 @@ class PlatformArtPiece
             $where[] = "ap.status = 'active'";
         }
 
-        if ($engine !== null && $engine !== '' && in_array($engine, ['p5', 'c2', 'three', 'svg'], true)) {
+        if ($engine !== null && $engine !== '' && in_array($engine, art_piece_supported_engines(), true)) {
             $where[] = 'ap.engine = ?';
             $params[] = $engine;
         }

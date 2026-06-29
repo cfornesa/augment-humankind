@@ -45,6 +45,7 @@ ob_start();
             <option value="c2"    <?= $engine === 'c2'    ? 'selected' : '' ?>>C2.js</option>
             <option value="three" <?= $engine === 'three' ? 'selected' : '' ?>>Three.js</option>
             <option value="svg"   <?= $engine === 'svg'   ? 'selected' : '' ?>>SVG</option>
+            <option value="aframe" <?= $engine === 'aframe' ? 'selected' : '' ?>>A-Frame</option>
         </select>
         <button class="admin-btn admin-btn-sm" type="submit">Filter</button>
         <?php if ($q !== '' || $engine !== '' || !$isDefaultSort): ?>

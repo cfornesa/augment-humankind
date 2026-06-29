@@ -16,7 +16,7 @@ class PiecesController
         $sort   = (string) ($_GET['sort'] ?? 'curated');
         $offset = max(0, (int) ($_GET['offset'] ?? 0));
 
-        if (!in_array($engine, ['p5', 'c2', 'three', 'svg'], true)) {
+        if (!in_array($engine, art_piece_supported_engines(), true)) {
             $engine = '';
         }
         if (!in_array($sort, ['curated', 'newest', 'oldest', 'az', 'za', 'unsorted'], true)) {

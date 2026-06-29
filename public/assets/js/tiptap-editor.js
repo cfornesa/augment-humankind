@@ -1862,7 +1862,7 @@ function initMediaPicker() {
 
 // ─── Art Piece / Exhibit Picker ────────────────────────────────────────────
 
-const PIECE_ENGINE_LABELS = { p5: 'P5.js', c2: 'C2.js', three: 'Three.js', svg: 'SVG' }
+const PIECE_ENGINE_LABELS = { p5: 'P5.js', c2: 'C2.js', three: 'Three.js', svg: 'SVG', aframe: 'A-Frame' }
 
 let _piecePickerCallback = null
 

@@ -65,7 +65,7 @@ Admin routes are flat and protected by OAuth login:
 - `/admin/site-identity` — site settings and assets management
 - `/admin/user-profiles` — admin users, AI vendor configurations, API keys, and profile photo uploads
 - `/admin/platform-connections` — syndication platforms (Bluesky, WordPress, Blogger, Substack, LinkedIn, Meta) with OAuth credential acquisition and a diagnostics page
-- `/admin/pieces` — platform generative art pieces and version history (with AI-driven generation at `/admin/pieces/generate` and AI refinement at `/admin/pieces/refine-ai`)
+- `/admin/pieces` — platform generative art pieces and version history (with AI-driven generation at `/admin/pieces/generate`, including C2.js Interactive and A-Frame Experimental modes, and AI refinement at `/admin/pieces/refine-ai`)
 - `/admin/ai/process` — AI text improvement endpoint (used by the Tiptap editor)
 - `/admin/ai/describe-image` — AI alt-text generation endpoint (used by the media library)
 - `/admin/trash` — trash bins for soft-deleted content

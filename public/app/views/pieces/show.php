@@ -11,6 +11,7 @@ $engineLabel = match (strtolower((string) ($version['engine'] ?? $piece['engine'
     'c2' => 'C2.js',
     'three' => 'Three.js',
     'svg' => 'SVG',
+    'aframe' => 'A-Frame',
     default => strtoupper((string) ($version['engine'] ?? $piece['engine'] ?? '')),
 };
 ?>

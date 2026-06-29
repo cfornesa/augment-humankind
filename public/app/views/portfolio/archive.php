@@ -36,7 +36,7 @@ require __DIR__ . '/../partials/header.php';
                     <fieldset class="filter-fieldset">
                         <legend>Type</legend>
                         <div class="filter-chip-group" role="group">
-                            <?php foreach (['' => 'All', 'p5' => 'P5.js', 'c2' => 'C2.js', 'three' => 'Three.js', 'svg' => 'SVG'] as $v => $l): ?>
+                            <?php foreach (['' => 'All', 'p5' => 'P5.js', 'c2' => 'C2.js', 'three' => 'Three.js', 'svg' => 'SVG', 'aframe' => 'A-Frame'] as $v => $l): ?>
                                 <label class="filter-chip <?= $activeEngine === $v ? 'filter-chip-active' : '' ?>">
                                     <input type="radio" name="engine" value="<?= $v ?>"
                                            <?= $activeEngine === $v ? 'checked' : '' ?> class="sr-only"

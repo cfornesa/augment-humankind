@@ -34,6 +34,7 @@ $version = $version ?? [];
                     <option value="c2" <?= ($version['engine'] ?? '') === 'c2' ? 'selected' : '' ?>>C2.js</option>
                     <option value="three" <?= ($version['engine'] ?? '') === 'three' ? 'selected' : '' ?>>Three.js</option>
                     <option value="svg" <?= ($version['engine'] ?? '') === 'svg' ? 'selected' : '' ?>>SVG</option>
+                    <option value="aframe" <?= ($version['engine'] ?? '') === 'aframe' ? 'selected' : '' ?>>A-Frame</option>
                 </select>
             </div>
             <div class="field">
@@ -139,7 +140,7 @@ if ($engineVal === 'p5') {
 
             function updateEngineHtmlVisibility(engine) {
                 if (!fieldHtmlCode) return;
-                if (engine === 'svg') {
+                if (engine === 'svg' || engine === 'aframe') {
                     fieldHtmlCode.style.display = '';
                 } else {
                     fieldHtmlCode.style.display = 'none';

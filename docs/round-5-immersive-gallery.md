@@ -56,19 +56,25 @@ Decomposed into concrete behaviors:
    the viewer is inside the piece's own 3D scene, free to orbit/move
    (OrbitControls + keyboard navigation), same as the platform's current
    `ImmersiveThreePieceStage`.
-2. `/immersive/pieces/{id}` where `engine in [p5, c2, svg]` → **gallery
+2. `/immersive/pieces/{id}` where `engine === 'aframe'` → **live A-Frame
+   immersion**: the viewer is inside the generated `<a-scene>` mounted
+   directly in the immersive stage, using the same fullscreen shell and
+   viewport resize protocol as the Three.js immersive route. A-Frame pieces
+   are not projected onto the gallery wall on the single-piece immersive
+   route.
+3. `/immersive/pieces/{id}` where `engine in [p5, c2, svg]` → **gallery
    piece**: the piece is mounted as a framed artwork inside a small 3D
    gallery room (floor, back wall, frame, lighting), viewer can orbit/move
    *around the room* but the piece itself runs in its normal 2D
    canvas/iframe form, projected onto the frame. Metadata overlay (title,
    engine, prompt/alt text, source link, interaction hints) — same
    information density as the platform's `ImmersiveGalleryPieceStage`.
-3. `/immersive/exhibits/{slug}` → **multi-frame wall**: every item
+4. `/immersive/exhibits/{slug}` → **multi-frame wall**: every item
    (art pieces of *any* engine, including `three`, AND media assets/images)
    renders as a framed gallery item on a grid wall sized by
    `exhibits.rows` × `exhibits.cols`. Three.js pieces do **not** get full
    immersion here — they're just another frame on the wall.
-4. Exhibit wall progressive loading: at most N items are "live"
+5. Exhibit wall progressive loading: at most N items are "live"
    (actually running their animation/scene) at once —
    N = 1 (viewport < 640px, mobile), 2 (640–1179px, tablet), 3 (≥1180px,
    desktop). The live N are chosen by proximity to the camera target;
@@ -718,9 +724,10 @@ equivalent, since the platform splits these across React components):
 
 ---
 
-## Phase 1 — Single Three.js piece: full immersion
+## Phase 1 — Single Three.js or A-Frame piece: full immersion
 
-Route: `/immersive/pieces/{id}` where the version's `engine === 'three'`.
+Route: `/immersive/pieces/{id}` where the version's `engine === 'three'` or
+`engine === 'aframe'`.
 
 ### Target PHP (`ImmersiveController::piece()`)
 
@@ -766,7 +773,7 @@ reading `ImmersiveThreePieceStage` shows otherwise.
 ### Metadata overlay content (from immersive-piece.tsx ~1205-1252)
 
 Read this range for exact markup/copy, but it should include at minimum:
-title, engine label (`Three.js`), interaction hints (drag to orbit,
+title, engine label (`Three.js` or `A-Frame`), interaction hints (drag to orbit,
 scroll/pinch to zoom, arrow/WASD + click-floor to move), alt text /
 description if present, and a link back to `/pieces/{id}` (source URL). Port
 this as an HTML overlay (`position:fixed`, semi-transparent panel, matching
@@ -785,6 +792,16 @@ reachable (`tabindex` not removed). Keyboard navigation of the 3D scene
 page keyboard navigation — don't trap focus inside the canvas.
 
 ---
+
+### A-Frame implementation note
+
+Generated A-Frame pieces are intentionally handled by a dedicated
+`mountAFrameImmersivePiece()` branch in `public/assets/js/immersive-gallery.js`.
+That branch loads the self-hosted `/assets/js/aframe.min.js`, inserts exactly
+one generated `<a-scene id="scene" embedded>` into `#immersive-stage`, and
+passes `{ AFRAME, scene, startFrame }` to optional generated setup code. It
+uses the same immersive page fullscreen shell as Three.js, but it does not
+reuse Three.js OrbitControls or the gallery texture projection path.
 
 ## Phase 2 — Single p5/c2/svg piece: gallery framing
 

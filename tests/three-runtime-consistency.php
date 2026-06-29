@@ -287,12 +287,38 @@ test('shared admin capture module waits for the runtime ready marker before usin
     assert_contains($captureModule, "engine === 'p5'");
     assert_contains($captureModule, "engine === 'c2'");
     assert_contains($captureModule, "engine === 'three'");
+    assert_contains($captureModule, "engine === 'aframe'");
 });
 
 test('shared admin capture module uses the Three.js 6000ms head-start and 40 x 500ms poll window', function () use ($captureModule) {
-    assert_contains($captureModule, "engine === 'three' ? 6000 : 500");
+    assert_contains($captureModule, "engine === 'three' || engine === 'aframe'");
+    assert_contains($captureModule, '? 6000 : 500');
     assert_contains($captureModule, 'attempt < maxAttempts');
     assert_contains($captureModule, 'await wait(500)');
+});
+
+test('shared runtime boots A-Frame from the self-hosted asset and signals readiness after canvas creation', function () use ($runtime) {
+    assert_contains($runtime, 'function bootAFrame()');
+    assert_contains($runtime, '/assets/js/aframe.min.js');
+    assert_contains($runtime, "PIECE_ENGINE === 'aframe'");
+    assert_contains($runtime, 'signalAFrameReadyOnce');
+    assert_contains($runtime, "canvas.dataset.creatrReady = '1'");
+});
+
+test('A-Frame immersive pieces mount as live scenes, not gallery textures', function () use ($immersive) {
+    $pieceView = file_get_contents(__DIR__ . '/../public/app/views/immersive/piece.php');
+    assert_contains($immersive, 'export function mountAFrameImmersivePiece');
+    assert_contains($immersive, '/assets/js/aframe.min.js');
+    assert_contains($immersive, '<a-scene id="scene" embedded>');
+    assert_contains($pieceView, "engine === 'aframe'");
+    assert_contains($pieceView, 'mountAFrameImmersivePiece(stage, code, htmlCode, cssCode, handleRuntimeError)');
+});
+
+test('A-Frame sizing CSS is emitted only on A-Frame render documents', function () use ($captureModule) {
+    $renderHelper = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
+    assert_contains($renderHelper, "\$engine === 'aframe'");
+    assert_contains($captureModule, "engine === 'aframe'");
+    assert_contains($captureModule, "var aframeCss = engine === 'aframe'");
 });
 
 test('shared admin capture module keeps capture iframes in the viewport', function () use ($captureModule) {

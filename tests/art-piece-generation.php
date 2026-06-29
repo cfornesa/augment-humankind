@@ -572,6 +572,65 @@ test('c2 refine prompt still forbids hardcoded pixel values', function () {
     assert_contains($prompt, 'canvas.width');
 });
 
+test('c2 interactive prompt requires native pointer interaction while preserving c2 runtime constraints', function () {
+    $prompt = art_piece_generation_system_prompt('c2_interactive');
+    assert_contains($prompt, 'canvas.addEventListener()');
+    assert_contains($prompt, 'pointerdown');
+    assert_contains($prompt, 'touchstart');
+    assert_contains($prompt, 'const { c2, canvas, startFrame } = runtime');
+    assert_contains($prompt, 'NEVER use');
+    assert_contains($prompt, 'c2.Mouse');
+});
+
+test('c2 interactive mode persists as c2 engine', function () {
+    assert_eq(art_piece_generation_mode_to_engine('c2_interactive'), 'c2');
+    assert_eq(art_piece_generation_mode_to_engine('aframe'), 'aframe');
+});
+
+test('A-Frame system prompt exists', function () {
+    $prompt = art_piece_generation_system_prompt('aframe');
+    assert_contains($prompt, 'A-Frame');
+    assert_contains($prompt, '<a-scene id="scene" embedded>');
+    assert_contains($prompt, 'window.sketch');
+    assert_contains($prompt, 'Do NOT include <script>');
+});
+
+test('A-Frame preflight accepts a minimal safe scene', function () {
+    $html = '<a-scene id="scene" embedded><a-sky color="#101014"></a-sky><a-box position="0 1 -3" color="#ffcc00" animation="property: rotation; to: 0 360 0; loop: true; dur: 4000"></a-box></a-scene>';
+    $css = '#scene { width: 100%; height: 100%; }';
+    $js = 'window.sketch = ({ AFRAME, scene, startFrame }) => { startFrame(() => {}); };';
+    $result = art_piece_preflight_document('aframe', $html, $css, $js);
+    assert_eq($result['html'], $html);
+});
+
+test('A-Frame preflight rejects missing scene root', function () {
+    assert_throws(
+        fn() => art_piece_preflight_document('aframe', '<a-box></a-box>', '', 'window.sketch = ({ scene }) => {};'),
+        '<a-scene'
+    );
+});
+
+test('A-Frame preflight rejects external assets', function () {
+    assert_throws(
+        fn() => art_piece_preflight_document('aframe', '<a-scene id="scene" embedded><a-image src="https://example.com/x.png"></a-image></a-scene>', '', 'window.sketch = ({ scene }) => {};'),
+        'external or file assets'
+    );
+});
+
+test('A-Frame preflight rejects webcam or media capture', function () {
+    assert_throws(
+        fn() => art_piece_preflight_document('aframe', '<a-scene id="scene" embedded></a-scene>', '', 'window.sketch = () => { navigator.mediaDevices.getUserMedia({ video: true }); };'),
+        'webcam'
+    );
+});
+
+test('A-Frame preflight rejects hidden scene CSS', function () {
+    assert_throws(
+        fn() => art_piece_preflight_document('aframe', '<a-scene id="scene" embedded></a-scene>', '#scene { display: none; }', 'window.sketch = ({ scene }) => {};'),
+        'display: none'
+    );
+});
+
 echo "\n=== Results ===\n";
 echo "Passed: {$passed}\n";
 echo "Failed: {$failed}\n";

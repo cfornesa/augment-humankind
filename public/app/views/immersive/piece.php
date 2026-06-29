@@ -9,6 +9,7 @@ $engineLabel = match ($engine) {
     'c2' => 'C2.js',
     'three' => 'Three.js',
     'svg' => 'SVG',
+    'aframe' => 'A-Frame',
     default => strtoupper($engine),
 };
 
@@ -596,7 +597,7 @@ canvas[aria-hidden="true"] {
 </div>
 
 <script type="module">
-import { mountThreeImmersivePiece, mountGalleryPiece } from '/assets/js/immersive-gallery.js';
+import { mountThreeImmersivePiece, mountAFrameImmersivePiece, mountGalleryPiece } from '/assets/js/immersive-gallery.js';
 
 // Setup full screen toggling variables
 const shell = document.getElementById('immersive-shell');
@@ -798,6 +799,8 @@ function handleRuntimeError(err) {
 try {
     if (engine === 'three') {
         mountThreeImmersivePiece(stage, code, htmlCode, cssCode, handleRuntimeError);
+    } else if (engine === 'aframe') {
+        mountAFrameImmersivePiece(stage, code, htmlCode, cssCode, handleRuntimeError);
     } else {
         mountGalleryPiece(stage, code, htmlCode, cssCode, engine, title, sourceUrl, prompt, description, handleRuntimeError);
     }

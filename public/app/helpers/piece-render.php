@@ -13,6 +13,9 @@ function piece_render_document(array $piece, array $version): string
     $jsonEngine = json_encode($engine);
     $jsonHtml = json_encode($html, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     $jsonCss = json_encode($css, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    $aframeCss = $engine === 'aframe'
+        ? "a-scene{display:block;width:100%;height:100%;}\n.a-canvas{display:block;width:100%!important;height:100%!important;}\n"
+        : '';
 
     $origin = function_exists('seo_origin') ? seo_origin() : '';
     $baseTag = $origin ? '<base href="' . htmlspecialchars(rtrim($origin, '/') . '/', ENT_QUOTES | ENT_HTML5, 'UTF-8') . '">' : '';
@@ -59,6 +62,7 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-seri
 #runtime-root{width:100vw;height:100vh;overflow:hidden;}
 #piece-error{position:fixed;inset:auto 1rem 1rem 1rem;z-index:9999;padding:1rem;border:1px solid #fca5a5;background:#450a0a;color:#fee2e2;font:14px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;display:none;}
 canvas{display:block;width:100%;height:100%;}
+{$aframeCss}
 {$css}
 </style>
 </head>

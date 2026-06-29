@@ -5,6 +5,21 @@ declare(strict_types=1);
 const ART_PIECE_MAX_ATTEMPTS = 5;
 const ART_PIECE_ATTEMPT_TIMEOUT = 120; // seconds
 
+function art_piece_supported_engines(): array
+{
+    return ['p5', 'c2', 'three', 'svg', 'aframe'];
+}
+
+function art_piece_canvas_managed_engines(): array
+{
+    return ['p5', 'c2', 'three'];
+}
+
+function art_piece_generation_mode_to_engine(string $mode): string
+{
+    return $mode === 'c2_interactive' ? 'c2' : $mode;
+}
+
 /**
  * Returns the engine-specific system prompt for generation.
  * Joined with a single space to match the Node.js .join(" ") behavior.
@@ -47,6 +62,25 @@ function art_piece_generation_system_prompt(string $engine): string
             "CRITICAL: Animations MUST be infinite. Use the frameCount passed to startFrame() with periodic functions like Math.sin() to ensure the piece loops or pulsates indefinitely. Respawn elements if they move off-screen or are destroyed.",
             "Keep the work visually intentional."
         ]),
+        'c2_interactive' => implode(' ', [
+            "You generate reusable INTERACTIVE art sketches for a self-hosted c2.js runtime.",
+            "You MUST return your response as three separate Markdown code blocks (```html, ```css, and ```javascript).",
+            "Return ONLY those three fenced code blocks. Do NOT include prose, explanations, titles, bullets, or notes before, between, or after the code blocks.",
+            'The HTML block must contain ONLY a mount canvas such as `<canvas id="piece-canvas"></canvas>`. Do NOT include <style>, <script>, <link>, <base>, <html>, <head>, or <body> tags in the HTML block.',
+            "The CSS block may style only mount IDs/classes that you define in the HTML block. Do NOT target `html`, `body`, or global `canvas`, and do NOT use `position: fixed`, `display: none`, `visibility: hidden`, or `opacity: 0`.",
+            "Do NOT use import statements for c2; the runtime provides it through the runtime object.",
+            "The JS must assign its setup function to `window.sketch` like this: `window.sketch = (runtime) => { const { c2, canvas, startFrame } = runtime; const renderer = new c2.Renderer(canvas); startFrame((frameCount) => { renderer.clear('#101014'); /* draw */ }); };`. CALL `startFrame(handler)` inside the sketch to register the animation loop.",
+            "This mode MUST include direct user interaction. Use native `canvas.addEventListener()` handlers for `pointerdown`, `pointermove`, `pointerup`, `click`, or `touchstart` to update local state, hit-test shapes, spawn elements, drag anchors, toggle colors, or otherwise visibly change the artwork.",
+            "For pointer coordinates, use `const rect = canvas.getBoundingClientRect(); const x = (event.clientX - rect.left) * (canvas.width / rect.width); const y = (event.clientY - rect.top) * (canvas.height / rect.height);` so interaction works after responsive scaling.",
+            "Keep every interaction state variable inside the `window.sketch` closure. Do NOT use localStorage, cookies, fetch, parent/top window access, or navigation.",
+            "Use `new c2.Renderer(canvas)` to create the renderer. Do NOT call any canvas-sizing or canvas-context methods directly.",
+            "RENDERER API (call on the renderer object): renderer.clear(), renderer.clear(cssColor), renderer.fill(cssColor), renderer.stroke(cssColor), renderer.fill(false), renderer.stroke(false), renderer.lineWidth(n), renderer.alpha(a), renderer.fontSize(n), renderer.fontFamily(f), renderer.textAlign(a), renderer.text(str,x,y). Use renderer.clear('#color') for background fills; NEVER use renderer.background() for drawing backgrounds.",
+            "DRAWING METHODS — use these exact signatures: renderer.circle(x,y,r) OR renderer.circle(new c2.Circle(x,y,r)); renderer.rect(x,y,w,h) OR renderer.rect(new c2.Rect(x,y,w,h)); renderer.line(x1,y1,x2,y2) OR renderer.line(new c2.Line(p1,p2)); renderer.ellipse(x,y,rx,ry); renderer.triangle(x1,y1,x2,y2,x3,y3); renderer.polygon([{x,y},...]); renderer.arc(new c2.Arc(p,r,start,end)); renderer.sector(new c2.Sector(p,r1,r2,start,end)).",
+            "NEVER use: c2.Ellipse, c2.Text, c2.Path, c2.Shape, beginShape, endShape, vertex, bezierVertex, curveVertex, noFill, noStroke, push, pop, strokeWeight, beginFill, endFill, c2.Ease, c2.Mouse, c2.Keyboard, c2.Touch, .linear, .pressed, .released, .dragged, renderer.draw(), renderer.animation(), or renderer.loop().",
+            "The `c2` library object comes from `runtime.c2` — always destructure it as `const { c2, canvas, startFrame } = runtime`. Do NOT assume `c2` is a global variable.",
+            "ALWAYS use `canvas.width` and `canvas.height` for drawing coordinates and sizes. Animations MUST be infinite and continue even when no pointer is active.",
+            "Keep the work visually intentional and make the interactive affordance discoverable from motion or composition."
+        ]),
         'three' => implode(' ', [
             "You generate reusable interactive 3D scenes for a self-hosted Three.js runtime.",
             "You MUST return your response as three separate Markdown code blocks (```html, ```css, and ```javascript).",
@@ -65,6 +99,20 @@ function art_piece_generation_system_prompt(string $engine): string
             "CRITICAL: A single shared geometry does NOT mean every instance must look identical — simulate per-instance SIZE/shape variation with non-uniform scale on the SAME base geometry instead of a different geometry per item: `dummy.scale.set(radiusFactor, heightFactor, radiusFactor);` (e.g. a base unit cylinder stretched/thinned per instance) covers the common 'each strand is a slightly different size' need without ever calling `new THREE.CylinderGeometry(...)` (or any geometry constructor) inside the per-instance loop.",
             "CRITICAL: If repeated instances need their OWN per-instance animation (e.g. each hair strand swaying independently), do the per-instance setup ONCE outside any frame loop — storing each instance's base transform and a phase offset in a plain array, e.g. `const instanceData = []; for (let i = 0; i < count; i++) { instanceData.push({ basePos: new THREE.Vector3(...), phase: Math.random() * Math.PI * 2 }); }` — then inside `startFrame((frameCount) => { ... })`, loop over that array once per frame, compute each instance's updated matrix from its stored base data plus the current time/frameCount, call `inst.setMatrixAt(i, dummy.matrix)` for each one, and set `inst.instanceMatrix.needsUpdate = true;` once after the loop (not per instance) before `renderer.render(scene, camera)`. This is the instanced equivalent of updating each individual mesh's `.position`/`.rotation` per frame — never abandon instancing for repeated elements just because they need independent motion.",
             "Keep the scene self-contained."
+        ]),
+        'aframe' => implode(' ', [
+            "You generate reusable experimental A-Frame scenes for a self-hosted A-Frame runtime.",
+            "You MUST return your response as three separate Markdown code blocks (```html, ```css, and ```javascript).",
+            "Return ONLY those three fenced code blocks. Do NOT include prose, explanations, titles, bullets, or notes before, between, or after the code blocks.",
+            "The HTML block MUST contain exactly one `<a-scene id=\"scene\" embedded>` as the scene root. Include all generated A-Frame entities inside that scene.",
+            "Do NOT include <script>, <link>, <base>, <html>, <head>, <body>, <iframe>, <img>, <audio>, <video>, or asset-loading tags. Do NOT use external URLs or remote textures. Use primitive geometry, materials, lights, sky color, camera, cursor/raycaster, and generated entities only.",
+            "The CSS block may style only `#scene`, `.a-canvas`, or classes/ids used by generated entities. Do NOT target global page chrome, and do NOT use `display: none`, `visibility: hidden`, or `opacity: 0` on the scene or canvas.",
+            "The runtime provides AFRAME globally. Do NOT use import statements.",
+            "The JS must assign its setup function to `window.sketch` like this: `window.sketch = ({ AFRAME, scene, startFrame }) => { /* optional event handlers or generated entities */ };`.",
+            "Use declarative infinite A-Frame animations with `animation` / `animation__name` attributes whenever possible. Animations MUST be infinite, looping, alternating, or continuously updated by startFrame().",
+            "For interaction, use A-Frame event listeners on generated entities, such as `entity.addEventListener('click', ...)`, `mouseenter`, `mouseleave`, or cursor/raycaster events. Include an `<a-camera>` with an `<a-cursor>` when click/hover interaction matters.",
+            "Do NOT request camera, microphone, webcam, device sensors, XR sessions, remote assets, networking, storage, parent/top window access, or page navigation.",
+            "Keep the scene self-contained, lightweight, and visually intentional."
         ]),
         'svg' => implode(' ', [
             "You generate animated SVG art pieces for display as a self-contained iframe.",
@@ -243,7 +291,7 @@ function art_piece_count_three_object_calls(string $code): int
 /**
  * Validates art piece code based on its engine type.
  */
-function art_piece_preflight_code(string $engine, string $code): string
+function art_piece_preflight_code(string $engine, string $code, ?string $html = null, ?string $css = null): string
 {
     $validatedCode = validate_art_piece_code($code);
 
@@ -291,6 +339,24 @@ function art_piece_preflight_code(string $engine, string $code): string
         // gate or warn here.
     }
 
+    if ($engine === 'aframe') {
+        $aframeJsRules = [
+            [
+                'pattern' => '/\bnavigator\s*\.\s*mediaDevices\b|\bgetUserMedia\s*\(/i',
+                'message' => 'Generated A-Frame code cannot request webcam, microphone, or media capture.'
+            ],
+            [
+                'pattern' => '/\bnavigator\s*\.\s*xr\b|\brequestSession\s*\(/i',
+                'message' => 'Generated A-Frame code cannot request XR sessions directly; the runtime owns fullscreen/immersive behavior.'
+            ],
+        ];
+        foreach ($aframeJsRules as $rule) {
+            if (preg_match($rule['pattern'], $validatedCode)) {
+                throw new RuntimeException($rule['message']);
+            }
+        }
+    }
+
     // Static check for window.sketch definition. Requires an actual
     // assignment (a single `=` not followed by another `=`) rather than
     // just the identifier appearing anywhere — a stray
@@ -304,6 +370,73 @@ function art_piece_preflight_code(string $engine, string $code): string
     }
 
     return $validatedCode;
+}
+
+function art_piece_preflight_document(string $engine, ?string $html, ?string $css, ?string $js): array
+{
+    $html = trim((string) $html);
+    $css = trim((string) $css);
+    $js = trim((string) $js);
+
+    if ($html === '' && $engine !== 'svg') {
+        throw new RuntimeException('HTML block is empty');
+    }
+    if ($js !== '') {
+        art_piece_preflight_code($engine, $js, $html, $css);
+    } elseif ($engine !== 'svg') {
+        throw new RuntimeException('JavaScript block is empty');
+    }
+
+    if (in_array($engine, art_piece_canvas_managed_engines(), true)) {
+        if (!preg_match('/id\s*=\s*["\'](?:container|canvas-container|sketch-container|runtime-root)["\']/i', $html) && !preg_match('/<canvas/i', $html)) {
+            throw new RuntimeException('HTML block must contain a container element (e.g. <div id="container"></div> or a <canvas> element) to mount the canvas.');
+        }
+        if (preg_match('/(?:canvas|#container|#scene|#c2-canvas)\s*\{[^}]*\bdisplay\s*:\s*none\b/i', $css)) {
+            throw new RuntimeException('CSS cannot hide the canvas or container element (display: none is forbidden).');
+        }
+        if (preg_match('/(?:canvas|#container|#scene|#c2-canvas)\s*\{[^}]*\bvisibility\s*:\s*hidden\b/i', $css)) {
+            throw new RuntimeException('CSS cannot hide the canvas or container element (visibility: hidden is forbidden).');
+        }
+    }
+
+    if ($engine === 'aframe') {
+        if (!preg_match('/<a-scene\b[^>]*\bid\s*=\s*["\']scene["\']/i', $html)) {
+            throw new RuntimeException('A-Frame HTML must contain one <a-scene id="scene" embedded> root.');
+        }
+        if (preg_match_all('/<a-scene\b/i', $html) !== 1) {
+            throw new RuntimeException('A-Frame HTML must contain exactly one <a-scene> root.');
+        }
+        $aframeHtmlRules = [
+            ['pattern' => '/<\/?(?:script|link|base|html|head|body|iframe|img|audio|video|a-assets|a-asset-item)\b/i', 'message' => 'A-Frame HTML cannot contain document, script, iframe, image, audio, video, or asset-loading tags.'],
+            ['pattern' => '/\bsrc\s*=|\bmaterial\s*=\s*["\'][^"\']*\bsrc\s*:/i', 'message' => 'A-Frame HTML cannot load external or file assets; use primitives and generated entities only.'],
+            ['pattern' => '/\burl\s*\(/i', 'message' => 'A-Frame CSS/HTML cannot reference external URL assets.'],
+        ];
+        foreach ($aframeHtmlRules as $rule) {
+            if (preg_match($rule['pattern'], $html) || preg_match($rule['pattern'], $css)) {
+                throw new RuntimeException($rule['message']);
+            }
+        }
+        if (preg_match('/(?:#scene|a-scene|canvas|\.a-canvas)\s*\{[^}]*\bdisplay\s*:\s*none\b/i', $css)) {
+            throw new RuntimeException('CSS cannot hide the A-Frame scene or canvas (display: none is forbidden).');
+        }
+        if (preg_match('/(?:#scene|a-scene|canvas|\.a-canvas)\s*\{[^}]*\bvisibility\s*:\s*hidden\b/i', $css)) {
+            throw new RuntimeException('CSS cannot hide the A-Frame scene or canvas (visibility: hidden is forbidden).');
+        }
+    }
+
+    if ($engine === 'svg') {
+        if (!preg_match('/<svg/i', $html)) {
+            throw new RuntimeException('HTML code must contain an <svg> element for SVG pieces.');
+        }
+        if (preg_match('/(?:svg|#container)\s*\{[^}]*\bdisplay\s*:\s*none\b/i', $css)) {
+            throw new RuntimeException('CSS cannot hide the SVG or container element (display: none is forbidden).');
+        }
+        if (preg_match('/(?:svg|#container)\s*\{[^}]*\bvisibility\s*:\s*hidden\b/i', $css)) {
+            throw new RuntimeException('CSS cannot hide the SVG or container element (visibility: hidden is forbidden).');
+        }
+    }
+
+    return ['html' => $html, 'css' => $css, 'js' => $js];
 }
 
 /**
@@ -341,13 +474,18 @@ function art_piece_refine_system_prompt(string $engine): string
 {
     $baseRules = art_piece_generation_system_prompt($engine);
     $isSvg = ($engine === 'svg');
+    $isAframe = ($engine === 'aframe');
     $htmlContextDesc = $isSvg 
         ? "the current HTML, CSS, and JS code blocks" 
-        : "the current CSS and JS code blocks (excluding the static HTML block which is managed automatically and must not be edited)";
+        : ($isAframe
+            ? "the current HTML, CSS, and JS code blocks"
+            : "the current CSS and JS code blocks (excluding the static HTML block which is managed automatically and must not be edited)");
     
     $engineConstraint = $isSvg
         ? "CRITICAL: For svg engine pieces, the HTML code MUST retain the <svg> element. The CSS must never hide the SVG or container (display: none and visibility: hidden on svg or container elements are strictly forbidden)."
-        : "CRITICAL: For {$engine} engine pieces, HTML changes are STRICTLY FORBIDDEN. The HTML container is managed automatically. Do not write a 'PATCH html:' block. Focus your edits solely on CSS or JS. The CSS must never hide the canvas or container (display: none and visibility: hidden on canvas or container elements are strictly forbidden).";
+        : ($isAframe
+            ? "CRITICAL: For aframe engine pieces, the HTML code MUST retain exactly one <a-scene id=\"scene\" embedded> root. Do not add external assets, scripts, media, iframes, or remote URLs. The CSS must never hide the scene or canvas."
+            : "CRITICAL: For {$engine} engine pieces, HTML changes are STRICTLY FORBIDDEN. The HTML container is managed automatically. Do not write a 'PATCH html:' block. Focus your edits solely on CSS or JS. The CSS must never hide the canvas or container (display: none and visibility: hidden on canvas or container elements are strictly forbidden).");
 
     return implode(' ', [
         "You are an AI assistant making a SINGLE, NARROWLY SCOPED edit to an existing interactive generative art piece, following a strict two-step process.",
@@ -416,12 +554,12 @@ function art_piece_refine_user_prompt(string $engine, string $refinementPrompt, 
     $sections[] = "### REFINEMENT INSTRUCTION";
     $sections[] = $refinementPrompt;
     $sections[] = "### REMINDER";
-    if ($engine === 'svg') {
+    if ($engine === 'svg' || $engine === 'aframe') {
         $sections[] = "Apply ONLY the change named above, as PATCH blocks against the exact current code below — never as a rewritten file. Every color, shape, decoration, and detail not mentioned in the instruction must not appear in any SEARCH/REPLACE pair at all.";
     } else {
         $sections[] = "Apply ONLY the change named above, as PATCH blocks against the exact current code below — never as a rewritten file. Every color, shape, decoration, and detail not mentioned in the instruction must not appear in any SEARCH/REPLACE pair at all. You are STRICTLY FORBIDDEN from editing or adding HTML patches. Focus your edits solely on JS or CSS.";
     }
-    if ($engine === 'svg') {
+    if ($engine === 'svg' || $engine === 'aframe') {
         $sections[] = "### CURRENT HTML CODE";
         $sections[] = "```html\n" . ($html ?? '') . "\n```";
     }
@@ -596,12 +734,12 @@ function art_piece_refine_repair_prompt(string $engine, string $refinementPrompt
         "Refinement instruction: {$refinementPrompt}",
         "CRITICAL — your previous attempt failed: \"{$failureMessage}\" You MUST directly address this specific problem in your PLAN section before writing any PATCH — state the new approach you will use to avoid it, not just adjusted numbers or a smaller version of the same approach.",
     ];
-    if ($engine === 'svg') {
+    if ($engine === 'svg' || $engine === 'aframe') {
         $segments[] = "Respond again in the exact PLAN: / PATCH <file>: / <<<<<<< SEARCH / ======= / >>>>>>> REPLACE format. Every SEARCH block must be copied character-for-character from the CURRENT code below, including whitespace and indentation — do not paraphrase, reformat, or reproduce it from memory of your previous attempt. Re-read the current code below and copy directly from it.";
     } else {
         $segments[] = "Respond again in the exact PLAN: / PATCH <file>: / <<<<<<< SEARCH / ======= / >>>>>>> REPLACE format. Every SEARCH block must be copied character-for-character from the CURRENT code below, including whitespace and indentation — do not paraphrase, reformat, or reproduce it from memory of your previous attempt. Re-read the current code below and copy directly from it. Remember: You are STRICTLY FORBIDDEN from editing HTML. Only edit JS or CSS.";
     }
-    if ($engine === 'svg') {
+    if ($engine === 'svg' || $engine === 'aframe') {
         $segments[] = "### CURRENT HTML CODE";
         $segments[] = "```html\n" . ($html ?? '') . "\n```";
     }
@@ -614,4 +752,3 @@ function art_piece_refine_repair_prompt(string $engine, string $refinementPrompt
     }
     return implode("\n\n", $segments);
 }
-

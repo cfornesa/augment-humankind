@@ -419,6 +419,7 @@ $preferredProfileId = $preferredProfileId ?? null;
                                     <option value="c2" <?= ($piece['engine'] ?? '') === 'c2' ? 'selected' : '' ?>>C2.js</option>
                                     <option value="three" <?= ($piece['engine'] ?? '') === 'three' ? 'selected' : '' ?>>Three.js</option>
                                     <option value="svg" <?= ($piece['engine'] ?? '') === 'svg' ? 'selected' : '' ?>>SVG</option>
+                                    <option value="aframe" <?= ($piece['engine'] ?? '') === 'aframe' ? 'selected' : '' ?>>A-Frame</option>
                                 </select>
                             </div>
                             <div class="field">
@@ -763,7 +764,7 @@ if ($engineVal === 'p5') {
         var htmlTabButton = document.querySelector('.piece-edit-tabs button[data-tab="html"]');
         if (!htmlTabButton) return;
 
-        if (engine === 'svg') {
+        if (engine === 'svg' || engine === 'aframe') {
             htmlTabButton.style.display = '';
         } else {
             htmlTabButton.style.display = 'none';

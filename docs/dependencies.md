@@ -205,6 +205,24 @@
 - **Required config:** None — the importmap in `app/views/admin/layout.php`
   is static.
 
+## A-Frame Runtime (Self-Hosted)
+
+- **Purpose:** Runs generated experimental A-Frame art pieces in previews,
+  public piece views, embeds, immersive views, and thumbnail capture.
+- **Package/runtime file:** A-Frame `1.6.0` (`aframe-master.min.js`),
+  vendored as `/assets/js/aframe.min.js`.
+- **Data sent off-domain:** None at runtime. Browsers load the runtime from
+  this site's own public assets.
+- **What breaks if unavailable or changed:** Saved A-Frame pieces can fail to
+  render in public pages, embeds, admin previews/capture, and the direct live
+  immersive stage until the runtime file or A-Frame-specific renderer code is
+  restored.
+- **Self-hosting alternative:** This is already self-hosted. Updating A-Frame
+  requires intentionally replacing the vendored runtime file and testing
+  generated A-Frame previews, embeds, fullscreen/immersive behavior, and
+  capture.
+- **Required config:** None.
+
 ## GuzzleHTTP 7
 
 - **Purpose:** Shared HTTP client for PHP syndication adapters.
@@ -250,19 +268,29 @@
 
 ## Piece Renderer CDN Runtimes
 
-- **Purpose:** PHP piece pages, standard embed routes, and the new immersive gallery/exhibit viewer views render generative sketches (P5, C2, Three.js, SVG) using client-side dynamic libraries loaded from CDNs.
+- **Purpose:** PHP piece pages, standard embed routes, and immersive
+  gallery/exhibit viewer views render generative sketches. P5, C2, and
+  Three.js use client-side dynamic libraries loaded from CDNs; A-Frame is
+  documented separately above because it is self-hosted.
 - **External endpoints:**
   - P5.js: `https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js`
   - C2.js: `https://cdn.jsdelivr.net/npm/c2.js@1.0.9/dist/c2.min.js`
   - Three.js Core: `https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js`
   - Three.js OrbitControls: `https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js`
 - **Data sent off-domain:** The browser requests the runtime script from the CDN. Piece content and database data are not sent by the PHP server.
-- **What breaks if unavailable or changed:** P5, C2, and Three.js-based piece pages, embeds, and immersive views fail to render until local runtime copies are served.
+- **What breaks if unavailable or changed:** P5, C2, and Three.js-based piece
+  pages, embeds, and immersive views fail to render until local runtime
+  copies are served. A-Frame failures are covered by the self-hosted runtime
+  entry above.
 - **Self-hosting alternative:** Store p5.js, c2.min.js, three.module.js, and OrbitControls.js under `public/assets/vendor/` and load them from the PHP site.
 
 ## AI Piece Generation (Multi-Vendor)
 
-- **Purpose:** Allow generating and repairing art pieces using external LLM models (p5, c2, three, svg).
+- **Purpose:** Allow generating and repairing art pieces using external LLM
+  models (`p5`, `c2`, `c2_interactive`, `three`, `svg`, and experimental
+  `aframe`). `c2_interactive` is a generation mode only and persists as
+  `engine='c2'`; A-Frame persists as `engine='aframe'` only after its
+  preview/capture validation gate.
 - **External endpoints:**
   - OpenRouter: `https://openrouter.ai/api/v1/chat/completions`
   - DeepSeek: `https://api.deepseek.com/chat/completions`

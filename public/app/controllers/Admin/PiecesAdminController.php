@@ -20,7 +20,7 @@ class PiecesAdminController
         if (!in_array($dir, ['asc', 'desc'], true)) {
             $dir = 'asc';
         }
-        if (!in_array($engine, ['p5', 'c2', 'three', 'svg'], true)) {
+        if (!in_array($engine, art_piece_supported_engines(), true)) {
             $engine = '';
         }
 
@@ -460,7 +460,7 @@ class PiecesAdminController
         }
 
         $engine = $_POST['engine'] ?? 'p5';
-        if (!in_array($engine, ['p5', 'c2', 'three', 'svg'], true)) {
+        if (!in_array($engine, art_piece_supported_engines(), true)) {
             $engine = 'p5';
         }
 
@@ -517,6 +517,7 @@ class PiecesAdminController
                 return '<canvas id="piece-canvas"></canvas>';
             case 'three':
                 return '<div id="container"></div>';
+            case 'aframe':
             case 'svg':
             default:
                 return $defaultHtml ?? '';
@@ -531,12 +532,12 @@ class PiecesAdminController
         }
 
         $engine = $_POST['engine'] ?? 'p5';
-        if (!in_array($engine, ['p5', 'c2', 'three', 'svg'], true)) {
+        if (!in_array($engine, art_piece_supported_engines(), true)) {
             $engine = 'p5';
         }
 
         $html = trim($_POST['html_code'] ?? '') ?: null;
-        if (in_array($engine, ['p5', 'c2', 'three'], true)) {
+        if (in_array($engine, art_piece_canvas_managed_engines(), true)) {
             $html = self::getStandardHtmlForEngine($engine);
         }
 
@@ -593,7 +594,7 @@ class PiecesAdminController
         $css = trim((string) ($_POST['css_code'] ?? ''));
         $js = trim((string) ($_POST['generated_code'] ?? ''));
 
-        if (in_array($engine, ['p5', 'c2', 'three'], true)) {
+        if (in_array($engine, art_piece_canvas_managed_engines(), true)) {
             $html = self::getStandardHtmlForEngine($engine);
         }
 
@@ -672,6 +673,7 @@ class PiecesAdminController
         $error = null;
         $prompt = '';
         $engine = 'p5';
+        $generationMode = 'p5';
         $selectedProfileId = null;
         $selectedPersonaId = null;
         $attemptLogs = null;
@@ -716,7 +718,12 @@ class PiecesAdminController
         header('Content-Type: application/json; charset=utf-8');
         $startedAt = microtime(true);
         $prompt = trim($_POST['prompt'] ?? '');
-        $engine = trim($_POST['engine'] ?? 'p5');
+        $generationMode = trim($_POST['generation_mode'] ?? ($_POST['engine'] ?? 'p5'));
+        $engine = art_piece_generation_mode_to_engine($generationMode);
+        if (!in_array($engine, art_piece_supported_engines(), true) || !in_array($generationMode, array_merge(art_piece_supported_engines(), ['c2_interactive']), true)) {
+            $generationMode = 'p5';
+            $engine = 'p5';
+        }
         $profileId = (int) ($_POST['profile_id'] ?? 0);
         $personaId = (int) ($_POST['persona_id'] ?? 0);
 
@@ -798,7 +805,7 @@ class PiecesAdminController
                     'status' => null,
                 ];
 
-                $systemPrompt = art_piece_generation_system_prompt($engine);
+                $systemPrompt = art_piece_generation_system_prompt($generationMode);
                 if ($attemptCount === 1) {
                     $userPromptForApi = $basePrompt;
                 } else {
@@ -828,39 +835,7 @@ class PiecesAdminController
 
                 // Preflight
                 try {
-                    if ($html === '' && $engine !== 'svg') {
-                        throw new RuntimeException('HTML block is empty');
-                    }
-                    if ($js !== '') {
-                        art_piece_preflight_code($engine, $js);
-                    } elseif ($engine !== 'svg') {
-                        throw new RuntimeException('JavaScript block is empty');
-                    }
-
-                    // Canvas & SVG Preservation Constraints
-                    if (in_array($engine, ['p5', 'c2', 'three'], true)) {
-                        if (!preg_match('/id\s*=\s*["\'](?:container|canvas-container|sketch-container|runtime-root)["\']/i', $html) && !preg_match('/<canvas/i', $html)) {
-                            throw new RuntimeException('HTML block must contain a container element (e.g. <div id="container"></div> or a <canvas> element) to mount the canvas.');
-                        }
-                        if (preg_match('/(?:canvas|#container|#scene|#c2-canvas)\s*\{[^}]*\bdisplay\s*:\s*none\b/i', $css)) {
-                            throw new RuntimeException('CSS cannot hide the canvas or container element (display: none is forbidden).');
-                        }
-                        if (preg_match('/(?:canvas|#container|#scene|#c2-canvas)\s*\{[^}]*\bvisibility\s*:\s*hidden\b/i', $css)) {
-                            throw new RuntimeException('CSS cannot hide the canvas or container element (visibility: hidden is forbidden).');
-                        }
-                    }
-
-                    if ($engine === 'svg') {
-                        if (!preg_match('/<svg/i', $html)) {
-                            throw new RuntimeException('HTML code must contain an <svg> element for SVG pieces.');
-                        }
-                        if (preg_match('/(?:svg|#container)\s*\{[^}]*\bdisplay\s*:\s*none\b/i', $css)) {
-                            throw new RuntimeException('CSS cannot hide the SVG or container element (display: none is forbidden).');
-                        }
-                        if (preg_match('/(?:svg|#container)\s*\{[^}]*\bvisibility\s*:\s*hidden\b/i', $css)) {
-                            throw new RuntimeException('CSS cannot hide the SVG or container element (visibility: hidden is forbidden).');
-                        }
-                    }
+                    art_piece_preflight_document($engine, $html, $css, $js);
 
                     // Success!
                     $htmlCode = $html;
@@ -891,12 +866,14 @@ class PiecesAdminController
                     'model' => $profile['model'] ?? '',
                     'endpoint_kind' => $profile['endpoint_kind'] ?? '',
                     'engine' => $engine,
+                    'generation_mode' => $generationMode,
                     'attempt_count' => $attemptCount,
                     'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
                 ],
             ]);
             self::storePendingGeneration([
                 'engine' => $engine,
+                'generation_mode' => $generationMode,
                 'html_code' => $htmlCode,
                 'css_code' => $cssCode,
                 'generated_code' => $generatedCode,
@@ -944,7 +921,7 @@ class PiecesAdminController
 
         $engine = (string) ($pending['engine'] ?? 'p5');
         $htmlCode = (string) ($pending['html_code'] ?? '');
-        if (in_array($engine, ['p5', 'c2', 'three'], true)) {
+        if (in_array($engine, art_piece_canvas_managed_engines(), true)) {
             $htmlCode = self::getStandardHtmlForEngine($engine);
         }
         $cssCode = (string) ($pending['css_code'] ?? '');
@@ -991,10 +968,13 @@ class PiecesAdminController
 
             $prompt = trim($_POST['prompt'] ?? '') ?: null;
             $engine = $_POST['engine'] ?? 'p5';
+            if (!in_array($engine, art_piece_supported_engines(), true)) {
+                throw new InvalidArgumentException('Unsupported art piece engine.');
+            }
             $status = $_POST['status'] ?? 'draft';
 
             $htmlCode = trim($_POST['html_code'] ?? '') ?: null;
-            if (in_array($engine, ['p5', 'c2', 'three'], true)) {
+            if (in_array($engine, art_piece_canvas_managed_engines(), true)) {
                 $htmlCode = self::getStandardHtmlForEngine($engine);
             }
             $cssCode = trim($_POST['css_code'] ?? '') ?: null;
@@ -1015,6 +995,9 @@ class PiecesAdminController
                     $mediaId = MediaFile::create($binary, 'image/png', 'piece-thumbnail.png');
                     $thumbnailUrl = '/image/' . $mediaId;
                 }
+            }
+            if ($engine === 'aframe' && $thumbnailUrl === null) {
+                throw new RuntimeException('A-Frame pieces must pass sandbox render/capture before they can be saved. Wait for thumbnail capture to complete, then save again.');
             }
 
             $pieceId = PlatformArtPiece::create([
@@ -1493,7 +1476,7 @@ class PiecesAdminController
             }
 
             $extractedHtml = art_piece_apply_refine_patches($html, $patches['html']);
-            if (in_array($engine, ['p5', 'c2', 'three'], true)) {
+            if (in_array($engine, art_piece_canvas_managed_engines(), true)) {
                 $extractedHtml = self::getStandardHtmlForEngine($engine);
             }
             $extractedCss = art_piece_apply_refine_patches($css, $patches['css']);
@@ -1509,37 +1492,12 @@ class PiecesAdminController
                 $profileId, $personaId, $sequenceToken, $attemptNumber, 'pending'
             );
 
-            if ($extractedHtml === '' && $engine !== 'svg') {
-                throw new RuntimeException('HTML is empty after applying patches');
-            }
-            if ($extractedJs !== '') {
-                art_piece_preflight_code($engine, $extractedJs);
-            } elseif ($engine !== 'svg') {
-                throw new RuntimeException('JavaScript is empty after applying patches');
-            }
+            art_piece_preflight_document($engine, $extractedHtml, $extractedCss, $extractedJs);
 
-            // Canvas & SVG Preservation Constraints
-            if (in_array($engine, ['p5', 'c2', 'three'], true)) {
+            // Canvas Preservation Constraints
+            if (in_array($engine, art_piece_canvas_managed_engines(), true)) {
                 if (!empty($patches['html'])) {
                     throw new RuntimeException('HTML changes are not allowed for p5, c2, and three engine types. The canvas is automatically managed. Focus your edits on CSS or JS instead.');
-                }
-                if (preg_match('/(?:canvas|#container|#scene|#c2-canvas)\s*\{[^}]*\bdisplay\s*:\s*none\b/i', $extractedCss)) {
-                    throw new RuntimeException('CSS cannot hide the canvas or container element (display: none is forbidden).');
-                }
-                if (preg_match('/(?:canvas|#container|#scene|#c2-canvas)\s*\{[^}]*\bvisibility\s*:\s*hidden\b/i', $extractedCss)) {
-                    throw new RuntimeException('CSS cannot hide the canvas or container element (visibility: hidden is forbidden).');
-                }
-            }
-
-            if ($engine === 'svg') {
-                if (!preg_match('/<svg/i', $extractedHtml)) {
-                    throw new RuntimeException('HTML code must contain an <svg> element for SVG pieces.');
-                }
-                if (preg_match('/(?:svg|#container)\s*\{[^}]*\bdisplay\s*:\s*none\b/i', $extractedCss)) {
-                    throw new RuntimeException('CSS cannot hide the SVG or container element (display: none is forbidden).');
-                }
-                if (preg_match('/(?:svg|#container)\s*\{[^}]*\bvisibility\s*:\s*hidden\b/i', $extractedCss)) {
-                    throw new RuntimeException('CSS cannot hide the SVG or container element (visibility: hidden is forbidden).');
                 }
             }
 
@@ -1709,7 +1667,7 @@ class PiecesAdminController
         try {
             $input = json_decode(file_get_contents('php://input'), true) ?? [];
             $html = (string) ($input['html_code'] ?? '');
-            if (in_array($piece['engine'] ?? 'p5', ['p5', 'c2', 'three'], true)) {
+            if (in_array($piece['engine'] ?? 'p5', art_piece_canvas_managed_engines(), true)) {
                 $html = self::getStandardHtmlForEngine($piece['engine']);
             }
             $css = (string) ($input['css_code'] ?? '');
