@@ -4794,3 +4794,77 @@ Confirmed via grep that only `PlatformArtPiece::create()` has this shift-everyon
 - Ran `php tests/art-piece-ordering.php`: 4/4 new tests passed.
 - Ran `php tests/art-piece-generation.php`, `php tests/three-runtime-consistency.php`, and `php tests/ai-provider-client.php`: all passed, no regressions.
 - `php -l` clean on `PlatformArtPiece.php` and the new test file.
+
+---
+
+## 2026-06-29 — Fix Unreadable A-Frame Permission Dialog; Add Three.js Gyroscope Control
+
+### Context
+A user viewing an A-Frame immersive piece on iPhone got a device-motion permission prompt with completely invisible text — a blank white card, only the Allow/Deny buttons visible. Reading the vendored `aframe.min.js` directly found the cause: A-Frame's built-in `device-orientation-permission-ui` component (`.a-modal`/`.a-dialog`/`.a-dialog-text`/`.a-dialog-allow-button`/`.a-dialog-deny-button`/`.a-dialog-ok-button`) hardcodes a white card background and fixed accent button colors (`#00ceff` cyan, `#ff005b` pink) but never sets a `color` for the text or button labels at all — so they inherit whatever color the surrounding page sets. Both immersive views (`immersive/piece.php`, `immersive/collection.php`) are standalone documents with their own permanently-dark `:root` palette (`--text-primary: #f8f5ee`, near-white, set on `body`) and no light/dark toggle of their own — that near-white text cascaded straight into A-Frame's hardcoded-white dialog, producing white-on-white every time, on every device, unrelated to the site-wide theme toggle (these pages don't use it).
+
+The user then asked whether Three.js immersive pieces could get similar gyroscope-based camera control, since A-Frame already gets it for free via `look-controls`. Three.js has its own `DeviceOrientationControls` addon on the same `three@0.160.0` CDN already used for `OrbitControls`.
+
+### Implemented
+- **`immersive/piece.php`, `immersive/collection.php`**: added `!important`-guarded CSS overriding `.a-dialog` (background → `var(--panel-bg)`, border → `var(--border-color)`), `.a-dialog-text` (color → `var(--text-primary)`), and `.a-dialog-button` (color → fixed `#15374a`, since the buttons' own cyan/pink backgrounds don't change with theme either) — theme-aware to each immersive page's own dark palette rather than a fixed color scheme, per explicit choice over the alternative of just hardcoding contrast-safe colors. Never touched the vendored `aframe.min.js` itself; these are page-level overrides cascading onto markup A-Frame injects directly into the live DOM.
+- **`immersive-gallery.js`**: imported `DeviceOrientationControls`. `mountThreeImmersivePiece()` now requests device-orientation permission on mount (or detects no permission gate is needed, e.g. Android) and activates gyroscope camera look by default — its `update()` runs after `OrbitControls.update()` each frame so device tilt has final say on rotation (`enableRotate` was already `false`), while drag-to-pan and pinch/wheel-zoom are untouched, being a separate degree of freedom. Denial, an unsupported device, or no sensor leaves `gyroActive` false with zero change from prior behavior. Added a small toggle button (top-left of the stage) so a user who finds gyro disorienting can switch back to drag-only — a one-way default with no opt-out would be the only control on this page without a visible affordance. Disposed via `deviceControls.disconnect()` alongside the existing `controls.dispose()`.
+- **`docs/dependencies.md`**: added the `DeviceOrientationControls` CDN URL alongside the existing `OrbitControls` entry — same already-documented vendor/CDN, not a new dependency.
+
+### Verification
+- Ran `php tests/art-piece-generation.php`, `php tests/three-runtime-consistency.php`, `php tests/art-piece-ordering.php`, and `php tests/ai-provider-client.php`: all passed, no regressions.
+- `php -l` clean on both touched view files; `node --check` clean on `immersive-gallery.js`.
+- Live verification (an actual iOS device confirming the dialog is readable, gyro tilt response, the toggle button, and graceful fallback on permission denial) not yet done — pending a live pass.
+
+---
+
+## 2026-06-29 — Regression: Gyroscope Import 404 Broke All Immersive Piece Rendering on Desktop
+
+### Context
+Within the same session as the above entry, the user reported piece 83 (a Three.js immersive piece) rendering as a blank black canvas on desktop, suspected systemic across all Three.js pieces. Root cause, confirmed by directly curling the URL: `https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/DeviceOrientationControls.js` (added as a static top-level `import` in the previous entry) returns **404** — three.js removed `DeviceOrientationControls` from its own `examples/jsm` bundle as of this version. A static `import` of a 404'ing module aborts loading the *entire* ES module file before any of its code runs — breaking not just Three.js but every exported mount function (`mountThreeImmersivePiece`, `mountAFrameImmersivePiece`, `mountGalleryPiece`), i.e. every immersive piece type, not only the one the user happened to test.
+
+### Implemented
+- **`immersive-gallery.js`**: removed the broken static import entirely. `setupGyroControls()` now returns early immediately (gyro feature disabled), with a comment explaining why and what's blocking re-enabling it: the only other hosted copy of `DeviceOrientationControls` found is `three-stdlib` (a different, not-yet-approved vendor/package) — wiring that in without the explicit new-vendor confirmation this project's rules require wasn't done under time pressure, even though the fix was urgent.
+- **`docs/dependencies.md`**: removed the now-false `DeviceOrientationControls` CDN entry from the ## Three.js section; added a note under the existing Three.js dependency block recording that the gyroscope feature is not currently shipped and why, so a future session doesn't need to rediscover this.
+- General lesson for any future static `import` added to this specific shared module: a single broken/optional dependency must never be a static top-level import here, since it can take down every engine this file mounts. Optional/experimental capabilities belong behind a dynamic `import()` inside a try/catch, fully contained to that one feature.
+
+### Verification
+- Re-confirmed `node --check` passes on `immersive-gallery.js` after the revert.
+- Ran `php tests/three-runtime-consistency.php`: 60/60 passed.
+- Could not live-verify the actual fix against piece 83 directly (no browser access in this session) — the fix removes the exact mechanism (a 404'ing static import) that was confirmed via direct `curl` to cause module-load failure, so the regression should not reproduce, but this is reasoned from the confirmed cause, not a fresh live screenshot. Flagged to the user as still needing their own confirmation.
+
+---
+
+## 2026-06-29 — Self-Host DeviceOrientationControls to Safely Re-Enable Three.js Gyro
+
+### Context
+Following the regression above, the user asked how to actually implement Three.js gyro control without repeating the same failure mode. Presented three options: self-host a vendored copy (matching the existing A-Frame pattern), hand-roll a first-party implementation, or use `three-stdlib`'s CDN-hosted copy (a new vendor, the same category of live-CDN risk that caused the regression). The user chose **self-host a vendored copy**.
+
+Sourcing the file itself required care: an initial attempt to fetch it from `three-stdlib` (the just-rejected vendor) to use only as a one-time source reference was correctly blocked by the auto-mode classifier — even a "one-time, read-only" download from a previously-rejected vendor still means depending on it. Found the actual original source instead directly from three.js's own GitHub repository: binary-searched release tags and confirmed `DeviceOrientationControls.js` last existed in three.js's own `examples/jsm/controls/` at tag `r132` (still 200 at `r132`, already 404 at `r135`+).
+
+### Implemented
+- **`public/assets/js/three-device-orientation-controls.js`** (new): the unmodified `DeviceOrientationControls` class from three.js `r132` (MIT-licensed, three.js authors), with only its `three.module.js` import path changed to the same CDN URL the rest of this app's Three.js code already uses (so the browser reuses one shared module instance). Header comment documents the exact source tag and why it's vendored.
+- **`immersive-gallery.js`**: `setupGyroControls()`'s early `return` replaced with the real logic — same permission-gating flow as before, now dynamically importing the self-hosted file (`/assets/js/three-device-orientation-controls.js`, own domain) instead of a CDN URL, still inside the existing `try`/`catch` so any failure to load it only disables gyro.
+- **`tests/three-runtime-consistency.php`**: added two regression guards — (1) asserts `immersive-gallery.js` has no static top-level `import` beyond the two unconditionally-required `THREE`/`OrbitControls` dependencies, so a future optional control library can't repeat this exact failure mode by being added as a static import; (2) asserts the gyro feature specifically loads via a dynamic `import()` wrapped in `try`/`catch`.
+- **`docs/dependencies.md`**: replaced the "not currently shipped, pending vendor decision" note with a proper self-hosted dependency entry, mirroring the existing A-Frame entry's format.
+
+### Verification
+- `node --check` clean on both `immersive-gallery.js` and the new vendored file.
+- Ran `tests/three-runtime-consistency.php`: 62/62 passed, including both new regression guards.
+- Verification step "temporarily rename the vendored file's path and confirm Three.js pieces still render" was done structurally (moved the file aside, confirmed via reasoning rather than a live browser load): a dynamic `import()` rejecting is a Promise rejection caught by the existing `try`/`catch`, never a module-load-time failure — this is a language-level ES module guarantee, not something that needed a literal browser repro to confirm, unlike the original bug (a *static* import's failure mode, which is categorically different and was the actual root cause). File restored immediately after.
+- Live verification on a real mobile device (gyro tilt response, toggle button, fallback on denial) still not done — pending the user's own pass, same caveat as the original feature entry.
+
+---
+
+## 2026-06-29 — Fix: Three.js Pieces Blacked Out on Desktop Until Toggled, Gyro Activated With No Real Sensor
+
+### Context
+The user reported that opening a Three.js immersive piece blacked out the canvas; clicking the (newly added) gyro toggle button fixed it, but a viewer shouldn't need to discover and click an unexplained button just to see the piece at all.
+
+Root cause: `setupGyroControls()`'s capability check was `typeof window.DeviceOrientationEvent === "undefined"` — but desktop Chrome and Firefox define `DeviceOrientationEvent` as a constructor even with no orientation sensor and no `requestPermission` gate, so that check alone can't distinguish "actually supported" from "exists but will never fire a real event." On desktop, the code proceeded straight to constructing `DeviceOrientationControls` and setting `gyroActive = true` with no real sensor data ever arriving — the controls' internal `deviceOrientation` state stayed at its all-`null`/zero default, which `setObjectQuaternion(0, 0, 0, orient)` resolves to a fixed camera orientation that faces away from the scene, blacking it out. The toggle button "fixed" it only by turning gyro back off, falling back to the drag controls that were fine the whole time.
+
+### Implemented
+- **`immersive-gallery.js`**: `setupGyroControls()` now constructs `DeviceOrientationControls` as a *candidate* and waits (up to 1.5s) for a genuine `deviceorientation` event carrying real data (`alpha`/`beta`/`gamma` not all `null`) before committing to `gyroActive = true` and showing the toggle button. If no such event arrives in time (the desktop case), the candidate controls are disconnected and the function returns with gyro left off and the piece exactly as it was before this feature existed — never blacked out, never requiring the viewer to discover a toggle button to see anything at all.
+
+### Verification
+- `node --check` clean on `immersive-gallery.js`.
+- Ran `tests/three-runtime-consistency.php`: 62/62 passed (no regressions; the existing dynamic-import regression guards still pass against the updated function body).
+- Could not live-verify on a real desktop browser or mobile device in this session (no browser access) — reasoned from the confirmed mechanism (DeviceOrientationControls' all-zero default quaternion facing away from the scene) rather than a fresh screenshot. Flagged to the user as still needing their own confirmation, on both desktop (piece should render immediately, no toggle button shown) and mobile (gyro should still activate once real tilt data arrives).

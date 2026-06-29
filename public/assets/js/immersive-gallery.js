@@ -1,5 +1,12 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
 import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js';
+// DeviceOrientationControls was removed from three.js's own examples/jsm
+// bundle as of 0.160.0 (confirmed: that path 404s on the CDN). A static
+// top-level import of a 404'ing module aborts loading this ENTIRE file —
+// breaking Three.js, A-Frame, and p5/c2/svg immersive mounting alike, since
+// they're all exported from here. Loaded lazily inside setupGyroControls()
+// instead, wrapped in try/catch, so a missing/broken source only disables
+// the gyro feature itself and never the rest of this module.
 
 // Constants
 const WALL_CENTER = new THREE.Vector3(0, 1.35, -1.08);
@@ -902,6 +909,9 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
   let keyNav = null;
   let isOrbitActive = false;
   let userHasInteracted = false;
+  let deviceControls = null;
+  let gyroActive = false;
+  let gyroToggleBtn = null;
   const _orbitCamPos = new THREE.Vector3();
   const _orbitTarget = new THREE.Vector3();
 
@@ -1115,6 +1125,16 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
         // This prevents the next pan from reviving an older zoom distance.
         controls.update();
 
+        // DeviceOrientationControls only ever touches camera.quaternion, never
+        // position — it runs after OrbitControls.update() so a device's tilt
+        // has the final say on look direction, while drag-to-pan/pinch-zoom
+        // (a separate degree of freedom, untouched by this) keep working
+        // exactly as before. enableRotate is already false (see setup below),
+        // so there's no fight over rotation between the two.
+        if (gyroActive && deviceControls) {
+          deviceControls.update();
+        }
+
         // Many pieces script their own ambient camera motion every frame
         // (e.g. a slow sway via camera.position.x = ... ; camera.lookAt(...)),
         // and since only the piece's own render call paints pixels when
@@ -1297,6 +1317,85 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
       saveOrbitState();
     });
 
+    // Gyroscope look control, mirroring what A-Frame's look-controls already
+    // gets for free. Active by default once permission is granted (or on a
+    // device with no permission gate at all, e.g. Android); falls back to
+    // today's drag/pan behavior unchanged if denied, not invoked within a
+    // qualifying user gesture, or the device has no orientation sensor.
+    function createGyroToggleButton() {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.setAttribute("aria-label", "Toggle gyroscope camera control");
+      btn.setAttribute("aria-pressed", "true");
+      btn.textContent = "⟲";
+      btn.style.cssText = "position:absolute;top:calc(0.75rem + env(safe-area-inset-top));left:calc(0.75rem + env(safe-area-inset-left));z-index:130;display:inline-flex;align-items:center;justify-content:center;height:2.5rem;width:2.5rem;border:1px solid rgba(255,255,255,0.15);background:rgba(89,184,201,0.85);color:#fff;border-radius:9999px;font-size:1.1rem;cursor:pointer;";
+      btn.addEventListener("click", () => {
+        gyroActive = !gyroActive;
+        btn.setAttribute("aria-pressed", String(gyroActive));
+        btn.style.background = gyroActive ? "rgba(89,184,201,0.85)" : "rgba(0,0,0,0.55)";
+      });
+      stageEl.appendChild(btn);
+      return btn;
+    }
+
+    async function setupGyroControls() {
+      if (typeof window.DeviceOrientationEvent === "undefined") return;
+      try {
+        if (typeof DeviceOrientationEvent.requestPermission === "function") {
+          const result = await DeviceOrientationEvent.requestPermission();
+          if (result !== "granted") return;
+        }
+        // Dynamic import of a self-hosted file (own domain, not a CDN URL) —
+        // deliberately not a static top-level import. three.js's own copy of
+        // this module was removed from its examples bundle and 404'd as a
+        // static import, which took down this entire file (every immersive
+        // piece type, not just Three.js) until reverted. A dynamic import
+        // here means even a missing/broken file only disables gyro, exactly
+        // like permission denial or no sensor already do.
+        const { DeviceOrientationControls } = await import("/assets/js/three-device-orientation-controls.js");
+
+        // Desktop Chrome/Firefox define window.DeviceOrientationEvent as a
+        // constructor even with no orientation sensor at all and no
+        // requestPermission gate — so the checks above alone can't tell
+        // "supported" apart from "exists but never actually fires." Acting
+        // on that false positive blacked out the whole piece: with no real
+        // events, DeviceOrientationControls' camera quaternion stays at its
+        // all-zero default, which faces away from the scene. Only commit to
+        // gyro once a genuine event with real angle data is observed; a
+        // short timeout with no such event means "no sensor" and the piece
+        // is left exactly as it was (drag/pan, never blacked out).
+        const candidateControls = new DeviceOrientationControls(state.camera);
+        const hasRealOrientationData = await new Promise((resolve) => {
+          const onFirstEvent = (event) => {
+            if (event.alpha !== null || event.beta !== null || event.gamma !== null) {
+              window.removeEventListener("deviceorientation", onFirstEvent);
+              resolve(true);
+            }
+          };
+          window.addEventListener("deviceorientation", onFirstEvent);
+          setTimeout(() => {
+            window.removeEventListener("deviceorientation", onFirstEvent);
+            resolve(false);
+          }, 1500);
+        });
+
+        if (!hasRealOrientationData) {
+          candidateControls.disconnect?.();
+          return;
+        }
+
+        deviceControls = candidateControls;
+        gyroActive = true;
+        gyroToggleBtn = createGyroToggleButton();
+      } catch (_) {
+        // Denied, not invoked within a user gesture, no sensor, or the
+        // dynamic import itself failed — leave gyroActive false. A failure
+        // here is fully contained to this function and can never break
+        // module load for the rest of this file.
+      }
+    }
+    setupGyroControls();
+
     frameId = requestAnimationFrame(animateControls);
 
     const resizeObserver = new ResizeObserver(() => resize());
@@ -1308,6 +1407,7 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
       window.removeEventListener("resize", resize);
       cancelAnimationFrame(frameId);
       controls.dispose();
+      deviceControls?.disconnect?.();
       canvas.removeEventListener("pointerdown", onThreePointerDown);
       canvas.removeEventListener("pointermove", onThreePointerMove);
       canvas.removeEventListener("pointerup", onThreePointerUp);

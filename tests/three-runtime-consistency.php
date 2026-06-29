@@ -422,6 +422,37 @@ test('c2 canvas CSS preserves aspect ratio via object-fit instead of stretching'
     assert_contains($bootCanvasRuntimeBody, "object-fit:contain");
 });
 
+test('immersive-gallery.js has no static top-level import beyond the two unconditionally-required Three.js dependencies', function () use ($immersive) {
+    // Regression guard: a static top-level `import` of DeviceOrientationControls
+    // from a URL that 404'd (three.js removed it from examples/jsm in the
+    // version this app pins) aborted loading this ENTIRE module — breaking
+    // Three.js, A-Frame, and p5/c2/svg immersive mounting alike, since
+    // they're all exported from this one file. THREE core and OrbitControls
+    // are the only dependencies every immersive piece actually needs
+    // unconditionally; anything else optional/experimental must be loaded
+    // via a dynamic import() inside a try/catch instead, so a missing or
+    // broken source can only disable that one feature, never the module.
+    preg_match_all('/^import\s.+$/m', $immersive, $matches);
+    $staticImports = $matches[0];
+    foreach ($staticImports as $line) {
+        $isCoreThree = str_contains($line, "from 'https://cdn.jsdelivr.net/npm/three@") && str_contains($line, '/build/three.module.js');
+        $isOrbitControls = str_contains($line, 'OrbitControls.js');
+        if (!$isCoreThree && !$isOrbitControls) {
+            throw new Exception("Unexpected static top-level import found (should be a dynamic import() instead, contained in try/catch): {$line}");
+        }
+    }
+    assert_contains($immersive, "import * as THREE from");
+    assert_contains($immersive, "import { OrbitControls }");
+});
+
+test('the gyroscope feature loads DeviceOrientationControls via a contained dynamic import, not a static one', function () use ($immersive) {
+    assert_contains($immersive, 'await import("/assets/js/three-device-orientation-controls.js")');
+    $setupBody = substr($immersive, strpos($immersive, 'async function setupGyroControls()'));
+    $setupBody = substr($setupBody, 0, strpos($setupBody, "\n    }\n"));
+    assert_contains($setupBody, 'try {');
+    assert_contains($setupBody, 'catch');
+});
+
 echo "\n=== Results ===\n";
 echo "Passed: {$passed}\n";
 echo "Failed: {$failed}\n";

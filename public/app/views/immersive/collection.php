@@ -497,6 +497,22 @@ html, body {
   transform: translateX(-50%) translateY(0);
   opacity: 1;
 }
+
+/* A-Frame's device-orientation-permission-ui dialog hardcodes a white card
+   and bright accent buttons but never sets its own text color, so it
+   inherited this page's --text-primary (near-white) and went invisible
+   (white-on-white). Override it to match this page's own dark panel styling
+   instead of A-Frame's plain white default. */
+.a-dialog {
+  background-color: var(--panel-bg) !important;
+  border: 1px solid var(--border-color);
+}
+.a-dialog-text {
+  color: var(--text-primary) !important;
+}
+.a-dialog-button {
+  color: #15374a !important;
+}
 </style>
 
 <!-- Load p5 and c2 library runtimes on-demand -->

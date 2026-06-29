@@ -284,6 +284,37 @@
   entry above.
 - **Self-hosting alternative:** Store p5.js, c2.min.js, three.module.js, and OrbitControls.js under `public/assets/vendor/` and load them from the PHP site.
 
+## Three.js DeviceOrientationControls (Self-Hosted)
+
+- **Purpose:** Gyroscope-driven camera look for Three.js immersive pieces
+  (`mountThreeImmersivePiece()`'s `setupGyroControls()`, `immersive-gallery.js`)
+  — the Three.js equivalent of what A-Frame's `look-controls` already
+  provides for free. Active by default once motion permission is granted (or
+  immediately on a device with no permission gate); falls back to today's
+  drag/pan + wheel-zoom unchanged on denial or no sensor.
+- **Package/runtime file:** three.js's own `DeviceOrientationControls`,
+  vendored as `/assets/js/three-device-orientation-controls.js`, sourced from
+  three.js's GitHub repo at tag `r132` — the last release that still shipped
+  this module before its removal from later versions' examples bundle.
+- **Why self-hosted instead of CDN:** an earlier attempt loaded this as a
+  static top-level `import` from `three@0.160.0`'s own CDN bundle, which
+  404'd (the module had been removed) and broke loading of all of
+  `immersive-gallery.js` — every immersive piece type, not just Three.js —
+  until reverted (see DECISIONS.md, "Regression: Gyroscope Import 404 Broke
+  All Immersive Piece Rendering on Desktop"). Self-hosting removes the live
+  CDN risk; `setupGyroControls()` also loads it via a *dynamic* `import()`
+  inside a try/catch (not a static one), so even a missing/broken local file
+  can only disable this one feature, never the rest of the module — guarded
+  by a regression test in `tests/three-runtime-consistency.php`.
+- **Data sent off-domain:** None at runtime. Browsers load this file from
+  this site's own public assets; the underlying Three.js core module it
+  imports from is the same already-existing CDN dependency listed above.
+- **What breaks if unavailable or changed:** Three.js immersive pieces fall
+  back to drag/pan + wheel-zoom only, identical to before this feature
+  existed — no other rendering is affected.
+- **Self-hosting alternative:** This is already self-hosted.
+- **Required config:** None.
+
 ## AI Piece Generation (Multi-Vendor)
 
 - **Purpose:** Allow generating and repairing art pieces using external LLM
