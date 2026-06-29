@@ -1318,10 +1318,9 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
     });
 
     // Gyroscope look control, mirroring what A-Frame's look-controls already
-    // gets for free. Active by default once permission is granted (or on a
-    // device with no permission gate at all, e.g. Android); falls back to
-    // today's drag/pan behavior unchanged if denied, not invoked within a
-    // qualifying user gesture, or the device has no orientation sensor.
+    // gets for free: rotation only, driven by device tilt — drag-to-pan,
+    // pinch/wheel-zoom, and keyboard WASD keep moving the camera through the
+    // scene exactly as they always have, on every device, gyro or not.
     function createGyroToggleButton() {
       const btn = document.createElement("button");
       btn.type = "button";
@@ -1338,60 +1337,104 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
       return btn;
     }
 
+    // A-Frame's own device-orientation-permission-ui falls back to exactly
+    // this kind of manual Allow button when its automatic on-load
+    // requestPermission() call fails — which it almost always does here too,
+    // since by the time this async mount function runs, the click/tap that
+    // navigated to this page is no longer a "fresh" user gesture as far as
+    // iOS Safari's transient-activation rules are concerned. A button click
+    // is always a guaranteed-fresh gesture, so the retry from inside it
+    // reliably succeeds where the automatic attempt did not.
+    function createEnableMotionButton(onGranted) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = "Enable Motion Controls";
+      btn.style.cssText = "position:absolute;bottom:calc(1rem + env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);z-index:130;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.65);color:#fff;padding:0.6rem 1.1rem;border-radius:9999px;font-size:0.85rem;cursor:pointer;";
+      btn.addEventListener("click", async () => {
+        try {
+          const result = await DeviceOrientationEvent.requestPermission();
+          if (result === "granted") {
+            btn.remove();
+            onGranted();
+          }
+        } catch (_) {
+          // Still denied/unsupported even from a real click — leave the
+          // button in place so the user can try again, same as A-Frame's
+          // own fallback dialog does.
+        }
+      });
+      stageEl.appendChild(btn);
+      return btn;
+    }
+
+    // Constructing DeviceOrientationControls is not side-effect-free: its
+    // constructor unconditionally calls camera.rotation.reorder('YXZ'),
+    // which silently changes how *any* later rotation math on this camera
+    // is interpreted — including a piece's own scripted camera animation.
+    // That reorder must only ever happen once we're certain real motion
+    // data exists; never as part of merely testing for it.
+    async function activateGyro() {
+      const { DeviceOrientationControls } = await import("/assets/js/three-device-orientation-controls.js");
+      deviceControls = new DeviceOrientationControls(state.camera);
+      gyroActive = true;
+      gyroToggleBtn = createGyroToggleButton();
+    }
+
+    // Waits for a genuine 'deviceorientation' event carrying real angle data
+    // — using a plain window listener, never constructing
+    // DeviceOrientationControls itself — so a desktop browser that merely
+    // defines window.DeviceOrientationEvent with no real sensor (Chrome and
+    // Firefox both do) is never mistaken for "supported" and never mutates
+    // the camera's rotation order for nothing.
+    function waitForRealOrientationData(timeoutMs = 1500) {
+      return new Promise((resolve) => {
+        const onFirstEvent = (event) => {
+          if (event.alpha !== null || event.beta !== null || event.gamma !== null) {
+            window.removeEventListener("deviceorientation", onFirstEvent);
+            resolve(true);
+          }
+        };
+        window.addEventListener("deviceorientation", onFirstEvent);
+        setTimeout(() => {
+          window.removeEventListener("deviceorientation", onFirstEvent);
+          resolve(false);
+        }, timeoutMs);
+      });
+    }
+
     async function setupGyroControls() {
       if (typeof window.DeviceOrientationEvent === "undefined") return;
       try {
         if (typeof DeviceOrientationEvent.requestPermission === "function") {
-          const result = await DeviceOrientationEvent.requestPermission();
-          if (result !== "granted") return;
-        }
-        // Dynamic import of a self-hosted file (own domain, not a CDN URL) —
-        // deliberately not a static top-level import. three.js's own copy of
-        // this module was removed from its examples bundle and 404'd as a
-        // static import, which took down this entire file (every immersive
-        // piece type, not just Three.js) until reverted. A dynamic import
-        // here means even a missing/broken file only disables gyro, exactly
-        // like permission denial or no sensor already do.
-        const { DeviceOrientationControls } = await import("/assets/js/three-device-orientation-controls.js");
-
-        // Desktop Chrome/Firefox define window.DeviceOrientationEvent as a
-        // constructor even with no orientation sensor at all and no
-        // requestPermission gate — so the checks above alone can't tell
-        // "supported" apart from "exists but never actually fires." Acting
-        // on that false positive blacked out the whole piece: with no real
-        // events, DeviceOrientationControls' camera quaternion stays at its
-        // all-zero default, which faces away from the scene. Only commit to
-        // gyro once a genuine event with real angle data is observed; a
-        // short timeout with no such event means "no sensor" and the piece
-        // is left exactly as it was (drag/pan, never blacked out).
-        const candidateControls = new DeviceOrientationControls(state.camera);
-        const hasRealOrientationData = await new Promise((resolve) => {
-          const onFirstEvent = (event) => {
-            if (event.alpha !== null || event.beta !== null || event.gamma !== null) {
-              window.removeEventListener("deviceorientation", onFirstEvent);
-              resolve(true);
+          // iOS 13+: gated behind explicit permission, not by sensor
+          // presence. The auto-attempt below usually fails because this
+          // async mount function isn't a direct user-gesture handler; on
+          // failure, fall back to a real button click, exactly like
+          // A-Frame's own permission dialog does.
+          try {
+            const result = await DeviceOrientationEvent.requestPermission();
+            if (result === "granted") {
+              await activateGyro();
+              return;
             }
-          };
-          window.addEventListener("deviceorientation", onFirstEvent);
-          setTimeout(() => {
-            window.removeEventListener("deviceorientation", onFirstEvent);
-            resolve(false);
-          }, 1500);
-        });
-
-        if (!hasRealOrientationData) {
-          candidateControls.disconnect?.();
+          } catch (_) {
+            // Fall through to the manual button below.
+          }
+          createEnableMotionButton(activateGyro);
           return;
         }
 
-        deviceControls = candidateControls;
-        gyroActive = true;
-        gyroToggleBtn = createGyroToggleButton();
+        // No permission gate at all (Android, or desktop's false-positive
+        // constructor) — the only way to tell those apart is whether a real
+        // event actually arrives.
+        const hasRealOrientationData = await waitForRealOrientationData();
+        if (hasRealOrientationData) {
+          await activateGyro();
+        }
       } catch (_) {
-        // Denied, not invoked within a user gesture, no sensor, or the
-        // dynamic import itself failed — leave gyroActive false. A failure
-        // here is fully contained to this function and can never break
-        // module load for the rest of this file.
+        // The dynamic import itself failed, or anything else unexpected —
+        // leave gyroActive false. Fully contained to this function, can
+        // never break module load for the rest of this file.
       }
     }
     setupGyroControls();
