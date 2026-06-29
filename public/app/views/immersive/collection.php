@@ -2,6 +2,12 @@
 
 declare(strict_types=1);
 
+// Cache-busted by file mtime, matching the ?v= pattern already used for
+// piece-runtime.js (piece-render.php) and immersive/piece.php — without
+// this, browsers (WebKit/Safari especially) can keep serving a stale
+// cached copy of immersive-gallery.js indefinitely after a deploy.
+$galleryRuntimeVersion = (int) @filemtime(dirname(__DIR__, 3) . '/assets/js/immersive-gallery.js');
+
 // Hydrate fields for display
 $hasP5 = false;
 $hasC2 = false;
@@ -637,7 +643,7 @@ html, body {
 </div>
 
 <script type="module">
-import { mountExhibitWall } from '/assets/js/immersive-gallery.js';
+import { mountExhibitWall } from '/assets/js/immersive-gallery.js?v=<?= $galleryRuntimeVersion ?>';
 
 // Setup full screen toggling variables
 const shell = document.getElementById('immersive-shell');

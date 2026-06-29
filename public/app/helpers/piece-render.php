@@ -62,6 +62,15 @@ body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-seri
 #runtime-root{width:100vw;height:100vh;overflow:hidden;}
 #piece-error{position:fixed;inset:auto 1rem 1rem 1rem;z-index:9999;padding:1rem;border:1px solid #fca5a5;background:#450a0a;color:#fee2e2;font:14px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;display:none;}
 canvas{display:block;width:100%;height:100%;}
+/* A-Frame's device-orientation-permission-ui dialog hardcodes a white card
+   and bright accent buttons but never sets its own text color, so it
+   inherited this document's color:#fff above and went invisible
+   (white-on-white). This document has no theme toggle and no --panel-bg/
+   --text-primary variables (unlike the immersive views, which get the same
+   override using those) — literal colors here instead. */
+.a-dialog{background-color:#162a3a !important;border:1px solid rgba(255,255,255,0.15);}
+.a-dialog-text{color:#dde8ef !important;}
+.a-dialog-button{color:#15374a !important;}
 {$aframeCss}
 {$css}
 </style>

@@ -1378,6 +1378,16 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
       deviceControls = new DeviceOrientationControls(state.camera);
       gyroActive = true;
       gyroToggleBtn = createGyroToggleButton();
+      // Tilting the phone to look around is taking control of the camera,
+      // exactly as much as a drag or a key press is — without this,
+      // deviceControls.update() correctly writes the tilted orientation onto
+      // state.camera.quaternion every frame, but animateControls() only ever
+      // renders that when pieceDrivesOwnRender is false or userHasInteracted
+      // is true. Any piece that scripts its own render loop (common) would
+      // silently overwrite gyro's quaternion update with its own scripted
+      // camera before our render call would even run, making tilt appear to
+      // do nothing despite the camera actually updating correctly underneath.
+      userHasInteracted = true;
     }
 
     // Waits for a genuine 'deviceorientation' event carrying real angle data
