@@ -711,9 +711,17 @@ class PiecesAdminController
         }
     }
 
+    // One AI attempt per request, mirroring refineAi()'s stateless per-attempt
+    // design — the client carries attempt_number/previous_raw_response/
+    // last_error/sequence_token and decides whether to send the next attempt.
+    // The previous design ran all ART_PIECE_MAX_ATTEMPTS attempts inside one
+    // blocking request (up to ~600s); since the documented local/production
+    // server handles one request at a time, that left no way for any other
+    // request (Cancel, Back, anything) to be serviced until it finished. A
+    // single attempt here blocks the one worker for at most one AI call.
     public static function generate(): void
     {
-        set_time_limit(660); // 5 attempts × 2 min + buffer
+        set_time_limit(150); // one ~120s AI call + buffer
         admin_check();
         header('Content-Type: application/json; charset=utf-8');
         $startedAt = microtime(true);
@@ -726,9 +734,14 @@ class PiecesAdminController
         }
         $profileId = (int) ($_POST['profile_id'] ?? 0);
         $personaId = (int) ($_POST['persona_id'] ?? 0);
+        $attemptNumber = max(1, (int) ($_POST['attempt_number'] ?? 1));
+        $previousRawResponse = $_POST['previous_raw_response'] !== null && $_POST['previous_raw_response'] !== ''
+            ? (string) ($_POST['previous_raw_response'] ?? '')
+            : null;
+        $lastError = trim((string) ($_POST['last_error'] ?? ''));
+        $sequenceToken = trim((string) ($_POST['sequence_token'] ?? ''));
 
         $actorId = (int) (admin_identity()['id'] ?? 0);
-        self::writeGenerateProgress(null, $engine);
 
         $limit = rate_limit_consume('ai_generate_piece', rate_limit_subject_for_scope('ai_generate_piece', $actorId > 0 ? $actorId : null));
         if (!$limit['allowed']) {
@@ -752,6 +765,12 @@ class PiecesAdminController
             }
             if ($profileId <= 0) {
                 throw new InvalidArgumentException('Please select an active AI profile.');
+            }
+            // Defensive cap — don't trust the client alone to stop at 5; a
+            // tampered or buggy client retrying past the limit would
+            // otherwise keep spending tokens indefinitely.
+            if ($attemptNumber > ART_PIECE_MAX_ATTEMPTS) {
+                throw new InvalidArgumentException("Maximum of " . ART_PIECE_MAX_ATTEMPTS . " attempts already reached.");
             }
 
             $profile = UserAiVendorSettings::find($profileId);
@@ -781,102 +800,27 @@ class PiecesAdminController
 
             $aiClient = new \App\Lib\Ai\AiProviderClient($profile['vendor'], $profile['model'], $profile['endpoint_kind'], $apiKey);
 
-            $attemptCount = 0;
-            $success = false;
-            $htmlCode = '';
-            $cssCode = '';
-            $generatedCode = '';
-            $attemptLogs = [];
-            $previousRawResponse = null;
-            $lastError = '';
+            $systemPrompt = art_piece_generation_system_prompt($generationMode);
+            $userPromptForApi = $attemptNumber === 1
+                ? $basePrompt
+                : art_piece_repair_prompt($engine, $basePrompt, $previousRawResponse, $lastError !== '' ? $lastError : 'Unknown failure');
 
-            while ($attemptCount < ART_PIECE_MAX_ATTEMPTS) {
-                self::ensureWritableSession();
-                $cancelled = !empty($_SESSION['generation_cancelled']);
-                unset($_SESSION['generation_cancelled']);
-                session_write_close();
-                if ($cancelled) {
-                    audit_log_event('ai_request', 'ai_generate_piece', 'cancelled', [
-                        'actor_admin_identity_id' => $actorId > 0 ? $actorId : null,
-                        'http_status' => 400,
-                        'metadata' => [
-                            'profile_id' => $profileId,
-                            'engine' => $engine,
-                            'attempt_count' => $attemptCount,
-                            'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
-                        ],
-                    ]);
-                    http_response_code(400);
-                    echo json_encode(['success' => false, 'error' => 'Cancelled by user']);
-                    exit;
-                }
-
-                $attemptCount++;
-                self::writeGenerateProgress($attemptCount, $engine);
-                $currentAttemptLog = [
-                    'attempt' => $attemptCount,
-                    'vendor' => $profile['vendor'],
-                    'model' => $profile['model'],
-                    'success' => false,
-                    'api_error' => null,
-                    'validation_error' => null,
-                    'raw_response' => null,
-                    'url' => '',
-                    'status' => null,
-                ];
-
-                $systemPrompt = art_piece_generation_system_prompt($generationMode);
-                if ($attemptCount === 1) {
-                    $userPromptForApi = $basePrompt;
-                } else {
-                    $userPromptForApi = art_piece_repair_prompt($engine, $basePrompt, $previousRawResponse, $lastError);
-                }
-
-                $res = $aiClient->generate($systemPrompt, $userPromptForApi);
-                $currentAttemptLog['url'] = $res['url'] ?? '';
-                $currentAttemptLog['status'] = $res['status'] ?? null;
-
-                if (!$res['ok']) {
-                    $lastError = $res['error'] ?? 'API error';
-                    $currentAttemptLog['api_error'] = $lastError;
-                    $attemptLogs[] = $currentAttemptLog;
-                    continue;
-                }
-
-                $rawText = $res['text'];
-                $previousRawResponse = $rawText;
-                $currentAttemptLog['raw_response'] = $rawText;
-
-                // Extract blocks
-                $blocks = art_piece_extract_code_blocks($rawText);
-                $html = $blocks['htmlCode'] ?? '';
-                $css = $blocks['cssCode'] ?? '';
-                $js = $blocks['generatedCode'] ?? '';
-
-                // Preflight
-                try {
-                    art_piece_preflight_document($engine, $html, $css, $js);
-
-                    // Success!
-                    $htmlCode = $html;
-                    $cssCode = $css;
-                    $generatedCode = $js;
-                    $success = true;
-                    $currentAttemptLog['success'] = true;
-                    $attemptLogs[] = $currentAttemptLog;
-                    break;
-                } catch (Throwable $e) {
-                    $lastError = $e->getMessage();
-                    $currentAttemptLog['validation_error'] = $lastError;
-                    $attemptLogs[] = $currentAttemptLog;
-                }
+            $res = $aiClient->generate($systemPrompt, $userPromptForApi);
+            if (!$res['ok']) {
+                throw new RuntimeException($res['error'] ?? 'API error');
             }
 
-            if (!$success) {
-                throw new RuntimeException('All AI generation attempts failed validation.');
-            }
+            $rawText = $res['text'];
+            $previousRawResponse = $rawText;
 
-            // Render preview
+            $blocks = art_piece_extract_code_blocks($rawText);
+            $html = $blocks['htmlCode'] ?? '';
+            $css = $blocks['cssCode'] ?? '';
+            $js = $blocks['generatedCode'] ?? '';
+
+            art_piece_preflight_document($engine, $html, $css, $js);
+
+            // Success!
             audit_log_event('ai_request', 'ai_generate_piece', 'success', [
                 'actor_admin_identity_id' => $actorId > 0 ? $actorId : null,
                 'http_status' => 200,
@@ -887,20 +831,21 @@ class PiecesAdminController
                     'endpoint_kind' => $profile['endpoint_kind'] ?? '',
                     'engine' => $engine,
                     'generation_mode' => $generationMode,
-                    'attempt_count' => $attemptCount,
+                    'attempt_number' => $attemptNumber,
+                    'sequence_token' => $sequenceToken,
                     'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
                 ],
             ]);
             self::storePendingGeneration([
                 'engine' => $engine,
                 'generation_mode' => $generationMode,
-                'html_code' => $htmlCode,
-                'css_code' => $cssCode,
-                'generated_code' => $generatedCode,
+                'html_code' => $html,
+                'css_code' => $css,
+                'generated_code' => $js,
                 'vendor' => $profile['vendor'] ?? '',
                 'model' => $profile['model'] ?? '',
                 'endpoint_kind' => $profile['endpoint_kind'] ?? '',
-                'attempt_count' => $attemptCount,
+                'attempt_count' => $attemptNumber,
                 'prompt' => $prompt,
                 'profile_id' => $profileId,
                 'persona_id' => $personaId,
@@ -914,12 +859,20 @@ class PiecesAdminController
                 'metadata' => [
                     'profile_id' => $profileId,
                     'engine' => $engine,
+                    'attempt_number' => $attemptNumber,
+                    'sequence_token' => $sequenceToken,
                     'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
                     'error' => $e->getMessage(),
                 ],
             ]);
             http_response_code(400);
-            echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+            echo json_encode([
+                'success' => false,
+                'error' => $e->getMessage(),
+                'raw_response' => $previousRawResponse,
+                'attempt_number' => $attemptNumber,
+                'can_retry' => $attemptNumber < ART_PIECE_MAX_ATTEMPTS,
+            ]);
         }
         exit;
     }
@@ -957,33 +910,6 @@ class PiecesAdminController
         $personaId = (int) ($pending['persona_id'] ?? 0);
 
         require dirname(__DIR__, 2) . '/views/admin/pieces/generate-preview.php';
-    }
-
-    public static function generateProgress(): void
-    {
-        admin_check();
-        header('Content-Type: application/json; charset=utf-8');
-
-        $progress = $_SESSION['generate_progress'] ?? [];
-        echo json_encode([
-            'attempt' => isset($progress['attempt']) ? (int) $progress['attempt'] : null,
-            'max_attempts' => isset($progress['max_attempts']) ? (int) $progress['max_attempts'] : ART_PIECE_MAX_ATTEMPTS,
-            'engine' => isset($progress['engine']) ? (string) $progress['engine'] : null,
-            'complete' => !empty($progress['complete']),
-            'updated_at' => isset($progress['updated_at']) ? (int) $progress['updated_at'] : null,
-        ]);
-        exit;
-    }
-
-    public static function generateCancel(): void
-    {
-        admin_check();
-        header('Content-Type: application/json; charset=utf-8');
-        self::ensureWritableSession();
-        $_SESSION['generation_cancelled'] = true;
-        session_write_close();
-        echo json_encode(['success' => true]);
-        exit;
     }
 
     public static function generateSave(): void
@@ -1827,31 +1753,10 @@ class PiecesAdminController
         }
     }
 
-    private static function writeGenerateProgress(?int $attempt, string $engine): void
-    {
-        self::ensureWritableSession();
-        unset($_SESSION['pending_generation']);
-        $_SESSION['generate_progress'] = [
-            'attempt' => $attempt,
-            'max_attempts' => ART_PIECE_MAX_ATTEMPTS,
-            'engine' => $engine,
-            'complete' => false,
-            'updated_at' => time(),
-        ];
-        session_write_close();
-    }
-
     private static function storePendingGeneration(array $pending): void
     {
         self::ensureWritableSession();
         $_SESSION['pending_generation'] = $pending;
-        $_SESSION['generate_progress'] = [
-            'attempt' => (int) ($pending['attempt_count'] ?? 1),
-            'max_attempts' => ART_PIECE_MAX_ATTEMPTS,
-            'engine' => (string) ($pending['engine'] ?? ''),
-            'complete' => true,
-            'updated_at' => time(),
-        ];
         session_write_close();
     }
 

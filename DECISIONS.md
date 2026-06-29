@@ -4728,3 +4728,69 @@ Reporter asked to restore A-Frame cautiously as an experimental generated-piece 
 - Ran `php tests/three-runtime-consistency.php`: 60/60 tests passed, including new checks that A-Frame immersive pieces mount as live scenes and that A-Frame sizing CSS is A-Frame-scoped.
 - `php -l` clean on touched PHP files; `node --check` clean on touched JS files; `git diff --check` clean.
 - Browser-smoked local A-Frame runtime and immersive mounting through the PHP server: the shared runtime created a ready A-Frame canvas and advanced the generated `startFrame` loop; the immersive mount inserted a live `<a-scene>` and canvas into `#immersive-stage`. That smoke surfaced and fixed an A-Frame resize timing bug by only calling `scene.resize()` after A-Frame has attached `scene.renderer`.
+
+---
+
+## 2026-06-29 — C2.js Immersive Interactivity: Click-to-Enter Fullscreen Overlay
+
+### Context
+Verifying the new A-Frame/C2.js generation modes surfaced a gap: C2.js pieces in the immersive/VR gallery (`mountGalleryPiece()`, `immersive-gallery.js`) run in an off-screen canvas (`createImmersiveHost`, positioned `left:-10000px`) and are texture-projected onto a 3D frame mesh via `THREE.CanvasTexture` — no pointer events ever reach the piece's own click/touch/drag listeners. Three.js and A-Frame don't have this problem: Three.js gets `OrbitControls` attached directly to its own camera, and A-Frame's `<a-scene>` is inserted live into the DOM. A C2.js piece's entire point — clicking, dragging — was dead on arrival in the immersive view.
+
+Considered and rejected forwarding pointer events into the 3D scene via raycasting + synthetic dispatch to the off-screen canvas (new, fragile machinery for drag/multi-touch gestures) in favor of reusing the fullscreen interactive render `/pieces/{id}` already provides.
+
+### Implemented
+- **`immersive-gallery.js`**: `mountGalleryPiece()` gained an optional `onInteractiveClick` callback parameter. For `engine === 'c2'`, a pointer-down/up listener on the stage element raycasts against `shell.artMesh` (reusing the existing click-vs-drag threshold pattern from `createFloorClickNavigation`) and invokes the callback on a real click (not a drag-to-orbit).
+- **`immersive/piece.php`**: added a hidden fullscreen overlay (`#c2-interactive-overlay`) containing an `<iframe>` whose `srcdoc` is the exact same `piece_render_document()` output `/pieces/{id}` uses — opened via the new callback, closed via an X button or Escape. A "Click to interact" hint button surfaces the affordance. The off-screen texture-projected version keeps running underneath unchanged; closing the overlay just hides it again.
+- Left Three.js and A-Frame paths untouched — they already have native interactivity in the immersive view.
+- Scoped to the single-piece gallery view (`mountGalleryPiece`/`piece.php`) only — deliberately did not extend this to the multi-frame exhibit wall (`mountExhibitWall`/`collection.php`), which has more complex progressive-loading state and wasn't called out as urgent; flagged as a possible follow-up.
+
+### Verification
+- Ran `php tests/art-piece-generation.php` and `php tests/three-runtime-consistency.php`: both suites passed with no regressions.
+- `php -l` clean on `piece.php`; `node --check` clean on `immersive-gallery.js`.
+- Live verification (clicking a real C2 piece's frame in `/immersive/pieces/{id}`, confirming the overlay opens with working click/touch/drag and closes back to the gallery room) not yet done — pending a live pass.
+
+---
+
+## 2026-06-29 — AI Generation Loop Cancel: Port AI Refine's One-Attempt-Per-Request Pattern
+
+### Context
+The "AI Generation Loop" Cancel button was a plain `<a href="/admin/pieces">` link with no JS handler — clicking it did nothing, and the actual generation work (`PiecesAdminController::generate()`) ran as a single blocking PHP request making up to `ART_PIECE_MAX_ATTEMPTS` (5) sequential AI calls, each up to ~120s, inside one request (`set_time_limit(660)`, up to ~11 minutes worst case).
+
+**First pass (superseded):** added a client `AbortController` plus a server-side `$_SESSION['generation_cancelled']` flag the `while` loop checked between attempts. This surfaced a new symptom: after clicking Cancel, the page's "Back" link also took a very long time to respond. Investigation confirmed why: the documented local dev server (`php -S`, README.md) handles exactly one HTTP request at a time. While `generate()` is blocked on a ~120s AI call, the server can't process *any* other request — not the Cancel POST, not Back — until the in-flight request finishes. A flag-based cancel fundamentally requires a second concurrent request to reach the server while the first is still running, which is structurally impossible with one worker. Confirmed empirically with a temporary sleep-test script: two parallel requests took 10s (fully serialized) under default `php -S`, vs. 5s (concurrent) with `PHP_CLI_SERVER_WORKERS=2`.
+
+The user ruled out leaning on server concurrency as the fix — Hostinger production risk of additional PHP workers exhausting MySQL connections (the user explicitly wants production capped at 2 PHP workers at a time, well under their plan's 100-worker ceiling, to avoid past availability incidents) — and pointed out this exact problem was already solved correctly for AI Refine: `refineAi()`/`form.php`'s `performRefineAttempt()`/`handleRefineAttemptFailure()` do one attempt per HTTP request, fully stateless server-side (the client carries `attempt_number`/`previous_raw_response`/`last_error`/`sequence_token`), with a manual "Attempt N of 5 failed — Try Again / Give Up" dialog instead of a server-side auto-loop. Piece generation had simply never been brought in line with it.
+
+### Implemented
+- **`PiecesAdminController.php`**: `generate()` rewritten to perform exactly one AI attempt per request, mirroring `refineAi()`. Reads `attempt_number`/`previous_raw_response`/`last_error`/`sequence_token` from the request; defensively caps `attempt_number` at `ART_PIECE_MAX_ATTEMPTS` server-side; on failure returns `{success:false, error, raw_response, attempt_number, can_retry}` (same shape `refineAi()` already returns). `set_time_limit(150)` (one attempt, not 660s for five). Removed `generateCancel()`, `generateProgress()`, and `writeGenerateProgress()` — none needed once generation is stateless per attempt.
+- **`router.php`**: removed the now-unused `/admin/pieces/generate/cancel` and `/admin/pieces/generate/progress` routes.
+- **`generate-form.php`**: added a "Attempt N of 5 failed" dialog mirroring `form.php`'s AI Refine retry dialog (same 30s cooldown pattern). Rewrote the inline JS (`performGenerateAttempt`/`handleGenerateAttemptFailure`) to drive attempts one at a time client-side; dropped the progress-polling loop entirely (elapsed time is now computed client-side from `ctx.attemptNumber`, same as refine). Cancel now just aborts the in-flight single attempt via `AbortController` — no server round-trip needed, since there's no multi-attempt server-side loop left to interrupt.
+- **`docs/api.md`**: rewrote the "Admin Piece Generation Routes" section to document the new per-attempt request/response contract and removed references to the deleted progress-polling endpoint.
+- Worst case any single request now occupies one PHP worker for ~120s (one AI call) instead of up to ~600s+ (five chained), and the feature's real concurrency footprint is exactly 2 (one in-flight attempt + one Back/Cancel/anything-else request) — comfortably within the user's explicit 2-worker target.
+
+### Verification
+- Ran `php tests/art-piece-generation.php` and `php tests/three-runtime-consistency.php`: both suites passed with no regressions (the repair-prompt/preflight helpers `generate()` calls were unchanged).
+- `php -l` clean on all touched PHP files; `node --check` clean on the embedded JS in `generate-form.php`.
+- Empirically confirmed the underlying concurrency theory with a temporary, non-persisted sleep-test script (created and removed within the session, no code changes): default `php -S` serializes two concurrent requests (10s for two 5s requests); `PHP_CLI_SERVER_WORKERS=2` runs them concurrently (5s) — confirming the single-attempt-per-request design (needing only 2 concurrent slots) resolves the blocking symptom without requiring more than the user's stated 2-worker target.
+- Live verification of the actual admin generation flow (start a generation, click Cancel mid-attempt, confirm Back/navigation responds immediately) not yet done — pending a live pass.
+
+---
+
+## 2026-06-29 — Fix "Latest Piece" Ordering Corrupted by an Unrelated UPDATE's Side Effect
+
+### Context
+The Portfolio page's "Browse all art pieces" preview (`PortfolioController::gallery()` → `PlatformArtPiece::latestActive(3)`) was showing different pieces than the main Art Pieces listing's default order — not just "off by one," but missing the actual newest piece entirely.
+
+Root cause, confirmed by reading the schema and querying live data (read-only, via a temporary script): `art_pieces.updated_at` is `DATETIME(3) ... ON UPDATE CURRENT_TIMESTAMP(3)` (migrations/2026-06-14-platform-assimilation.sql) — MySQL auto-touches this column on *any* UPDATE to a row, even one that never mentions `updated_at`. `PlatformArtPiece::create()` gives every new piece `sort_order = 0` by first running `UPDATE art_pieces SET sort_order = sort_order + 1 WHERE deleted_at IS NULL` — a single statement touching every other active piece's row. Combined, this silently bumped `updated_at` to "now" on every existing piece every time any new piece was created. `latestActive()`/`paginateLatest()`/`buildSortClause()`'s `'newest'` case all ordered by `GREATEST(created_at, updated_at) DESC`, which this made meaningless: a live query showed the genuinely newest piece (id 90, `sort_order=0`, never touched since creation) completely absent from `latestActive()`'s top 8, displaced by seven older pieces whose `updated_at` got bumped 0.147s after piece 90's own creation, as a side effect of that creation's sort_order shift.
+
+Confirmed via grep that only `PlatformArtPiece::create()` has this shift-everyone's-sort_order-in-one-UPDATE pattern among models with a `latestActive()` (`Collection`/`Exhibit`/`PlatformCollection` all insert with a given `sort_order` directly, no bulk shift) — the bug is isolated to art pieces.
+
+### Implemented
+- **`PlatformArtPiece.php`**: the sort_order-shift statement in `create()` now includes `updated_at = updated_at` — an explicit self-assignment that suppresses MySQL's `ON UPDATE CURRENT_TIMESTAMP` for that statement, so creating a piece no longer touches any other piece's `updated_at`.
+- **`PlatformArtPiece.php`**: `latestActive()`, `paginateLatest()`, and `buildSortClause()`'s `'newest'`/default case now order by `ap.created_at` alone instead of `GREATEST(ap.created_at, ap.updated_at)`. This fixes the *existing* corrupted data immediately with no migration/backfill needed — `created_at` was never touched by the bug, only `updated_at` was, so switching the sort column sidesteps the bad historical data entirely. A backfill was considered and rejected: distinguishing genuine past edits from incidental sort_order-shift pollution in already-written `updated_at` values isn't reliably possible after the fact.
+- **`tests/art-piece-ordering.php`** (new): source-text regression assertions, matching this codebase's existing no-DB-dependency test convention (`art-piece-generation.php`, `three-runtime-consistency.php`) — guards both the `updated_at = updated_at` suppression and the `GREATEST` removal against silent regression.
+
+### Verification
+- Verified live (read-only, then a real `create()` call inside a rolled-back transaction — no data persisted): before the fix, `latestActive()`'s `GREATEST`-ordered top 8 omitted the genuinely newest piece entirely; after the fix, ordering by `created_at` puts it first, matching the main listing. Confirmed `create()` no longer bumps other pieces' `updated_at` by diffing three existing rows' `updated_at` before/after a test creation, then rolling back.
+- Ran `php tests/art-piece-ordering.php`: 4/4 new tests passed.
+- Ran `php tests/art-piece-generation.php`, `php tests/three-runtime-consistency.php`, and `php tests/ai-provider-client.php`: all passed, no regressions.
+- `php -l` clean on `PlatformArtPiece.php` and the new test file.

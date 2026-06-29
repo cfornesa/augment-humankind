@@ -90,7 +90,7 @@ class PlatformArtPiece
              LEFT JOIN users u ON u.id = ap.owner_user_id
              WHERE ap.deleted_at IS NULL
                AND ap.status = 'active'
-             ORDER BY GREATEST(ap.created_at, ap.updated_at) DESC, ap.id DESC
+             ORDER BY ap.created_at DESC, ap.id DESC
              LIMIT ?"
         );
         $stmt->bindValue(1, max(1, $limit), PDO::PARAM_INT);
@@ -110,7 +110,7 @@ class PlatformArtPiece
              LEFT JOIN users u ON u.id = ap.owner_user_id
              WHERE ap.deleted_at IS NULL
                AND ap.status = 'active'
-             ORDER BY GREATEST(ap.created_at, ap.updated_at) DESC, ap.id DESC
+             ORDER BY ap.created_at DESC, ap.id DESC
              LIMIT ?, ?"
         );
         $stmt->bindValue(1, max(0, $offset), PDO::PARAM_INT);
@@ -198,7 +198,7 @@ class PlatformArtPiece
     {
         $dir = strtoupper($dir) === 'ASC' ? 'ASC' : 'DESC';
         $col = match ($sort) {
-            'newest'     => 'GREATEST(ap.created_at, ap.updated_at)',
+            'newest'     => 'ap.created_at',
             'title'      => 'ap.title',
             'engine'     => 'ap.engine',
             'status'     => 'ap.status',
@@ -206,7 +206,7 @@ class PlatformArtPiece
             'updated'    => 'ap.updated_at',
             'sort_order' => 'ap.sort_order',
             'id'         => 'ap.id',
-            default      => 'GREATEST(ap.created_at, ap.updated_at)',
+            default      => 'ap.created_at',
         };
         $idDir = in_array($sort, ['sort_order', 'id'], true) ? 'ASC' : $dir;
         return "{$col} {$dir}, ap.id {$idDir}";
@@ -241,7 +241,14 @@ class PlatformArtPiece
         if ($sortOrder === null) {
             // Shift everyone else down a slot so the new piece can take
             // position 0 — keeps sort_order always in [0, N-1], never negative.
-            db()->exec('UPDATE art_pieces SET sort_order = sort_order + 1 WHERE deleted_at IS NULL');
+            // updated_at = updated_at (a no-op self-assignment) suppresses
+            // updated_at's ON UPDATE CURRENT_TIMESTAMP for this statement —
+            // without it, every other active piece's updated_at silently
+            // jumps to "now" on every single new piece created, which
+            // corrupted GREATEST(created_at, updated_at)-based "newest"
+            // ordering elsewhere (confirmed live: the actual newest piece
+            // dropped out of latestActive()'s top 8 entirely).
+            db()->exec('UPDATE art_pieces SET sort_order = sort_order + 1, updated_at = updated_at WHERE deleted_at IS NULL');
             $sortOrder = 0;
         }
 

@@ -251,22 +251,28 @@ Compatibility embed and immersive routes return content rather than redirects:
 
 ## Admin Piece Generation Routes
 
-AI piece generation is an admin-only workflow. The browser submits generation
-requests with `fetch()` so the page can keep showing elapsed time and poll
-attempt progress while the server-side validation/repair loop is running.
+AI piece generation is an admin-only workflow. `POST /admin/pieces/generate`
+performs exactly **one AI attempt per request** — the same stateless,
+client-driven retry design `POST /admin/pieces/refine-ai` already used. The
+server never loops through multiple attempts inside one request; the browser
+decides whether to spend another attempt and sends a fresh request for it.
+This keeps any single request's worst-case duration to one AI call (rather
+than up to `ART_PIECE_MAX_ATTEMPTS` chained calls in one request), which
+matters because the documented local/production server model handles a
+limited number of requests at a time — a long multi-attempt request
+previously blocked unrelated navigation (e.g. clicking "Back") until it
+finished.
 
 - `GET /admin/pieces/generate` — renders the generation form.
 - `POST /admin/pieces/generate` — accepts `prompt`, `generation_mode`,
-  `profile_id`, and optional `persona_id`; runs the configured AI generation
-  loop; returns JSON. Supported generation modes are `p5`, `c2`,
-  `c2_interactive`, `three`, `svg`, and experimental `aframe`. The
-  `c2_interactive` mode persists generated pieces as `engine = 'c2'`; it is
-  a prompt/validation mode for click, touch, pointer, and drag behavior, not
-  a durable engine value. The experimental `aframe` mode persists as
-  `engine = 'aframe'` only after the generated draft passes static preflight
-  and the preview/capture save gate.
-- `GET /admin/pieces/generate/progress` — returns the current session's
-  generation attempt state as JSON.
+  `profile_id`, optional `persona_id`, and the per-attempt fields described
+  below; performs a single AI generation attempt; returns JSON. Supported
+  generation modes are `p5`, `c2`, `c2_interactive`, `three`, `svg`, and
+  experimental `aframe`. The `c2_interactive` mode persists generated pieces
+  as `engine = 'c2'`; it is a prompt/validation mode for click, touch,
+  pointer, and drag behavior, not a durable engine value. The experimental
+  `aframe` mode persists as `engine = 'aframe'` only after the generated
+  draft passes static preflight and the preview/capture save gate.
 - `GET /admin/pieces/generate/preview` — renders the one-time pending
   generation preview saved in the admin session; redirects back to
   `/admin/pieces/generate` if no pending preview exists.
@@ -287,6 +293,26 @@ piece pages, embeds, admin previews, thumbnail capture, and
 `/immersive/pieces/[id]` all recognize `engine = 'aframe'`. The immersive
 piece route mounts A-Frame pieces as a live `<a-scene>` directly inside the
 immersive stage, rather than projecting them as a framed gallery texture.
+C2.js pieces in the immersive gallery/exhibit wall are texture-projected
+(no native pointer events reach the off-screen canvas); clicking the framed
+piece opens a fullscreen interactive overlay — the same on-screen render
+document `/pieces/[id]` uses — for full click/touch/drag, closable via an
+X button or Escape.
+
+`POST /admin/pieces/generate` request fields (in addition to `prompt`,
+`generation_mode`, `profile_id`, `persona_id`):
+
+- `attempt_number` — 1 for a fresh generation; the client increments this on
+  each retry. Defensively capped server-side at `ART_PIECE_MAX_ATTEMPTS`
+  regardless of what the client sends.
+- `previous_raw_response` — the prior attempt's raw AI response, echoed back
+  by the server on failure; omitted/empty on attempt 1. Used to build the
+  repair prompt for attempt 2+.
+- `last_error` — the prior attempt's error message, same role as
+  `previous_raw_response`.
+- `sequence_token` — a client-generated UUID (or timestamp-based fallback)
+  identifying one logical generation sequence across its retries, for audit
+  log correlation. Not validated server-side.
 
 `POST /admin/pieces/generate` success response:
 
@@ -294,20 +320,26 @@ immersive stage, rather than projecting them as a framed gallery texture.
 {"success": true}
 ```
 
-Failure responses use:
+Failure responses:
 
 ```json
-{"success": false, "error": "Human-readable error"}
+{
+  "success": false,
+  "error": "Human-readable error",
+  "raw_response": "...or null",
+  "attempt_number": 1,
+  "can_retry": true
+}
 ```
 
-`GET /admin/pieces/generate/progress` returns:
-
-```json
-{"attempt": 2, "max_attempts": 5, "engine": "three"}
-```
-
-The progress route may return `null` for `attempt` when no generation is
-currently recorded for the admin session.
+`can_retry` is `false` once `attempt_number` has reached
+`ART_PIECE_MAX_ATTEMPTS`. The generation form shows an "Attempt N of 5
+failed" dialog on any failure response, offering "Try Again" (after a 30s
+cooldown, sending `attempt_number + 1` with the echoed `raw_response`/`error`
+as repair context) or "Give Up" — mirroring `POST /admin/pieces/refine-ai`'s
+existing retry dialog. There is no separate cancel endpoint: aborting the
+in-flight attempt is purely client-side (`AbortController`), since there's
+no multi-attempt server-side loop left to interrupt.
 
 ## Platform Compatibility API Routes
 
@@ -778,12 +810,14 @@ specific "Three.js failed to load from the CDN" error via `sketch-status` if
 the imports haven't resolved by then — so a genuine network stall is now
 distinguishable from an actually-broken piece.
 
-`GET /admin/pieces/generate` renders the interface for AI piece generation, letting the admin select the generation mode, prompt, vendor settings, and model. `POST /admin/pieces/generate` triggers the generation process (running a validation and repair loop checking window.sketch constraints and output structure) and returns a preview sandbox. `generation_mode='c2_interactive'` selects a stricter C2 prompt for click/touch/drag interaction but still stores the resulting piece as `engine='c2'`; `generation_mode='aframe'` stores `engine='aframe'` only after the experimental A-Frame draft passes static preflight and reaches the preview save step. `POST /admin/pieces/generate/save` saves the generated metadata and code as a new piece with its initial version, returning JSON — `{"success":true,"redirect":"/admin/pieces"}` on success, or `{"success":false,"error":"..."}` with HTTP 400 on failure (e.g. a missing title) — rather than a server-side redirect. A-Frame saves additionally require the preview page's browser-side thumbnail capture to complete, using that nonblank capture as the sandbox render check before the durable `aframe` engine value is persisted. The preview page's Save form submits via `fetch()` with a one-time automatic retry on a network-level failure specifically (the connection itself dying before the server ever received the request — e.g. a stale keep-alive connection reused after a gap spent reviewing the preview — not a resolved server error, which is shown directly without retrying), then navigates via the returned `redirect` on success. This endpoint has exactly one caller (`generate-preview.php`'s form).
+`GET /admin/pieces/generate` renders the interface for AI piece generation, letting the admin select the generation mode, prompt, vendor settings, and model. `POST /admin/pieces/generate` performs exactly one AI generation attempt (checking `window.sketch` constraints and output structure via the same preflight generation/refine share) and, on success, stores a preview sandbox; on failure it returns the attempt's error/raw response so the client can decide whether to spend another attempt — see "Admin Piece Generation Routes" above for the full per-attempt request/response contract, which mirrors `POST /admin/pieces/refine-ai`'s. `generation_mode='c2_interactive'` selects a stricter C2 prompt for click/touch/drag interaction but still stores the resulting piece as `engine='c2'`; `generation_mode='aframe'` stores `engine='aframe'` only after the experimental A-Frame draft passes static preflight and reaches the preview save step. `POST /admin/pieces/generate/save` saves the generated metadata and code as a new piece with its initial version, returning JSON — `{"success":true,"redirect":"/admin/pieces"}` on success, or `{"success":false,"error":"..."}` with HTTP 400 on failure (e.g. a missing title) — rather than a server-side redirect. A-Frame saves additionally require the preview page's browser-side thumbnail capture to complete, using that nonblank capture as the sandbox render check before the durable `aframe` engine value is persisted. The preview page's Save form submits via `fetch()` with a one-time automatic retry on a network-level failure specifically (the connection itself dying before the server ever received the request — e.g. a stale keep-alive connection reused after a gap spent reviewing the preview — not a resolved server error, which is shown directly without retrying), then navigates via the returned `redirect` on success. This endpoint has exactly one caller (`generate-preview.php`'s form).
 
 `POST /admin/pieces/refine-ai` accepts a JSON body with `prompt` (the refinement instruction), `engine`, `profile_id`, `persona_id` (optional), `html_code`, `css_code`, `generated_code`, and `original_prompt` (optional — the piece's own creative prompt). Unlike generation, refine never asks the AI for a complete rewritten file — a full rewrite gives a model no structural reason to leave anything untouched, and in practice none reliably do. Instead the AI must respond with a `PLAN:` section naming the specific existing elements it intends to touch, followed by one or more `PATCH <html|css|js>:` blocks, each an exact `<<<<<<< SEARCH` / `=======` / `>>>>>>> REPLACE` find-and-replace against the *current* code (see `art_piece_refine_system_prompt()`, which includes worked examples for both an HTML and a JS patch). `art_piece_extract_refine_patches()` parses these — it also accepts `PATCH javascript:` as a synonym for `PATCH js:` and normalizes it, since models reliably write the former despite being asked for the latter (this silently discarded every otherwise-valid patch on Three.js pieces specifically, since their refinements are almost always JS-only and so hit the mismatch on every attempt — found by reproducing a real failing piece's refine request directly against the same code path outside the browser); `art_piece_apply_refine_patches()` applies each one against the original `html_code`/`css_code`/`generated_code` sent in the request via `art_piece_find_patch_match()` — an exact substring match first, falling back to a whitespace-tolerant match (tokenizes into word-runs and individual punctuation characters, discarding whitespace, then re-joins with `\s*` between every token) if the exact match finds nothing. This tolerates the kind of incidental reformatting LLMs are known to introduce when transcribing code verbatim (adding/dropping a space around `:`/`{`/`,`, re-indenting) without weakening the guarantee: every actual token in `SEARCH` must still match exactly, only whitespace *between* tokens is flexible, so this can't match different content, only differently-formatted identical content. A file with no `PATCH` block for it is carried forward completely unchanged either way. This is a structural guarantee, not a prompt request: content outside a matched `SEARCH` region is never regenerated, so it cannot drift. A patch whose `SEARCH` text doesn't match the current code exactly once (not found, or ambiguous) by either method fails validation and feeds into the same retry loop generation uses, via a refine-specific repair prompt (`art_piece_refine_repair_prompt()`) that reminds the AI of the exact format — and, critically, re-includes the current HTML/CSS/JS on every retry attempt (not just the first), so a failed attempt can actually re-read the real source and correct itself instead of guessing blind from memory of its own previous wrong response — rather than reusing generation's "animations must be infinite" framing. When the model ignores the PLAN+PATCH protocol entirely and responds with full-file fenced ` ```css `/` ```javascript ` blocks and no `PATCH` marker at all (confirmed in production audit logs), the zero-patches branch now throws a distinct "AI ignored the required PATCH format and returned full rewritten files in fenced code blocks instead of a diff" message rather than the generic "no valid PATCH blocks" one — that specific wording flows straight into the next repair prompt's "your previous attempt failed" line, naming the actual mistake instead of repeating the same generic instruction that already failed to prevent it once. The resulting code still runs through the same `art_piece_preflight_code()` engine/security checks as generation. On success it returns `{success: true, html_code, css_code, generated_code, plan, profile_id, persona_id}` — `plan` is the AI's stated PLAN text, shown to the admin alongside the diff for the same before-acting visibility a plan gives; `profile_id`/`persona_id` are echoed back so the client can carry them into the version created when the accepted code is saved. On failure it returns `{success: false, error: "..."}` with HTTP 500. The endpoint is used by the "AI Refine" tab in the piece editor, which also renders a line diff of what actually changed, and the AI's PLAN text, before the admin decides to accept, edit, or reject. Accepting calls `POST /admin/pieces/[id]/refine-save` immediately (see below) rather than requiring a separate "Save Changes" submit, then — on a successful save that actually changed something — automatically re-captures and uploads a new thumbnail via the same client-side `performCapture()` path the Edit page's manual "Generate Thumbnail" button uses, so an accepted refinement's thumbnail no longer goes stale until someone clicks that button by hand.
 
 `POST /admin/pieces/generate` and `POST /admin/pieces/refine-ai` are both
-rate-limited. A throttled request returns HTTP `429`.
+rate-limited, consumed on every attempt request (not once per logical
+sequence) — same precedent `refine-ai` already established. A throttled
+request returns HTTP `429`.
 
 `refine-ai`'s call into `AiProviderClient::generate()` passes
 `suppressPlanningPreamble: false` and `maxTokensOverride: 24576` — both

@@ -121,12 +121,12 @@ ob_start();
             <div class="field">
                 <label for="prompt">Creative Prompt</label>
                 <textarea id="prompt" name="prompt" rows="6" placeholder="Describe the visual effects, interaction, behavior, colors, and layout of the piece. E.g. 'A cascading waterfall of particles that bounce off obstacles when the mouse is dragged.'" required><?= e($prompt ?? '') ?></textarea>
-                <small>The generation engine will trigger a validation/retry repair loop up to <?= (int) ART_PIECE_MAX_ATTEMPTS ?> times to correct syntax, namespace conflicts, or forbidden API behaviors.</small>
+                <small>If an attempt fails syntax, namespace, or forbidden-API validation, you'll be asked whether to spend another attempt (up to <?= (int) ART_PIECE_MAX_ATTEMPTS ?> total) with the AI's own previous response as repair context.</small>
             </div>
 
             <div class="form-actions" style="margin-top: 2rem;">
                 <div id="generate-status" class="form-status" role="status" aria-live="polite" style="display:none; width:100%; margin-bottom:0.75rem;"></div>
-                <button type="button" class="admin-btn" id="generate-submit-btn">Start AI Generation Loop</button>
+                <button type="button" class="admin-btn" id="generate-submit-btn">Start AI Generation</button>
                 <button type="button" class="admin-btn admin-btn-ghost" id="generate-cancel-btn">Cancel</button>
             </div>
         </form>
@@ -149,6 +149,22 @@ ob_start();
             </div>
         </dialog>
 
+        <!-- Attempt-failed dialog: mirrors form.php's AI Refine retry dialog
+             (#refine-attempt-failed-dialog) — one AI attempt per request,
+             user decides whether to spend another. -->
+        <dialog id="generate-attempt-failed-dialog" class="inline-create-dialog">
+            <div class="dialog-header">
+                <h2 id="generate-attempt-failed-title">Attempt 1 of <?= (int) ART_PIECE_MAX_ATTEMPTS ?> failed</h2>
+            </div>
+            <div class="dialog-body">
+                <p id="generate-attempt-failed-message"></p>
+            </div>
+            <div class="dialog-footer">
+                <button type="button" class="admin-btn admin-btn-ghost" id="generate-attempt-give-up-btn">Give Up</button>
+                <button type="button" class="admin-btn" id="generate-attempt-try-again-btn">Try Again</button>
+            </div>
+        </dialog>
+
         <script>
         (function () {
             var profileSel = document.getElementById('profile_id');
@@ -159,8 +175,6 @@ ob_start();
             var cancelBtn  = document.getElementById('generate-cancel-btn');
             var statusEl   = document.getElementById('generate-status');
             var dialog     = document.getElementById('persona-dialog');
-            var activeAbortController = null;
-            var activeStopIntervals = null;
 
             function checkCodeCap() {
                 var opt = profileSel.options[profileSel.selectedIndex];
@@ -211,6 +225,11 @@ ob_start();
                     .catch(function(){ errEl.textContent = 'Request failed. Please try again.'; errEl.hidden = false; });
             });
 
+            var ART_PIECE_MAX_ATTEMPTS = <?= (int) ART_PIECE_MAX_ATTEMPTS ?>;
+            var GENERATE_RETRY_COOLDOWN_SECONDS = 30;
+            var isGenerateRequestInFlight = false;
+            var activeAbortController = null;
+
             function formatElapsed(ms) {
                 var totalSeconds = Math.floor(ms / 1000);
                 var minutes = Math.floor(totalSeconds / 60);
@@ -225,110 +244,156 @@ ob_start();
                 statusEl.textContent = message;
             }
 
-            function parseJsonResponse(resp) {
-                return resp.json().then(function (data) {
-                    if (!resp.ok || !data.success) {
-                        throw new Error(data.error || 'Generation failed.');
-                    }
-                    return data;
-                });
-            }
-
-            btn.addEventListener('click', function () {
-                if (!form || !btn) return;
-                if (!form.reportValidity()) return;
-
-                btn.disabled = true;
+            // One AI attempt per request, mirroring form.php's
+            // performRefineAttempt()/handleRefineAttemptFailure() — the
+            // client carries attempt number/previous response/last error
+            // and decides whether to spend another attempt, instead of the
+            // server looping through all attempts inside one long request.
+            function performGenerateAttempt(ctx) {
+                isGenerateRequestInFlight = true;
                 var startedAt = Date.now();
-                var currentAttempt = null;
-                var maxAttempts = <?= (int) ART_PIECE_MAX_ATTEMPTS ?>;
-                var timerInterval = null;
-                var progressInterval = null;
 
                 function renderRunningStatus() {
                     var elapsed = formatElapsed(Date.now() - startedAt);
-                    if (currentAttempt) {
-                        setGenerateStatus('Attempt ' + currentAttempt + ' of ' + maxAttempts + ' - ' + elapsed + ' elapsed');
-                    } else {
-                        setGenerateStatus('Starting generation - ' + elapsed + ' elapsed');
-                    }
+                    setGenerateStatus('Attempt ' + ctx.attemptNumber + ' of ' + ART_PIECE_MAX_ATTEMPTS + ' - ' + elapsed + ' elapsed');
                 }
-
-                function stopIntervals() {
-                    if (timerInterval) {
-                        clearInterval(timerInterval);
-                        timerInterval = null;
-                    }
-                    if (progressInterval) {
-                        clearInterval(progressInterval);
-                        progressInterval = null;
-                    }
-                }
-
-                function pollProgress() {
-                    fetch('/admin/pieces/generate/progress', {
-                        headers: {'Accept': 'application/json'}
-                    }).then(function (resp) {
-                        if (!resp.ok) return null;
-                        return resp.json();
-                    }).then(function (data) {
-                        if (!data) return;
-                        if (data.attempt) currentAttempt = data.attempt;
-                        if (data.max_attempts) maxAttempts = data.max_attempts;
-                        renderRunningStatus();
-                    }).catch(function () {
-                        // The generation request itself is authoritative.
-                    });
-                }
-
                 renderRunningStatus();
-                timerInterval = setInterval(renderRunningStatus, 1000);
-                progressInterval = setInterval(pollProgress, 1500);
-                pollProgress();
+                var timerInterval = setInterval(renderRunningStatus, 1000);
+
+                function stopAndReenable() {
+                    clearInterval(timerInterval);
+                    isGenerateRequestInFlight = false;
+                    activeAbortController = null;
+                    btn.disabled = false;
+                }
+
+                var fd = new FormData(form);
+                fd.set('attempt_number', String(ctx.attemptNumber));
+                fd.set('previous_raw_response', ctx.previousRawResponse || '');
+                fd.set('last_error', ctx.lastError || '');
+                fd.set('sequence_token', ctx.sequenceToken);
 
                 var abortController = new AbortController();
                 activeAbortController = abortController;
-                activeStopIntervals = stopIntervals;
 
                 fetch(form.dataset.generateUrl || '/admin/pieces/generate', {
                     method: 'POST',
-                    body: new FormData(form),
+                    body: fd,
                     headers: {'Accept': 'application/json'},
                     signal: abortController.signal
-                }).then(parseJsonResponse).then(function () {
-                    stopIntervals();
-                    activeAbortController = null;
-                    activeStopIntervals = null;
+                }).then(function (resp) {
+                    return resp.json();
+                }).then(function (data) {
+                    if (!data.success) {
+                        stopAndReenable();
+                        handleGenerateAttemptFailure(ctx, data);
+                        return;
+                    }
+                    stopAndReenable();
                     setGenerateStatus('Generation complete. Opening preview...');
                     window.location.href = '/admin/pieces/generate/preview';
                 }).catch(function (err) {
-                    stopIntervals();
-                    activeAbortController = null;
-                    activeStopIntervals = null;
+                    stopAndReenable();
                     if (err && err.name === 'AbortError') {
                         setGenerateStatus('Generation cancelled.', true);
                     } else {
                         setGenerateStatus(err.message || 'Generation failed.', true);
                     }
-                    btn.disabled = false;
+                });
+            }
+
+            function handleGenerateAttemptFailure(ctx, data) {
+                var dialog = document.getElementById('generate-attempt-failed-dialog');
+                if (!dialog) {
+                    setGenerateStatus(data.error || 'Generation failed.', true);
+                    return;
+                }
+
+                var titleEl = document.getElementById('generate-attempt-failed-title');
+                var messageEl = document.getElementById('generate-attempt-failed-message');
+                var tryAgainBtn = document.getElementById('generate-attempt-try-again-btn');
+                var giveUpBtn = document.getElementById('generate-attempt-give-up-btn');
+
+                var attemptNumber = data.attempt_number || ctx.attemptNumber;
+                var canRetry = data.can_retry !== false && attemptNumber < ART_PIECE_MAX_ATTEMPTS;
+
+                titleEl.textContent = 'Attempt ' + attemptNumber + ' of ' + ART_PIECE_MAX_ATTEMPTS + ' failed';
+                messageEl.textContent = data.error || 'Unknown error';
+                tryAgainBtn.hidden = !canRetry;
+
+                // Clone-and-replace to drop any listener from a previous
+                // failed attempt in this same sequence.
+                var newTryAgainBtn = tryAgainBtn.cloneNode(true);
+                tryAgainBtn.parentNode.replaceChild(newTryAgainBtn, tryAgainBtn);
+                var newGiveUpBtn = giveUpBtn.cloneNode(true);
+                giveUpBtn.parentNode.replaceChild(newGiveUpBtn, giveUpBtn);
+
+                var cooldownInterval = null;
+
+                newGiveUpBtn.addEventListener('click', function () {
+                    dialog.close();
+                    if (cooldownInterval) clearInterval(cooldownInterval);
+                    setGenerateStatus('Generation stopped after attempt ' + attemptNumber + '.', true);
+                });
+
+                if (canRetry) {
+                    newTryAgainBtn.addEventListener('click', function () {
+                        if (isGenerateRequestInFlight) return;
+                        dialog.close();
+                        if (cooldownInterval) clearInterval(cooldownInterval);
+                        btn.disabled = true;
+                        performGenerateAttempt({
+                            sequenceToken: ctx.sequenceToken,
+                            attemptNumber: attemptNumber + 1,
+                            previousRawResponse: data.raw_response || null,
+                            lastError: data.error || null
+                        });
+                    });
+
+                    var cooldownRemaining = GENERATE_RETRY_COOLDOWN_SECONDS;
+                    newTryAgainBtn.disabled = true;
+                    newTryAgainBtn.textContent = 'Try Again (' + cooldownRemaining + 's)';
+                    cooldownInterval = setInterval(function () {
+                        cooldownRemaining--;
+                        if (cooldownRemaining <= 0) {
+                            clearInterval(cooldownInterval);
+                            newTryAgainBtn.disabled = false;
+                            newTryAgainBtn.textContent = 'Try Again';
+                        } else {
+                            newTryAgainBtn.textContent = 'Try Again (' + cooldownRemaining + 's)';
+                        }
+                    }, 1000);
+                }
+
+                dialog.showModal();
+            }
+
+            btn.addEventListener('click', function () {
+                if (!form || !btn) return;
+                if (!form.reportValidity()) return;
+                if (isGenerateRequestInFlight) return;
+
+                btn.disabled = true;
+                var sequenceToken = (window.crypto && window.crypto.randomUUID)
+                    ? window.crypto.randomUUID()
+                    : ('seq-' + Date.now() + '-' + Math.random().toString(36).slice(2));
+
+                performGenerateAttempt({
+                    sequenceToken: sequenceToken,
+                    attemptNumber: 1,
+                    previousRawResponse: null,
+                    lastError: null
                 });
             });
 
             cancelBtn.addEventListener('click', function () {
+                // No server round-trip needed: a single attempt is now at
+                // most one AI call, and there's no multi-attempt loop on
+                // the server left to interrupt. Aborting the in-flight
+                // fetch just stops the UI from waiting on it.
                 if (activeAbortController) {
                     activeAbortController.abort();
                 }
-                if (activeStopIntervals) {
-                    activeStopIntervals();
-                }
-                activeAbortController = null;
-                activeStopIntervals = null;
-                fetch('/admin/pieces/generate/cancel', {
-                    method: 'POST',
-                    headers: {'Accept': 'application/json'}
-                }).catch(function () {
-                    // Best-effort; the client-side abort already stopped the wait.
-                });
                 window.location.href = '/admin/pieces';
             });
         })();
