@@ -1438,7 +1438,7 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
 }
 
 // Phase 2 Entry Point: mountGalleryPiece
-export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, title, sourceUrl, prompt, description, onError = console.error) {
+export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, title, sourceUrl, prompt, description, onError = console.error, onInteractiveClick = null) {
   const runtimeSize = { width: 1280, height: 720 };
   const presentationSurface = engine === "p5" ? createPresentationSurface(1200, 900, 72) : null;
   const shell = createMountedGalleryShell(
@@ -1677,6 +1677,34 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
   const floorNav = createFloorClickNavigation(shell.camera, shell.controls, shell.floor, stageEl);
   const keyNav = createKeyboardNavigation(shell.controls, { container: stageEl });
 
+  // C2.js pieces run in an off-screen canvas (createImmersiveHost) and are
+  // texture-projected onto shell.artMesh, so no pointer events ever reach
+  // the piece's own click/touch/drag listeners. Rather than forwarding
+  // synthetic pointer events through a raycast (fragile for drag gestures),
+  // a click on the frame opens the same fullscreen interactive render used
+  // by the non-immersive /pieces/{id} view, supplied via onInteractiveClick.
+  let disposeInteractiveClick = null;
+  if (engine === "c2" && typeof onInteractiveClick === "function") {
+    const clickRaycaster = new THREE.Raycaster();
+    let downX = 0, downY = 0;
+    const onPointerDown = (e) => { downX = e.clientX; downY = e.clientY; };
+    const onPointerUp = (e) => {
+      if (Math.hypot(e.clientX - downX, e.clientY - downY) >= 6) return;
+      const rect = stageEl.getBoundingClientRect();
+      clickRaycaster.setFromCamera(
+        new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1),
+        shell.camera,
+      );
+      if (clickRaycaster.intersectObject(shell.artMesh, false).length) onInteractiveClick();
+    };
+    stageEl.addEventListener("pointerdown", onPointerDown);
+    stageEl.addEventListener("pointerup", onPointerUp);
+    disposeInteractiveClick = () => {
+      stageEl.removeEventListener("pointerdown", onPointerDown);
+      stageEl.removeEventListener("pointerup", onPointerUp);
+    };
+  }
+
   function animate() {
     frameId = requestAnimationFrame(animate);
     floorNav.update();
@@ -1738,6 +1766,7 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
     p5Instance?.remove?.();
     floorNav.dispose();
     keyNav.dispose();
+    disposeInteractiveClick?.();
     host.remove();
     stageEl.innerHTML = "";
   };

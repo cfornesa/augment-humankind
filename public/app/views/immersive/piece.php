@@ -441,6 +441,65 @@ html, body {
 canvas[aria-hidden="true"] {
   display: none !important;
 }
+
+/* C2.js click-to-interact overlay */
+.c2-interact-hint-btn {
+  position: absolute;
+  bottom: calc(1rem + env(safe-area-inset-bottom));
+  left: calc(1rem + env(safe-area-inset-left));
+  z-index: 130;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  padding: 0.5rem 1rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  border-radius: 9999px;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+}
+.c2-interact-hint-btn:hover {
+  background: rgba(0, 0, 0, 0.7);
+  border-color: #fff;
+}
+.c2-interactive-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 140;
+  background: #05070f;
+}
+.c2-interactive-overlay[hidden] {
+  display: none !important;
+}
+.c2-interactive-frame {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+}
+.c2-interactive-close-btn {
+  position: absolute;
+  top: calc(0.75rem + env(safe-area-inset-top));
+  right: calc(0.75rem + env(safe-area-inset-right));
+  z-index: 150;
+  display: inline-flex;
+  height: 2.5rem;
+  width: 2.5rem;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  border-radius: 9999px;
+  cursor: pointer;
+}
+.c2-interactive-close-btn:hover {
+  background: rgba(0, 0, 0, 0.8);
+}
 </style>
 
 <!-- Load p5 and c2 library runtimes on-demand -->
@@ -470,11 +529,29 @@ canvas[aria-hidden="true"] {
     <!-- Canvas Stage Viewport -->
     <div class="stage-wrapper">
         <div id="immersive-stage"></div>
-        
+
         <!-- Fullscreen controls (hidden in static embeds, and iOS embeds without handshakes) -->
         <?php if (!$isStaticEmbed): ?>
             <button id="fullscreen-toggle-btn" class="fullscreen-toggle-btn" onclick="toggleFullscreen()" aria-label="Expand immersive view">
                 <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+            </button>
+        <?php endif; ?>
+
+        <?php if ($engine === 'c2'): ?>
+            <!-- Click-to-interact overlay: the gallery room only ever shows this
+                 piece as a texture-projected frame (off-screen canvas, no pointer
+                 events reach it). Opening the same on-screen render document used
+                 by the non-immersive /pieces/{id} view here gives full click/touch/
+                 drag without building pointer-forwarding/raycasting into the 3D
+                 scene. -->
+            <div id="c2-interactive-overlay" class="c2-interactive-overlay" hidden>
+                <button id="c2-interactive-close-btn" class="c2-interactive-close-btn" aria-label="Close interactive view">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+                <iframe id="c2-interactive-frame" class="c2-interactive-frame" title="Interactive view" sandbox="allow-scripts allow-same-origin"></iframe>
+            </div>
+            <button id="c2-interact-hint-btn" class="c2-interact-hint-btn" type="button">
+                Click to interact
             </button>
         <?php endif; ?>
     </div>
@@ -796,13 +873,43 @@ function handleRuntimeError(err) {
     }
 }
 
+// Click-to-interact overlay (c2 only): the gallery room only ever shows
+// this piece as a texture-projected frame, so opening the same on-screen
+// render document used by /pieces/{id} is the only way to get real
+// click/touch/drag here.
+let openInteractiveOverlay = null;
+<?php if ($engine === 'c2'): ?>
+const c2InteractiveSrcdoc = <?= json_encode(piece_render_document($piece, $version)) ?>;
+const c2Overlay = document.getElementById('c2-interactive-overlay');
+const c2Frame = document.getElementById('c2-interactive-frame');
+const c2CloseBtn = document.getElementById('c2-interactive-close-btn');
+const c2HintBtn = document.getElementById('c2-interact-hint-btn');
+
+openInteractiveOverlay = function () {
+    if (!c2Frame.getAttribute('srcdoc')) {
+        c2Frame.setAttribute('srcdoc', c2InteractiveSrcdoc);
+    }
+    c2Overlay.hidden = false;
+};
+
+function closeInteractiveOverlay() {
+    c2Overlay.hidden = true;
+}
+
+c2CloseBtn.addEventListener('click', closeInteractiveOverlay);
+c2HintBtn.addEventListener('click', openInteractiveOverlay);
+window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !c2Overlay.hidden) closeInteractiveOverlay();
+});
+<?php endif; ?>
+
 try {
     if (engine === 'three') {
         mountThreeImmersivePiece(stage, code, htmlCode, cssCode, handleRuntimeError);
     } else if (engine === 'aframe') {
         mountAFrameImmersivePiece(stage, code, htmlCode, cssCode, handleRuntimeError);
     } else {
-        mountGalleryPiece(stage, code, htmlCode, cssCode, engine, title, sourceUrl, prompt, description, handleRuntimeError);
+        mountGalleryPiece(stage, code, htmlCode, cssCode, engine, title, sourceUrl, prompt, description, handleRuntimeError, openInteractiveOverlay);
     }
 } catch (e) {
     handleRuntimeError(e);

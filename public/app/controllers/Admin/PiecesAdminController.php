@@ -791,6 +791,26 @@ class PiecesAdminController
             $lastError = '';
 
             while ($attemptCount < ART_PIECE_MAX_ATTEMPTS) {
+                self::ensureWritableSession();
+                $cancelled = !empty($_SESSION['generation_cancelled']);
+                unset($_SESSION['generation_cancelled']);
+                session_write_close();
+                if ($cancelled) {
+                    audit_log_event('ai_request', 'ai_generate_piece', 'cancelled', [
+                        'actor_admin_identity_id' => $actorId > 0 ? $actorId : null,
+                        'http_status' => 400,
+                        'metadata' => [
+                            'profile_id' => $profileId,
+                            'engine' => $engine,
+                            'attempt_count' => $attemptCount,
+                            'duration_ms' => (int) round((microtime(true) - $startedAt) * 1000),
+                        ],
+                    ]);
+                    http_response_code(400);
+                    echo json_encode(['success' => false, 'error' => 'Cancelled by user']);
+                    exit;
+                }
+
                 $attemptCount++;
                 self::writeGenerateProgress($attemptCount, $engine);
                 $currentAttemptLog = [
@@ -952,6 +972,17 @@ class PiecesAdminController
             'complete' => !empty($progress['complete']),
             'updated_at' => isset($progress['updated_at']) ? (int) $progress['updated_at'] : null,
         ]);
+        exit;
+    }
+
+    public static function generateCancel(): void
+    {
+        admin_check();
+        header('Content-Type: application/json; charset=utf-8');
+        self::ensureWritableSession();
+        $_SESSION['generation_cancelled'] = true;
+        session_write_close();
+        echo json_encode(['success' => true]);
         exit;
     }
 

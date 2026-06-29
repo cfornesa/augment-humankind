@@ -127,7 +127,7 @@ ob_start();
             <div class="form-actions" style="margin-top: 2rem;">
                 <div id="generate-status" class="form-status" role="status" aria-live="polite" style="display:none; width:100%; margin-bottom:0.75rem;"></div>
                 <button type="button" class="admin-btn" id="generate-submit-btn">Start AI Generation Loop</button>
-                <a href="/admin/pieces" class="admin-btn admin-btn-ghost">Cancel</a>
+                <button type="button" class="admin-btn admin-btn-ghost" id="generate-cancel-btn">Cancel</button>
             </div>
         </form>
 
@@ -156,8 +156,11 @@ ob_start();
             var codeWarn   = document.getElementById('code-cap-warning');
             var form       = document.getElementById('generate-form');
             var btn        = document.getElementById('generate-submit-btn');
+            var cancelBtn  = document.getElementById('generate-cancel-btn');
             var statusEl   = document.getElementById('generate-status');
             var dialog     = document.getElementById('persona-dialog');
+            var activeAbortController = null;
+            var activeStopIntervals = null;
 
             function checkCodeCap() {
                 var opt = profileSel.options[profileSel.selectedIndex];
@@ -283,19 +286,50 @@ ob_start();
                 progressInterval = setInterval(pollProgress, 1500);
                 pollProgress();
 
+                var abortController = new AbortController();
+                activeAbortController = abortController;
+                activeStopIntervals = stopIntervals;
+
                 fetch(form.dataset.generateUrl || '/admin/pieces/generate', {
                     method: 'POST',
                     body: new FormData(form),
-                    headers: {'Accept': 'application/json'}
+                    headers: {'Accept': 'application/json'},
+                    signal: abortController.signal
                 }).then(parseJsonResponse).then(function () {
                     stopIntervals();
+                    activeAbortController = null;
+                    activeStopIntervals = null;
                     setGenerateStatus('Generation complete. Opening preview...');
                     window.location.href = '/admin/pieces/generate/preview';
                 }).catch(function (err) {
                     stopIntervals();
-                    setGenerateStatus(err.message || 'Generation failed.', true);
+                    activeAbortController = null;
+                    activeStopIntervals = null;
+                    if (err && err.name === 'AbortError') {
+                        setGenerateStatus('Generation cancelled.', true);
+                    } else {
+                        setGenerateStatus(err.message || 'Generation failed.', true);
+                    }
                     btn.disabled = false;
                 });
+            });
+
+            cancelBtn.addEventListener('click', function () {
+                if (activeAbortController) {
+                    activeAbortController.abort();
+                }
+                if (activeStopIntervals) {
+                    activeStopIntervals();
+                }
+                activeAbortController = null;
+                activeStopIntervals = null;
+                fetch('/admin/pieces/generate/cancel', {
+                    method: 'POST',
+                    headers: {'Accept': 'application/json'}
+                }).catch(function () {
+                    // Best-effort; the client-side abort already stopped the wait.
+                });
+                window.location.href = '/admin/pieces';
             });
         })();
         </script>
