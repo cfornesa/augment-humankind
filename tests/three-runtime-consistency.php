@@ -526,6 +526,16 @@ test('the gyroscope feature loads DeviceOrientationControls via a contained dyna
     assert_contains($setupBody, 'catch');
 });
 
+test('Three.js gyro controls wait for real angles and calibrate first yaw to the visible view', function () use ($immersive) {
+    assert_contains($immersive, 'function requestGyroCalibration()');
+    assert_contains($immersive, 'function hasDeviceOrientationAngles');
+    assert_contains($immersive, 'function calibrateGyroToCurrentView()');
+    assert_contains($immersive, '_gyroBaselineQuat.copy(state.camera.quaternion)');
+    assert_contains($immersive, 'if (hasDeviceOrientationAngles(deviceControls))');
+    assert_contains($immersive, 'deviceControls.alphaOffset = bestOffset');
+    assert_contains($immersive, 'if (gyroActive) requestGyroCalibration();');
+});
+
 echo "\n=== Results ===\n";
 echo "Passed: {$passed}\n";
 echo "Failed: {$failed}\n";

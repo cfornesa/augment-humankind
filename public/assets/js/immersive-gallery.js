@@ -1040,12 +1040,15 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
   let userHasInteracted = false;
   let deviceControls = null;
   let gyroActive = false;
+  let gyroNeedsCalibration = false;
   let gyroToggleBtn = null;
   let viewerControls = null;
   const _orbitCamPos = new THREE.Vector3();
   const _orbitTarget = new THREE.Vector3();
   const _buttonForward = new THREE.Vector3();
   const _buttonRight = new THREE.Vector3();
+  const _gyroBaselineQuat = new THREE.Quaternion();
+  const _gyroYawProbe = new THREE.Vector3();
   let threeNavLimit = 5;
 
   let threeAnimFromTarget = null, threeAnimToTarget = null, threeAnimFromCam = null, threeAnimToCam = null, threeAnimStart = 0;
@@ -1057,6 +1060,73 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
     if (!controls || !state.camera) return;
     _orbitCamPos.copy(state.camera.position);
     _orbitTarget.copy(controls.target);
+  }
+
+  function requestGyroCalibration() {
+    if (!state.camera) return;
+    _gyroBaselineQuat.copy(state.camera.quaternion);
+    gyroNeedsCalibration = true;
+  }
+
+  function hasDeviceOrientationAngles(deviceControlsRef) {
+    const orientation = deviceControlsRef?.deviceOrientation;
+    return !!orientation && (
+      orientation.alpha !== null && orientation.alpha !== undefined
+      || orientation.beta !== null && orientation.beta !== undefined
+      || orientation.gamma !== null && orientation.gamma !== undefined
+    );
+  }
+
+  function yawFromQuaternion(quaternion) {
+    _gyroYawProbe.set(0, 0, -1).applyQuaternion(quaternion);
+    _gyroYawProbe.y = 0;
+    if (_gyroYawProbe.lengthSq() < 1e-8) return null;
+    _gyroYawProbe.normalize();
+    return Math.atan2(_gyroYawProbe.x, _gyroYawProbe.z);
+  }
+
+  function normalizeAngleRadians(angle) {
+    let normalized = angle;
+    while (normalized > Math.PI) normalized -= Math.PI * 2;
+    while (normalized < -Math.PI) normalized += Math.PI * 2;
+    return normalized;
+  }
+
+  function calibrateGyroToCurrentView() {
+    if (!gyroNeedsCalibration || !deviceControls || !state.camera || !hasDeviceOrientationAngles(deviceControls)) return;
+
+    const desiredYaw = yawFromQuaternion(_gyroBaselineQuat);
+    if (desiredYaw === null) {
+      gyroNeedsCalibration = false;
+      return;
+    }
+
+    deviceControls.alphaOffset = 0;
+    deviceControls.update();
+    const rawYaw = yawFromQuaternion(state.camera.quaternion);
+    if (rawYaw === null) {
+      state.camera.quaternion.copy(_gyroBaselineQuat);
+      gyroNeedsCalibration = false;
+      return;
+    }
+
+    const yawDelta = normalizeAngleRadians(desiredYaw - rawYaw);
+    let bestOffset = yawDelta;
+    let bestError = Infinity;
+    [yawDelta, -yawDelta].forEach((candidateOffset) => {
+      deviceControls.alphaOffset = candidateOffset;
+      deviceControls.update();
+      const candidateYaw = yawFromQuaternion(state.camera.quaternion);
+      if (candidateYaw === null) return;
+      const candidateError = Math.abs(normalizeAngleRadians(desiredYaw - candidateYaw));
+      if (candidateError < bestError) {
+        bestError = candidateError;
+        bestOffset = candidateOffset;
+      }
+    });
+
+    deviceControls.alphaOffset = bestOffset;
+    gyroNeedsCalibration = false;
   }
 
   function cancelThreeNavigationAnimation() {
@@ -1337,7 +1407,10 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
         // exactly as before. enableRotate is already false (see setup below),
         // so there's no fight over rotation between the two.
         if (gyroActive && deviceControls) {
-          deviceControls.update();
+          if (hasDeviceOrientationAngles(deviceControls)) {
+            calibrateGyroToCurrentView();
+            deviceControls.update();
+          }
         }
 
         // Many pieces script their own ambient camera motion every frame
@@ -1548,6 +1621,7 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
       btn.style.cssText = "position:absolute;top:calc(0.75rem + env(safe-area-inset-top));left:calc(0.75rem + env(safe-area-inset-left));z-index:130;display:inline-flex;align-items:center;justify-content:center;height:2.5rem;width:2.5rem;border:1px solid rgba(255,255,255,0.15);background:rgba(89,184,201,0.85);color:#fff;border-radius:9999px;font-size:1.1rem;cursor:pointer;";
       btn.addEventListener("click", () => {
         gyroActive = !gyroActive;
+        if (gyroActive) requestGyroCalibration();
         btn.setAttribute("aria-pressed", String(gyroActive));
         btn.style.background = gyroActive ? "rgba(89,184,201,0.85)" : "rgba(0,0,0,0.55)";
       });
@@ -1593,6 +1667,7 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
     // data exists; never as part of merely testing for it.
     async function activateGyro() {
       const { DeviceOrientationControls } = await import("/assets/js/three-device-orientation-controls.js");
+      requestGyroCalibration();
       deviceControls = new DeviceOrientationControls(state.camera);
       gyroActive = true;
       gyroToggleBtn = createGyroToggleButton();
