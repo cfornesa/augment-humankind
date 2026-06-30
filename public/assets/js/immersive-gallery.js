@@ -447,18 +447,37 @@ export function getProgressiveExhibitLiveBudget(viewportWidth, staticMode = fals
 }
 
 function createImmersiveViewerControls(stageEl, handlers = {}) {
-  if (!handlers.onZoomIn || !handlers.onZoomOut) return null;
+  if (!handlers.onZoomSliderInput) return null;
   const root = document.createElement("div");
   root.className = "immersive-viewer-controls";
   root.setAttribute("aria-label", "Viewer controls");
-  root.style.cssText = "position:absolute;left:calc(1rem + env(safe-area-inset-left));bottom:calc(1rem + env(safe-area-inset-bottom));z-index:132;display:flex;align-items:flex-end;gap:0.7rem;max-width:calc(100% - 2rem - env(safe-area-inset-left) - env(safe-area-inset-right));";
+  root.style.cssText = "position:absolute;inset:0;z-index:132;pointer-events:none;opacity:0.34;transition:opacity 180ms ease;";
+  let fadeTimer = 0;
+  const activateControls = () => {
+    root.style.opacity = "1";
+    clearTimeout(fadeTimer);
+    fadeTimer = setTimeout(() => { root.style.opacity = "0.34"; }, 2400);
+  };
+  ["pointermove", "pointerdown", "focusin", "mouseenter"].forEach((eventName) => {
+    root.addEventListener(eventName, activateControls);
+  });
 
-  const zoomRail = document.createElement("div");
-  zoomRail.style.cssText = "display:flex;flex-direction:column;gap:0.45rem;";
-  root.appendChild(zoomRail);
+  const leftEdge = document.createElement("div");
+  leftEdge.className = "immersive-edge-hud immersive-edge-hud-left";
+  leftEdge.style.cssText = "position:absolute;left:calc(0.55rem + env(safe-area-inset-left));top:50%;transform:translateY(-50%);display:flex;flex-direction:column;align-items:center;gap:0.55rem;pointer-events:auto;";
+  root.appendChild(leftEdge);
 
   const movePad = document.createElement("div");
-  movePad.style.cssText = "display:grid;grid-template-columns:repeat(3,2.4rem);grid-template-rows:repeat(3,2.4rem);gap:0.35rem;align-items:center;justify-items:center;";
+  movePad.className = "immersive-move-pad";
+  movePad.style.cssText = "display:grid;grid-template-columns:repeat(3,2.25rem);grid-template-rows:repeat(3,2.25rem);gap:0.28rem;align-items:center;justify-items:center;";
+
+  const floatPad = document.createElement("div");
+  floatPad.className = "immersive-float-pad";
+  floatPad.style.cssText = "display:flex;gap:0.35rem;";
+
+  const zoomEdge = document.createElement("div");
+  zoomEdge.className = "immersive-edge-hud immersive-edge-hud-right";
+  zoomEdge.style.cssText = "position:absolute;right:calc(1rem + env(safe-area-inset-right));top:50%;width:2.75rem;transform:translateY(-50%);display:flex;flex-direction:column;align-items:center;gap:0.45rem;pointer-events:auto;";
 
   function createButton(parent, label, ariaLabel, onClick, options = {}) {
     const btn = document.createElement("button");
@@ -467,7 +486,7 @@ function createImmersiveViewerControls(stageEl, handlers = {}) {
     btn.type = "button";
     btn.textContent = label;
     btn.setAttribute("aria-label", ariaLabel);
-    btn.style.cssText = "display:inline-flex;align-items:center;justify-content:center;height:2.75rem;width:2.75rem;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.55);color:#fff;border-radius:0.75rem;box-shadow:0 4px 12px rgba(0,0,0,0.5);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);font-size:1.25rem;font-weight:900;line-height:1;cursor:pointer;touch-action:none;user-select:none;-webkit-user-select:none;";
+    btn.style.cssText = "display:inline-flex;align-items:center;justify-content:center;height:2.25rem;width:2.25rem;border:1px solid rgba(255,255,255,0.2);background:rgba(0,0,0,0.42);color:#fff;border-radius:9999px;box-shadow:0 4px 12px rgba(0,0,0,0.45);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);font-size:1rem;font-weight:900;line-height:1;cursor:pointer;touch-action:none;user-select:none;-webkit-user-select:none;";
     if (options.gridArea) btn.style.gridArea = options.gridArea;
     const stopHold = () => {
       if (holdTimer) {
@@ -502,18 +521,55 @@ function createImmersiveViewerControls(stageEl, handlers = {}) {
     return btn;
   }
 
-  createButton(zoomRail, "+", "Zoom in", handlers.onZoomIn, { hold: true });
-  createButton(zoomRail, "-", "Zoom out", handlers.onZoomOut, { hold: true });
   if (handlers.onMoveForward && handlers.onMoveBackward && handlers.onMoveLeft && handlers.onMoveRight) {
     createButton(movePad, "^", "Move forward", handlers.onMoveForward, { hold: true, gridArea: "1 / 2" });
     createButton(movePad, "<", "Move left", handlers.onMoveLeft, { hold: true, gridArea: "2 / 1" });
     createButton(movePad, ">", "Move right", handlers.onMoveRight, { hold: true, gridArea: "2 / 3" });
     createButton(movePad, "v", "Move backward", handlers.onMoveBackward, { hold: true, gridArea: "3 / 2" });
-    root.appendChild(movePad);
+    leftEdge.appendChild(movePad);
   }
+  if (handlers.onFloatUp && handlers.onFloatDown) {
+    createButton(floatPad, "Up", "Float up", handlers.onFloatUp, { hold: true });
+    createButton(floatPad, "Dn", "Float down", handlers.onFloatDown, { hold: true });
+    leftEdge.appendChild(floatPad);
+  }
+
+  const zoomIcon = document.createElement("span");
+  zoomIcon.className = "immersive-zoom-icon";
+  zoomIcon.setAttribute("aria-hidden", "true");
+  zoomIcon.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="6"></circle><path d="m16 16 4 4"></path></svg>';
+  zoomIcon.style.cssText = "display:inline-flex;align-items:center;justify-content:center;width:2.75rem;height:2.25rem;color:rgba(255,255,255,0.82);filter:drop-shadow(0 2px 6px rgba(0,0,0,0.65));";
+  const sliderSlot = document.createElement("div");
+  sliderSlot.className = "immersive-zoom-slider-slot";
+  sliderSlot.style.cssText = "position:relative;width:2.75rem;height:9rem;display:flex;align-items:center;justify-content:center;";
+  const zoomSlider = document.createElement("input");
+  zoomSlider.type = "range";
+  zoomSlider.min = "0";
+  zoomSlider.max = "100";
+  zoomSlider.value = String(handlers.initialZoomValue ?? 50);
+  zoomSlider.setAttribute("aria-label", "Zoom");
+  zoomSlider.className = "immersive-zoom-slider";
+  zoomSlider.style.cssText = "position:absolute;left:50%;top:50%;width:9rem;height:2rem;transform:translate(-50%,-50%) rotate(-90deg);transform-origin:center;accent-color:#fff;cursor:pointer;touch-action:none;";
+  zoomSlider.addEventListener("pointerdown", (event) => {
+    event.stopPropagation();
+    activateControls();
+  });
+  zoomSlider.addEventListener("input", (event) => {
+    event.stopPropagation();
+    handlers.onZoomSliderInput(Number(zoomSlider.value));
+    activateControls();
+  });
+  sliderSlot.appendChild(zoomSlider);
+  zoomEdge.appendChild(zoomIcon);
+  zoomEdge.appendChild(sliderSlot);
+  root.appendChild(zoomEdge);
   stageEl.appendChild(root);
   return {
+    setZoomValue(value) {
+      if (Number.isFinite(value)) zoomSlider.value = String(Math.max(0, Math.min(100, value)));
+    },
     remove() {
+      clearTimeout(fadeTimer);
       root.remove();
     },
   };
@@ -1154,6 +1210,31 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
     cameraPosition.copy(controls.target).add(direction);
     controls.update();
     saveOrbitState();
+    viewerControls?.setZoomValue(threeZoomValueFromDistance(nextDistance));
+    userHasInteracted = true;
+  }
+
+  function threeZoomValueFromDistance(distance) {
+    if (!controls || !Number.isFinite(distance)) return 50;
+    const minDistance = controls.minDistance || 0.6;
+    const maxDistance = controls.maxDistance || Math.max(40, distance * 4);
+    if (maxDistance <= minDistance) return 50;
+    return ((maxDistance - Math.max(minDistance, Math.min(maxDistance, distance))) / (maxDistance - minDistance)) * 100;
+  }
+
+  function applyThreeZoomValue(value) {
+    if (!controls || !state.camera || !Number.isFinite(value)) return;
+    const minDistance = controls.minDistance || 0.6;
+    const currentDistance = state.camera.position.distanceTo(controls.target);
+    const maxDistance = controls.maxDistance || Math.max(40, currentDistance * 4);
+    const t = Math.max(0, Math.min(100, value)) / 100;
+    const nextDistance = maxDistance - ((maxDistance - minDistance) * t);
+    const direction = state.camera.position.clone().sub(controls.target);
+    if (direction.lengthSq() < 1e-8) return;
+    direction.setLength(nextDistance);
+    state.camera.position.copy(controls.target).add(direction);
+    controls.update();
+    saveOrbitState();
     userHasInteracted = true;
   }
 
@@ -1180,6 +1261,20 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
     state.camera.position.z += dz;
     controls.target.x += dx;
     controls.target.z += dz;
+    controls.update();
+    saveOrbitState();
+    userHasInteracted = true;
+  }
+
+  function applyThreeFloatMove(verticalScale) {
+    if (!controls || !state.camera || !Number.isFinite(verticalScale)) return;
+    cancelThreeNavigationAnimation();
+    const step = Math.max(0.08, controls.target.distanceTo(state.camera.position) * 0.03);
+    const nextCamY = Math.max(0.1, Math.min(threeNavLimit, state.camera.position.y + (verticalScale * step)));
+    const dy = nextCamY - state.camera.position.y;
+    if (Math.abs(dy) < 1e-6) return;
+    state.camera.position.y += dy;
+    controls.target.y += dy;
     controls.update();
     saveOrbitState();
     userHasInteracted = true;
@@ -1419,12 +1514,14 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
 
     if (options.showViewerControls) {
       viewerControls = createImmersiveViewerControls(stageEl, {
-        onZoomIn: () => applyThreeZoom(0.82),
-        onZoomOut: () => applyThreeZoom(1.22),
+        initialZoomValue: threeZoomValueFromDistance(state.camera.position.distanceTo(controls.target)),
+        onZoomSliderInput: (value) => applyThreeZoomValue(value),
         onMoveForward: () => applyThreeDirectionalMove(1, 0),
         onMoveBackward: () => applyThreeDirectionalMove(-1, 0),
         onMoveLeft: () => applyThreeDirectionalMove(0, -1),
         onMoveRight: () => applyThreeDirectionalMove(0, 1),
+        onFloatUp: () => applyThreeFloatMove(1),
+        onFloatDown: () => applyThreeFloatMove(-1),
       });
     }
 
@@ -1648,6 +1745,7 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
     hadMultiTouch: false,
     activeTouches: new Set(),
   };
+  let aframeZoomSliderValue = 50;
 
   const startFrame = (handler) => {
     let frameCount = 0;
@@ -1723,6 +1821,14 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
     moveAFrameCameraByWorldDelta(forward.multiplyScalar(distance));
   }
 
+  function applyAFrameZoomSliderValue(value) {
+    if (!Number.isFinite(value)) return;
+    const nextValue = Math.max(0, Math.min(100, value));
+    const delta = nextValue - aframeZoomSliderValue;
+    aframeZoomSliderValue = nextValue;
+    applyAFrameZoom(delta * 0.045);
+  }
+
   function applyAFrameDirectionalMove(forwardScale, rightScale) {
     const THREE_NS = getAFrameThree();
     const cameraObject = getAFrameCameraObject();
@@ -1739,6 +1845,12 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
     const step = 0.18;
     const shift = forward.multiplyScalar(forwardScale * step).add(right.multiplyScalar(rightScale * step));
     moveAFrameCameraByWorldDelta(shift);
+  }
+
+  function applyAFrameFloatMove(verticalScale) {
+    const THREE_NS = getAFrameThree();
+    if (!THREE_NS || !Number.isFinite(verticalScale)) return;
+    moveAFrameCameraByWorldDelta(new THREE_NS.Vector3(0, verticalScale * 0.14, 0));
   }
 
   function activeAFrameTouchCount() {
@@ -1895,12 +2007,14 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
     frameId = requestAnimationFrame(animateAFrameViewerControls);
     if (options.showViewerControls) {
       viewerControls = createImmersiveViewerControls(stageEl, {
-        onZoomIn: () => applyAFrameZoom(0.45),
-        onZoomOut: () => applyAFrameZoom(-0.45),
+        initialZoomValue: aframeZoomSliderValue,
+        onZoomSliderInput: (value) => applyAFrameZoomSliderValue(value),
         onMoveForward: () => applyAFrameDirectionalMove(1, 0),
         onMoveBackward: () => applyAFrameDirectionalMove(-1, 0),
         onMoveLeft: () => applyAFrameDirectionalMove(0, -1),
         onMoveRight: () => applyAFrameDirectionalMove(0, 1),
+        onFloatUp: () => applyAFrameFloatMove(1),
+        onFloatDown: () => applyAFrameFloatMove(-1),
       });
     }
   }).catch(onError);

@@ -88,8 +88,14 @@ Cron endpoints:
 Full `/immersive/pieces/[id]` pages expose viewer-level camera controls for
 native Three.js and A-Frame pieces:
 
-- `+` / `-` buttons zoom the viewer in and out.
-- Direction buttons move the camera forward, backward, left, and right.
+- A low-opacity edge HUD keeps controls available without covering the center
+  of the piece, brightening on hover, touch, pointer movement, or keyboard
+  focus.
+- The right edge vertical slider zooms the viewer in and out, is identified by
+  a magnifying-glass icon above the slider, and aligns on the same x-axis as
+  the site-level expand control.
+- The left edge movement controls move the camera forward, backward, left, and
+  right, with separate float up/down controls for vertical camera movement.
 - Buttons support click/tap and press-and-hold across desktop, tablet, and
   mobile pointer devices.
 - Existing keyboard controls remain available on desktop: arrow keys and
@@ -99,9 +105,15 @@ native Three.js and A-Frame pieces:
 
 These controls move the viewer camera, not the artwork's own authored
 interaction state. Embedded and static immersive iframes stay visually quieter
-and do not show the viewer control rail. A-Frame's built-in enter-VR/fullscreen
-button is suppressed in immersive piece views so the site-level fullscreen
-button remains the single fullscreen control.
+and do not show the viewer HUD. A-Frame's built-in enter-VR/fullscreen button
+is suppressed in immersive piece views so the site-level expand control remains
+the single expansion control.
+
+Desktop and supporting tablet browsers still use native fullscreen when
+available. iPhone Safari uses Immersive Focus instead: the piece is promoted to
+a fixed `visualViewport`-sized mode, page scrolling is locked, safe-area insets
+are respected, and the button state uses "Expand immersive view" / "Return to
+page" language instead of promising true browser fullscreen.
 
 ## Deployed File Layout
 

@@ -204,10 +204,14 @@ test('wheel-zoom saves orbit state so the next frame does not snap back to the p
     assert_contains($immersive, 'addEventListener("wheel", onThreeWheel');
 });
 
-test('Three.js viewer zoom buttons use the same saved orbit state path as wheel zoom', function () use ($immersive) {
+test('Three.js viewer zoom slider uses the same saved orbit state path as wheel zoom', function () use ($immersive) {
     assert_contains($immersive, 'function applyThreeZoom');
-    assert_contains($immersive, 'onZoomIn: () => applyThreeZoom(0.82)');
-    assert_contains($immersive, 'onZoomOut: () => applyThreeZoom(1.22)');
+    assert_contains($immersive, 'function applyThreeZoomValue');
+    assert_contains($immersive, 'onZoomSliderInput: (value) => applyThreeZoomValue(value)');
+    assert_contains($immersive, 'className = "immersive-zoom-slider"');
+    assert_contains($immersive, 'className = "immersive-zoom-icon"');
+    assert_contains($immersive, 'className = "immersive-zoom-slider-slot"');
+    assert_contains($immersive, 'right:calc(1rem + env(safe-area-inset-right));top:50%;width:2.75rem');
     assert_contains($immersive, 'saveOrbitState();');
 });
 
@@ -215,6 +219,8 @@ test('immersive viewer controls are optional and gated by the piece view', funct
     $pieceView = file_get_contents(__DIR__ . '/../public/app/views/immersive/piece.php');
     assert_contains($immersive, 'function createImmersiveViewerControls');
     assert_contains($immersive, 'options.showViewerControls');
+    assert_contains($immersive, 'immersive-edge-hud-left');
+    assert_contains($immersive, 'immersive-edge-hud-right');
     assert_contains($immersive, 'setInterval(onClick, 90)');
     assert_contains($immersive, 'touch-action:none');
     assert_contains($pieceView, 'showViewerControls: <?= (!$isEmbedMode && !$isStaticEmbed)');
@@ -227,25 +233,32 @@ test('tap/click movement preserves Three.js camera distance by translating camer
 
 test('Three.js viewer direction buttons translate camera and target together', function () use ($immersive) {
     assert_contains($immersive, 'function applyThreeDirectionalMove');
+    assert_contains($immersive, 'function applyThreeFloatMove');
     assert_contains($immersive, 'onMoveForward: () => applyThreeDirectionalMove(1, 0)');
     assert_contains($immersive, 'onMoveBackward: () => applyThreeDirectionalMove(-1, 0)');
     assert_contains($immersive, 'onMoveLeft: () => applyThreeDirectionalMove(0, -1)');
     assert_contains($immersive, 'onMoveRight: () => applyThreeDirectionalMove(0, 1)');
+    assert_contains($immersive, 'onFloatUp: () => applyThreeFloatMove(1)');
+    assert_contains($immersive, 'onFloatDown: () => applyThreeFloatMove(-1)');
     assert_contains($immersive, 'controls.target.x += dx');
     assert_contains($immersive, 'controls.target.z += dz');
+    assert_contains($immersive, 'controls.target.y += dy');
 });
 
 test('A-Frame immersive pieces expose viewer zoom and tap-to-move controls without new dependencies', function () use ($immersive) {
     assert_contains($immersive, 'export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onError = console.error, options = {})');
     assert_contains($immersive, 'function applyAFrameZoom');
+    assert_contains($immersive, 'function applyAFrameZoomSliderValue');
     assert_contains($immersive, 'function applyAFrameDirectionalMove');
+    assert_contains($immersive, 'function applyAFrameFloatMove');
     assert_contains($immersive, 'function moveAFrameViewTo');
-    assert_contains($immersive, 'onZoomIn: () => applyAFrameZoom(0.45)');
-    assert_contains($immersive, 'onZoomOut: () => applyAFrameZoom(-0.45)');
+    assert_contains($immersive, 'onZoomSliderInput: (value) => applyAFrameZoomSliderValue(value)');
     assert_contains($immersive, 'onMoveForward: () => applyAFrameDirectionalMove(1, 0)');
     assert_contains($immersive, 'onMoveBackward: () => applyAFrameDirectionalMove(-1, 0)');
     assert_contains($immersive, 'onMoveLeft: () => applyAFrameDirectionalMove(0, -1)');
     assert_contains($immersive, 'onMoveRight: () => applyAFrameDirectionalMove(0, 1)');
+    assert_contains($immersive, 'onFloatUp: () => applyAFrameFloatMove(1)');
+    assert_contains($immersive, 'onFloatDown: () => applyAFrameFloatMove(-1)');
     assert_not_contains($immersive, 'import("/assets/js/aframe');
 });
 
@@ -253,6 +266,15 @@ test('A-Frame immersive view suppresses the duplicate built-in VR fullscreen con
     assert_contains($immersive, 'scene.setAttribute("vr-mode-ui", "enabled: false")');
     assert_contains($immersive, '.a-enter-vr');
     assert_contains($immersive, 'display: none !important;');
+});
+
+test('iPhone Safari enters immersive focus mode without attempting native fullscreen first', function () {
+    $pieceView = file_get_contents(__DIR__ . '/../public/app/views/immersive/piece.php');
+    assert_contains($pieceView, "if (isIPhoneWebKitBrowser()) {\n            syncFullscreenState(true, { mode: 'focus' });");
+    assert_contains($pieceView, "shell.dataset.immersiveMode = options.mode || 'fullscreen'");
+    assert_contains($pieceView, "btn.setAttribute('aria-label', 'Return to page')");
+    assert_contains($pieceView, 'function lockImmersiveScroll');
+    assert_contains($pieceView, 'window.visualViewport?.addEventListener');
 });
 
 test('createKeyboardNavigation scales movement by elapsed time, not a fixed per-tick step', function () use ($immersive) {

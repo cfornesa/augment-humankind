@@ -700,6 +700,8 @@ import { mountThreeImmersivePiece, mountAFrameImmersivePiece, mountGalleryPiece 
 
 // Setup full screen toggling variables
 const shell = document.getElementById('immersive-shell');
+let lockedScrollY = 0;
+let immersiveScrollLocked = false;
 
 // iOS Safari has no Fullscreen API support at all (not even webkit-prefixed —
 // it only ever existed for <video>), so shell.requestFullscreen() always
@@ -746,6 +748,32 @@ function unwatchImmersiveViewport() {
     clearImmersiveViewportVars();
 }
 
+function lockImmersiveScroll() {
+    if (immersiveScrollLocked) return;
+    lockedScrollY = window.scrollY || window.pageYOffset || 0;
+    document.body.style.position = 'fixed';
+    document.body.style.top = '-' + lockedScrollY + 'px';
+    document.body.style.left = '0';
+    document.body.style.right = '0';
+    document.body.style.width = '100%';
+    document.body.style.overflow = 'hidden';
+    document.documentElement.style.overflow = 'hidden';
+    immersiveScrollLocked = true;
+}
+
+function unlockImmersiveScroll() {
+    if (!immersiveScrollLocked) return;
+    document.body.style.position = '';
+    document.body.style.top = '';
+    document.body.style.left = '';
+    document.body.style.right = '';
+    document.body.style.width = '';
+    document.body.style.overflow = '';
+    document.documentElement.style.overflow = '';
+    window.scrollTo(0, lockedScrollY);
+    immersiveScrollLocked = false;
+}
+
 window.toggleFullscreen = function() {
     const isCurrentlyFull = shell.classList.contains('fullscreen');
     if (isCurrentlyFull) {
@@ -755,11 +783,20 @@ window.toggleFullscreen = function() {
             syncFullscreenState(false);
         }
     } else {
+        if (isIPhoneWebKitBrowser()) {
+            syncFullscreenState(true, { mode: 'focus' });
+            try {
+                if (window.parent && window.parent !== window) {
+                    window.parent.postMessage({ type: 'creatr-toggle-fullscreen', value: true }, '*');
+                }
+            } catch (e) {}
+            return;
+        }
         shell.requestFullscreen().then(() => {
             syncFullscreenState(true);
         }).catch(() => {
             // fallback if fullscreen API blocked or unsupported (like on iOS Safari)
-            syncFullscreenState(true);
+            syncFullscreenState(true, { mode: 'focus' });
             // If this page is itself nested in an iframe (e.g. embedded via
             // <creatr-art-piece>/<creatr-exhibit-wall>), the CSS overlay above
             // is only as big as the iframe — ask the wrapper to promote us
@@ -775,24 +812,24 @@ window.toggleFullscreen = function() {
     }
 };
 
-function syncFullscreenState(isFull) {
+function syncFullscreenState(isFull, options = {}) {
     const btn = document.getElementById('fullscreen-toggle-btn');
     if (!btn) return;
 
     if (isFull) {
+        shell.dataset.immersiveMode = options.mode || 'fullscreen';
         shell.classList.add('fullscreen');
         watchImmersiveViewport();
         btn.innerHTML = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14h6v6m10-6h-6v6M4 10h6V4m10 6h-6V4"/></svg>`;
-        btn.setAttribute('aria-label', 'Return to gallery view');
-        document.body.style.overflow = 'hidden';
-        document.documentElement.style.overflow = 'hidden';
+        btn.setAttribute('aria-label', 'Return to page');
+        lockImmersiveScroll();
     } else {
         shell.classList.remove('fullscreen');
+        delete shell.dataset.immersiveMode;
         unwatchImmersiveViewport();
         btn.innerHTML = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>`;
         btn.setAttribute('aria-label', 'Expand immersive view');
-        document.body.style.overflow = '';
-        document.documentElement.style.overflow = '';
+        unlockImmersiveScroll();
         if (isIPhoneWebKitBrowser()) {
             try {
                 if (window.parent && window.parent !== window) {
@@ -821,7 +858,7 @@ window.addEventListener('keydown', (e) => {
 
 // If loaded with direct fullscreen parameter
 if (<?= $isFullscreenInit ? 'true' : 'false' ?>) {
-    syncFullscreenState(true);
+    syncFullscreenState(true, { mode: isIPhoneWebKitBrowser() ? 'focus' : 'fullscreen' });
 }
 
 // Embed copy codes setup

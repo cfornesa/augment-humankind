@@ -243,10 +243,17 @@ Compatibility embed and immersive routes return content rather than redirects:
   version.
 - `GET /immersive/pieces/[id]` — full-page presentation for one piece.
   Full immersive pages expose viewer-level controls for native Three.js and
-  A-Frame pieces: `+` / `-` zoom, directional forward/back/left/right camera
-  movement, click/tap and press-and-hold button operation, keyboard WASD/arrow
-  movement where keyboard input exists, and pointer/touch gestures where
-  supported. Embedded/static immersive iframes keep the control rail hidden.
+  A-Frame pieces: a low-opacity edge HUD, right-edge vertical zoom slider
+  identified by a magnifying-glass icon and aligned with the site expand
+  control's x-axis, left-edge forward/back/left/right movement controls, float
+  up/down controls, click/tap and press-and-hold button operation, keyboard
+  WASD/arrow movement where keyboard input exists, and pointer/touch gestures
+  where supported.
+  Embedded/static immersive iframes keep the viewer HUD hidden. Desktop and
+  supporting tablet browsers use native fullscreen when available; iPhone
+  Safari uses Immersive Focus, a fixed `visualViewport`-sized mode with page
+  scrolling locked and "Expand immersive view" / "Return to page" button
+  language.
 - `GET /immersive/exhibits/[slug]` — full-page presentation for one platform
   exhibit and its migrated art/media items.
 - `GET /immersive/images/[encoded-ref]` — full-page presentation for a
@@ -299,11 +306,14 @@ piece pages, embeds, admin previews, thumbnail capture, and
 piece route mounts A-Frame pieces as a live `<a-scene>` directly inside the
 immersive stage, rather than projecting them as a framed gallery texture. In
 full immersive mode, A-Frame pieces use the same site-level viewer controls as
-native Three.js pieces: zoom buttons, directional camera buttons, tap/click
-movement, and mobile/tablet/desktop pointer support. These controls translate
-the viewer camera and do not call into piece-authored event handlers. A-Frame's
-built-in enter-VR/fullscreen control is disabled in this surface so the
-site-level fullscreen button remains the only fullscreen control.
+native Three.js pieces: the edge HUD, magnifying-glass-labeled vertical zoom
+slider aligned with the site expand control, directional camera buttons, float
+up/down buttons, tap/click movement, and mobile/tablet/desktop pointer support.
+These controls translate the viewer camera and do not call into piece-authored
+event handlers. A-Frame's built-in enter-VR/fullscreen control is disabled in
+this surface so the site-level expand control remains the only expansion
+control, with iPhone Safari using Immersive Focus rather than native browser
+fullscreen.
 C2.js pieces in the immersive gallery/exhibit wall are texture-projected
 (no native pointer events reach the off-screen canvas); clicking the framed
 piece opens a fullscreen interactive overlay — the same on-screen render
