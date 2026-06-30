@@ -242,6 +242,11 @@ Compatibility embed and immersive routes return content rather than redirects:
 - `GET /embed/pieces/[id]/data?version=[version-id]` — JSON for a specific
   version.
 - `GET /immersive/pieces/[id]` — full-page presentation for one piece.
+  Full immersive pages expose viewer-level controls for native Three.js and
+  A-Frame pieces: `+` / `-` zoom, directional forward/back/left/right camera
+  movement, click/tap and press-and-hold button operation, keyboard WASD/arrow
+  movement where keyboard input exists, and pointer/touch gestures where
+  supported. Embedded/static immersive iframes keep the control rail hidden.
 - `GET /immersive/exhibits/[slug]` — full-page presentation for one platform
   exhibit and its migrated art/media items.
 - `GET /immersive/images/[encoded-ref]` — full-page presentation for a
@@ -292,7 +297,13 @@ A-Frame pieces use the self-hosted `/assets/js/aframe.min.js` runtime. Public
 piece pages, embeds, admin previews, thumbnail capture, and
 `/immersive/pieces/[id]` all recognize `engine = 'aframe'`. The immersive
 piece route mounts A-Frame pieces as a live `<a-scene>` directly inside the
-immersive stage, rather than projecting them as a framed gallery texture.
+immersive stage, rather than projecting them as a framed gallery texture. In
+full immersive mode, A-Frame pieces use the same site-level viewer controls as
+native Three.js pieces: zoom buttons, directional camera buttons, tap/click
+movement, and mobile/tablet/desktop pointer support. These controls translate
+the viewer camera and do not call into piece-authored event handlers. A-Frame's
+built-in enter-VR/fullscreen control is disabled in this surface so the
+site-level fullscreen button remains the only fullscreen control.
 C2.js pieces in the immersive gallery/exhibit wall are texture-projected
 (no native pointer events reach the off-screen canvas); clicking the framed
 piece opens a fullscreen interactive overlay — the same on-screen render

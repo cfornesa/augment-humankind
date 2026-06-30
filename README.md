@@ -46,7 +46,7 @@ this instance's content.
 - `/collections` and `/collections/[slug]` — public archive/detail for migrated platform art collections
 - `/embed/pieces/[id]` — public embeddable HTML of a generative art piece
 - `/embed/pieces/[id]/data` — public JSON feed of art piece parameters and source code
-- `/immersive/pieces/[id]` — public 3D full-immersion stage or gallery room framing
+- `/immersive/pieces/[id]` — public 3D full-immersion stage or gallery room framing with viewer zoom, movement, keyboard, pointer, and touch controls where supported
 - `/immersive/collections/[slug]` — public progressive rendering collection wall (`/immersive/exhibits/[slug]` 301-redirects here for legacy links)
 - `/feeds/mf2` — mf2 JSON format feed export
 
@@ -82,6 +82,26 @@ Cron endpoints:
 - `Exhibit Collections` is the public/admin name for the native `collections` model that groups exhibits.
 - `Art Media` is the public/admin name for the portfolio taxonomy stored in `categories` with `category_scope='portfolio'`, and it now applies to pieces rather than exhibits.
 - `Categories` in the admin now refers only to blog/post categories stored in `categories` with `category_scope='blog'`.
+
+## Immersive Piece Controls
+
+Full `/immersive/pieces/[id]` pages expose viewer-level camera controls for
+native Three.js and A-Frame pieces:
+
+- `+` / `-` buttons zoom the viewer in and out.
+- Direction buttons move the camera forward, backward, left, and right.
+- Buttons support click/tap and press-and-hold across desktop, tablet, and
+  mobile pointer devices.
+- Existing keyboard controls remain available on desktop: arrow keys and
+  WASD move the viewer.
+- Existing pointer gestures remain available where supported: drag/pan,
+  wheel or pinch zoom, and tap/click-to-move.
+
+These controls move the viewer camera, not the artwork's own authored
+interaction state. Embedded and static immersive iframes stay visually quieter
+and do not show the viewer control rail. A-Frame's built-in enter-VR/fullscreen
+button is suppressed in immersive piece views so the site-level fullscreen
+button remains the single fullscreen control.
 
 ## Deployed File Layout
 

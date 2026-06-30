@@ -204,6 +204,57 @@ test('wheel-zoom saves orbit state so the next frame does not snap back to the p
     assert_contains($immersive, 'addEventListener("wheel", onThreeWheel');
 });
 
+test('Three.js viewer zoom buttons use the same saved orbit state path as wheel zoom', function () use ($immersive) {
+    assert_contains($immersive, 'function applyThreeZoom');
+    assert_contains($immersive, 'onZoomIn: () => applyThreeZoom(0.82)');
+    assert_contains($immersive, 'onZoomOut: () => applyThreeZoom(1.22)');
+    assert_contains($immersive, 'saveOrbitState();');
+});
+
+test('immersive viewer controls are optional and gated by the piece view', function () use ($immersive) {
+    $pieceView = file_get_contents(__DIR__ . '/../public/app/views/immersive/piece.php');
+    assert_contains($immersive, 'function createImmersiveViewerControls');
+    assert_contains($immersive, 'options.showViewerControls');
+    assert_contains($immersive, 'setInterval(onClick, 90)');
+    assert_contains($immersive, 'touch-action:none');
+    assert_contains($pieceView, 'showViewerControls: <?= (!$isEmbedMode && !$isStaticEmbed)');
+});
+
+test('tap/click movement preserves Three.js camera distance by translating camera and target together', function () use ($immersive) {
+    assert_contains($immersive, 'threeAnimToTarget = threeAnimFromTarget.clone().add(shift)');
+    assert_contains($immersive, 'threeAnimToCam = threeAnimFromCam.clone().add(shift)');
+});
+
+test('Three.js viewer direction buttons translate camera and target together', function () use ($immersive) {
+    assert_contains($immersive, 'function applyThreeDirectionalMove');
+    assert_contains($immersive, 'onMoveForward: () => applyThreeDirectionalMove(1, 0)');
+    assert_contains($immersive, 'onMoveBackward: () => applyThreeDirectionalMove(-1, 0)');
+    assert_contains($immersive, 'onMoveLeft: () => applyThreeDirectionalMove(0, -1)');
+    assert_contains($immersive, 'onMoveRight: () => applyThreeDirectionalMove(0, 1)');
+    assert_contains($immersive, 'controls.target.x += dx');
+    assert_contains($immersive, 'controls.target.z += dz');
+});
+
+test('A-Frame immersive pieces expose viewer zoom and tap-to-move controls without new dependencies', function () use ($immersive) {
+    assert_contains($immersive, 'export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onError = console.error, options = {})');
+    assert_contains($immersive, 'function applyAFrameZoom');
+    assert_contains($immersive, 'function applyAFrameDirectionalMove');
+    assert_contains($immersive, 'function moveAFrameViewTo');
+    assert_contains($immersive, 'onZoomIn: () => applyAFrameZoom(0.45)');
+    assert_contains($immersive, 'onZoomOut: () => applyAFrameZoom(-0.45)');
+    assert_contains($immersive, 'onMoveForward: () => applyAFrameDirectionalMove(1, 0)');
+    assert_contains($immersive, 'onMoveBackward: () => applyAFrameDirectionalMove(-1, 0)');
+    assert_contains($immersive, 'onMoveLeft: () => applyAFrameDirectionalMove(0, -1)');
+    assert_contains($immersive, 'onMoveRight: () => applyAFrameDirectionalMove(0, 1)');
+    assert_not_contains($immersive, 'import("/assets/js/aframe');
+});
+
+test('A-Frame immersive view suppresses the duplicate built-in VR fullscreen control', function () use ($immersive) {
+    assert_contains($immersive, 'scene.setAttribute("vr-mode-ui", "enabled: false")');
+    assert_contains($immersive, '.a-enter-vr');
+    assert_contains($immersive, 'display: none !important;');
+});
+
 test('createKeyboardNavigation scales movement by elapsed time, not a fixed per-tick step', function () use ($immersive) {
     // Regression guard: a fixed step per animateControls() tick makes
     // navigation speed vary with actual frame rate (device/fullscreen/tab
@@ -311,7 +362,7 @@ test('A-Frame immersive pieces mount as live scenes, not gallery textures', func
     assert_contains($immersive, '/assets/js/aframe.min.js');
     assert_contains($immersive, '<a-scene id="scene" embedded>');
     assert_contains($pieceView, "engine === 'aframe'");
-    assert_contains($pieceView, 'mountAFrameImmersivePiece(stage, code, htmlCode, cssCode, handleRuntimeError)');
+    assert_contains($pieceView, 'mountAFrameImmersivePiece(stage, code, htmlCode, cssCode, handleRuntimeError, viewerControlsOptions)');
 });
 
 test('A-Frame sizing CSS is emitted only on A-Frame render documents', function () use ($captureModule) {

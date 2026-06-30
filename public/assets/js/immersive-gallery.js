@@ -446,6 +446,79 @@ export function getProgressiveExhibitLiveBudget(viewportWidth, staticMode = fals
   return 3;                            // desktop
 }
 
+function createImmersiveViewerControls(stageEl, handlers = {}) {
+  if (!handlers.onZoomIn || !handlers.onZoomOut) return null;
+  const root = document.createElement("div");
+  root.className = "immersive-viewer-controls";
+  root.setAttribute("aria-label", "Viewer controls");
+  root.style.cssText = "position:absolute;left:calc(1rem + env(safe-area-inset-left));bottom:calc(1rem + env(safe-area-inset-bottom));z-index:132;display:flex;align-items:flex-end;gap:0.7rem;max-width:calc(100% - 2rem - env(safe-area-inset-left) - env(safe-area-inset-right));";
+
+  const zoomRail = document.createElement("div");
+  zoomRail.style.cssText = "display:flex;flex-direction:column;gap:0.45rem;";
+  root.appendChild(zoomRail);
+
+  const movePad = document.createElement("div");
+  movePad.style.cssText = "display:grid;grid-template-columns:repeat(3,2.4rem);grid-template-rows:repeat(3,2.4rem);gap:0.35rem;align-items:center;justify-items:center;";
+
+  function createButton(parent, label, ariaLabel, onClick, options = {}) {
+    const btn = document.createElement("button");
+    let holdTimer = 0;
+    let usedPointer = false;
+    btn.type = "button";
+    btn.textContent = label;
+    btn.setAttribute("aria-label", ariaLabel);
+    btn.style.cssText = "display:inline-flex;align-items:center;justify-content:center;height:2.75rem;width:2.75rem;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.55);color:#fff;border-radius:0.75rem;box-shadow:0 4px 12px rgba(0,0,0,0.5);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);font-size:1.25rem;font-weight:900;line-height:1;cursor:pointer;touch-action:none;user-select:none;-webkit-user-select:none;";
+    if (options.gridArea) btn.style.gridArea = options.gridArea;
+    const stopHold = () => {
+      if (holdTimer) {
+        clearInterval(holdTimer);
+        holdTimer = 0;
+      }
+    };
+    btn.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      usedPointer = true;
+      onClick();
+      if (options.hold) {
+        stopHold();
+        holdTimer = setInterval(onClick, 90);
+      }
+      try { btn.setPointerCapture(event.pointerId); } catch (_) {}
+    });
+    btn.addEventListener("pointerup", stopHold);
+    btn.addEventListener("pointercancel", stopHold);
+    btn.addEventListener("lostpointercapture", stopHold);
+    btn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (usedPointer) {
+        usedPointer = false;
+        return;
+      }
+      onClick();
+    });
+    parent.appendChild(btn);
+    return btn;
+  }
+
+  createButton(zoomRail, "+", "Zoom in", handlers.onZoomIn, { hold: true });
+  createButton(zoomRail, "-", "Zoom out", handlers.onZoomOut, { hold: true });
+  if (handlers.onMoveForward && handlers.onMoveBackward && handlers.onMoveLeft && handlers.onMoveRight) {
+    createButton(movePad, "^", "Move forward", handlers.onMoveForward, { hold: true, gridArea: "1 / 2" });
+    createButton(movePad, "<", "Move left", handlers.onMoveLeft, { hold: true, gridArea: "2 / 1" });
+    createButton(movePad, ">", "Move right", handlers.onMoveRight, { hold: true, gridArea: "2 / 3" });
+    createButton(movePad, "v", "Move backward", handlers.onMoveBackward, { hold: true, gridArea: "3 / 2" });
+    root.appendChild(movePad);
+  }
+  stageEl.appendChild(root);
+  return {
+    remove() {
+      root.remove();
+    },
+  };
+}
+
 export function selectProgressiveExhibitSlots(items, centers, target, liveBudget) {
   if (liveBudget <= 0) return new Set();
   return new Set(
@@ -741,7 +814,7 @@ export function fitMultiFrameExhibitCamera(shell, stage, resetCamera = true) {
 }
 
 // Phase 1 Entry Point: mountThreeImmersivePiece
-export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onError = console.error) {
+export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onError = console.error, options = {}) {
   const runtimeSize = { width: 1280, height: 720 };
   const host = createImmersiveHost(htmlCode, cssCode, '<div id="container"></div>', runtimeSize);
 
@@ -912,8 +985,12 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
   let deviceControls = null;
   let gyroActive = false;
   let gyroToggleBtn = null;
+  let viewerControls = null;
   const _orbitCamPos = new THREE.Vector3();
   const _orbitTarget = new THREE.Vector3();
+  const _buttonForward = new THREE.Vector3();
+  const _buttonRight = new THREE.Vector3();
+  let threeNavLimit = 5;
 
   let threeAnimFromTarget = null, threeAnimToTarget = null, threeAnimFromCam = null, threeAnimToCam = null, threeAnimStart = 0;
   const threeRaycaster = new THREE.Raycaster();
@@ -1058,28 +1135,61 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
     if (hitPoint) moveThreeOrbitTo(hitPoint);
   }
 
-  function onThreeWheel(e) {
+  function applyThreeZoom(zoomScale) {
     // OrbitControls' own wheel/dolly handling changes camera.position
     // directly without dispatching "start"/"end", so isOrbitActive never
     // flips and saveOrbitState() never captures the new zoom distance —
     // the very next frame's "snap back to last saved state" logic then
     // reverts the zoom. Handling wheel ourselves (and saving state after)
-    // closes that gap.
-    if (!controls || !state.camera) return;
-    e.preventDefault();
-    e.stopPropagation();
+    // closes that gap. Viewer buttons use this same path for parity.
+    if (!controls || !state.camera || !Number.isFinite(zoomScale) || zoomScale <= 0) return;
     const cameraPosition = state.camera.position;
     const direction = cameraPosition.clone().sub(controls.target);
     const currentDistance = direction.length();
     if (currentDistance < 1e-6) return;
     const minDistance = controls.minDistance || 0.6;
     const maxDistance = controls.maxDistance || Math.max(40, currentDistance * 4);
-    const zoomScale = Math.exp(Math.max(-1, Math.min(1, e.deltaY / 600)));
     const nextDistance = Math.max(minDistance, Math.min(maxDistance, currentDistance * zoomScale));
     direction.setLength(nextDistance);
     cameraPosition.copy(controls.target).add(direction);
     controls.update();
     saveOrbitState();
+    userHasInteracted = true;
+  }
+
+  function applyThreeDirectionalMove(forwardScale, rightScale) {
+    if (!controls || !state.camera) return;
+    cancelThreeNavigationAnimation();
+    state.camera.getWorldDirection(_buttonForward);
+    _buttonForward.y = 0;
+    if (_buttonForward.lengthSq() < 1e-6) {
+      _buttonForward.set(0, 0, -1);
+    } else {
+      _buttonForward.normalize();
+    }
+    _buttonRight.set(-_buttonForward.z, 0, _buttonForward.x);
+    const step = Math.max(0.08, controls.target.distanceTo(state.camera.position) * 0.035);
+    const shift = _buttonForward.multiplyScalar(forwardScale * step).add(_buttonRight.multiplyScalar(rightScale * step));
+    if (shift.lengthSq() < 1e-8) return;
+    const nextCamX = Math.max(-threeNavLimit, Math.min(threeNavLimit, state.camera.position.x + shift.x));
+    const nextCamZ = Math.max(0.5, Math.min(threeNavLimit, state.camera.position.z + shift.z));
+    const dx = nextCamX - state.camera.position.x;
+    const dz = nextCamZ - state.camera.position.z;
+    if (Math.abs(dx) < 1e-6 && Math.abs(dz) < 1e-6) return;
+    state.camera.position.x += dx;
+    state.camera.position.z += dz;
+    controls.target.x += dx;
+    controls.target.z += dz;
+    controls.update();
+    saveOrbitState();
+    userHasInteracted = true;
+  }
+
+  function onThreeWheel(e) {
+    if (!controls || !state.camera) return;
+    e.preventDefault();
+    e.stopPropagation();
+    applyThreeZoom(Math.exp(Math.max(-1, Math.min(1, e.deltaY / 600))));
   }
 
   function resize() {
@@ -1279,14 +1389,14 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
     controls.maxDistance = Math.max(40, initialTargetDist * 4);
     controls.update();
 
-    const navLimit = getThreeNavigationLimit();
+    threeNavLimit = getThreeNavigationLimit();
     keyNav = createKeyboardNavigation(controls, {
       container: stageEl,
       speed: (act) => Math.max(0.05, act.target.distanceTo(act.object.position) * 0.03),
-      minX: -navLimit,
-      maxX: navLimit,
+      minX: -threeNavLimit,
+      maxX: threeNavLimit,
       minZ: 0.5,
-      maxZ: navLimit,
+      maxZ: threeNavLimit,
     });
 
     _orbitCamPos.copy(state.camera.position);
@@ -1306,6 +1416,17 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
     canvas.addEventListener("gesturechange", preventNativeGesture);
     canvas.addEventListener("gestureend", preventNativeGesture);
     canvas.addEventListener("touchmove", preventNativeGesture, { passive: false });
+
+    if (options.showViewerControls) {
+      viewerControls = createImmersiveViewerControls(stageEl, {
+        onZoomIn: () => applyThreeZoom(0.82),
+        onZoomOut: () => applyThreeZoom(1.22),
+        onMoveForward: () => applyThreeDirectionalMove(1, 0),
+        onMoveBackward: () => applyThreeDirectionalMove(-1, 0),
+        onMoveLeft: () => applyThreeDirectionalMove(0, -1),
+        onMoveRight: () => applyThreeDirectionalMove(0, 1),
+      });
+    }
 
     controls.addEventListener("start", () => {
       isOrbitActive = true;
@@ -1460,6 +1581,7 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
       window.removeEventListener("resize", resize);
       cancelAnimationFrame(frameId);
       controls.dispose();
+      viewerControls?.remove();
       deviceControls?.disconnect?.();
       canvas.removeEventListener("pointerdown", onThreePointerDown);
       canvas.removeEventListener("pointermove", onThreePointerMove);
@@ -1481,7 +1603,7 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
   }
 }
 
-export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onError = console.error) {
+export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onError = console.error, options = {}) {
   stageEl.innerHTML = "";
 
   const host = document.createElement("div");
@@ -1499,6 +1621,9 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
       width: 100% !important;
       height: 100% !important;
     }
+    .a-enter-vr {
+      display: none !important;
+    }
     ${cssCode || ""}
   `;
   host.appendChild(style);
@@ -1511,7 +1636,18 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
   let disposed = false;
   let scene = null;
   let resizeObserver = null;
+  let viewerControls = null;
+  let pointerTarget = null;
+  let frameId = 0;
   const stopFrameHandles = [];
+  const aframeNav = {
+    animFrom: null,
+    animTo: null,
+    animStart: 0,
+    pointer: null,
+    hadMultiTouch: false,
+    activeTouches: new Set(),
+  };
 
   const startFrame = (handler) => {
     let frameCount = 0;
@@ -1547,6 +1683,183 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
     window.dispatchEvent(new Event("resize"));
   }
 
+  function getAFrameThree() {
+    return window.AFRAME?.THREE || window.THREE;
+  }
+
+  function getAFrameCameraObject() {
+    if (scene?.camera) return scene.camera;
+    const cameraEl = scene?.querySelector("[camera]") || scene?.querySelector("a-camera");
+    return cameraEl?.object3D || null;
+  }
+
+  function getAFrameCameraMover() {
+    const cameraObject = getAFrameCameraObject();
+    if (!cameraObject) return null;
+    const cameraEl = cameraObject.el || scene?.querySelector("[camera]") || scene?.querySelector("a-camera");
+    return cameraEl?.object3D || cameraObject;
+  }
+
+  function moveAFrameCameraByWorldDelta(delta) {
+    const THREE_NS = getAFrameThree();
+    const mover = getAFrameCameraMover();
+    if (!THREE_NS || !mover) return false;
+    const worldPosition = new THREE_NS.Vector3();
+    mover.getWorldPosition(worldPosition);
+    worldPosition.add(delta);
+    if (mover.parent) {
+      mover.parent.worldToLocal(worldPosition);
+    }
+    mover.position.copy(worldPosition);
+    return true;
+  }
+
+  function applyAFrameZoom(distance) {
+    const THREE_NS = getAFrameThree();
+    const cameraObject = getAFrameCameraObject();
+    if (!THREE_NS || !cameraObject) return;
+    const forward = new THREE_NS.Vector3();
+    cameraObject.getWorldDirection(forward);
+    moveAFrameCameraByWorldDelta(forward.multiplyScalar(distance));
+  }
+
+  function applyAFrameDirectionalMove(forwardScale, rightScale) {
+    const THREE_NS = getAFrameThree();
+    const cameraObject = getAFrameCameraObject();
+    if (!THREE_NS || !cameraObject) return;
+    const forward = new THREE_NS.Vector3();
+    cameraObject.getWorldDirection(forward);
+    forward.y = 0;
+    if (forward.lengthSq() < 1e-6) {
+      forward.set(0, 0, -1);
+    } else {
+      forward.normalize();
+    }
+    const right = new THREE_NS.Vector3(-forward.z, 0, forward.x);
+    const step = 0.18;
+    const shift = forward.multiplyScalar(forwardScale * step).add(right.multiplyScalar(rightScale * step));
+    moveAFrameCameraByWorldDelta(shift);
+  }
+
+  function activeAFrameTouchCount() {
+    return aframeNav.activeTouches.size;
+  }
+
+  function onAFramePointerDown(event) {
+    if ((event.pointerType || "mouse") === "touch") {
+      aframeNav.activeTouches.add(event.pointerId);
+      if (activeAFrameTouchCount() > 1) aframeNav.hadMultiTouch = true;
+    }
+    aframeNav.pointer = {
+      id: event.pointerId,
+      pointerType: event.pointerType || "mouse",
+      button: event.button,
+      startX: event.clientX,
+      startY: event.clientY,
+      moved: false,
+    };
+  }
+
+  function onAFramePointerMove(event) {
+    if (!aframeNav.pointer || aframeNav.pointer.id !== event.pointerId) return;
+    if (Math.hypot(event.clientX - aframeNav.pointer.startX, event.clientY - aframeNav.pointer.startY) >= 6) {
+      aframeNav.pointer.moved = true;
+    }
+    if ((event.pointerType || "mouse") === "touch" && activeAFrameTouchCount() > 1) {
+      aframeNav.hadMultiTouch = true;
+    }
+  }
+
+  function clearAFramePointer(event) {
+    if ((event.pointerType || "mouse") === "touch") {
+      aframeNav.activeTouches.delete(event.pointerId);
+      if (activeAFrameTouchCount() === 0) aframeNav.hadMultiTouch = false;
+    }
+    if (aframeNav.pointer?.id === event.pointerId) {
+      aframeNav.pointer = null;
+    }
+  }
+
+  function moveAFrameViewTo(hitPoint) {
+    const THREE_NS = getAFrameThree();
+    const mover = getAFrameCameraMover();
+    if (!THREE_NS || !mover || !hitPoint) return;
+    const cameraWorld = new THREE_NS.Vector3();
+    mover.getWorldPosition(cameraWorld);
+    const shift = new THREE_NS.Vector3(
+      Math.max(-12, Math.min(12, hitPoint.x - cameraWorld.x)),
+      0,
+      Math.max(-12, Math.min(12, hitPoint.z - cameraWorld.z)),
+    );
+    if (shift.lengthSq() < 0.003) return;
+    aframeNav.animFrom = cameraWorld.clone();
+    aframeNav.animTo = cameraWorld.clone().add(shift);
+    aframeNav.animStart = performance.now();
+  }
+
+  function onAFramePointerUp(event) {
+    const THREE_NS = getAFrameThree();
+    const pointer = aframeNav.pointer;
+    const wasMultiTouch = aframeNav.hadMultiTouch || activeAFrameTouchCount() > 1;
+    clearAFramePointer(event);
+    if (!THREE_NS || !scene || !pointer || wasMultiTouch || pointer.button !== 0 || event.button !== 0 || pointer.moved) return;
+    const cameraObject = getAFrameCameraObject();
+    if (!cameraObject) return;
+    const rect = (pointerTarget || host).getBoundingClientRect();
+    const raycaster = new THREE_NS.Raycaster();
+    raycaster.setFromCamera(
+      new THREE_NS.Vector2(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1),
+      cameraObject,
+    );
+
+    let hitPoint = null;
+    const hits = raycaster.intersectObjects(scene.object3D?.children || [], true)
+      .filter(hit => {
+        if (hit.object === cameraObject || cameraObject.children?.includes(hit.object)) return false;
+        const tagName = hit.object.el?.tagName?.toUpperCase?.() || "";
+        const name = (hit.object.name || hit.object.el?.id || "").toLowerCase();
+        if (tagName === "A-SKY" || name.includes("sky") || name.includes("background") || name.includes("env")) return false;
+        return true;
+      });
+    if (hits.length > 0) {
+      hitPoint = hits[0].point;
+    } else {
+      const floorPlane = new THREE_NS.Plane(new THREE_NS.Vector3(0, 1, 0), 0);
+      const planeHit = new THREE_NS.Vector3();
+      if (raycaster.ray.intersectPlane(floorPlane, planeHit)) hitPoint = planeHit;
+    }
+    if (hitPoint) moveAFrameViewTo(hitPoint);
+  }
+
+  function animateAFrameViewerControls() {
+    if (disposed) return;
+    frameId = requestAnimationFrame(animateAFrameViewerControls);
+    const THREE_NS = getAFrameThree();
+    const mover = getAFrameCameraMover();
+    if (!THREE_NS || !mover || !aframeNav.animFrom || !aframeNav.animTo) return;
+    const t = Math.min((performance.now() - aframeNav.animStart) / 350, 1);
+    const eased = 1 - (1 - t) ** 3;
+    const nextWorld = new THREE_NS.Vector3().lerpVectors(aframeNav.animFrom, aframeNav.animTo, eased);
+    if (mover.parent) {
+      mover.parent.worldToLocal(nextWorld);
+    }
+    mover.position.copy(nextWorld);
+    if (t >= 1) {
+      aframeNav.animFrom = aframeNav.animTo = null;
+    }
+  }
+
+  function bindAFramePointerControls() {
+    if (pointerTarget) return;
+    pointerTarget = scene?.canvas || scene?.querySelector("canvas") || host;
+    pointerTarget.style.touchAction = "none";
+    pointerTarget.addEventListener("pointerdown", onAFramePointerDown);
+    pointerTarget.addEventListener("pointermove", onAFramePointerMove);
+    pointerTarget.addEventListener("pointerup", onAFramePointerUp);
+    pointerTarget.addEventListener("pointercancel", clearAFramePointer);
+    pointerTarget.addEventListener("lostpointercapture", clearAFramePointer);
+  }
+
   loadAFrameRuntime().then(() => {
     if (disposed) return;
     mount.innerHTML = htmlCode?.trim() ? htmlCode : '<a-scene id="scene" embedded><a-sky color="#10151f"></a-sky><a-entity camera position="0 1.6 4"></a-entity></a-scene>';
@@ -1556,6 +1869,7 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
     }
     if (!scene.id) scene.id = "scene";
     if (!scene.hasAttribute("embedded")) scene.setAttribute("embedded", "");
+    scene.setAttribute("vr-mode-ui", "enabled: false");
     scene.style.display = "block";
     scene.style.width = "100%";
     scene.style.height = "100%";
@@ -1576,11 +1890,33 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
     resizeObserver = new ResizeObserver(resizeScene);
     resizeObserver.observe(stageEl);
     requestAnimationFrame(resizeScene);
+    requestAnimationFrame(bindAFramePointerControls);
+    scene.addEventListener("renderstart", bindAFramePointerControls, { once: true });
+    frameId = requestAnimationFrame(animateAFrameViewerControls);
+    if (options.showViewerControls) {
+      viewerControls = createImmersiveViewerControls(stageEl, {
+        onZoomIn: () => applyAFrameZoom(0.45),
+        onZoomOut: () => applyAFrameZoom(-0.45),
+        onMoveForward: () => applyAFrameDirectionalMove(1, 0),
+        onMoveBackward: () => applyAFrameDirectionalMove(-1, 0),
+        onMoveLeft: () => applyAFrameDirectionalMove(0, -1),
+        onMoveRight: () => applyAFrameDirectionalMove(0, 1),
+      });
+    }
   }).catch(onError);
 
   return () => {
     disposed = true;
+    cancelAnimationFrame(frameId);
     resizeObserver?.disconnect();
+    viewerControls?.remove();
+    if (pointerTarget) {
+      pointerTarget.removeEventListener("pointerdown", onAFramePointerDown);
+      pointerTarget.removeEventListener("pointermove", onAFramePointerMove);
+      pointerTarget.removeEventListener("pointerup", onAFramePointerUp);
+      pointerTarget.removeEventListener("pointercancel", clearAFramePointer);
+      pointerTarget.removeEventListener("lostpointercapture", clearAFramePointer);
+    }
     stopFrameHandles.forEach((stop) => stop());
     try {
       scene?.pause?.();

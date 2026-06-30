@@ -882,6 +882,7 @@ const title = <?= json_encode($piece['title'] ?? '') ?>;
 const prompt = <?= json_encode($prompt) ?>;
 const description = <?= json_encode($description) ?>;
 const sourceUrl = <?= json_encode($embedUrl) ?>;
+const viewerControlsOptions = { showViewerControls: <?= (!$isEmbedMode && !$isStaticEmbed) ? 'true' : 'false' ?> };
 
 const stage = document.getElementById('immersive-stage');
 
@@ -927,9 +928,9 @@ window.addEventListener('keydown', (e) => {
 
 try {
     if (engine === 'three') {
-        mountThreeImmersivePiece(stage, code, htmlCode, cssCode, handleRuntimeError);
+        mountThreeImmersivePiece(stage, code, htmlCode, cssCode, handleRuntimeError, viewerControlsOptions);
     } else if (engine === 'aframe') {
-        mountAFrameImmersivePiece(stage, code, htmlCode, cssCode, handleRuntimeError);
+        mountAFrameImmersivePiece(stage, code, htmlCode, cssCode, handleRuntimeError, viewerControlsOptions);
     } else {
         mountGalleryPiece(stage, code, htmlCode, cssCode, engine, title, sourceUrl, prompt, description, handleRuntimeError, openInteractiveOverlay);
     }
