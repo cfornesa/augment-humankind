@@ -608,6 +608,234 @@ function createImmersiveViewerControls(stageEl, handlers = {}) {
   };
 }
 
+function createSharedGyroController(stageEl, camera, options = {}) {
+  if (!stageEl || !camera) {
+    return {
+      update() {},
+      dispose() {},
+      isActive() { return false; },
+      async setup() { return false; },
+      requestCalibration() {},
+    };
+  }
+
+  let deviceControls = null;
+  let gyroActive = false;
+  let gyroNeedsCalibration = false;
+  let gyroToggleBtn = null;
+  let enableMotionBtn = null;
+  let disposed = false;
+  let activationPromise = null;
+  const baselineQuat = new THREE.Quaternion();
+  const yawProbe = new THREE.Vector3();
+
+  function requestCalibration() {
+    baselineQuat.copy(camera.quaternion);
+    gyroNeedsCalibration = true;
+  }
+
+  function hasDeviceOrientationAngles(deviceControlsRef) {
+    const orientation = deviceControlsRef?.deviceOrientation;
+    return !!orientation && (
+      orientation.alpha !== null && orientation.alpha !== undefined
+      || orientation.beta !== null && orientation.beta !== undefined
+      || orientation.gamma !== null && orientation.gamma !== undefined
+    );
+  }
+
+  function yawFromQuaternion(quaternion) {
+    yawProbe.set(0, 0, -1).applyQuaternion(quaternion);
+    yawProbe.y = 0;
+    if (yawProbe.lengthSq() < 1e-8) return null;
+    yawProbe.normalize();
+    return Math.atan2(yawProbe.x, yawProbe.z);
+  }
+
+  function normalizeAngleRadians(angle) {
+    let normalized = angle;
+    while (normalized > Math.PI) normalized -= Math.PI * 2;
+    while (normalized < -Math.PI) normalized += Math.PI * 2;
+    return normalized;
+  }
+
+  function calibrateGyroToCurrentView() {
+    if (!gyroNeedsCalibration || !deviceControls || !hasDeviceOrientationAngles(deviceControls)) return;
+
+    const desiredYaw = yawFromQuaternion(baselineQuat);
+    if (desiredYaw === null) {
+      gyroNeedsCalibration = false;
+      return;
+    }
+
+    deviceControls.alphaOffset = 0;
+    deviceControls.update();
+    const rawYaw = yawFromQuaternion(camera.quaternion);
+    if (rawYaw === null) {
+      camera.quaternion.copy(baselineQuat);
+      gyroNeedsCalibration = false;
+      return;
+    }
+
+    const yawDelta = normalizeAngleRadians(desiredYaw - rawYaw);
+    let bestOffset = yawDelta;
+    let bestError = Infinity;
+    [yawDelta, -yawDelta].forEach((candidateOffset) => {
+      deviceControls.alphaOffset = candidateOffset;
+      deviceControls.update();
+      const candidateYaw = yawFromQuaternion(camera.quaternion);
+      if (candidateYaw === null) return;
+      const candidateError = Math.abs(normalizeAngleRadians(desiredYaw - candidateYaw));
+      if (candidateError < bestError) {
+        bestError = candidateError;
+        bestOffset = candidateOffset;
+      }
+    });
+
+    deviceControls.alphaOffset = bestOffset;
+    gyroNeedsCalibration = false;
+  }
+
+  function setGyroActive(nextActive) {
+    gyroActive = nextActive;
+    gyroToggleBtn?.setAttribute("aria-pressed", String(gyroActive));
+    if (gyroToggleBtn) {
+      gyroToggleBtn.style.background = gyroActive ? "rgba(89,184,201,0.85)" : "rgba(0,0,0,0.55)";
+    }
+    options.onStateChange?.(gyroActive);
+  }
+
+  function createGyroToggleButton() {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.setAttribute("aria-label", "Toggle gyroscope camera control");
+    btn.textContent = "⟲";
+    btn.style.cssText = "position:absolute;top:calc(0.75rem + env(safe-area-inset-top));left:calc(0.75rem + env(safe-area-inset-left));z-index:130;display:inline-flex;align-items:center;justify-content:center;height:2.5rem;width:2.5rem;border:1px solid rgba(255,255,255,0.15);background:rgba(89,184,201,0.85);color:#fff;border-radius:9999px;font-size:1.1rem;cursor:pointer;";
+    btn.addEventListener("click", () => {
+      const nextActive = !gyroActive;
+      if (nextActive) {
+        requestCalibration();
+        options.onActivated?.();
+      }
+      setGyroActive(nextActive);
+    });
+    stageEl.appendChild(btn);
+    return btn;
+  }
+
+  function createEnableMotionButton(onGranted) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = "Enable Motion Controls";
+    btn.style.cssText = "position:absolute;bottom:calc(1rem + env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);z-index:130;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.65);color:#fff;padding:0.6rem 1.1rem;border-radius:9999px;font-size:0.85rem;cursor:pointer;";
+    btn.addEventListener("click", async () => {
+      try {
+        const result = await DeviceOrientationEvent.requestPermission();
+        if (result === "granted") {
+          btn.remove();
+          if (enableMotionBtn === btn) enableMotionBtn = null;
+          await onGranted();
+        }
+      } catch (_) {
+        // Leave the button in place so the user can try again later.
+      }
+    });
+    stageEl.appendChild(btn);
+    return btn;
+  }
+
+  function waitForRealOrientationData(timeoutMs = 1500) {
+    return new Promise((resolve) => {
+      const onFirstEvent = (event) => {
+        if (event.alpha !== null || event.beta !== null || event.gamma !== null) {
+          window.removeEventListener("deviceorientation", onFirstEvent);
+          resolve(true);
+        }
+      };
+      window.addEventListener("deviceorientation", onFirstEvent);
+      setTimeout(() => {
+        window.removeEventListener("deviceorientation", onFirstEvent);
+        resolve(false);
+      }, timeoutMs);
+    });
+  }
+
+  async function activateGyro() {
+    if (disposed) return false;
+    if (activationPromise) return activationPromise;
+    activationPromise = (async () => {
+      if (!deviceControls) {
+        const { DeviceOrientationControls } = await import("/assets/js/three-device-orientation-controls.js");
+        deviceControls = new DeviceOrientationControls(camera);
+      }
+      requestCalibration();
+      if (!gyroToggleBtn) gyroToggleBtn = createGyroToggleButton();
+      options.onActivated?.();
+      setGyroActive(true);
+      return true;
+    })();
+    try {
+      return await activationPromise;
+    } finally {
+      activationPromise = null;
+    }
+  }
+
+  async function setup() {
+    if (disposed || typeof window.DeviceOrientationEvent === "undefined") return false;
+    try {
+      if (typeof DeviceOrientationEvent.requestPermission === "function") {
+        try {
+          const result = await DeviceOrientationEvent.requestPermission();
+          if (result === "granted") {
+            return await activateGyro();
+          }
+        } catch (_) {
+          // Fall through to the manual permission button.
+        }
+        if (!enableMotionBtn) {
+          enableMotionBtn = createEnableMotionButton(activateGyro);
+        }
+        return false;
+      }
+
+      const hasRealOrientationData = await waitForRealOrientationData();
+      if (hasRealOrientationData) {
+        return await activateGyro();
+      }
+    } catch (_) {
+      // A failed dynamic import or unsupported browser should only disable motion.
+    }
+    return false;
+  }
+
+  return {
+    update() {
+      if (!gyroActive || !deviceControls || disposed) return;
+      if (hasDeviceOrientationAngles(deviceControls)) {
+        calibrateGyroToCurrentView();
+        deviceControls.update();
+      }
+    },
+    dispose() {
+      disposed = true;
+      enableMotionBtn?.remove();
+      gyroToggleBtn?.remove();
+      deviceControls?.disconnect?.();
+      enableMotionBtn = null;
+      gyroToggleBtn = null;
+      deviceControls = null;
+      activationPromise = null;
+      gyroActive = false;
+      gyroNeedsCalibration = false;
+    },
+    isActive() {
+      return gyroActive;
+    },
+    setup,
+    requestCalibration,
+  };
+}
+
 export function createReadOnlyFullViewOverlay(stageEl, items, options = {}) {
   const overlayItems = Array.isArray(items) ? items : [];
   const host = stageEl.parentElement ?? stageEl;
@@ -1294,17 +1522,12 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
   let keyNav = null;
   let isOrbitActive = false;
   let userHasInteracted = false;
-  let deviceControls = null;
-  let gyroActive = false;
-  let gyroNeedsCalibration = false;
-  let gyroToggleBtn = null;
+  let gyroController = null;
   let viewerControls = null;
   const _orbitCamPos = new THREE.Vector3();
   const _orbitTarget = new THREE.Vector3();
   const _buttonForward = new THREE.Vector3();
   const _buttonRight = new THREE.Vector3();
-  const _gyroBaselineQuat = new THREE.Quaternion();
-  const _gyroYawProbe = new THREE.Vector3();
   let threeNavLimit = 5;
 
   let threeAnimFromTarget = null, threeAnimToTarget = null, threeAnimFromCam = null, threeAnimToCam = null, threeAnimStart = 0;
@@ -1316,73 +1539,6 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
     if (!controls || !state.camera) return;
     _orbitCamPos.copy(state.camera.position);
     _orbitTarget.copy(controls.target);
-  }
-
-  function requestGyroCalibration() {
-    if (!state.camera) return;
-    _gyroBaselineQuat.copy(state.camera.quaternion);
-    gyroNeedsCalibration = true;
-  }
-
-  function hasDeviceOrientationAngles(deviceControlsRef) {
-    const orientation = deviceControlsRef?.deviceOrientation;
-    return !!orientation && (
-      orientation.alpha !== null && orientation.alpha !== undefined
-      || orientation.beta !== null && orientation.beta !== undefined
-      || orientation.gamma !== null && orientation.gamma !== undefined
-    );
-  }
-
-  function yawFromQuaternion(quaternion) {
-    _gyroYawProbe.set(0, 0, -1).applyQuaternion(quaternion);
-    _gyroYawProbe.y = 0;
-    if (_gyroYawProbe.lengthSq() < 1e-8) return null;
-    _gyroYawProbe.normalize();
-    return Math.atan2(_gyroYawProbe.x, _gyroYawProbe.z);
-  }
-
-  function normalizeAngleRadians(angle) {
-    let normalized = angle;
-    while (normalized > Math.PI) normalized -= Math.PI * 2;
-    while (normalized < -Math.PI) normalized += Math.PI * 2;
-    return normalized;
-  }
-
-  function calibrateGyroToCurrentView() {
-    if (!gyroNeedsCalibration || !deviceControls || !state.camera || !hasDeviceOrientationAngles(deviceControls)) return;
-
-    const desiredYaw = yawFromQuaternion(_gyroBaselineQuat);
-    if (desiredYaw === null) {
-      gyroNeedsCalibration = false;
-      return;
-    }
-
-    deviceControls.alphaOffset = 0;
-    deviceControls.update();
-    const rawYaw = yawFromQuaternion(state.camera.quaternion);
-    if (rawYaw === null) {
-      state.camera.quaternion.copy(_gyroBaselineQuat);
-      gyroNeedsCalibration = false;
-      return;
-    }
-
-    const yawDelta = normalizeAngleRadians(desiredYaw - rawYaw);
-    let bestOffset = yawDelta;
-    let bestError = Infinity;
-    [yawDelta, -yawDelta].forEach((candidateOffset) => {
-      deviceControls.alphaOffset = candidateOffset;
-      deviceControls.update();
-      const candidateYaw = yawFromQuaternion(state.camera.quaternion);
-      if (candidateYaw === null) return;
-      const candidateError = Math.abs(normalizeAngleRadians(desiredYaw - candidateYaw));
-      if (candidateError < bestError) {
-        bestError = candidateError;
-        bestOffset = candidateOffset;
-      }
-    });
-
-    deviceControls.alphaOffset = bestOffset;
-    gyroNeedsCalibration = false;
   }
 
   function cancelThreeNavigationAnimation() {
@@ -1662,12 +1818,7 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
         // (a separate degree of freedom, untouched by this) keep working
         // exactly as before. enableRotate is already false (see setup below),
         // so there's no fight over rotation between the two.
-        if (gyroActive && deviceControls) {
-          if (hasDeviceOrientationAngles(deviceControls)) {
-            calibrateGyroToCurrentView();
-            deviceControls.update();
-          }
-        }
+        gyroController?.update();
 
         // Many pieces script their own ambient camera motion every frame
         // (e.g. a slow sway via camera.position.x = ... ; camera.lookAt(...)),
@@ -1864,139 +2015,16 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
       saveOrbitState();
     });
 
-    // Gyroscope look control, mirroring what A-Frame's look-controls already
-    // gets for free: rotation only, driven by device tilt — drag-to-pan,
-    // pinch/wheel-zoom, and keyboard WASD keep moving the camera through the
-    // scene exactly as they always have, on every device, gyro or not.
-    function createGyroToggleButton() {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.setAttribute("aria-label", "Toggle gyroscope camera control");
-      btn.setAttribute("aria-pressed", "true");
-      btn.textContent = "⟲";
-      btn.style.cssText = "position:absolute;top:calc(0.75rem + env(safe-area-inset-top));left:calc(0.75rem + env(safe-area-inset-left));z-index:130;display:inline-flex;align-items:center;justify-content:center;height:2.5rem;width:2.5rem;border:1px solid rgba(255,255,255,0.15);background:rgba(89,184,201,0.85);color:#fff;border-radius:9999px;font-size:1.1rem;cursor:pointer;";
-      btn.addEventListener("click", () => {
-        gyroActive = !gyroActive;
-        if (gyroActive) requestGyroCalibration();
-        btn.setAttribute("aria-pressed", String(gyroActive));
-        btn.style.background = gyroActive ? "rgba(89,184,201,0.85)" : "rgba(0,0,0,0.55)";
-      });
-      stageEl.appendChild(btn);
-      return btn;
-    }
-
-    // A-Frame's own device-orientation-permission-ui falls back to exactly
-    // this kind of manual Allow button when its automatic on-load
-    // requestPermission() call fails — which it almost always does here too,
-    // since by the time this async mount function runs, the click/tap that
-    // navigated to this page is no longer a "fresh" user gesture as far as
-    // iOS Safari's transient-activation rules are concerned. A button click
-    // is always a guaranteed-fresh gesture, so the retry from inside it
-    // reliably succeeds where the automatic attempt did not.
-    function createEnableMotionButton(onGranted) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.textContent = "Enable Motion Controls";
-      btn.style.cssText = "position:absolute;bottom:calc(1rem + env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);z-index:130;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.65);color:#fff;padding:0.6rem 1.1rem;border-radius:9999px;font-size:0.85rem;cursor:pointer;";
-      btn.addEventListener("click", async () => {
-        try {
-          const result = await DeviceOrientationEvent.requestPermission();
-          if (result === "granted") {
-            btn.remove();
-            onGranted();
-          }
-        } catch (_) {
-          // Still denied/unsupported even from a real click — leave the
-          // button in place so the user can try again, same as A-Frame's
-          // own fallback dialog does.
-        }
-      });
-      stageEl.appendChild(btn);
-      return btn;
-    }
-
-    // Constructing DeviceOrientationControls is not side-effect-free: its
-    // constructor unconditionally calls camera.rotation.reorder('YXZ'),
-    // which silently changes how *any* later rotation math on this camera
-    // is interpreted — including a piece's own scripted camera animation.
-    // That reorder must only ever happen once we're certain real motion
-    // data exists; never as part of merely testing for it.
-    async function activateGyro() {
-      const { DeviceOrientationControls } = await import("/assets/js/three-device-orientation-controls.js");
-      requestGyroCalibration();
-      deviceControls = new DeviceOrientationControls(state.camera);
-      gyroActive = true;
-      gyroToggleBtn = createGyroToggleButton();
-      // Tilting the phone to look around is taking control of the camera,
-      // exactly as much as a drag or a key press is — without this,
-      // deviceControls.update() correctly writes the tilted orientation onto
-      // state.camera.quaternion every frame, but animateControls() only ever
-      // renders that when pieceDrivesOwnRender is false or userHasInteracted
-      // is true. Any piece that scripts its own render loop (common) would
-      // silently overwrite gyro's quaternion update with its own scripted
-      // camera before our render call would even run, making tilt appear to
-      // do nothing despite the camera actually updating correctly underneath.
-      userHasInteracted = true;
-    }
-
-    // Waits for a genuine 'deviceorientation' event carrying real angle data
-    // — using a plain window listener, never constructing
-    // DeviceOrientationControls itself — so a desktop browser that merely
-    // defines window.DeviceOrientationEvent with no real sensor (Chrome and
-    // Firefox both do) is never mistaken for "supported" and never mutates
-    // the camera's rotation order for nothing.
-    function waitForRealOrientationData(timeoutMs = 1500) {
-      return new Promise((resolve) => {
-        const onFirstEvent = (event) => {
-          if (event.alpha !== null || event.beta !== null || event.gamma !== null) {
-            window.removeEventListener("deviceorientation", onFirstEvent);
-            resolve(true);
-          }
-        };
-        window.addEventListener("deviceorientation", onFirstEvent);
-        setTimeout(() => {
-          window.removeEventListener("deviceorientation", onFirstEvent);
-          resolve(false);
-        }, timeoutMs);
-      });
-    }
-
-    async function setupGyroControls() {
-      if (typeof window.DeviceOrientationEvent === "undefined") return;
-      try {
-        if (typeof DeviceOrientationEvent.requestPermission === "function") {
-          // iOS 13+: gated behind explicit permission, not by sensor
-          // presence. The auto-attempt below usually fails because this
-          // async mount function isn't a direct user-gesture handler; on
-          // failure, fall back to a real button click, exactly like
-          // A-Frame's own permission dialog does.
-          try {
-            const result = await DeviceOrientationEvent.requestPermission();
-            if (result === "granted") {
-              await activateGyro();
-              return;
-            }
-          } catch (_) {
-            // Fall through to the manual button below.
-          }
-          createEnableMotionButton(activateGyro);
-          return;
-        }
-
-        // No permission gate at all (Android, or desktop's false-positive
-        // constructor) — the only way to tell those apart is whether a real
-        // event actually arrives.
-        const hasRealOrientationData = await waitForRealOrientationData();
-        if (hasRealOrientationData) {
-          await activateGyro();
-        }
-      } catch (_) {
-        // The dynamic import itself failed, or anything else unexpected —
-        // leave gyroActive false. Fully contained to this function, can
-        // never break module load for the rest of this file.
-      }
-    }
-    setupGyroControls();
+    gyroController = createSharedGyroController(stageEl, state.camera, {
+      onActivated() {
+        // Tilting the phone to look around is taking control of the camera,
+        // exactly as much as a drag or a key press is — without this, pieces
+        // that drive their own render loop can silently overwrite the device
+        // orientation before the user ever sees it.
+        userHasInteracted = true;
+      },
+    });
+    gyroController.setup();
 
     frameId = requestAnimationFrame(animateControls);
 
@@ -2010,7 +2038,7 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
       cancelAnimationFrame(frameId);
       controls.dispose();
       viewerControls?.remove();
-      deviceControls?.disconnect?.();
+      gyroController?.dispose();
       canvas.removeEventListener("pointerdown", onThreePointerDown);
       canvas.removeEventListener("pointermove", onThreePointerMove);
       canvas.removeEventListener("pointerup", onThreePointerUp);
@@ -2398,6 +2426,7 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
   let disposed = false;
   let viewerControls = null;
   let readOnlyOverlay = null;
+  let gyroController = null;
   const galleryButtonForward = new THREE.Vector3();
   const galleryButtonRight = new THREE.Vector3();
 
@@ -2677,6 +2706,7 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
 
   const floorNav = createFloorClickNavigation(shell.camera, shell.controls, shell.floor, stageEl);
   const keyNav = createKeyboardNavigation(shell.controls, { container: stageEl });
+  gyroController = createSharedGyroController(stageEl, shell.camera);
 
   // C2.js pieces run in an off-screen canvas (createImmersiveHost) and are
   // texture-projected onto shell.artMesh, so no pointer events ever reach
@@ -2752,12 +2782,14 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
       artTexture.needsUpdate = true;
     }
     shell.controls.update();
+    gyroController?.update();
     syncViewerControlZoom();
     shell.renderer.render(shell.scene, shell.camera);
   }
 
   bootRuntime();
   fitMountedGalleryCamera(shell, stageEl);
+  gyroController.setup();
   animate();
 
   const resizeObserver = new ResizeObserver(() => fitMountedGalleryCamera(shell, stageEl, undefined, false));
@@ -2785,6 +2817,7 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
     p5Instance?.remove?.();
     floorNav.dispose();
     keyNav.dispose();
+    gyroController?.dispose();
     viewerControls?.remove();
     readOnlyOverlay?.remove();
     disposeInteractiveClick?.();
@@ -2874,8 +2907,10 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
   let viewerControls = null;
   let readOnlyOverlay = null;
   let disposeSlotFullViewClick = null;
+  let gyroController = null;
   const exhibitButtonForward = new THREE.Vector3();
   const exhibitButtonRight = new THREE.Vector3();
+  gyroController = createSharedGyroController(stageEl, shell.camera);
   
   function getLiveSlots() {
     const budget = getProgressiveExhibitLiveBudget(window.innerWidth);
@@ -3268,6 +3303,7 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
     floorNav.update();
     keyNav.update();
     shell.controls.update();
+    gyroController?.update();
     syncExhibitViewerZoom();
     
     // Update live textures
@@ -3286,6 +3322,7 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
   }
 
   updateProgressiveLoading();
+  gyroController.setup();
   animate();
 
   const resizeObserver = new ResizeObserver(() => {
@@ -3323,6 +3360,7 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
     shell.renderer.dispose();
     floorNav.dispose();
     keyNav.dispose();
+    gyroController?.dispose();
     viewerControls?.remove();
     readOnlyOverlay?.remove();
     disposeSlotFullViewClick?.();
