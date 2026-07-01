@@ -43,13 +43,26 @@ foreach ($items as $index => $item) {
         };
         $pieceDescription = $piece['description'] ?? '';
         $piecePrompt = (string) ($version['prompt'] ?? $piece['prompt'] ?? '');
-        // Three.js and A-Frame are always interactive; C2 is interactive only when its
-        // generated code registers pointer/mouse/touch listeners.
+        // C2 is interactive when its generated code registers pointer/mouse/touch listeners.
         $c2LikelyInteractive = $engine === 'c2'
             && preg_match($c2InteractivePattern, (string) ($version['generated_code'] ?? '') . "\n" . (string) ($version['html_code'] ?? '')) === 1;
-        $isInteractivePiece = in_array($engine, ['three', 'aframe'], true) || $c2LikelyInteractive;
         $immersiveHref = '/immersive/pieces/' . (int) ($piece['id'] ?? 0)
             . '?returnTo=' . rawurlencode($immersiveCollectionReturnTo);
+        $pieceFullViewDescription = (string) ($pieceDescription !== '' ? $pieceDescription : $piecePrompt);
+        // Three.js and A-Frame spin up a WebGL renderer — loading them as srcdoc iframes
+        // inside the slideshow overlay conflicts with the exhibit wall's own WebGL context
+        // (mobile Safari renders the iframe black). These engines navigate to their canonical
+        // immersive route instead; openSlideshowAt handles the navigation fallback.
+        $fullView = in_array($engine, ['three', 'aframe'], true) ? null : [
+            'type' => 'iframe',
+            // Interactive C2 pieces get pointer-events enabled so the user can interact.
+            // Static engines (P5, SVG, non-interactive C2) remain read-only previews.
+            'interactive' => $c2LikelyInteractive,
+            'srcdoc' => piece_render_document($piece, $version),
+            'title' => $piece['title'] ?? 'Untitled Piece',
+            'subtitle' => $itemEngineLabel,
+            'description' => $pieceFullViewDescription,
+        ];
         $jsItems[] = [
             'kind' => 'piece',
             'title' => $piece['title'] ?? 'Untitled Piece',
@@ -60,22 +73,7 @@ foreach ($items as $index => $item) {
             'generated_code' => $version['generated_code'] ?? '',
             'description' => $pieceDescription,
             'immersive_href' => $immersiveHref,
-            'full_view' => [
-                'type' => 'iframe',
-                // Interactive engines (Three.js, A-Frame, interactive C2) get pointer-events
-                // enabled in the slideshow overlay so the user can orbit/interact. Static
-                // engines (P5, SVG, non-interactive C2) remain read-only previews.
-                'interactive' => $isInteractivePiece,
-                'srcdoc' => piece_render_document($piece, $version, [
-                    // Suppress A-Frame device-orientation controls inside the overlay (avoids
-                    // a gyro-permission prompt on mobile); mouse/touch orbit still works.
-                    // Has no effect on Three.js or C2.
-                    'disable_motion' => $engine === 'aframe',
-                ]),
-                'title' => $piece['title'] ?? 'Untitled Piece',
-                'subtitle' => $itemEngineLabel,
-                'description' => (string) ($pieceDescription !== '' ? $pieceDescription : $piecePrompt),
-            ],
+            'full_view' => $fullView,
         ];
         $detailItems[] = [
             'title' => $piece['title'] ?? 'Untitled Piece',

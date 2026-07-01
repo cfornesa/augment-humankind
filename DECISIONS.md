@@ -4938,3 +4938,15 @@ After the gateway routing was corrected, P5.js, C2.js, and SVG pieces landed at 
 **Root cause:** `mountGalleryPiece()` in `immersive-gallery.js` receives a `fullView` option whose `items[0].srcdoc` is a full HTML document (output of `piece_render_document()`). That srcdoc contains literal `</script>` tags. The PHP encoding used `JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE`, which does not escape `<`/`>` — PHP's default XSS-safe flag `JSON_HEX_TAG` was absent, so `</script>` appeared verbatim inside the surrounding `<script type="module">` block and the HTML parser closed the script element prematurely.
 
 **Fix:** changed the `json_encode()` call on line 1041 of `public/app/views/immersive/piece.php` from `JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE` to `JSON_HEX_TAG | JSON_UNESCAPED_UNICODE`. `JSON_HEX_TAG` encodes `<` → `<` and `>` → `>`, making the JSON safe inside any `<script>` block regardless of srcdoc content. Three.js and A-Frame pieces were unaffected because they use `mountThreeImmersivePiece()`/`mountAFrameImmersivePiece()` and never generate the `fullView` block.
+
+### Follow-up regression — Three.js/A-Frame pieces rendered black in the platform-collection slideshow overlay (2026-07-01)
+
+Commit `8f402f0` added `full_view` (a live srcdoc iframe) to ALL engine types in `collection.php`, including Three.js and A-Frame. It also changed `contentWrap` CSS in `createReadOnlyFullViewOverlay` to add `overflow:hidden` and replaced `flex:1;min-height:0` with `flex:1 1 auto;min-height:11rem`. Together these caused Three.js canvases inside the overlay to compute an incorrect height, rendering solid black. The same commit also removed the `window.location.assign(immersiveHrefs[safeIndex])` navigation fallback from `openSlideshowAt`, so art pieces that cannot render in the overlay had no escape path.
+
+**Root cause:** Three.js/A-Frame each create a full WebGL renderer — loading them as srcdoc iframes inside the slideshow overlay competes with the exhibit wall's own WebGL context. The correct behavior (pre-regression) was to navigate to the canonical `/immersive/pieces/{id}` route for these engines rather than render them in the overlay.
+
+**Fix (2026-07-01):**
+- `public/app/views/immersive/collection.php`: Three.js and A-Frame pieces now set `full_view = null` (no srcdoc); the `immersive_href` on their `$jsItems` entry is kept so the wall-click and slideshow navigation paths can both use it.
+- `public/assets/js/immersive-gallery.js` `openSlideshowAt`: added a navigation fallback — if the requested index has no slideshow entry but does have an `immersiveHrefs` value, call `window.location.assign()` to that href instead of falling through to `readOnlyOverlay?.openAt(0)`.
+- The entry-guard condition now includes `immersiveHrefs.some(Boolean)` so collections with only art pieces (no overlay-renderable items) can still trigger navigation.
+- Interactive C2 and all static engines (P5, SVG, non-interactive C2) continue to render as srcdoc iframes in the overlay, with `interactive: true` only for C2 pieces whose generated code registers pointer/mouse/touch events.

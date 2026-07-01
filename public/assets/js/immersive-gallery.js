@@ -3378,11 +3378,17 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
   return {
     destroy,
     openSlideshowAt(index = 0) {
-      if (!slideshowEntries.length) return;
+      if (!slideshowEntries.length && !immersiveHrefs.some(Boolean)) return;
       const safeIndex = Math.max(0, Math.min(items.length - 1, index));
       const slideshowIndex = slideshowIndexBySourceIndex.get(safeIndex);
       if (Number.isFinite(slideshowIndex)) {
         readOnlyOverlay?.openAt(slideshowIndex);
+        return;
+      }
+      // Pieces like Three.js and A-Frame can't render in the overlay — navigate to their
+      // canonical immersive route instead (same as clicking them on the exhibit wall).
+      if (immersiveHrefs[safeIndex]) {
+        window.location.assign(immersiveHrefs[safeIndex]);
         return;
       }
       readOnlyOverlay?.openAt(0);
