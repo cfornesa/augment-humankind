@@ -60,7 +60,6 @@ foreach ($items as $index => $item) {
             'srcdoc' => piece_render_document($piece, $version),
             'title' => $piece['title'] ?? 'Untitled Piece',
             'subtitle' => $itemEngineLabel,
-            'description' => $pieceFullViewDescription,
         ];
         $jsItems[] = [
             'kind' => 'piece',
@@ -98,7 +97,6 @@ foreach ($items as $index => $item) {
                 'alt' => $altText !== '' ? $altText : ($media['title'] ?? 'Untitled Image'),
                 'title' => $media['title'] ?? 'Untitled Image',
                 'subtitle' => 'Image',
-                'description' => $altText,
             ],
         ];
         $detailItems[] = [

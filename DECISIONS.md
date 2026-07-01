@@ -5027,3 +5027,43 @@ The artMesh click handler fix (wiring P5/SVG art-frame clicks to `readOnlyOverla
 
 ### Verification
 Pending live confirmation on deployed site: P5/SVG/C2/A-Frame pieces should show title + description in the metadata card; the full-view overlay should show only the piece with no title/description text; Three.js pieces unchanged.
+
+### Follow-up correction — Full transparency grid restored for ALL piece engines (2026-07-01)
+
+After live testing, the "title + card-desc only" card for non-Three.js pieces was found insufficient. DECISIONS.md entry 2026-06-20 ("AI Profile/Persona Attribution Per Version") establishes that every generated piece must show the full transparency grid: Engine, Version, Interaction, AI Profile, AI Persona, Creative Prompt, About, Embed Source. Only `image.php` (images not generated on this site) is exempt.
+
+**Fix:** Removed the `$isThree` gate that was restricting non-Three.js pieces to a stripped card. The card-grid now renders for **all** engine types. Engine-specific text is confined to two fields:
+- `card-desc` paragraph: Three.js → 3D canvas description; A-Frame → WebXR/scene description; all others → gallery-room description.
+- Interaction row: Three.js → orbit/fly instructions; A-Frame → look-around/walk; all others → orbit/walk-floor.
+
+`image.php` is a separate file and was not touched.
+
+---
+
+## 2026-07-01 — Collection Fullscreen and Slideshow Description Fix
+
+### Context
+
+Two issues reported with `/immersive/collections/{slug}`:
+
+1. **Slideshow overlay did not cover the full browser viewport.** `createReadOnlyFullViewOverlay` used `position:absolute;inset:0`, positioning the overlay relative to `.stage-wrapper` (its nearest positioned ancestor, which is only 55 vh tall). This meant the overlay was visually constrained to the stage area even when the user expected a fullscreen experience.
+
+   On iOS Safari, `shell.requestFullscreen()` is always rejected (iOS Safari has never supported the Fullscreen API for non-`<video>` elements). The existing `.catch()` handler already calls `syncFullscreenState(true)` unconditionally, adding the `.fullscreen` class and applying `.stage-wrapper { position: fixed; inset: 0; width: 100dvw; height: 100dvh }` via CSS — so the **fullscreen button for the 3D gallery room** was already functional on iOS Safari via this CSS fallback. The overlay was the missing piece.
+
+2. **Description text appearing in collection slideshow overlays.** `collection.php` was passing `'description' => $pieceFullViewDescription` (piece description or fallback to prompt) and `'description' => $altText` (media alt text) in the `full_view` arrays for pieces and images respectively. `createReadOnlyFullViewOverlay` renders `item.description` in a footer paragraph, causing the text to appear inside the overlay. Piece.php had already stripped its fullView items of description in a prior session; collection.php had not been updated consistently.
+
+### Implemented
+
+**`public/assets/js/immersive-gallery.js` — `createReadOnlyFullViewOverlay` (line 854)**
+
+Changed `position:absolute` to `position:fixed` in the root overlay element's inline style. The overlay is appended to `stageEl.parentElement` (`.stage-wrapper`), which has `position:relative` but no `transform`, `filter`, or `perspective` — so `position:fixed` escapes `overflow:hidden` and positions relative to the viewport. z-index:145 remains correct: above the fullscreen stage-wrapper (z-index:120) and below the toast container (z-index:200). This change affects both collection slideshows and individual piece full-view overlays — both now cover the full browser viewport when opened.
+
+**`public/app/views/immersive/collection.php`**
+
+- Piece `$fullView` (lines 57–64): removed `'description' => $pieceFullViewDescription`.
+- Media asset `full_view` (lines 95–102): removed `'description' => $altText`.
+
+Title and subtitle are retained in both cases (user specified "no description text," not "no title/subtitle"). The `descriptionEl` in `createReadOnlyFullViewOverlay` was already hidden when `item.description` is absent or empty (prior session fix), so no JS change is needed.
+
+### Verification
+Pending live confirmation: collection slideshow opens covering the full browser viewport; no description text appears in any slide; individual piece full-view overlays also cover the full viewport.

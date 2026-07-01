@@ -851,7 +851,7 @@ export function createReadOnlyFullViewOverlay(stageEl, items, options = {}) {
   const root = document.createElement("div");
   root.hidden = true;
   root.setAttribute("aria-hidden", "true");
-  root.style.cssText = "position:absolute;inset:0;z-index:145;background:rgba(5,7,15,0.92);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);display:none;align-items:stretch;justify-content:center;padding:1rem;pointer-events:auto;";
+  root.style.cssText = "position:fixed;inset:0;z-index:145;background:rgba(5,7,15,0.92);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);display:none;align-items:stretch;justify-content:center;padding:1rem;pointer-events:auto;";
 
   const shell = document.createElement("div");
   shell.style.cssText = "position:relative;display:flex;flex-direction:column;width:min(100%,1100px);height:100%;max-height:100%;border:1px solid rgba(255,255,255,0.14);border-radius:1.2rem;background:rgba(9,14,24,0.96);box-shadow:0 24px 80px rgba(0,0,0,0.35);overflow:hidden;";
