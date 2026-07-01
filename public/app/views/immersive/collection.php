@@ -51,6 +51,13 @@ foreach ($items as $index => $item) {
             'generated_code' => $version['generated_code'] ?? '',
             'description' => $pieceDescription,
             'immersive_href' => $immersiveHref,
+            'full_view' => [
+                'type' => 'iframe',
+                'srcdoc' => piece_render_document($piece, $version, ['disable_motion' => true]),
+                'title' => $piece['title'] ?? 'Untitled Piece',
+                'subtitle' => $itemEngineLabel,
+                'description' => (string) ($pieceDescription !== '' ? $pieceDescription : ($version['prompt'] ?? $piece['prompt'] ?? '')),
+            ],
         ];
         $detailItems[] = [
             'title' => $piece['title'] ?? 'Untitled Piece',
@@ -982,10 +989,10 @@ const stage = document.getElementById('immersive-stage');
 try {
     const immersiveViewer = mountExhibitWall(stage, items, rows, cols, viewerControlsOptions);
     const slideshowBtn = document.getElementById('collection-full-view-btn');
-    if (slideshowBtn && immersiveViewer?.openFullViewAt) {
+    if (slideshowBtn && immersiveViewer?.openSlideshowAt) {
         slideshowBtn.addEventListener('click', () => {
             const startIndex = Number(slideshowBtn.getAttribute('data-start-index'));
-            immersiveViewer.openFullViewAt(Number.isFinite(startIndex) ? startIndex : 0);
+            immersiveViewer.openSlideshowAt(Number.isFinite(startIndex) ? startIndex : 0);
         });
     }
     document.querySelectorAll('[data-full-view-index]').forEach((link) => {
@@ -993,7 +1000,7 @@ try {
             event.preventDefault();
             const index = Number(link.getAttribute('data-full-view-index'));
             if (!Number.isFinite(index)) return;
-            immersiveViewer?.openFullViewAt?.(index);
+            immersiveViewer?.openSlideshowAt?.(index);
         });
     });
 } catch (e) {

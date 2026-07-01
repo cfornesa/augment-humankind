@@ -896,7 +896,7 @@ export function createReadOnlyFullViewOverlay(stageEl, items, options = {}) {
   controlsWrap.appendChild(closeBtn);
 
   const contentWrap = document.createElement("div");
-  contentWrap.style.cssText = "flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:1rem 1rem 0.75rem;";
+  contentWrap.style.cssText = "flex:1 1 auto;min-height:11rem;display:flex;align-items:center;justify-content:center;padding:1rem 1rem 0.75rem;overflow:hidden;";
   shell.appendChild(contentWrap);
 
   const mediaViewport = document.createElement("div");
@@ -904,7 +904,7 @@ export function createReadOnlyFullViewOverlay(stageEl, items, options = {}) {
   contentWrap.appendChild(mediaViewport);
 
   const footer = document.createElement("div");
-  footer.style.cssText = "padding:0 1rem 1rem;";
+  footer.style.cssText = "flex:0 0 auto;max-height:min(36vh,18rem);overflow:auto;padding:0 1rem 1rem;";
   shell.appendChild(footer);
 
   const descriptionEl = document.createElement("p");
@@ -3258,8 +3258,14 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
   const immersiveHrefs = items.map((item) => item?.immersive_href || null);
   const hasFullViewItems = fullViewItems.some((item) => Boolean(item));
   const hasImmersiveHrefs = immersiveHrefs.some((href) => Boolean(href));
+  const slideshowEntries = fullViewItems
+    .map((item, sourceIndex) => item ? { item, sourceIndex } : null)
+    .filter((entry) => Boolean(entry));
+  const slideshowIndexBySourceIndex = new Map(
+    slideshowEntries.map((entry, slideshowIndex) => [entry.sourceIndex, slideshowIndex]),
+  );
   if (hasFullViewItems) {
-    readOnlyOverlay = createReadOnlyFullViewOverlay(stageEl, fullViewItems);
+    readOnlyOverlay = createReadOnlyFullViewOverlay(stageEl, slideshowEntries.map((entry) => entry.item));
   }
   if (hasFullViewItems || hasImmersiveHrefs) {
 
@@ -3288,7 +3294,9 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
         return;
       }
       if (!fullViewItems[slotIndex]) return;
-      readOnlyOverlay.openAt(slotIndex);
+      const slideshowIndex = slideshowIndexBySourceIndex.get(slotIndex);
+      if (!Number.isFinite(slideshowIndex)) return;
+      readOnlyOverlay.openAt(slideshowIndex);
     };
     stageEl.addEventListener("pointerdown", onPointerDown);
     stageEl.addEventListener("pointerup", onPointerUp);
@@ -3369,14 +3377,18 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
 
   return {
     destroy,
-    openFullViewAt(index = 0) {
+    openSlideshowAt(index = 0) {
+      if (!slideshowEntries.length) return;
       const safeIndex = Math.max(0, Math.min(items.length - 1, index));
-      if (immersiveHrefs[safeIndex]) {
-        window.location.assign(immersiveHrefs[safeIndex]);
+      const slideshowIndex = slideshowIndexBySourceIndex.get(safeIndex);
+      if (Number.isFinite(slideshowIndex)) {
+        readOnlyOverlay?.openAt(slideshowIndex);
         return;
       }
-      if (!fullViewItems[safeIndex]) return;
-      readOnlyOverlay?.openAt(safeIndex);
+      readOnlyOverlay?.openAt(0);
+    },
+    openFullViewAt(index = 0) {
+      this.openSlideshowAt(index);
     },
     closeFullView() {
       readOnlyOverlay?.close();
