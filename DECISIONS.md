@@ -5067,3 +5067,22 @@ Title and subtitle are retained in both cases (user specified "no description te
 
 ### Verification
 Pending live confirmation: collection slideshow opens covering the full browser viewport; no description text appears in any slide; individual piece full-view overlays also cover the full viewport.
+
+### Follow-up fix — Collection fullscreen button not working on Safari iOS (2026-07-01)
+
+Live testing confirmed the fullscreen button on platform collections did not work on Safari iOS, while the same button on individual piece pages did. Root cause: `collection.php`'s fullscreen JS was an earlier, underdeveloped version of the code that piece.php had already evolved past.
+
+**Two concrete gaps:**
+
+1. **Missing `lockImmersiveScroll()` / `unlockImmersiveScroll()`** — piece.php locks page scrolling with `document.body.style.position = 'fixed'; top: -${scrollY}px`. This is the only reliable technique to prevent iOS Safari's momentum scrolling from operating behind a `position:fixed` overlay. collection.php only set `overflow: hidden` on body/html, which iOS Safari ignores for touch-scroll purposes. Without the body lock, iOS would continue scrolling the page behind the fullscreen stage, causing the fixed overlay to appear to shift or fail to cover the visual viewport.
+
+2. **No iOS Safari pre-check in `toggleFullscreen()`** — piece.php detects iPhone WebKit before calling `shell.requestFullscreen()` and immediately calls `syncFullscreenState(true, { mode: 'focus' })` then returns. collection.php called `requestFullscreen()` unconditionally (which always rejects on iOS), then handled the rejection in `.catch()`. While the catch path should theoretically work, skipping the doomed API call is the safer and faster path on iOS.
+
+**Fix:** Replaced collection.php's fullscreen JS block with a fully up-to-date implementation matching piece.php:
+- Added `let lockedScrollY = 0; let immersiveScrollLocked = false;`
+- Added `lockImmersiveScroll()` and `unlockImmersiveScroll()` functions (body position-lock technique)
+- `toggleFullscreen()`: pre-checks `isIPhoneWebKitBrowser()` first; skips `requestFullscreen()` on iPhone
+- `syncFullscreenState(isFull, options = {})`: accepts options, sets `shell.dataset.immersiveMode`, calls `lockImmersiveScroll()`/`unlockImmersiveScroll()` instead of inline overflow toggles
+- Fullscreen init: passes `{ mode: isIPhoneWebKitBrowser() ? 'focus' : 'fullscreen' }`
+
+The `window.addEventListener('message', ...)` handler and `creatr-iframe-ready` postMessage were already present in collection.php and needed no change.
