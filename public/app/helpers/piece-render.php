@@ -89,6 +89,7 @@ const PIECE_CODE = {$jsonCode};
 const PIECE_HTML_CODE = {$jsonHtml};
 const PIECE_CSS_CODE = {$jsonCss};
 window.CREATR_PIECE_CONTEXT = {$jsonContext};
+window.PIECE_PRESERVE_DRAWING_BUFFER = true;
 </script>
 <script src="{$runtimeScriptUrl}"></script>
 </body>

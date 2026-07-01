@@ -49,15 +49,14 @@ foreach ($items as $index => $item) {
         $immersiveHref = '/immersive/pieces/' . (int) ($piece['id'] ?? 0)
             . '?returnTo=' . rawurlencode($immersiveCollectionReturnTo);
         $pieceFullViewDescription = (string) ($pieceDescription !== '' ? $pieceDescription : $piecePrompt);
-        // Three.js and A-Frame spin up a WebGL renderer — loading them as srcdoc iframes
-        // inside the slideshow overlay conflicts with the exhibit wall's own WebGL context
-        // (mobile Safari renders the iframe black). These engines navigate to their canonical
-        // immersive route instead; openSlideshowAt handles the navigation fallback.
-        $fullView = in_array($engine, ['three', 'aframe'], true) ? null : [
+        // Three.js, A-Frame, and interactive C2 pieces get pointer-events enabled so the
+        // user can interact with them in the overlay. P5, SVG, and non-interactive C2
+        // remain read-only previews. srcdoc iframes run in their own browsing context,
+        // so there is no WebGL context conflict with the exhibit wall.
+        $pieceInteractive = in_array($engine, ['three', 'aframe'], true) || $c2LikelyInteractive;
+        $fullView = [
             'type' => 'iframe',
-            // Interactive C2 pieces get pointer-events enabled so the user can interact.
-            // Static engines (P5, SVG, non-interactive C2) remain read-only previews.
-            'interactive' => $c2LikelyInteractive,
+            'interactive' => $pieceInteractive,
             'srcdoc' => piece_render_document($piece, $version),
             'title' => $piece['title'] ?? 'Untitled Piece',
             'subtitle' => $itemEngineLabel,

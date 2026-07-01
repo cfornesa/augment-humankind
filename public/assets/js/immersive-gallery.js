@@ -899,10 +899,6 @@ export function createReadOnlyFullViewOverlay(stageEl, items, options = {}) {
   contentWrap.style.cssText = "flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:1rem 1rem 0.75rem;";
   shell.appendChild(contentWrap);
 
-  const mediaViewport = document.createElement("div");
-  mediaViewport.style.cssText = "width:100%;height:100%;display:flex;align-items:center;justify-content:center;border-radius:1rem;background:#05070f;overflow:hidden;";
-  contentWrap.appendChild(mediaViewport);
-
   const footer = document.createElement("div");
   footer.style.cssText = "flex:0 0 auto;max-height:min(36vh,18rem);overflow:auto;padding:0 1rem 1rem;";
   shell.appendChild(footer);
@@ -911,7 +907,7 @@ export function createReadOnlyFullViewOverlay(stageEl, items, options = {}) {
   descriptionEl.style.cssText = "margin:0;color:rgba(255,255,255,0.78);font-size:0.95rem;line-height:1.6;display:none;";
   footer.appendChild(descriptionEl);
 
-  let currentIndex = 0;
+  let currentStartIndex = 0;
   let priorKeyboardDisabled = false;
   let previouslyFocused = null;
 
@@ -921,25 +917,15 @@ export function createReadOnlyFullViewOverlay(stageEl, items, options = {}) {
     return ((index % total) + total) % total;
   }
 
-  function getCurrentItem() {
-    return overlayItems[normalizeIndex(currentIndex)] || null;
+  function getColumns() {
+    return Math.min(getProgressiveExhibitLiveBudget(window.innerWidth), overlayItems.length);
   }
 
   function clearViewport() {
-    mediaViewport.replaceChildren();
+    contentWrap.replaceChildren();
   }
 
-  function renderCurrentItem() {
-    const item = getCurrentItem();
-    if (!item) return;
-    clearViewport();
-
-    titleEl.textContent = item.title || "Untitled";
-    subtitleEl.textContent = item.subtitle || "";
-    subtitleEl.style.display = subtitleEl.textContent ? "" : "none";
-    descriptionEl.textContent = item.description || "";
-    descriptionEl.style.display = descriptionEl.textContent ? "" : "none";
-
+  function renderItemIntoEl(item, containerEl) {
     if (item.type === "iframe" && item.srcdoc) {
       const interactive = item.interactive === true;
       const iframe = document.createElement("iframe");
@@ -948,31 +934,77 @@ export function createReadOnlyFullViewOverlay(stageEl, items, options = {}) {
       iframe.setAttribute("tabindex", interactive ? "0" : "-1");
       iframe.srcdoc = item.srcdoc;
       iframe.style.cssText = "width:100%;height:100%;border:0;display:block;pointer-events:" + (interactive ? "auto" : "none") + ";background:#05070f;";
-      mediaViewport.appendChild(iframe);
+      containerEl.appendChild(iframe);
     } else if (item.type === "image" && item.src) {
       const image = document.createElement("img");
       image.src = item.src;
       image.alt = item.alt || item.title || "";
-      image.style.cssText = "max-width:100%;max-height:100%;width:auto;height:auto;display:block;object-fit:contain;background:#05070f;";
-      mediaViewport.appendChild(image);
+      image.style.cssText = "max-width:100%;max-height:100%;width:auto;height:auto;display:block;object-fit:contain;background:#05070f;margin:auto;";
+      containerEl.appendChild(image);
     } else {
       const fallback = document.createElement("div");
       fallback.textContent = item.title || "Unable to preview this work.";
       fallback.style.cssText = "padding:1rem;color:#fff;font-weight:600;";
-      mediaViewport.appendChild(fallback);
+      containerEl.appendChild(fallback);
     }
+  }
 
+  function renderCurrentItems() {
+    clearViewport();
+    const cols = getColumns();
     const multi = overlayItems.length > 1;
     prevBtn.style.display = multi ? "" : "none";
     nextBtn.style.display = multi ? "" : "none";
+
+    if (cols === 1) {
+      contentWrap.style.cssText = "flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:1rem 1rem 0.75rem;";
+      const viewport = document.createElement("div");
+      viewport.style.cssText = "width:100%;height:100%;display:flex;align-items:center;justify-content:center;border-radius:1rem;background:#05070f;overflow:hidden;";
+      contentWrap.appendChild(viewport);
+      const item = overlayItems[normalizeIndex(currentStartIndex)];
+      renderItemIntoEl(item, viewport);
+      titleEl.textContent = item.title || "Untitled";
+      subtitleEl.textContent = item.subtitle || "";
+      subtitleEl.style.display = subtitleEl.textContent ? "" : "none";
+      descriptionEl.textContent = item.description || "";
+      descriptionEl.style.display = descriptionEl.textContent ? "" : "none";
+    } else {
+      contentWrap.style.cssText = `flex:1;min-height:0;display:grid;grid-template-columns:repeat(${cols},1fr);gap:0.75rem;padding:1rem 1rem 0.75rem;`;
+      titleEl.textContent = "";
+      subtitleEl.style.display = "none";
+      descriptionEl.style.display = "none";
+      for (let i = 0; i < cols; i++) {
+        const item = overlayItems[normalizeIndex(currentStartIndex + i)];
+        const slot = document.createElement("div");
+        slot.style.cssText = "display:flex;flex-direction:column;min-height:0;overflow:hidden;border-radius:0.75rem;background:#05070f;";
+        const pieceEl = document.createElement("div");
+        pieceEl.style.cssText = "flex:1;min-height:0;overflow:hidden;";
+        renderItemIntoEl(item, pieceEl);
+        slot.appendChild(pieceEl);
+        const label = document.createElement("div");
+        label.style.cssText = "flex:0 0 auto;padding:0.4rem 0.6rem;border-top:1px solid rgba(255,255,255,0.08);";
+        const titleSpan = document.createElement("div");
+        titleSpan.textContent = item.title || "";
+        titleSpan.style.cssText = "font-size:0.8rem;font-weight:600;color:#f8f5ee;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;";
+        label.appendChild(titleSpan);
+        if (item.subtitle) {
+          const subtitleSpan = document.createElement("div");
+          subtitleSpan.textContent = item.subtitle;
+          subtitleSpan.style.cssText = "font-size:0.68rem;letter-spacing:0.1em;text-transform:uppercase;color:rgba(255,255,255,0.48);";
+          label.appendChild(subtitleSpan);
+        }
+        slot.appendChild(label);
+        contentWrap.appendChild(slot);
+      }
+    }
   }
 
   function openAt(index = 0) {
-    currentIndex = normalizeIndex(index);
+    currentStartIndex = normalizeIndex(index);
     priorKeyboardDisabled = stageEl.dataset.keyboardNavigationDisabled === "true";
     stageEl.dataset.keyboardNavigationDisabled = "true";
     previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    renderCurrentItem();
+    renderCurrentItems();
     root.hidden = false;
     root.setAttribute("aria-hidden", "false");
     root.style.display = "flex";
@@ -1000,13 +1032,13 @@ export function createReadOnlyFullViewOverlay(stageEl, items, options = {}) {
   }
 
   function showPrevious() {
-    currentIndex = normalizeIndex(currentIndex - 1);
-    renderCurrentItem();
+    currentStartIndex = normalizeIndex(currentStartIndex - getColumns());
+    renderCurrentItems();
   }
 
   function showNext() {
-    currentIndex = normalizeIndex(currentIndex + 1);
-    renderCurrentItem();
+    currentStartIndex = normalizeIndex(currentStartIndex + getColumns());
+    renderCurrentItems();
   }
 
   function isOpen() {
@@ -1040,7 +1072,13 @@ export function createReadOnlyFullViewOverlay(stageEl, items, options = {}) {
   shell.addEventListener("click", (event) => {
     event.stopPropagation();
   });
+  let resizeRafId = 0;
+  const onResize = () => {
+    cancelAnimationFrame(resizeRafId);
+    resizeRafId = requestAnimationFrame(() => { if (isOpen()) renderCurrentItems(); });
+  };
   window.addEventListener("keydown", onWindowKeyDown);
+  window.addEventListener("resize", onResize);
   host.appendChild(root);
 
   return {
@@ -1049,6 +1087,7 @@ export function createReadOnlyFullViewOverlay(stageEl, items, options = {}) {
     remove() {
       close();
       window.removeEventListener("keydown", onWindowKeyDown);
+      window.removeEventListener("resize", onResize);
       root.remove();
     },
     isOpen,
@@ -2997,7 +3036,85 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
 
       const item = items[index];
       const slot = shell.slots[index];
-      
+
+      // Three.js / A-Frame: boot in off-screen srcdoc iframe, copy canvas to proxy
+      if (item.engine === 'three' || item.engine === 'aframe') {
+        const srcdoc = item.full_view?.srcdoc;
+        if (!srcdoc) {
+          activeRuntimes.set(index, { host: null, sourceCanvas: null, stop: () => {}, texture: null, p5Instance: null, svgInterval: null, failed: true });
+          return;
+        }
+
+        const iframe = document.createElement('iframe');
+        iframe.style.cssText = `position:fixed;left:-10000px;top:0;width:${runtimeSize.width}px;height:${runtimeSize.height}px;pointer-events:none;border:none;`;
+        iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin');
+        document.body.appendChild(iframe);
+
+        const proxyCanvas = document.createElement('canvas');
+        proxyCanvas.width = runtimeSize.width;
+        proxyCanvas.height = runtimeSize.height;
+
+        let iframeCanvas = null;
+        let liveTexture = null;
+        let iframeRafId = 0;
+
+        // Show thumbnail as placeholder while the iframe piece boots
+        if (item.thumbnail_url) {
+          new THREE.TextureLoader().load(item.thumbnail_url, (thumbTex) => {
+            thumbTex.colorSpace = THREE.SRGBColorSpace;
+            if (!liveTexture) {
+              slot.artMaterial.map = thumbTex;
+              slot.artMaterial.color.set('#ffffff');
+              slot.artMaterial.needsUpdate = true;
+            } else {
+              thumbTex.dispose();
+            }
+          });
+        }
+
+        function syncFrame() {
+          if (!iframeCanvas) {
+            try {
+              const candidate = iframe.contentDocument?.querySelector('canvas');
+              if (candidate instanceof HTMLCanvasElement && candidate.width > 0 && candidate.height > 0) {
+                iframeCanvas = candidate;
+              }
+            } catch (_) { /* cross-origin guard */ }
+          }
+          if (iframeCanvas) {
+            try {
+              const ctx = proxyCanvas.getContext('2d');
+              ctx?.drawImage(iframeCanvas, 0, 0, proxyCanvas.width, proxyCanvas.height);
+              if (!liveTexture) {
+                liveTexture = new THREE.CanvasTexture(proxyCanvas);
+                liveTexture.colorSpace = THREE.SRGBColorSpace;
+                slot.artMaterial.map = liveTexture;
+                slot.artMaterial.color.set('#ffffff');
+                slot.artMaterial.needsUpdate = true;
+                const r = activeRuntimes.get(index);
+                if (r) r.texture = liveTexture;
+              }
+              liveTexture.needsUpdate = true;
+            } catch (_) { /* tainted canvas guard */ }
+          }
+          iframeRafId = requestAnimationFrame(syncFrame);
+        }
+
+        activeRuntimes.set(index, {
+          host: iframe,
+          sourceCanvas: proxyCanvas,
+          stop: () => { cancelAnimationFrame(iframeRafId); iframe.remove(); liveTexture?.dispose(); },
+          texture: null,
+          p5Instance: null,
+          svgInterval: null,
+          failed: false,
+        });
+
+        iframe.addEventListener('load', () => { iframeRafId = requestAnimationFrame(syncFrame); }, { once: true });
+        iframe.srcdoc = srcdoc;
+        return;
+      }
+
       const host = createImmersiveHost(
         item.html_code, item.css_code,
         item.engine === "p5" ? '<div id="canvas-container"></div>' : item.engine === "svg" ? '<svg viewBox="0 0 800 600" xmlns="http://www.w3.org/2000/svg" width="100%" height="100%"></svg>' : '<canvas id="piece-canvas"></canvas>',
@@ -3289,14 +3406,16 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
       if (!hits.length) return;
       const slotIndex = slotMeshes.indexOf(hits[0].object);
       if (slotIndex < 0) return;
+      if (fullViewItems[slotIndex]) {
+        const slideshowIndex = slideshowIndexBySourceIndex.get(slotIndex);
+        if (Number.isFinite(slideshowIndex)) {
+          readOnlyOverlay.openAt(slideshowIndex);
+          return;
+        }
+      }
       if (immersiveHrefs[slotIndex]) {
         window.location.assign(immersiveHrefs[slotIndex]);
-        return;
       }
-      if (!fullViewItems[slotIndex]) return;
-      const slideshowIndex = slideshowIndexBySourceIndex.get(slotIndex);
-      if (!Number.isFinite(slideshowIndex)) return;
-      readOnlyOverlay.openAt(slideshowIndex);
     };
     stageEl.addEventListener("pointerdown", onPointerDown);
     stageEl.addEventListener("pointerup", onPointerUp);

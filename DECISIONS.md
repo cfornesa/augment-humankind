@@ -4950,3 +4950,51 @@ Commit `8f402f0` added `full_view` (a live srcdoc iframe) to ALL engine types in
 - `public/assets/js/immersive-gallery.js` `openSlideshowAt`: added a navigation fallback — if the requested index has no slideshow entry but does have an `immersiveHrefs` value, call `window.location.assign()` to that href instead of falling through to `readOnlyOverlay?.openAt(0)`.
 - The entry-guard condition now includes `immersiveHrefs.some(Boolean)` so collections with only art pieces (no overlay-renderable items) can still trigger navigation.
 - Interactive C2 and all static engines (P5, SVG, non-interactive C2) continue to render as srcdoc iframes in the overlay, with `interactive: true` only for C2 pieces whose generated code registers pointer/mouse/touch events.
+
+---
+
+## 2026-07-01 — Platform Collection Slideshow Overlay + Wall Animation (All Engines)
+
+### Context
+
+The prior session's "Follow-up regression" fix (Three.js/A-Frame → `full_view = null` + navigation fallback in `openSlideshowAt`) was an intermediate step that fixed the black-canvas symptom but left Three.js/A-Frame outside the slideshow entirely. This session completes the work by making all engine types renderable in the overlay AND animating on the wall.
+
+### What changed
+
+**`public/app/views/immersive/collection.php`**
+
+All art piece engines now receive a `full_view` with `srcdoc` (output of `piece_render_document()`). The `$pieceInteractive` flag is `true` for Three.js, A-Frame, and C2 pieces whose generated code registers pointer/mouse/touch events; `false` for P5, SVG, and non-interactive C2 (read-only previews). The `immersive_href` continues to exist alongside `full_view` for all pieces.
+
+**`public/assets/js/immersive-gallery.js` — `createReadOnlyFullViewOverlay`**
+
+- `contentWrap.style.cssText` reverted to `flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:1rem 1rem 0.75rem;` — removed `overflow:hidden` (BFC regression that broke `height:100%` in nested iframes) and corrected flex values (`flex:1 1 auto;min-height:11rem` → `flex:1;min-height:0`).
+- Overlay now shows `getProgressiveExhibitLiveBudget(window.innerWidth)` pieces per page: 1 on mobile (<640px), 2 on tablet (<1180px), 3 on desktop (≥1180px). Multi-column layout uses CSS grid `repeat(N,1fr)` with per-item title/subtitle labels; single-column mode shows the title/subtitle/description in the top bar.
+- `showPrevious`/`showNext` advance by the current column count. A `resize` listener (rAF-debounced) re-renders when viewport width crosses a breakpoint.
+
+**`public/assets/js/immersive-gallery.js` — `updateProgressiveLoading` (wall animation)**
+
+Added an early-exit branch for `item.engine === 'three' || item.engine === 'aframe'` before `createImmersiveHost`. Instead of calling `resolveSketchFactory(item.generated_code)` (which fails on ES module `import` syntax), the new path:
+
+1. Creates an off-screen `<iframe srcdoc="...">` (400×300 px, same as `runtimeSize`, `sandbox="allow-scripts allow-same-origin"`) using `item.full_view.srcdoc`.
+2. Loads `item.thumbnail_url` as a placeholder texture while the iframe boots.
+3. On iframe `load`, starts a `requestAnimationFrame` loop (`syncFrame`) that polls `iframe.contentDocument.querySelector('canvas')` and, once found, calls `ctx.drawImage(iframeCanvas, 0, 0, ...)` onto a proxy canvas each frame.
+4. Creates `THREE.CanvasTexture(proxyCanvas)` on the first successful draw and sets it as the slot's artMaterial texture.
+5. `stop()` cancels the rAF, removes the iframe, and disposes the live texture.
+
+This runtime entry is compatible with the existing teardown path (`runtime.stop()`, `runtime.texture?.dispose()`, `runtime.host?.remove()`).
+
+**`public/app/helpers/piece-render.php`**
+
+Added `window.PIECE_PRESERVE_DRAWING_BUFFER = true;` to the inline `<script>` block in `piece_render_document()`. This activates an already-existing flag in `piece-runtime.js` line 271 (`...(window.PIECE_PRESERVE_DRAWING_BUFFER ? { preserveDrawingBuffer: true } : {})` inside the patched `THREE.WebGLRenderer` constructor), making the WebGL canvas pixel-readable via `drawImage`. Without this flag, WebGL pixels are cleared after compositing and `drawImage` returns blank.
+
+**A-Frame caveat:** A-Frame's internal WebGLRenderer is created by A-Frame's own bundled Three.js, not through `piece-runtime.js`'s instrumented `instrumentedThree`, so `PIECE_PRESERVE_DRAWING_BUFFER` does not propagate to A-Frame's renderer. A-Frame slots display the thumbnail placeholder and remain on it after load. The same iframe boot path is used (better than the previous silent `resolveSketchFactory` crash), with full animation support left as a future improvement.
+
+### Verification
+
+- `node --check public/assets/js/immersive-gallery.js` — passes.
+- Live browser test on `/immersive/collections/apocalyptic`:
+  - Three.js pieces animate on the wall (confirmed via pixel read: non-zero RGBA from `drawImage` on the off-screen iframe canvas).
+  - All 8 pieces animate in the wall simultaneously (P5, SVG, C2, Three.js all live).
+  - "View slideshow" button opens the overlay with 2-column layout (tablet-width preview): Google P5 Apocalyptic + Google 3JS Apocalyptic side by side, both rendering live animated iframes.
+  - "Next" paginates to DeepSeek C2 Apocalyptic + 3JS Apocalyptic — both rendering.
+  - Zero console errors throughout.
