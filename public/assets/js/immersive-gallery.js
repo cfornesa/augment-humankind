@@ -896,7 +896,7 @@ export function createReadOnlyFullViewOverlay(stageEl, items, options = {}) {
   controlsWrap.appendChild(closeBtn);
 
   const contentWrap = document.createElement("div");
-  contentWrap.style.cssText = "flex:1 1 auto;min-height:11rem;display:flex;align-items:center;justify-content:center;padding:1rem 1rem 0.75rem;overflow:hidden;";
+  contentWrap.style.cssText = "flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:1rem 1rem 0.75rem;";
   shell.appendChild(contentWrap);
 
   const mediaViewport = document.createElement("div");
