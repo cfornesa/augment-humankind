@@ -33,6 +33,9 @@ $versionId = isset($_GET['version']) ? (int) $_GET['version'] : null;
 $versionParam = $versionId ? '?version=' . $versionId : '';
 
 $embedUrl = $origin . '/embed/pieces/' . $pieceId . $versionParam;
+$c2InteractivePattern = '/(?:addEventListener\s*\(\s*[\'"](?:pointerdown|pointerup|pointermove|mousedown|mouseup|mousemove|touchstart|touchmove|touchend|click)|on(?:click|mousedown|mouseup|mousemove|touchstart|touchmove|touchend|pointerdown|pointermove|pointerup)\s*=)/i';
+$c2LikelyInteractive = $engine === 'c2'
+    && preg_match($c2InteractivePattern, (string) ($version['generated_code'] ?? '') . "\n" . (string) ($version['html_code'] ?? '')) === 1;
 
 // Build the three different iterations of embed codes mirroring legacy Node.js
 $titleSafe = htmlspecialchars($piece['title'] ?? 'Art piece', ENT_QUOTES | ENT_HTML5, 'UTF-8');
@@ -94,6 +97,11 @@ if (isset($_GET['returnTo']) && str_starts_with($_GET['returnTo'], '/')) {
 } elseif (isset($_GET['post']) && is_numeric($_GET['post'])) {
     $backUrl = '/posts/' . (int) $_GET['post'];
 }
+$showAdminEditButton = isset($adminEditUrl) && is_string($adminEditUrl) && $adminEditUrl !== '';
+$showReadOnlyFullViewButton = !$isEmbedMode && !$isStaticEmbed
+    && ($engine === 'p5' || $engine === 'svg' || ($engine === 'c2' && !$c2LikelyInteractive));
+$showC2InteractiveOverlay = $engine === 'c2' && $c2LikelyInteractive;
+$fullViewPieceSrcdoc = $showReadOnlyFullViewButton ? piece_render_document($piece, $version) : null;
 
 ?>
 <!DOCTYPE html>
@@ -173,6 +181,11 @@ html, body {
   margin-right: 0.5rem;
   flex-shrink: 0;
 }
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
 .header-info {
   text-align: right;
   min-width: 0;
@@ -198,6 +211,25 @@ html, body {
   .header-info .title {
     font-size: 1rem;
   }
+}
+.immersive-admin-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  padding: 0.55rem 0.95rem;
+  border-radius: 9999px;
+  text-decoration: none;
+  font-size: 0.8rem;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: background 0.2s, border-color 0.2s;
+}
+.immersive-admin-link:hover {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.3);
 }
 
 /* Stage Wrapper & Canvas Stage */
@@ -449,7 +481,7 @@ canvas[aria-hidden="true"] {
 }
 
 /* C2.js click-to-interact overlay */
-.c2-interact-hint-btn {
+.immersive-stage-action-btn {
   position: absolute;
   bottom: calc(1rem + env(safe-area-inset-bottom));
   left: calc(1rem + env(safe-area-inset-left));
@@ -468,7 +500,7 @@ canvas[aria-hidden="true"] {
   cursor: pointer;
   transition: background 0.2s, border-color 0.2s;
 }
-.c2-interact-hint-btn:hover {
+.immersive-stage-action-btn:hover {
   background: rgba(0, 0, 0, 0.7);
   border-color: #fff;
 }
@@ -542,9 +574,17 @@ canvas[aria-hidden="true"] {
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
             Back
         </a>
-        <div class="header-info">
-            <span class="eyebrow">Immersive View</span>
-            <h1 class="title"><?= e($piece['title'] ?? 'Untitled') ?></h1>
+        <div class="header-actions">
+            <?php if ($showAdminEditButton): ?>
+                <a href="<?= e($adminEditUrl) ?>" class="immersive-admin-link" aria-label="Edit this piece in admin">
+                    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 1 1 3 3L7 19l-4 1 1-4z"/></svg>
+                    Edit
+                </a>
+            <?php endif; ?>
+            <div class="header-info">
+                <span class="eyebrow">Immersive View</span>
+                <h1 class="title"><?= e($piece['title'] ?? 'Untitled') ?></h1>
+            </div>
         </div>
     </header>
 
@@ -559,7 +599,7 @@ canvas[aria-hidden="true"] {
             </button>
         <?php endif; ?>
 
-        <?php if ($engine === 'c2'): ?>
+        <?php if ($showC2InteractiveOverlay): ?>
             <!-- Click-to-interact overlay: the gallery room only ever shows this
                  piece as a texture-projected frame (off-screen canvas, no pointer
                  events reach it). Opening the same on-screen render document used
@@ -570,10 +610,16 @@ canvas[aria-hidden="true"] {
                 <button id="c2-interactive-close-btn" class="c2-interactive-close-btn" aria-label="Close interactive view">
                     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                 </button>
-                <iframe id="c2-interactive-frame" class="c2-interactive-frame" title="Interactive view" sandbox="allow-scripts allow-same-origin"></iframe>
+                <iframe id="c2-interactive-frame" class="c2-interactive-frame" title="Interactive view" tabindex="-1" sandbox="allow-scripts allow-same-origin"></iframe>
             </div>
-            <button id="c2-interact-hint-btn" class="c2-interact-hint-btn" type="button">
+            <button id="c2-interact-hint-btn" class="immersive-stage-action-btn" type="button">
                 Click to interact
+            </button>
+        <?php endif; ?>
+
+        <?php if ($showReadOnlyFullViewButton): ?>
+            <button id="readonly-full-view-btn" class="immersive-stage-action-btn" type="button">
+                View full size
             </button>
         <?php endif; ?>
     </div>
@@ -938,7 +984,7 @@ function handleRuntimeError(err) {
 // render document used by /pieces/{id} is the only way to get real
 // click/touch/drag here.
 let openInteractiveOverlay = null;
-<?php if ($engine === 'c2'): ?>
+<?php if ($showC2InteractiveOverlay): ?>
 const c2InteractiveSrcdoc = <?= json_encode(piece_render_document($piece, $version)) ?>;
 const c2Overlay = document.getElementById('c2-interactive-overlay');
 const c2Frame = document.getElementById('c2-interactive-frame');
@@ -949,11 +995,23 @@ openInteractiveOverlay = function () {
     if (!c2Frame.getAttribute('srcdoc')) {
         c2Frame.setAttribute('srcdoc', c2InteractiveSrcdoc);
     }
+    stage.dataset.keyboardNavigationDisabled = 'true';
     c2Overlay.hidden = false;
+    requestAnimationFrame(() => {
+        try {
+            c2Frame.focus();
+        } catch (e) {
+            c2CloseBtn.focus();
+        }
+    });
 };
 
 function closeInteractiveOverlay() {
     c2Overlay.hidden = true;
+    delete stage.dataset.keyboardNavigationDisabled;
+    requestAnimationFrame(() => {
+        stage.focus();
+    });
 }
 
 c2CloseBtn.addEventListener('click', closeInteractiveOverlay);
@@ -964,12 +1022,28 @@ window.addEventListener('keydown', (e) => {
 <?php endif; ?>
 
 try {
+    let immersiveViewer = null;
     if (engine === 'three') {
-        mountThreeImmersivePiece(stage, code, htmlCode, cssCode, handleRuntimeError, viewerControlsOptions);
+        immersiveViewer = mountThreeImmersivePiece(stage, code, htmlCode, cssCode, handleRuntimeError, viewerControlsOptions);
     } else if (engine === 'aframe') {
-        mountAFrameImmersivePiece(stage, code, htmlCode, cssCode, handleRuntimeError, viewerControlsOptions);
+        immersiveViewer = mountAFrameImmersivePiece(stage, code, htmlCode, cssCode, handleRuntimeError, viewerControlsOptions);
     } else {
-        mountGalleryPiece(stage, code, htmlCode, cssCode, engine, title, sourceUrl, prompt, description, handleRuntimeError, openInteractiveOverlay);
+        immersiveViewer = mountGalleryPiece(stage, code, htmlCode, cssCode, engine, title, sourceUrl, prompt, description, handleRuntimeError, openInteractiveOverlay, {
+            ...viewerControlsOptions,
+            fullView: <?= $showReadOnlyFullViewButton ? json_encode([
+                'items' => [[
+                    'type' => 'iframe',
+                    'srcdoc' => $fullViewPieceSrcdoc,
+                    'title' => (string) ($piece['title'] ?? 'Untitled'),
+                    'subtitle' => $engineLabel,
+                    'description' => (string) ($description !== '' ? $description : $prompt),
+                ]],
+            ], JSON_HEX_TAG | JSON_UNESCAPED_UNICODE) : 'null' ?>,
+        });
+    }
+    const readOnlyBtn = document.getElementById('readonly-full-view-btn');
+    if (readOnlyBtn && immersiveViewer?.openFullViewAt) {
+        readOnlyBtn.addEventListener('click', () => immersiveViewer.openFullViewAt(0));
     }
 } catch (e) {
     handleRuntimeError(e);

@@ -72,6 +72,9 @@ require __DIR__ . '/../partials/header.php';
                                             src="<?= e($sourceUrl) ?>"
                                             alt="<?= e($altText) ?>"
                                             class="work-image"
+                                            data-creatr-vr-title="<?= e($item['title'] ?? $exhibit['title'] ?? 'Exhibit image') ?>"
+                                            data-creatr-vr-caption="<?= e($item['caption'] ?? '') ?>"
+                                            data-creatr-vr-description="<?= e($item['caption'] ?? $exhibit['description'] ?? '') ?>"
                                             decoding="async"
                                             fetchpriority="high"
                                         >
@@ -174,4 +177,5 @@ require __DIR__ . '/../partials/header.php';
         <?php endif; ?>
     </section>
 <?php
+echo '<script src="/embed.js" defer></script>';
 require __DIR__ . '/../partials/footer.php';

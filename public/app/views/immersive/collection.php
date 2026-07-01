@@ -11,10 +11,15 @@ $galleryRuntimeVersion = (int) @filemtime(dirname(__DIR__, 3) . '/assets/js/imme
 // Hydrate fields for display
 $hasP5 = false;
 $hasC2 = false;
+$collectionSlideshowStartIndex = null;
+$immersiveCollectionReturnTo = (string) ($_SERVER['REQUEST_URI'] ?? '');
+if ($immersiveCollectionReturnTo === '') {
+    $immersiveCollectionReturnTo = '/immersive/collections/' . ($collection['slug'] ?? '');
+}
 
 $jsItems = [];
 $detailItems = [];
-foreach ($items as $item) {
+foreach ($items as $index => $item) {
     if ($item['type'] === 'art_piece' && !empty($item['piece']) && !empty($item['version'])) {
         $piece = $item['piece'];
         $version = $item['version'];
@@ -34,6 +39,8 @@ foreach ($items as $item) {
             default => strtoupper($engine),
         };
         $pieceDescription = $piece['description'] ?? '';
+        $immersiveHref = '/immersive/pieces/' . (int) ($piece['id'] ?? 0)
+            . '?returnTo=' . rawurlencode($immersiveCollectionReturnTo);
         $jsItems[] = [
             'kind' => 'piece',
             'title' => $piece['title'] ?? 'Untitled Piece',
@@ -43,26 +50,45 @@ foreach ($items as $item) {
             'css_code' => $version['css_code'] ?? '',
             'generated_code' => $version['generated_code'] ?? '',
             'description' => $pieceDescription,
+            'immersive_href' => $immersiveHref,
         ];
         $detailItems[] = [
             'title' => $piece['title'] ?? 'Untitled Piece',
             'badge' => $itemEngineLabel,
             'description' => $pieceDescription,
+            'edit_url' => $item['admin_edit_url'] ?? null,
+            'immersive_href' => $immersiveHref,
+            'view_aria_label' => 'Open immersive view for ' . ($piece['title'] ?? 'this piece'),
         ];
     } elseif ($item['type'] === 'media_asset' && !empty($item['media'])) {
         $media = $item['media'];
         $src = $media['url'] ?: '/api/media-assets/' . (int) $media['id'];
         $altText = $media['alt_text'] ?? '';
+        if ($collectionSlideshowStartIndex === null) {
+            $collectionSlideshowStartIndex = $index;
+        }
         $jsItems[] = [
             'kind' => 'image',
             'title' => $media['title'] ?? 'Untitled Image',
             'imageUrl' => $src,
             'alt_text' => $altText,
+            'description' => $altText,
+            'full_view' => [
+                'type' => 'image',
+                'src' => $src,
+                'alt' => $altText !== '' ? $altText : ($media['title'] ?? 'Untitled Image'),
+                'title' => $media['title'] ?? 'Untitled Image',
+                'subtitle' => 'Image',
+                'description' => $altText,
+            ],
         ];
         $detailItems[] = [
             'title' => $media['title'] ?? 'Untitled Image',
             'badge' => 'Image',
             'description' => $altText,
+            'edit_url' => $item['admin_edit_url'] ?? null,
+            'full_view_index' => $index,
+            'view_aria_label' => 'View ' . ($media['title'] ?? 'this image') . ' full size',
         ];
     }
 }
@@ -132,6 +158,7 @@ if (isset($_GET['returnTo']) && str_starts_with($_GET['returnTo'], '/')) {
 } elseif (isset($_GET['post']) && is_numeric($_GET['post'])) {
     $backUrl = '/posts/' . (int) $_GET['post'];
 }
+$showAdminEditButton = isset($adminEditUrl) && is_string($adminEditUrl) && $adminEditUrl !== '';
 
 ?>
 <!DOCTYPE html>
@@ -211,6 +238,11 @@ html, body {
   margin-right: 0.5rem;
   flex-shrink: 0;
 }
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
 .header-info {
   text-align: right;
   min-width: 0;
@@ -236,6 +268,25 @@ html, body {
   .header-info .title {
     font-size: 1rem;
   }
+}
+.immersive-admin-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  padding: 0.55rem 0.95rem;
+  border-radius: 9999px;
+  text-decoration: none;
+  font-size: 0.8rem;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: background 0.2s, border-color 0.2s;
+}
+.immersive-admin-link:hover {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.3);
 }
 
 /* Stage Wrapper & Canvas Stage */
@@ -277,6 +328,29 @@ html, body {
   transition: background 0.2s, border-color 0.2s;
 }
 .fullscreen-toggle-btn:hover {
+  background: rgba(0, 0, 0, 0.7);
+  border-color: #fff;
+}
+.immersive-stage-action-btn {
+  position: absolute;
+  bottom: calc(1rem + env(safe-area-inset-bottom));
+  left: calc(1rem + env(safe-area-inset-left));
+  z-index: 130;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  padding: 0.5rem 1rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  border-radius: 9999px;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+}
+.immersive-stage-action-btn:hover {
   background: rgba(0, 0, 0, 0.7);
   border-color: #fff;
 }
@@ -413,6 +487,12 @@ html, body {
   justify-content: space-between;
   gap: 0.5rem;
 }
+.work-card-title-text {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
 .work-badge {
   display: inline-block;
   font-size: 0.65rem;
@@ -423,6 +503,38 @@ html, body {
   background: rgba(255, 255, 255, 0.08);
   border-radius: 4px;
   padding: 0.1rem 0.5rem;
+}
+.work-card-edit-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: rgba(255, 255, 255, 0.78);
+  text-decoration: none;
+  font-size: 0.76rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.work-card-edit-link:hover {
+  color: #fff;
+}
+.work-card-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-shrink: 0;
+}
+.work-card-view-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: rgba(255, 255, 255, 0.78);
+  text-decoration: none;
+  font-size: 0.76rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.work-card-view-link:hover {
+  color: #fff;
 }
 .work-card-desc {
   font-size: 0.85rem;
@@ -540,9 +652,17 @@ html, body {
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
             Back
         </a>
-        <div class="header-info">
-            <span class="eyebrow">Immersive Collection</span>
-            <h1 class="title"><?= e($exhibitName) ?></h1>
+        <div class="header-actions">
+            <?php if ($showAdminEditButton): ?>
+                <a href="<?= e($adminEditUrl) ?>" class="immersive-admin-link" aria-label="Edit this collection in admin">
+                    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 1 1 3 3L7 19l-4 1 1-4z"/></svg>
+                    Edit
+                </a>
+            <?php endif; ?>
+            <div class="header-info">
+                <span class="eyebrow">Immersive Collection</span>
+                <h1 class="title"><?= e($exhibitName) ?></h1>
+            </div>
         </div>
     </header>
 
@@ -554,6 +674,16 @@ html, body {
         <?php if (!$isStaticEmbed): ?>
             <button id="fullscreen-toggle-btn" class="fullscreen-toggle-btn" onclick="toggleFullscreen()" aria-label="Expand immersive view">
                 <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+            </button>
+        <?php endif; ?>
+        <?php if (!$isEmbedMode && !$isStaticEmbed && $collectionSlideshowStartIndex !== null): ?>
+            <button
+                id="collection-full-view-btn"
+                class="immersive-stage-action-btn"
+                type="button"
+                data-start-index="<?= (int) $collectionSlideshowStartIndex ?>"
+            >
+                View slideshow
             </button>
         <?php endif; ?>
     </div>
@@ -622,8 +752,29 @@ html, body {
                     <?php foreach ($detailItems as $work): ?>
                         <div class="work-card">
                             <div class="work-card-title">
-                                <?= e($work['title']) ?>
-                                <span class="work-badge"><?= e($work['badge']) ?></span>
+                                <div class="work-card-title-text">
+                                    <span><?= e($work['title']) ?></span>
+                                    <span class="work-badge"><?= e($work['badge']) ?></span>
+                                </div>
+                                <div class="work-card-actions">
+                                    <a
+                                        href="<?= e((string) ($work['immersive_href'] ?? '#')) ?>"
+                                        class="work-card-view-link"
+                                        <?php if (!empty($work['full_view_index']) || array_key_exists('full_view_index', $work)): ?>
+                                            data-full-view-index="<?= (int) ($work['full_view_index'] ?? 0) ?>"
+                                        <?php endif; ?>
+                                        aria-label="<?= e((string) ($work['view_aria_label'] ?? ('View ' . ($work['title'] ?? 'this work')))) ?>"
+                                    >
+                                        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
+                                        View
+                                    </a>
+                                    <?php if (!empty($work['edit_url'])): ?>
+                                        <a href="<?= e((string) $work['edit_url']) ?>" class="work-card-edit-link" aria-label="Edit <?= e($work['title']) ?>">
+                                            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 1 1 3 3L7 19l-4 1 1-4z"/></svg>
+                                            Edit
+                                        </a>
+                                    <?php endif; ?>
+                                </div>
                             </div>
                             <?php if ($work['description'] !== ''): ?>
                                 <div class="work-card-desc"><?= e($work['description']) ?></div>
@@ -824,11 +975,30 @@ try {
 const items = <?= json_encode($jsItems) ?>;
 const rows = <?= (int) $rows ?>;
 const cols = <?= (int) $cols ?>;
+const viewerControlsOptions = {
+    showViewerControls: <?= (!$isEmbedMode && !$isStaticEmbed) ? 'true' : 'false' ?>,
+    labelPosition: 'above',
+};
 
 const stage = document.getElementById('immersive-stage');
 
 try {
-    mountExhibitWall(stage, items, rows, cols);
+    const immersiveViewer = mountExhibitWall(stage, items, rows, cols, viewerControlsOptions);
+    const slideshowBtn = document.getElementById('collection-full-view-btn');
+    if (slideshowBtn && immersiveViewer?.openFullViewAt) {
+        slideshowBtn.addEventListener('click', () => {
+            const startIndex = Number(slideshowBtn.getAttribute('data-start-index'));
+            immersiveViewer.openFullViewAt(Number.isFinite(startIndex) ? startIndex : 0);
+        });
+    }
+    document.querySelectorAll('[data-full-view-index]').forEach((link) => {
+        link.addEventListener('click', (event) => {
+            event.preventDefault();
+            const index = Number(link.getAttribute('data-full-view-index'));
+            if (!Number.isFinite(index)) return;
+            immersiveViewer?.openFullViewAt?.(index);
+        });
+    });
 } catch (e) {
     console.error("Failed to mount exhibit wall:", e);
 }

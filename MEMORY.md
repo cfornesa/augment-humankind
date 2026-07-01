@@ -239,3 +239,8 @@ Save Changes and AI Refine Accept both create new code; AI Refine Accept previou
 
 2026-06-21 CORRECTION "No canvas or svg element found" from admin-piece-capture.js is a fallback timeout message, not a real claim about the piece.
 Check piece-runtime.js's CDN import path and any sketch-status runtimeError before trusting it at face value.
+2026-06-30 DECISION Immersive platform collections are gateway surfaces: art pieces should hand off to their canonical `/immersive/pieces/{id}` routes with `returnTo`, while images may still use an in-collection slideshow overlay.
+2026-06-30 DECISION Immersive image metadata should prefer resolved managed-media titles when inbound title values collapse into description or alt text, to avoid showing the description as both title and description.
+2026-06-30 DECISION The shared immersive side-edge HUD pattern now extends beyond standalone Three.js and A-Frame pieces to gallery-mounted P5.js, C2.js, SVG, immersive-image, and platform-collection views.
+2026-06-30 CORRECTION Embedding a full HTML srcdoc as JSON inside a PHP `<script>` block requires `JSON_HEX_TAG` — `JSON_UNESCAPED_UNICODE` alone does not escape `</script>`, causing the HTML parser to close the script prematurely and a `SyntaxError` at runtime.
+Fixed in `public/app/views/immersive/piece.php` line 1041 for the P5/C2/SVG `fullView` option passed to `mountGalleryPiece()`; Three.js/A-Frame pieces are unaffected as they never generate that block.

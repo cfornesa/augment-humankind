@@ -21,6 +21,8 @@ function showPieceError(error) {
 }
 window.addEventListener('error', (event) => showPieceError(event.error || event.message));
 window.addEventListener('unhandledrejection', (event) => showPieceError(event.reason || 'Unhandled promise rejection'));
+const pieceContext = window.CREATR_PIECE_CONTEXT || {};
+const pieceDisableMotion = pieceContext.disableMotion === true;
 function runPieceCode() {
   try {
     const fn = new Function(PIECE_CODE + "\n//# sourceURL=piece-runtime.js");
@@ -156,10 +158,25 @@ function bootAFrame() {
       scene.style.width = '100%';
       scene.style.height = '100%';
       scene.style.display = 'block';
+      if (pieceDisableMotion) {
+        scene.setAttribute('device-orientation-permission-ui', 'enabled: false');
+      }
 
       runPieceCode();
       if (typeof window.sketch === 'function') {
         window.sketch({ AFRAME: window.AFRAME, scene, startFrame });
+      }
+
+      function disableMotionTracking() {
+        if (!pieceDisableMotion) return;
+        const cameraEntities = new Set();
+        if (scene.camera?.el) cameraEntities.add(scene.camera.el);
+        scene.querySelectorAll('a-camera, [camera]').forEach((el) => cameraEntities.add(el));
+        cameraEntities.forEach((el) => {
+          const current = el.getAttribute('look-controls');
+          if (current === null && el.tagName.toLowerCase() !== 'a-camera' && !el.hasAttribute('camera')) return;
+          el.setAttribute('look-controls', 'magicWindowTrackingEnabled: false');
+        });
       }
 
       let readySignaled = false;
@@ -173,9 +190,13 @@ function bootAFrame() {
       }
 
       scene.addEventListener('renderstart', signalAFrameReadyOnce, { once: true });
+      scene.addEventListener('loaded', disableMotionTracking, { once: true });
       scene.addEventListener('loaded', () => {
+        disableMotionTracking();
         requestAnimationFrame(() => requestAnimationFrame(signalAFrameReadyOnce));
       }, { once: true });
+      requestAnimationFrame(disableMotionTracking);
+      setTimeout(disableMotionTracking, 250);
       startFrame(() => signalAFrameReadyOnce());
       setTimeout(signalAFrameReadyOnce, 2500);
     } catch (error) {

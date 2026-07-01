@@ -5,12 +5,25 @@ declare(strict_types=1);
 $displayTitle = $title !== '' ? $title : ($alt !== '' ? $alt : 'Immersive image');
 $fixedSentence = 'This image uses the browser-based 3D immersive gallery scene '
     . 'with a normalized presentation surface and centered default framing.';
-$imageDescription = $caption !== '' ? $caption . ' ' . $fixedSentence : $fixedSentence;
+$displayCaption = trim((string) ($caption ?? ''));
+$displayDescription = trim((string) ($description ?? ''));
+$imageDescription = $displayDescription !== ''
+    ? $displayDescription . ' ' . $fixedSentence
+    : ($displayCaption !== '' ? $displayCaption . ' ' . $fixedSentence : $fixedSentence);
 
 $jsItems = [[
     'kind' => 'image',
     'title' => $displayTitle,
     'imageUrl' => $imageSrc,
+    'description' => $displayDescription !== '' ? $displayDescription : ($displayCaption !== '' ? $displayCaption : $alt),
+    'full_view' => [
+        'type' => 'image',
+        'src' => $imageSrc,
+        'alt' => $alt !== '' ? $alt : $displayTitle,
+        'title' => $displayTitle,
+        'subtitle' => 'Image',
+        'description' => $displayDescription !== '' ? $displayDescription : ($displayCaption !== '' ? $displayCaption : $alt),
+    ],
 ]];
 
 // Determine details for URL/origin
@@ -31,6 +44,7 @@ $queryParams = ['embed' => '1'];
 if ($alt !== '') $queryParams['alt'] = $alt;
 if ($title !== '') $queryParams['title'] = $title;
 if ($caption !== '') $queryParams['caption'] = $caption;
+if ($displayDescription !== '') $queryParams['description'] = $displayDescription;
 
 // 2. Custom gallery embed
 $customQuery = http_build_query($queryParams);
@@ -77,6 +91,8 @@ if (isset($_GET['returnTo']) && str_starts_with($_GET['returnTo'], '/')) {
 } elseif (isset($_GET['post']) && is_numeric($_GET['post'])) {
     $backUrl = '/posts/' . (int) $_GET['post'];
 }
+$showAdminEditButton = isset($imageAdminEditUrl) && is_string($imageAdminEditUrl) && $imageAdminEditUrl !== '';
+$showReadOnlyFullViewButton = !$isEmbedMode && !$isStaticEmbed;
 
 ?>
 <!DOCTYPE html>
@@ -156,6 +172,11 @@ html, body {
   margin-right: 0.5rem;
   flex-shrink: 0;
 }
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
 .header-info {
   text-align: right;
   min-width: 0;
@@ -181,6 +202,25 @@ html, body {
   .header-info .title {
     font-size: 1rem;
   }
+}
+.immersive-admin-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  padding: 0.55rem 0.95rem;
+  border-radius: 9999px;
+  text-decoration: none;
+  font-size: 0.8rem;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: background 0.2s, border-color 0.2s;
+}
+.immersive-admin-link:hover {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.3);
 }
 
 /* Stage Wrapper & Canvas Stage */
@@ -222,6 +262,29 @@ html, body {
   transition: background 0.2s, border-color 0.2s;
 }
 .fullscreen-toggle-btn:hover {
+  background: rgba(0, 0, 0, 0.7);
+  border-color: #fff;
+}
+.immersive-stage-action-btn {
+  position: absolute;
+  bottom: calc(1rem + env(safe-area-inset-bottom));
+  left: calc(1rem + env(safe-area-inset-left));
+  z-index: 130;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  padding: 0.5rem 1rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  border-radius: 9999px;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+}
+.immersive-stage-action-btn:hover {
   background: rgba(0, 0, 0, 0.7);
   border-color: #fff;
 }
@@ -412,9 +475,17 @@ html, body {
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
             Back
         </a>
-        <div class="header-info">
-            <span class="eyebrow">Immersive Image</span>
-            <h1 class="title"><?= e($displayTitle) ?></h1>
+        <div class="header-actions">
+            <?php if ($showAdminEditButton): ?>
+                <a href="<?= e($imageAdminEditUrl) ?>" class="immersive-admin-link" aria-label="Edit this image in admin">
+                    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 1 1 3 3L7 19l-4 1 1-4z"/></svg>
+                    Edit
+                </a>
+            <?php endif; ?>
+            <div class="header-info">
+                <span class="eyebrow">Immersive Image</span>
+                <h1 class="title"><?= e($displayTitle) ?></h1>
+            </div>
         </div>
     </header>
 
@@ -426,6 +497,11 @@ html, body {
         <?php if (!$isStaticEmbed): ?>
             <button id="fullscreen-toggle-btn" class="fullscreen-toggle-btn" onclick="toggleFullscreen()" aria-label="Expand immersive view">
                 <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+            </button>
+        <?php endif; ?>
+        <?php if ($showReadOnlyFullViewButton): ?>
+            <button id="readonly-full-view-btn" class="immersive-stage-action-btn" type="button">
+                View full size
             </button>
         <?php endif; ?>
     </div>
@@ -460,6 +536,18 @@ html, body {
                     <dt>Alt Text</dt>
                     <dd><?= e($alt !== '' ? $alt : 'No alt text provided in this view.') ?></dd>
                 </div>
+                <?php if ($displayCaption !== ''): ?>
+                <div>
+                    <dt>Caption</dt>
+                    <dd><?= e($displayCaption) ?></dd>
+                </div>
+                <?php endif; ?>
+                <?php if ($displayDescription !== ''): ?>
+                <div>
+                    <dt>Description</dt>
+                    <dd><?= e($displayDescription) ?></dd>
+                </div>
+                <?php endif; ?>
                 <div>
                     <dt>Interaction</dt>
                     <dd>Drag to orbit/pan, scroll to zoom, arrow keys/WASD or click floor to walk along the wall.</dd>
@@ -595,9 +683,14 @@ try {
 // Boot standalone image
 const stage = document.getElementById('immersive-stage');
 const items = <?= json_encode($jsItems, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
+const viewerControlsOptions = { showViewerControls: <?= (!$isEmbedMode && !$isStaticEmbed) ? 'true' : 'false' ?> };
 
 try {
-    mountExhibitWall(stage, items, 1, 1);
+    const immersiveViewer = mountExhibitWall(stage, items, 1, 1, viewerControlsOptions);
+    const readOnlyBtn = document.getElementById('readonly-full-view-btn');
+    if (readOnlyBtn && immersiveViewer?.openFullViewAt) {
+        readOnlyBtn.addEventListener('click', () => immersiveViewer.openFullViewAt(0));
+    }
 } catch (error) {
     console.error('Failed to mount immersive image:', error);
     stage.innerHTML = '<img src="<?= e($imageSrc) ?>" alt="<?= e($alt !== '' ? $alt : $displayTitle) ?>" style="max-width:100%;max-height:100%;object-fit:contain;display:block;margin:auto;">';

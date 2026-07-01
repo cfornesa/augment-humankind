@@ -535,10 +535,20 @@ document.addEventListener('DOMContentLoaded', () => {
         setPreview(card);
     }
 
+    function openCard(card, clearOpenParam = false) {
+        if (!card) return;
+        populateModal(card);
+        modal.showModal();
+        if (clearOpenParam) {
+            const url = new URL(window.location.href);
+            url.searchParams.delete('open');
+            window.history.replaceState({}, '', url.toString());
+        }
+    }
+
     cards.forEach(card => {
         card.addEventListener('click', () => {
-            populateModal(card);
-            modal.showModal();
+            openCard(card);
         });
     });
 
@@ -742,6 +752,23 @@ document.addEventListener('DOMContentLoaded', () => {
         newImageBtn.addEventListener('click', () => {
             if (window.openMediaPicker) window.openMediaPicker(null, 'upload', { mode: 'media' });
         });
+    }
+
+    const openToken = new URLSearchParams(window.location.search).get('open') || '';
+    if (openToken !== '') {
+        const targetCard = cards.find(card => {
+            if (openToken.startsWith('asset-')) {
+                return card.dataset.source === 'asset' && ('asset-' + (card.dataset.assetId || '')) === openToken;
+            }
+            if (openToken.startsWith('file-')) {
+                return card.dataset.source !== 'asset' && ('file-' + (card.dataset.id || '')) === openToken;
+            }
+            return false;
+        });
+        if (targetCard) {
+            openCard(targetCard, true);
+            targetCard.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        }
     }
 });
 </script>

@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-function piece_render_document(array $piece, array $version): string
+function piece_render_document(array $piece, array $version, array $options = []): string
 {
     $title = htmlspecialchars((string) ($piece['title'] ?? 'Art piece'), ENT_QUOTES | ENT_HTML5, 'UTF-8');
     $engine = strtolower((string) ($version['engine'] ?? $piece['engine'] ?? 'p5'));
@@ -13,6 +13,11 @@ function piece_render_document(array $piece, array $version): string
     $jsonEngine = json_encode($engine);
     $jsonHtml = json_encode($html, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     $jsonCss = json_encode($css, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    $jsonContext = json_encode([
+        'viewerMode' => (string) ($options['viewer_mode'] ?? 'default'),
+        'interactive' => !empty($options['interactive']),
+        'disableMotion' => !empty($options['disable_motion']),
+    ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     $aframeCss = $engine === 'aframe'
         ? "a-scene{display:block;width:100%;height:100%;}\n.a-canvas{display:block;width:100%!important;height:100%!important;}\n"
         : '';
@@ -83,6 +88,7 @@ const PIECE_ENGINE = {$jsonEngine};
 const PIECE_CODE = {$jsonCode};
 const PIECE_HTML_CODE = {$jsonHtml};
 const PIECE_CSS_CODE = {$jsonCss};
+window.CREATR_PIECE_CONTEXT = {$jsonContext};
 </script>
 <script src="{$runtimeScriptUrl}"></script>
 </body>

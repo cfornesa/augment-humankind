@@ -4910,3 +4910,31 @@ Live testing on a real iPhone surfaced three more issues, traced precisely rathe
 - Ran `tests/three-runtime-consistency.php` (62/62) and `tests/art-piece-generation.php` (68/68): both passed, no regressions.
 - Verified the `dirname(__DIR__, 3)` path resolution and `filemtime()` call independently via a throwaway PHP snippet matching the exact computation now in both view files — resolves to the real file path and a real non-zero mtime.
 - Still pending the user's own live confirmation on the actual iPhone: dialog readability on `/pieces/{id}`, the permission button now appearing without a manual refresh, and — the one most worth confirming carefully given the prior overpromise — whether tilting now actually rotates the view on piece 83 once all three fixes are deployed together.
+---
+
+## 2026-06-30 — Immersive VR Consistency Pass for Pieces, Images, and Platform Collections
+
+### Context
+This session focused on making the immersive/gallery VR surfaces behave more consistently across direct immersive pieces, immersive images, public content images, and immersive platform collections. Several user-reported regressions and mismatches were corrected during that pass, including control parity gaps, metadata errors, and collection routes that were behaving like alternate piece viewers instead of gateways to the canonical immersive piece routes.
+
+### Implemented
+- **Shared viewer HUD expanded beyond Three.js/A-Frame pieces**: extended the existing immersive side-edge controls in `immersive-gallery.js` so gallery-mounted P5.js, C2.js, SVG, immersive-image, and platform-collection views can opt into the same move/float/zoom HUD without introducing a second control design.
+- **C2 interactive compatibility preserved**: added a C2 interactivity heuristic so interactive C2 pieces keep their click-to-interact overlay while non-interactive C2 pieces use the shared read-only/full-view behavior. Keyboard navigation was hardened to ignore focused iframes and editable fields while still supporting arrow/WASD movement on immersive gallery surfaces.
+- **Automatic public-image VR affordances completed**: extended `public/embed.js` so eligible non-featured images on public posts, managed pages, exhibits, and collection detail pages gain an overlaid `VR` button linking to `/immersive/images/{encodedRef}` while preserving the original inline image presentation. Featured blog images and archive/listing thumbnails remain excluded.
+- **Immersive image metadata corrected**: immersive image routes now prefer resolved managed-media titles when the inbound `title` query collapses into description/alt text, preventing the image description from being shown as both title and description on immersive image pages.
+- **Admin-only immersive edit shortcuts added**: direct immersive piece, collection, and image views now expose admin-only `Edit` affordances when the current session is admin-capable, with platform collection metadata cards also receiving per-item edit shortcuts.
+- **Read-only full-view overlays added for static immersive works**: introduced a shared full-view overlay controller for P5.js, SVG, non-interactive C2.js, immersive images, and collection image browsing. The overlay was corrected to use explicit `display:none`/`display:flex` state after a regression showed the `hidden` attribute alone could leave the shell visibly mounted on load. Its close affordance was aligned to `×` for consistency with the C2 interactive overlay.
+- **Platform collections recast as gateways to canonical immersive piece routes**: immersive platform collections no longer treat art pieces as alternate in-collection immersive viewers. Art-piece entries now route directly to `/immersive/pieces/{id}` with `returnTo` back to the originating collection, while image entries remain eligible for the in-collection slideshow overlay. Collection wall title placards were moved above the framed works, and item descriptions continue to live in the metadata/work list rather than on the wall labels.
+
+### Verification
+- Ran `node --check public/assets/js/immersive-gallery.js` and `node --check public/assets/js/piece-runtime.js`.
+- Ran `php -l` on touched immersive view/helper files including `public/app/views/immersive/piece.php`, `public/app/views/immersive/image.php`, `public/app/views/immersive/collection.php`, and `public/app/helpers/piece-render.php`.
+- Live/manual verification remains partially user-driven for collection gateway handoff, public image VR affordances, and the full set of immersive admin/edit shortcuts across all surfaces.
+
+### Follow-up correction — `JSON_HEX_TAG` fix for P5/C2/SVG pieces on `/immersive/pieces/{id}`
+
+After the gateway routing was corrected, P5.js, C2.js, and SVG pieces landed at `/immersive/pieces/{id}` but still produced a `SyntaxError: Invalid or unexpected token` at the inline `<script type="module">` block. The symptom was the JSON payload leaking as visible text into the DOM and the gallery room never mounting.
+
+**Root cause:** `mountGalleryPiece()` in `immersive-gallery.js` receives a `fullView` option whose `items[0].srcdoc` is a full HTML document (output of `piece_render_document()`). That srcdoc contains literal `</script>` tags. The PHP encoding used `JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE`, which does not escape `<`/`>` — PHP's default XSS-safe flag `JSON_HEX_TAG` was absent, so `</script>` appeared verbatim inside the surrounding `<script type="module">` block and the HTML parser closed the script element prematurely.
+
+**Fix:** changed the `json_encode()` call on line 1041 of `public/app/views/immersive/piece.php` from `JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE` to `JSON_HEX_TAG | JSON_UNESCAPED_UNICODE`. `JSON_HEX_TAG` encodes `<` → `<` and `>` → `>`, making the JSON safe inside any `<script>` block regardless of srcdoc content. Three.js and A-Frame pieces were unaffected because they use `mountThreeImmersivePiece()`/`mountAFrameImmersivePiece()` and never generate the `fullView` block.

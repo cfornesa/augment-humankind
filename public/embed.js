@@ -18,6 +18,229 @@
     }
   }
 
+  function ensureInlineVrStyles() {
+    if (document.getElementById("creatr-inline-vr-image-styles")) return;
+    const style = document.createElement("style");
+    style.id = "creatr-inline-vr-image-styles";
+    style.textContent = `
+      .creatr-inline-vr-image {
+        position: relative;
+        max-width: 100%;
+      }
+      .creatr-inline-vr-image.is-shrink {
+        display: table;
+      }
+      .creatr-inline-vr-image.is-fill {
+        display: block;
+        width: 100%;
+      }
+      .creatr-inline-vr-image > img,
+      .creatr-inline-vr-image > picture,
+      .creatr-inline-vr-image > a,
+      .creatr-inline-vr-image > picture > img,
+      .creatr-inline-vr-image > a > img,
+      .creatr-inline-vr-image > a > picture,
+      .creatr-inline-vr-image > a > picture > img {
+        display: block;
+        max-width: 100%;
+      }
+      .creatr-inline-vr-btn {
+        position: absolute;
+        left: 16px;
+        bottom: 16px;
+        z-index: 5;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.4rem;
+        background: rgba(0, 0, 0, 0.55);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: 9999px;
+        color: #fff;
+        padding: 6px 12px;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        text-decoration: none;
+        backdrop-filter: blur(4px);
+        -webkit-backdrop-filter: blur(4px);
+        transition: background 0.2s, border-color 0.2s;
+      }
+      .creatr-inline-vr-btn:hover {
+        background: rgba(0, 0, 0, 0.8);
+        border-color: #f7f2e8;
+      }
+      .creatr-inline-vr-btn svg {
+        width: 16px;
+        height: 16px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 2;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      @media (max-width: 600px) {
+        .creatr-inline-vr-btn {
+          left: 12px;
+          bottom: 12px;
+          padding: 5px 10px;
+          font-size: 10px;
+        }
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  function encodeImageRef(src) {
+    const encoded = btoa(src).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+    return encoded;
+  }
+
+  function normalizeImageSrc(src) {
+    if (!src) return null;
+    const parsed = parseEmbedUrl(src);
+    if (!parsed) return null;
+    if (/^(javascript|data|vbscript):/i.test(parsed.protocol)) return null;
+    if (parsed.origin === window.location.origin) {
+      return `${parsed.pathname}${parsed.search}`;
+    }
+    return parsed.href;
+  }
+
+  function nonEmpty(value) {
+    const text = String(value ?? "").trim();
+    return text === "" ? "" : text;
+  }
+
+  function truncateMetadata(value, maxLength = 240) {
+    const text = nonEmpty(value);
+    if (text === "") return "";
+    return text.length > maxLength ? `${text.slice(0, maxLength - 1).trimEnd()}…` : text;
+  }
+
+  function extractImageMetadata(img) {
+    const figure = img.closest("figure");
+    const figcaption = figure?.querySelector("figcaption");
+    const slide = img.closest("[data-carousel-slide]");
+    const card = img.closest(".piece-card");
+    const title = truncateMetadata(
+      img.getAttribute("data-creatr-vr-title")
+      || slide?.getAttribute("data-title")
+      || card?.querySelector("h2")?.textContent
+      || img.getAttribute("title")
+      || figcaption?.textContent
+      || img.getAttribute("alt")
+    );
+    const alt = truncateMetadata(
+      img.getAttribute("data-creatr-vr-alt")
+      || img.getAttribute("alt")
+    );
+    const caption = truncateMetadata(
+      img.getAttribute("data-creatr-vr-caption")
+      || slide?.getAttribute("data-caption")
+      || figcaption?.textContent
+    );
+    const description = truncateMetadata(
+      img.getAttribute("data-creatr-vr-description")
+      || card?.querySelector("p")?.textContent
+      || caption
+      || alt
+    );
+    return { title, alt, caption, description };
+  }
+
+  function shouldUpgradePlainImage(img) {
+    if (!(img instanceof HTMLImageElement)) return false;
+    if (img.dataset.creatrVrProcessed === "true") return false;
+    if (img.closest("creatr-immersive-image, creatr-art-piece, creatr-exhibit-wall, .creatr-inline-vr-image")) return false;
+    if (img.closest(".blog-featured-image")) return false;
+    if (img.closest(".blog-card-image, .blog-card, .blog-category-grid, .portfolio-grid-3, .exhibits-grid, .collection-grid, .collection-thumb-wrap, .collection-detail-thumb, .archive-grid, .archive-card")) return false;
+    if (img.closest(".piece-card") && img.dataset.creatrVrEligible !== "true") return false;
+    if (img.closest(".managed-section-body, .work-content-slide, .work-description, .work-placard-notes")) return true;
+    if (img.classList.contains("work-image")) return true;
+    if (img.dataset.creatrVrEligible === "true") return true;
+    return false;
+  }
+
+  function getWrapTarget(img) {
+    const anchor = img.parentElement instanceof HTMLAnchorElement ? img.parentElement : null;
+    if (anchor) return anchor;
+    const picture = img.parentElement instanceof HTMLPictureElement ? img.parentElement : null;
+    if (picture) return picture;
+    return img;
+  }
+
+  function buildImmersiveImageHref(src, metadata) {
+    const ref = encodeImageRef(src);
+    const params = new URLSearchParams();
+    params.set("returnTo", window.location.pathname + window.location.search);
+    if (metadata.alt) params.set("alt", metadata.alt);
+    if (metadata.title) params.set("title", metadata.title);
+    if (metadata.caption) params.set("caption", metadata.caption);
+    if (metadata.description) params.set("description", metadata.description);
+    return `/immersive/images/${ref}?${params.toString()}`;
+  }
+
+  function upgradePlainImages() {
+    ensureInlineVrStyles();
+    const images = document.querySelectorAll("img");
+    images.forEach((img) => {
+      if (!shouldUpgradePlainImage(img)) return;
+      const normalizedSrc = normalizeImageSrc(img.currentSrc || img.getAttribute("src") || "");
+      if (!normalizedSrc) return;
+
+      const wrapTarget = getWrapTarget(img);
+      if (!wrapTarget || !wrapTarget.parentNode) return;
+
+      const metadata = extractImageMetadata(img);
+      const wrapper = document.createElement("span");
+      const isFillLayout = img.classList.contains("work-image") || img.dataset.creatrVrEligible === "true";
+      wrapper.className = `creatr-inline-vr-image ${isFillLayout ? "is-fill" : "is-shrink"}`;
+
+      const button = document.createElement("a");
+      button.className = "creatr-inline-vr-btn";
+      button.href = buildImmersiveImageHref(normalizedSrc, metadata);
+      button.target = "_parent";
+      button.innerHTML = `
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+          <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+          <line x1="12" y1="22.08" x2="12" y2="12"></line>
+        </svg>
+        <span>VR</span>
+      `;
+      const labelTitle = metadata.title || metadata.alt || "image";
+      button.setAttribute("aria-label", `Open immersive view for ${labelTitle}`);
+
+      wrapTarget.parentNode.insertBefore(wrapper, wrapTarget);
+      wrapper.appendChild(wrapTarget);
+      wrapper.appendChild(button);
+      img.dataset.creatrVrProcessed = "true";
+      wrapTarget.dataset.creatrVrProcessed = "true";
+    });
+  }
+
+  function startEmbedEnhancementObserver() {
+    if (window.__creatrEmbedEnhancementObserverStarted) return;
+    window.__creatrEmbedEnhancementObserverStarted = true;
+
+    const observer = new MutationObserver((mutations) => {
+      let shouldRefresh = false;
+      for (const mutation of mutations) {
+        if (mutation.type !== "childList") continue;
+        if (mutation.addedNodes.length === 0) continue;
+        shouldRefresh = true;
+        break;
+      }
+      if (!shouldRefresh) return;
+      upgradeIframes();
+      upgradePlainImages();
+    });
+
+    observer.observe(document.body, { childList: true, subtree: true });
+  }
+
   // Web Component for Art Piece
   class CreatrArtPiece extends HTMLElement {
     constructor() {
@@ -673,8 +896,14 @@
   }
 
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", upgradeIframes);
+    document.addEventListener("DOMContentLoaded", () => {
+      upgradeIframes();
+      upgradePlainImages();
+      startEmbedEnhancementObserver();
+    });
   } else {
     upgradeIframes();
+    upgradePlainImages();
+    startEmbedEnhancementObserver();
   }
 })();

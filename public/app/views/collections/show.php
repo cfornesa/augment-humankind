@@ -46,7 +46,14 @@ require dirname(__DIR__) . '/partials/header.php';
                     <?php elseif ($item['type'] === 'media_asset' && !empty($item['media'])): ?>
                         <?php $media = $item['media']; ?>
                         <article class="piece-card">
-                            <img src="<?= e($media['url'] ?: '/api/media-assets/' . (int) $media['id']) ?>" alt="<?= e($media['alt_text'] ?? '') ?>" loading="lazy">
+                            <img
+                                src="<?= e($media['url'] ?: '/api/media-assets/' . (int) $media['id']) ?>"
+                                alt="<?= e($media['alt_text'] ?? '') ?>"
+                                data-creatr-vr-eligible="true"
+                                data-creatr-vr-title="<?= e($media['title'] ?? 'Untitled Image') ?>"
+                                data-creatr-vr-description="<?= e($media['alt_text'] ?? '') ?>"
+                                loading="lazy"
+                            >
                             <h2><?= e($media['title'] ?? 'Untitled Image') ?></h2>
                             <?php if (!empty($media['alt_text'])): ?>
                                 <p><?= e($media['alt_text']) ?></p>
@@ -59,4 +66,5 @@ require dirname(__DIR__) . '/partials/header.php';
     </div>
 </section>
 <?php
+echo '<script src="/embed.js" defer></script>';
 require dirname(__DIR__) . '/partials/footer.php';

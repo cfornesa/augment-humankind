@@ -145,30 +145,58 @@ export function computeOrbitKeyboardMotion(forward, keys, speed) {
 }
 
 export function createKeyboardNavigation(controls, options = {}) {
-  const { speed = 0.05, minX = -8, maxX = 8, minY = -Infinity, maxY = Infinity, minZ = 0.5, maxZ = Infinity, container } = options;
+  const { speed = 0.05, minX = -8, maxX = 8, minY = -Infinity, maxY = Infinity, minZ = 0.5, maxZ = Infinity, container, isEnabled } = options;
   const keys = new Set();
+  const target = window;
+
+  function mapMovementKey(e) {
+    if (e.code === "KeyW") return "ArrowUp";
+    if (e.code === "KeyS") return "ArrowDown";
+    if (e.code === "KeyA") return "ArrowLeft";
+    if (e.code === "KeyD") return "ArrowRight";
+    if (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "ArrowUp" || e.key === "ArrowDown") return e.key;
+    return null;
+  }
+
+  function keyboardNavEnabled() {
+    if (typeof isEnabled === "function") return isEnabled() !== false;
+    if (!container) return true;
+    return container.dataset.keyboardNavigationDisabled !== "true";
+  }
+
+  function shouldIgnoreKeyEventTarget(eventTarget) {
+    if (!(eventTarget instanceof Element)) return false;
+    if (eventTarget.tagName === "IFRAME") return true;
+    if (eventTarget instanceof HTMLInputElement || eventTarget instanceof HTMLTextAreaElement || eventTarget instanceof HTMLSelectElement) return true;
+    if (eventTarget.isContentEditable) return true;
+    return Boolean(eventTarget.closest("[contenteditable=\"true\"], [contenteditable=\"\"], input, textarea, select"));
+  }
 
   function onKeyDown(e) {
-    if (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "ArrowUp" || e.key === "ArrowDown" ||
-        e.code === "KeyW" || e.code === "KeyA" || e.code === "KeyS" || e.code === "KeyD") {
-      e.preventDefault();
-      let mappedKey = e.key;
-      if (e.code === "KeyW") mappedKey = "ArrowUp";
-      if (e.code === "KeyS") mappedKey = "ArrowDown";
-      if (e.code === "KeyA") mappedKey = "ArrowLeft";
-      if (e.code === "KeyD") mappedKey = "ArrowRight";
-      keys.add(mappedKey);
-    }
+    const mappedKey = mapMovementKey(e);
+    if (!mappedKey) return;
+    if (!keyboardNavEnabled() || shouldIgnoreKeyEventTarget(e.target)) return;
+    e.preventDefault();
+    keys.add(mappedKey);
   }
 
   function onKeyUp(e) {
-    let mappedKey = e.key;
-    if (e.code === "KeyW") mappedKey = "ArrowUp";
-    if (e.code === "KeyS") mappedKey = "ArrowDown";
-    if (e.code === "KeyA") mappedKey = "ArrowLeft";
-    if (e.code === "KeyD") mappedKey = "ArrowRight";
+    const mappedKey = mapMovementKey(e);
+    if (!mappedKey) return;
+    if (!keyboardNavEnabled() || shouldIgnoreKeyEventTarget(e.target)) {
+      keys.delete(mappedKey);
+      return;
+    }
     keys.delete(mappedKey);
     keys.delete(e.key);
+  }
+
+  function clearKeys() {
+    keys.clear();
+  }
+
+  function onWindowBlur() {
+    clearKeys();
   }
 
   const _fwd = new THREE.Vector3();
@@ -182,6 +210,10 @@ export function createKeyboardNavigation(controls, options = {}) {
   let lastUpdateAt = null;
 
   function update() {
+    if (!keyboardNavEnabled()) {
+      clearKeys();
+      return false;
+    }
     const now = performance.now();
     const frameScale = lastUpdateAt === null
       ? 1
@@ -212,18 +244,19 @@ export function createKeyboardNavigation(controls, options = {}) {
     container.tabIndex = 0;
     container.addEventListener("click", onContainerClick, { passive: true });
   }
-  const target = container ?? window;
 
   function dispose() {
     target.removeEventListener("keydown", onKeyDown);
     target.removeEventListener("keyup", onKeyUp);
+    window.removeEventListener("blur", onWindowBlur);
     if (container) container.removeEventListener("click", onContainerClick);
-    keys.clear();
+    clearKeys();
   }
 
   target.addEventListener("keydown", onKeyDown);
   target.addEventListener("keyup", onKeyUp);
-  return { update, dispose };
+  window.addEventListener("blur", onWindowBlur);
+  return { update, dispose, clearKeys };
 }
 
 export function createMountedGalleryShell(stage, aspect, profile = {}) {
@@ -575,6 +608,225 @@ function createImmersiveViewerControls(stageEl, handlers = {}) {
   };
 }
 
+export function createReadOnlyFullViewOverlay(stageEl, items, options = {}) {
+  const overlayItems = Array.isArray(items) ? items : [];
+  const host = stageEl.parentElement ?? stageEl;
+  if (!overlayItems.length) {
+    return {
+      openAt() {},
+      close() {},
+      remove() {},
+      isOpen() { return false; },
+    };
+  }
+
+  const root = document.createElement("div");
+  root.hidden = true;
+  root.setAttribute("aria-hidden", "true");
+  root.style.cssText = "position:absolute;inset:0;z-index:145;background:rgba(5,7,15,0.92);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);display:none;align-items:stretch;justify-content:center;padding:1rem;pointer-events:auto;";
+
+  const shell = document.createElement("div");
+  shell.style.cssText = "position:relative;display:flex;flex-direction:column;width:min(100%,1100px);height:100%;max-height:100%;border:1px solid rgba(255,255,255,0.14);border-radius:1.2rem;background:rgba(9,14,24,0.96);box-shadow:0 24px 80px rgba(0,0,0,0.35);overflow:hidden;";
+  root.appendChild(shell);
+
+  const topBar = document.createElement("div");
+  topBar.style.cssText = "display:flex;align-items:flex-start;justify-content:space-between;gap:0.75rem;padding:0.9rem 1rem;border-bottom:1px solid rgba(255,255,255,0.08);";
+  shell.appendChild(topBar);
+
+  const metaWrap = document.createElement("div");
+  metaWrap.style.cssText = "min-width:0;display:flex;flex-direction:column;gap:0.2rem;";
+  topBar.appendChild(metaWrap);
+
+  const titleEl = document.createElement("div");
+  titleEl.style.cssText = "font-size:1rem;font-weight:700;color:#f8f5ee;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;";
+  metaWrap.appendChild(titleEl);
+
+  const subtitleEl = document.createElement("div");
+  subtitleEl.style.cssText = "font-size:0.76rem;letter-spacing:0.12em;text-transform:uppercase;color:rgba(255,255,255,0.54);";
+  metaWrap.appendChild(subtitleEl);
+
+  function chromeButton(label, ariaLabel) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = label;
+    btn.setAttribute("aria-label", ariaLabel || label);
+    btn.style.cssText = "display:inline-flex;align-items:center;justify-content:center;min-width:2.75rem;height:2.75rem;padding:0 0.85rem;border:1px solid rgba(255,255,255,0.16);border-radius:9999px;background:rgba(255,255,255,0.06);color:#fff;font-size:0.9rem;font-weight:600;cursor:pointer;";
+    btn.addEventListener("pointerenter", () => { btn.style.background = "rgba(255,255,255,0.14)"; });
+    btn.addEventListener("pointerleave", () => { btn.style.background = "rgba(255,255,255,0.06)"; });
+    return btn;
+  }
+
+  const controlsWrap = document.createElement("div");
+  controlsWrap.style.cssText = "display:flex;align-items:center;gap:0.5rem;flex-shrink:0;";
+  topBar.appendChild(controlsWrap);
+
+  const prevBtn = chromeButton("Prev", "Show previous work");
+  const nextBtn = chromeButton("Next", "Show next work");
+  const closeBtn = chromeButton("×", "Close full view");
+  controlsWrap.appendChild(prevBtn);
+  controlsWrap.appendChild(nextBtn);
+  controlsWrap.appendChild(closeBtn);
+
+  const contentWrap = document.createElement("div");
+  contentWrap.style.cssText = "flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:1rem 1rem 0.75rem;";
+  shell.appendChild(contentWrap);
+
+  const mediaViewport = document.createElement("div");
+  mediaViewport.style.cssText = "width:100%;height:100%;display:flex;align-items:center;justify-content:center;border-radius:1rem;background:#05070f;overflow:hidden;";
+  contentWrap.appendChild(mediaViewport);
+
+  const footer = document.createElement("div");
+  footer.style.cssText = "padding:0 1rem 1rem;";
+  shell.appendChild(footer);
+
+  const descriptionEl = document.createElement("p");
+  descriptionEl.style.cssText = "margin:0;color:rgba(255,255,255,0.78);font-size:0.95rem;line-height:1.6;display:none;";
+  footer.appendChild(descriptionEl);
+
+  let currentIndex = 0;
+  let priorKeyboardDisabled = false;
+  let previouslyFocused = null;
+
+  function normalizeIndex(index) {
+    const total = overlayItems.length;
+    if (!total) return 0;
+    return ((index % total) + total) % total;
+  }
+
+  function getCurrentItem() {
+    return overlayItems[normalizeIndex(currentIndex)] || null;
+  }
+
+  function clearViewport() {
+    mediaViewport.replaceChildren();
+  }
+
+  function renderCurrentItem() {
+    const item = getCurrentItem();
+    if (!item) return;
+    clearViewport();
+
+    titleEl.textContent = item.title || "Untitled";
+    subtitleEl.textContent = item.subtitle || "";
+    subtitleEl.style.display = subtitleEl.textContent ? "" : "none";
+    descriptionEl.textContent = item.description || "";
+    descriptionEl.style.display = descriptionEl.textContent ? "" : "none";
+
+    if (item.type === "iframe" && item.srcdoc) {
+      const interactive = item.interactive === true;
+      const iframe = document.createElement("iframe");
+      iframe.setAttribute("title", item.title || "Full view");
+      iframe.setAttribute("sandbox", "allow-scripts allow-same-origin");
+      iframe.setAttribute("tabindex", interactive ? "0" : "-1");
+      iframe.srcdoc = item.srcdoc;
+      iframe.style.cssText = "width:100%;height:100%;border:0;display:block;pointer-events:" + (interactive ? "auto" : "none") + ";background:#05070f;";
+      mediaViewport.appendChild(iframe);
+    } else if (item.type === "image" && item.src) {
+      const image = document.createElement("img");
+      image.src = item.src;
+      image.alt = item.alt || item.title || "";
+      image.style.cssText = "max-width:100%;max-height:100%;width:auto;height:auto;display:block;object-fit:contain;background:#05070f;";
+      mediaViewport.appendChild(image);
+    } else {
+      const fallback = document.createElement("div");
+      fallback.textContent = item.title || "Unable to preview this work.";
+      fallback.style.cssText = "padding:1rem;color:#fff;font-weight:600;";
+      mediaViewport.appendChild(fallback);
+    }
+
+    const multi = overlayItems.length > 1;
+    prevBtn.style.display = multi ? "" : "none";
+    nextBtn.style.display = multi ? "" : "none";
+  }
+
+  function openAt(index = 0) {
+    currentIndex = normalizeIndex(index);
+    priorKeyboardDisabled = stageEl.dataset.keyboardNavigationDisabled === "true";
+    stageEl.dataset.keyboardNavigationDisabled = "true";
+    previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    renderCurrentItem();
+    root.hidden = false;
+    root.setAttribute("aria-hidden", "false");
+    root.style.display = "flex";
+    closeBtn.focus();
+  }
+
+  function close() {
+    if (root.hidden && root.style.display === "none") return;
+    root.hidden = true;
+    root.setAttribute("aria-hidden", "true");
+    root.style.display = "none";
+    clearViewport();
+    if (priorKeyboardDisabled) {
+      stageEl.dataset.keyboardNavigationDisabled = "true";
+    } else {
+      delete stageEl.dataset.keyboardNavigationDisabled;
+    }
+    requestAnimationFrame(() => {
+      if (previouslyFocused?.focus) {
+        previouslyFocused.focus();
+      } else {
+        stageEl.focus?.();
+      }
+    });
+  }
+
+  function showPrevious() {
+    currentIndex = normalizeIndex(currentIndex - 1);
+    renderCurrentItem();
+  }
+
+  function showNext() {
+    currentIndex = normalizeIndex(currentIndex + 1);
+    renderCurrentItem();
+  }
+
+  function isOpen() {
+    return root.hidden === false && root.style.display !== "none";
+  }
+
+  function onWindowKeyDown(event) {
+    if (!isOpen()) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      close();
+      return;
+    }
+    if (overlayItems.length > 1 && event.key === "ArrowLeft") {
+      event.preventDefault();
+      showPrevious();
+      return;
+    }
+    if (overlayItems.length > 1 && event.key === "ArrowRight") {
+      event.preventDefault();
+      showNext();
+    }
+  }
+
+  prevBtn.addEventListener("click", showPrevious);
+  nextBtn.addEventListener("click", showNext);
+  closeBtn.addEventListener("click", close);
+  root.addEventListener("click", (event) => {
+    if (event.target === root) close();
+  });
+  shell.addEventListener("click", (event) => {
+    event.stopPropagation();
+  });
+  window.addEventListener("keydown", onWindowKeyDown);
+  host.appendChild(root);
+
+  return {
+    openAt,
+    close,
+    remove() {
+      close();
+      window.removeEventListener("keydown", onWindowKeyDown);
+      root.remove();
+    },
+    isOpen,
+  };
+}
+
 export function selectProgressiveExhibitSlots(items, centers, target, liveBudget) {
   if (liveBudget <= 0) return new Set();
   return new Set(
@@ -738,10 +990,11 @@ export function createFrameLabel(title, subtitle) {
   return { mesh, material };
 }
 
-export function createMultiFrameExhibitWall(stage, frameCount, rows = 1, cols = frameCount, labels) {
+export function createMultiFrameExhibitWall(stage, frameCount, rows = 1, cols = frameCount, labels, options = {}) {
   const n = Math.max(1, frameCount);
   const gridRows = Math.max(1, rows);
   const gridCols = Math.max(1, cols);
+  const labelPosition = options.labelPosition === "above" ? "above" : "below";
   const wallWidth = Math.max(22, gridCols * WALL_FRAME_SLOT_WIDTH + 2);
   const wallMeshHeight = Math.max(11, gridRows * WALL_FRAME_SLOT_HEIGHT + 5);
   const gridCenterY = computeExhibitGridCenterY(gridRows);
@@ -822,7 +1075,10 @@ export function createMultiFrameExhibitWall(stage, frameCount, rows = 1, cols = 
     const label = labels?.[i];
     if (label) {
       const { mesh: labelMesh, material: labelMaterial } = createFrameLabel(label.title, label.subtitle);
-      labelMesh.position.set(slotX, slotY - WALL_FRAME_ART_HEIGHT / 2 - WALL_LABEL_HEIGHT / 2 - WALL_LABEL_GAP, wallCenterZ + 0.01);
+      const labelY = labelPosition === "above"
+        ? slotY + WALL_FRAME_ART_HEIGHT / 2 + WALL_LABEL_HEIGHT / 2 + WALL_LABEL_GAP
+        : slotY - WALL_FRAME_ART_HEIGHT / 2 - WALL_LABEL_HEIGHT / 2 - WALL_LABEL_GAP;
+      labelMesh.position.set(slotX, labelY, wallCenterZ + 0.01);
       scene.add(labelMesh);
       slot.labelMesh = labelMesh;
       slot.labelMaterial = labelMaterial;
@@ -2116,7 +2372,7 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
 }
 
 // Phase 2 Entry Point: mountGalleryPiece
-export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, title, sourceUrl, prompt, description, onError = console.error, onInteractiveClick = null) {
+export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, title, sourceUrl, prompt, description, onError = console.error, onInteractiveClick = null, options = {}) {
   const runtimeSize = { width: 1280, height: 720 };
   const presentationSurface = engine === "p5" ? createPresentationSurface(1200, 900, 72) : null;
   const shell = createMountedGalleryShell(
@@ -2140,6 +2396,10 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
   let stopSourceLoop = null;
   let p5Instance = null;
   let disposed = false;
+  let viewerControls = null;
+  let readOnlyOverlay = null;
+  const galleryButtonForward = new THREE.Vector3();
+  const galleryButtonRight = new THREE.Vector3();
 
   function syncCanvas(nextCanvas) {
     sourceCanvas = nextCanvas;
@@ -2193,6 +2453,69 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
     if (detectCanvasAttempts >= 80) { onError(onMissing); return; }
     detectCanvasAttempts += 1;
     detectCanvasTimer = window.setTimeout(() => pollForCanvas(root, onMissing, preExisting), 100);
+  }
+
+  function galleryZoomValueFromDistance(distance) {
+    const minDistance = shell.controls.minDistance || 0.6;
+    const maxDistance = shell.controls.maxDistance || Math.max(40, distance * 4);
+    if (!Number.isFinite(distance) || maxDistance <= minDistance) return 50;
+    return ((maxDistance - Math.max(minDistance, Math.min(maxDistance, distance))) / (maxDistance - minDistance)) * 100;
+  }
+
+  function syncViewerControlZoom() {
+    viewerControls?.setZoomValue(galleryZoomValueFromDistance(shell.camera.position.distanceTo(shell.controls.target)));
+  }
+
+  function applyGalleryZoomValue(value) {
+    if (!Number.isFinite(value)) return;
+    const minDistance = shell.controls.minDistance || 0.6;
+    const currentDistance = shell.camera.position.distanceTo(shell.controls.target);
+    const maxDistance = shell.controls.maxDistance || Math.max(40, currentDistance * 4);
+    const t = Math.max(0, Math.min(100, value)) / 100;
+    const nextDistance = maxDistance - ((maxDistance - minDistance) * t);
+    const direction = shell.camera.position.clone().sub(shell.controls.target);
+    if (direction.lengthSq() < 1e-8) return;
+    direction.setLength(nextDistance);
+    shell.camera.position.copy(shell.controls.target).add(direction);
+    shell.controls.update();
+    syncViewerControlZoom();
+  }
+
+  function applyGalleryDirectionalMove(forwardScale, rightScale) {
+    shell.camera.getWorldDirection(galleryButtonForward);
+    galleryButtonForward.y = 0;
+    if (galleryButtonForward.lengthSq() < 1e-6) {
+      galleryButtonForward.set(0, 0, -1);
+    } else {
+      galleryButtonForward.normalize();
+    }
+    galleryButtonRight.set(-galleryButtonForward.z, 0, galleryButtonForward.x);
+    const step = Math.max(0.08, shell.controls.target.distanceTo(shell.camera.position) * 0.035);
+    const shift = galleryButtonForward.clone()
+      .multiplyScalar(forwardScale * step)
+      .add(galleryButtonRight.clone().multiplyScalar(rightScale * step));
+    if (shift.lengthSq() < 1e-8) return;
+    const nextCamX = Math.max(-8, Math.min(8, shell.camera.position.x + shift.x));
+    const nextCamZ = Math.max(0.5, shell.camera.position.z + shift.z);
+    const dx = nextCamX - shell.camera.position.x;
+    const dz = nextCamZ - shell.camera.position.z;
+    if (Math.abs(dx) < 1e-6 && Math.abs(dz) < 1e-6) return;
+    shell.camera.position.x += dx;
+    shell.camera.position.z += dz;
+    shell.controls.target.x += dx;
+    shell.controls.target.z += dz;
+    shell.controls.update();
+  }
+
+  function applyGalleryFloatMove(verticalScale) {
+    if (!Number.isFinite(verticalScale)) return;
+    const step = Math.max(0.08, shell.controls.target.distanceTo(shell.camera.position) * 0.03);
+    const nextCamY = Math.max(0.1, Math.min(24, shell.camera.position.y + (verticalScale * step)));
+    const dy = nextCamY - shell.camera.position.y;
+    if (Math.abs(dy) < 1e-6) return;
+    shell.camera.position.y += dy;
+    shell.controls.target.y += dy;
+    shell.controls.update();
   }
 
   async function bootRuntime() {
@@ -2383,6 +2706,23 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
     };
   }
 
+  if (options.showViewerControls) {
+    viewerControls = createImmersiveViewerControls(stageEl, {
+      initialZoomValue: galleryZoomValueFromDistance(shell.camera.position.distanceTo(shell.controls.target)),
+      onZoomSliderInput: (value) => applyGalleryZoomValue(value),
+      onMoveForward: () => applyGalleryDirectionalMove(1, 0),
+      onMoveBackward: () => applyGalleryDirectionalMove(-1, 0),
+      onMoveLeft: () => applyGalleryDirectionalMove(0, -1),
+      onMoveRight: () => applyGalleryDirectionalMove(0, 1),
+      onFloatUp: () => applyGalleryFloatMove(1),
+      onFloatDown: () => applyGalleryFloatMove(-1),
+    });
+  }
+
+  if (Array.isArray(options.fullView?.items) && options.fullView.items.length > 0) {
+    readOnlyOverlay = createReadOnlyFullViewOverlay(stageEl, options.fullView.items);
+  }
+
   function animate() {
     frameId = requestAnimationFrame(animate);
     floorNav.update();
@@ -2412,6 +2752,7 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
       artTexture.needsUpdate = true;
     }
     shell.controls.update();
+    syncViewerControlZoom();
     shell.renderer.render(shell.scene, shell.camera);
   }
 
@@ -2422,7 +2763,7 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
   const resizeObserver = new ResizeObserver(() => fitMountedGalleryCamera(shell, stageEl, undefined, false));
   resizeObserver.observe(stageEl);
 
-  return () => {
+  function destroy() {
     disposed = true;
     resizeObserver.disconnect();
     if (detectCanvasTimer) window.clearTimeout(detectCanvasTimer);
@@ -2444,9 +2785,24 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
     p5Instance?.remove?.();
     floorNav.dispose();
     keyNav.dispose();
+    viewerControls?.remove();
+    readOnlyOverlay?.remove();
     disposeInteractiveClick?.();
     host.remove();
     stageEl.innerHTML = "";
+  }
+
+  return {
+    destroy,
+    openFullViewAt(index = 0) {
+      readOnlyOverlay?.openAt(index);
+    },
+    closeFullView() {
+      readOnlyOverlay?.close();
+    },
+    isFullViewOpen() {
+      return readOnlyOverlay?.isOpen?.() ?? false;
+    },
   };
 }
 
@@ -2497,14 +2853,16 @@ export function mountGalleryImage(stageEl, imageUrl, aspect, title, prompt, desc
 }
 
 // Phase 3 Entry Point: mountExhibitWall
-export function mountExhibitWall(stageEl, items, rows, cols) {
+export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
   const wallWidth = Math.max(22, cols * WALL_FRAME_SLOT_WIDTH + 2);
   const labels = items.map(item => ({
     title: item.title || "Untitled",
     subtitle: item.kind === "piece" ? engineLabel(item.engine) : "Image"
   }));
 
-  const shell = createMultiFrameExhibitWall(stageEl, items.length, rows, cols, labels);
+  const shell = createMultiFrameExhibitWall(stageEl, items.length, rows, cols, labels, {
+    labelPosition: options.labelPosition,
+  });
   const floorNav = createFloorClickNavigation(shell.camera, shell.controls, shell.floor, stageEl, { maxX: wallWidth / 2 });
   const keyNav = createKeyboardNavigation(shell.controls, { container: stageEl, minX: -wallWidth / 2, maxX: wallWidth / 2 });
 
@@ -2513,10 +2871,78 @@ export function mountExhibitWall(stageEl, items, rows, cols) {
   const activeRuntimes = new Map(); // index -> { host, canvas, stop, texture, p5Instance }
 
   let frameId = 0;
+  let viewerControls = null;
+  let readOnlyOverlay = null;
+  let disposeSlotFullViewClick = null;
+  const exhibitButtonForward = new THREE.Vector3();
+  const exhibitButtonRight = new THREE.Vector3();
   
   function getLiveSlots() {
     const budget = getProgressiveExhibitLiveBudget(window.innerWidth);
     return selectProgressiveExhibitSlots(items, shell.slots.map(s => s.center), shell.controls.target, budget);
+  }
+
+  function exhibitZoomValueFromDistance(distance) {
+    const minDistance = shell.controls.minDistance || 0.6;
+    const maxDistance = shell.controls.maxDistance || Math.max(40, distance * 4);
+    if (!Number.isFinite(distance) || maxDistance <= minDistance) return 50;
+    return ((maxDistance - Math.max(minDistance, Math.min(maxDistance, distance))) / (maxDistance - minDistance)) * 100;
+  }
+
+  function syncExhibitViewerZoom() {
+    viewerControls?.setZoomValue(exhibitZoomValueFromDistance(shell.camera.position.distanceTo(shell.controls.target)));
+  }
+
+  function applyExhibitZoomValue(value) {
+    if (!Number.isFinite(value)) return;
+    const minDistance = shell.controls.minDistance || 0.6;
+    const currentDistance = shell.camera.position.distanceTo(shell.controls.target);
+    const maxDistance = shell.controls.maxDistance || Math.max(40, currentDistance * 4);
+    const t = Math.max(0, Math.min(100, value)) / 100;
+    const nextDistance = maxDistance - ((maxDistance - minDistance) * t);
+    const direction = shell.camera.position.clone().sub(shell.controls.target);
+    if (direction.lengthSq() < 1e-8) return;
+    direction.setLength(nextDistance);
+    shell.camera.position.copy(shell.controls.target).add(direction);
+    shell.controls.update();
+    syncExhibitViewerZoom();
+  }
+
+  function applyExhibitDirectionalMove(forwardScale, rightScale) {
+    shell.camera.getWorldDirection(exhibitButtonForward);
+    exhibitButtonForward.y = 0;
+    if (exhibitButtonForward.lengthSq() < 1e-6) {
+      exhibitButtonForward.set(0, 0, -1);
+    } else {
+      exhibitButtonForward.normalize();
+    }
+    exhibitButtonRight.set(-exhibitButtonForward.z, 0, exhibitButtonForward.x);
+    const step = Math.max(0.08, shell.controls.target.distanceTo(shell.camera.position) * 0.035);
+    const shift = exhibitButtonForward.clone()
+      .multiplyScalar(forwardScale * step)
+      .add(exhibitButtonRight.clone().multiplyScalar(rightScale * step));
+    if (shift.lengthSq() < 1e-8) return;
+    const nextCamX = Math.max(-wallWidth / 2, Math.min(wallWidth / 2, shell.camera.position.x + shift.x));
+    const nextCamZ = Math.max(0.5, shell.camera.position.z + shift.z);
+    const dx = nextCamX - shell.camera.position.x;
+    const dz = nextCamZ - shell.camera.position.z;
+    if (Math.abs(dx) < 1e-6 && Math.abs(dz) < 1e-6) return;
+    shell.camera.position.x += dx;
+    shell.camera.position.z += dz;
+    shell.controls.target.x += dx;
+    shell.controls.target.z += dz;
+    shell.controls.update();
+  }
+
+  function applyExhibitFloatMove(verticalScale) {
+    if (!Number.isFinite(verticalScale)) return;
+    const step = Math.max(0.08, shell.controls.target.distanceTo(shell.camera.position) * 0.03);
+    const nextCamY = Math.max(0.1, Math.min(24, shell.camera.position.y + (verticalScale * step)));
+    const dy = nextCamY - shell.camera.position.y;
+    if (Math.abs(dy) < 1e-6) return;
+    shell.camera.position.y += dy;
+    shell.controls.target.y += dy;
+    shell.controls.update();
   }
 
   function updateProgressiveLoading() {
@@ -2779,12 +3205,70 @@ export function mountExhibitWall(stageEl, items, rows, cols) {
 
   // Track if camera or target moved to update progressive loading
   const lastTarget = new THREE.Vector3().copy(shell.controls.target);
+
+  if (options.showViewerControls) {
+    viewerControls = createImmersiveViewerControls(stageEl, {
+      initialZoomValue: exhibitZoomValueFromDistance(shell.camera.position.distanceTo(shell.controls.target)),
+      onZoomSliderInput: (value) => applyExhibitZoomValue(value),
+      onMoveForward: () => applyExhibitDirectionalMove(1, 0),
+      onMoveBackward: () => applyExhibitDirectionalMove(-1, 0),
+      onMoveLeft: () => applyExhibitDirectionalMove(0, -1),
+      onMoveRight: () => applyExhibitDirectionalMove(0, 1),
+      onFloatUp: () => applyExhibitFloatMove(1),
+      onFloatDown: () => applyExhibitFloatMove(-1),
+    });
+  }
+
+  const fullViewItems = items.map((item) => item?.full_view || null);
+  const immersiveHrefs = items.map((item) => item?.immersive_href || null);
+  const hasFullViewItems = fullViewItems.some((item) => Boolean(item));
+  const hasImmersiveHrefs = immersiveHrefs.some((href) => Boolean(href));
+  if (hasFullViewItems) {
+    readOnlyOverlay = createReadOnlyFullViewOverlay(stageEl, fullViewItems);
+  }
+  if (hasFullViewItems || hasImmersiveHrefs) {
+
+    const clickRaycaster = new THREE.Raycaster();
+    let downX = 0;
+    let downY = 0;
+    const onPointerDown = (event) => {
+      downX = event.clientX;
+      downY = event.clientY;
+    };
+    const onPointerUp = (event) => {
+      if (readOnlyOverlay?.isOpen()) return;
+      if (Math.hypot(event.clientX - downX, event.clientY - downY) >= 6) return;
+      const rect = stageEl.getBoundingClientRect();
+      clickRaycaster.setFromCamera(
+        new THREE.Vector2(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1),
+        shell.camera,
+      );
+      const slotMeshes = shell.slots.map((slot) => slot.artMesh);
+      const hits = clickRaycaster.intersectObjects(slotMeshes, false);
+      if (!hits.length) return;
+      const slotIndex = slotMeshes.indexOf(hits[0].object);
+      if (slotIndex < 0) return;
+      if (immersiveHrefs[slotIndex]) {
+        window.location.assign(immersiveHrefs[slotIndex]);
+        return;
+      }
+      if (!fullViewItems[slotIndex]) return;
+      readOnlyOverlay.openAt(slotIndex);
+    };
+    stageEl.addEventListener("pointerdown", onPointerDown);
+    stageEl.addEventListener("pointerup", onPointerUp);
+    disposeSlotFullViewClick = () => {
+      stageEl.removeEventListener("pointerdown", onPointerDown);
+      stageEl.removeEventListener("pointerup", onPointerUp);
+    };
+  }
   
   function animate() {
     frameId = requestAnimationFrame(animate);
     floorNav.update();
     keyNav.update();
     shell.controls.update();
+    syncExhibitViewerZoom();
     
     // Update live textures
     activeRuntimes.forEach((runtime) => {
@@ -2810,7 +3294,7 @@ export function mountExhibitWall(stageEl, items, rows, cols) {
   });
   resizeObserver.observe(stageEl);
 
-  return () => {
+  function destroy() {
     resizeObserver.disconnect();
     cancelAnimationFrame(frameId);
     activeRuntimes.forEach(runtime => {
@@ -2839,6 +3323,23 @@ export function mountExhibitWall(stageEl, items, rows, cols) {
     shell.renderer.dispose();
     floorNav.dispose();
     keyNav.dispose();
+    viewerControls?.remove();
+    readOnlyOverlay?.remove();
+    disposeSlotFullViewClick?.();
     stageEl.innerHTML = "";
+  }
+
+  return {
+    destroy,
+    openFullViewAt(index = 0) {
+      if (!fullViewItems[index]) return;
+      readOnlyOverlay?.openAt(index);
+    },
+    closeFullView() {
+      readOnlyOverlay?.close();
+    },
+    isFullViewOpen() {
+      return readOnlyOverlay?.isOpen?.() ?? false;
+    },
   };
 }
