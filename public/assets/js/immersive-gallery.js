@@ -3370,8 +3370,13 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
   return {
     destroy,
     openFullViewAt(index = 0) {
-      if (!fullViewItems[index]) return;
-      readOnlyOverlay?.openAt(index);
+      const safeIndex = Math.max(0, Math.min(items.length - 1, index));
+      if (immersiveHrefs[safeIndex]) {
+        window.location.assign(immersiveHrefs[safeIndex]);
+        return;
+      }
+      if (!fullViewItems[safeIndex]) return;
+      readOnlyOverlay?.openAt(safeIndex);
     },
     closeFullView() {
       readOnlyOverlay?.close();

@@ -11,7 +11,7 @@ $galleryRuntimeVersion = (int) @filemtime(dirname(__DIR__, 3) . '/assets/js/imme
 // Hydrate fields for display
 $hasP5 = false;
 $hasC2 = false;
-$collectionSlideshowStartIndex = null;
+$collectionSlideshowStartIndex = !empty($items) ? 0 : null;
 $immersiveCollectionReturnTo = (string) ($_SERVER['REQUEST_URI'] ?? '');
 if ($immersiveCollectionReturnTo === '') {
     $immersiveCollectionReturnTo = '/immersive/collections/' . ($collection['slug'] ?? '');
@@ -64,9 +64,6 @@ foreach ($items as $index => $item) {
         $media = $item['media'];
         $src = $media['url'] ?: '/api/media-assets/' . (int) $media['id'];
         $altText = $media['alt_text'] ?? '';
-        if ($collectionSlideshowStartIndex === null) {
-            $collectionSlideshowStartIndex = $index;
-        }
         $jsItems[] = [
             'kind' => 'image',
             'title' => $media['title'] ?? 'Untitled Image',
