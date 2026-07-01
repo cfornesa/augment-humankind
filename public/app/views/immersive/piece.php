@@ -650,11 +650,12 @@ canvas[aria-hidden="true"] {
             <p class="card-desc">
                 <?php if ($isThree): ?>
                     This Three.js piece runs in a live immersive 3D canvas with orbital camera controls and keyboard WASD movement.
+                <?php elseif ($engine === 'aframe'): ?>
+                    This A-Frame piece runs in a live WebXR scene. Look around by dragging, and move with WASD or arrow keys.
                 <?php else: ?>
                     This <?= e($engineLabel) ?> piece is mounted inside a 3D gallery room frame. Walk around the room using arrow keys/WASD or by clicking the floor.
                 <?php endif; ?>
             </p>
-            
             <dl class="card-grid">
                 <div>
                     <dt>Engine</dt>
@@ -669,6 +670,8 @@ canvas[aria-hidden="true"] {
                     <dd>
                         <?php if ($isThree): ?>
                             Drag to orbit, scroll/pinch to zoom, arrow keys/WASD to fly, click scene points to fly-to target.
+                        <?php elseif ($engine === 'aframe'): ?>
+                            Drag to look around. Arrow keys/WASD to walk. Gyroscope on mobile when permission granted.
                         <?php else: ?>
                             Drag to orbit, scroll to zoom, arrow keys/WASD or click floor to walk.
                         <?php endif; ?>
@@ -1034,9 +1037,6 @@ try {
                 'items' => [[
                     'type' => 'iframe',
                     'srcdoc' => $fullViewPieceSrcdoc,
-                    'title' => (string) ($piece['title'] ?? 'Untitled'),
-                    'subtitle' => $engineLabel,
-                    'description' => (string) ($description !== '' ? $description : $prompt),
                 ]],
             ], JSON_HEX_TAG | JSON_UNESCAPED_UNICODE) : 'null' ?>,
         });

@@ -4998,3 +4998,32 @@ Added `window.PIECE_PRESERVE_DRAWING_BUFFER = true;` to the inline `<script>` bl
   - "View slideshow" button opens the overlay with 2-column layout (tablet-width preview): Google P5 Apocalyptic + Google 3JS Apocalyptic side by side, both rendering live animated iframes.
   - "Next" paginates to DeepSeek C2 Apocalyptic + 3JS Apocalyptic — both rendering.
   - Zero console errors throughout.
+
+---
+
+## 2026-07-01 — Fix: Metadata Card Blank and Description in Wrong Location for Non-Three.js Immersive Pieces
+
+### Context
+Live testing on the deployed site after the previous session's changes revealed three issues with `/immersive/pieces/:id` for gallery-frame engines (P5, SVG, C2, A-Frame):
+
+1. **Metadata card was blank for all non-Three.js pieces** — a prior change gated the entire card (icon, title, description) on `$isThree`, leaving only the hidden runtime-error row for P5/SVG/C2/A-Frame. The title was completely missing.
+
+2. **Description and title appearing in the full-view overlay instead of the card** — the `fullView` items array passed to `mountGalleryPiece` included `title`, `subtitle` (engine label), and `description`, which `createReadOnlyFullViewOverlay` renders in its topBar and footer inside the expanded slide view. The user wants these in the metadata card below the stage, not cluttering the expanded overlay.
+
+3. **"Untitled" fallback in overlay** — without the title field, `createReadOnlyFullViewOverlay`'s `item.title || "Untitled"` would have rendered "Untitled" in the topBar. Required a JS fix alongside the PHP change.
+
+The artMesh click handler fix (wiring P5/SVG art-frame clicks to `readOnlyOverlay.openAt(0)`) was already correctly applied and needed no further changes.
+
+### Implemented
+
+**`public/app/views/immersive/piece.php`** — two sub-changes:
+- **Metadata card**: Restored `card-icon` and `card-title` for all engines. Non-Three.js engines now render `card-icon` + `card-title` + `card-desc` (from `$description` or `$prompt` if present) + runtime-error-item only — no AI profile/persona grid, no embed source (those are redundant: already on the piece page the user came from). Three.js keeps its full card unchanged.
+- **`fullView` items**: Stripped `title`, `subtitle`, `description` from the items array passed to `mountGalleryPiece`. The overlay now carries only `type` and `srcdoc`, so `createReadOnlyFullViewOverlay` renders just the piece iframe with no text chrome.
+
+**`public/assets/js/immersive-gallery.js`** — `createReadOnlyFullViewOverlay`, `renderCurrentItems` (cols === 1 branch):
+- Changed `item.title || "Untitled"` to `item.title || ""` with `titleEl.style.display` toggled on content presence.
+- Added `metaWrap.style.display` hide when both `titleEl` and `subtitleEl` are empty, cleanly collapsing the meta area in the topBar.
+- Collection/exhibit-wall callers always pass real titles and are unaffected.
+
+### Verification
+Pending live confirmation on deployed site: P5/SVG/C2/A-Frame pieces should show title + description in the metadata card; the full-view overlay should show only the piece with no title/description text; Three.js pieces unchanged.

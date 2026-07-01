@@ -963,9 +963,11 @@ export function createReadOnlyFullViewOverlay(stageEl, items, options = {}) {
       contentWrap.appendChild(viewport);
       const item = overlayItems[normalizeIndex(currentStartIndex)];
       renderItemIntoEl(item, viewport);
-      titleEl.textContent = item.title || "Untitled";
+      titleEl.textContent = item.title || "";
+      titleEl.style.display = titleEl.textContent ? "" : "none";
       subtitleEl.textContent = item.subtitle || "";
       subtitleEl.style.display = subtitleEl.textContent ? "" : "none";
+      metaWrap.style.display = (titleEl.textContent || subtitleEl.textContent) ? "" : "none";
       descriptionEl.textContent = item.description || "";
       descriptionEl.style.display = descriptionEl.textContent ? "" : "none";
     } else {
@@ -2747,14 +2749,15 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
   const keyNav = createKeyboardNavigation(shell.controls, { container: stageEl });
   gyroController = createSharedGyroController(stageEl, shell.camera);
 
-  // C2.js pieces run in an off-screen canvas (createImmersiveHost) and are
+  // Gallery pieces run in an off-screen canvas (createImmersiveHost) and are
   // texture-projected onto shell.artMesh, so no pointer events ever reach
-  // the piece's own click/touch/drag listeners. Rather than forwarding
-  // synthetic pointer events through a raycast (fragile for drag gestures),
-  // a click on the frame opens the same fullscreen interactive render used
-  // by the non-immersive /pieces/{id} view, supplied via onInteractiveClick.
+  // the piece's own click/touch/drag listeners. A click on the art frame
+  // dispatches to whichever fullscreen path applies: onInteractiveClick for
+  // interactive C2 pieces, readOnlyOverlay.openAt(0) for static engines
+  // (P5, SVG, non-interactive C2) that have a fullView overlay configured.
   let disposeInteractiveClick = null;
-  if (engine === "c2" && typeof onInteractiveClick === "function") {
+  if (typeof onInteractiveClick === "function" ||
+      (Array.isArray(options.fullView?.items) && options.fullView.items.length > 0)) {
     const clickRaycaster = new THREE.Raycaster();
     let downX = 0, downY = 0;
     const onPointerDown = (e) => { downX = e.clientX; downY = e.clientY; };
@@ -2765,7 +2768,13 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
         new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1),
         shell.camera,
       );
-      if (clickRaycaster.intersectObject(shell.artMesh, false).length) onInteractiveClick();
+      if (clickRaycaster.intersectObject(shell.artMesh, false).length) {
+        if (typeof onInteractiveClick === "function") {
+          onInteractiveClick();
+        } else {
+          readOnlyOverlay?.openAt(0);
+        }
+      }
     };
     stageEl.addEventListener("pointerdown", onPointerDown);
     stageEl.addEventListener("pointerup", onPointerUp);
