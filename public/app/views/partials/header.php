@@ -76,6 +76,7 @@ unset($_ahLightMap, $_ahDarkMap, $_ahCol, $_ahVar);
     document.documentElement.classList.add('js-enhanced');
     // Apply stored theme before first paint to prevent flash
     (function(){var t=localStorage.getItem('theme');if(t==='dark'||t==='light')document.documentElement.dataset.theme=t;})();
+    <?php if (!empty($_ahS['theme'])): ?>document.documentElement.dataset.layoutTheme=<?= json_encode((string)$_ahS['theme']) ?>;<?php endif ?>
     </script>
     <title><?= e($pageTitle) ?></title>
     <script type="importmap">
@@ -112,8 +113,26 @@ unset($_ahLightMap, $_ahDarkMap, $_ahCol, $_ahVar);
     </style>
     <?php endif ?>
     <?= $extraHeadHtml ?>
+    <?php if (!empty($_ahS['custom_css'])): ?>
+    <style><?= $_ahS['custom_css'] ?></style>
+    <?php endif ?>
 </head>
 <body class="<?= e($bodyClass) ?>">
+    <?php if (($_ahS['theme'] ?? '') === 'celestial'): ?>
+    <div id="celestial-background" aria-hidden="true">
+        <div class="nebula-wash nebula-wash--1"></div>
+        <div class="nebula-wash nebula-wash--2"></div>
+        <div class="nebula-wash nebula-wash--3"></div>
+        <svg class="astrolabe-grid" viewBox="0 0 100 100" aria-hidden="true" focusable="false">
+            <circle cx="50" cy="50" r="48" fill="none" stroke="currentColor" stroke-width="0.1" stroke-dasharray="1 3"/>
+            <circle cx="50" cy="50" r="35" fill="none" stroke="currentColor" stroke-width="0.1"/>
+            <circle cx="50" cy="50" r="20" fill="none" stroke="currentColor" stroke-width="0.08" stroke-dasharray="2 1"/>
+            <line x1="50" y1="2" x2="50" y2="98" stroke="currentColor" stroke-width="0.05"/>
+            <line x1="2" y1="50" x2="98" y2="50" stroke="currentColor" stroke-width="0.05"/>
+            <path d="M 16 16 L 84 84 M 84 16 L 16 84" stroke="currentColor" stroke-dasharray="1 5" stroke-width="0.05"/>
+        </svg>
+    </div>
+    <?php endif ?>
     <a class="skip-link" href="#main">Skip to content</a>
 
     <header class="site-header" aria-label="Site header">

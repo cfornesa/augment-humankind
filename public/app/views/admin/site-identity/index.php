@@ -177,6 +177,7 @@ if (!in_array($tab, ['settings', 'design', 'assets', 'media'], true)) {
                         <option value="sepia" <?= ($settings['palette'] ?? '') === 'sepia' ? 'selected' : '' ?>>Sepia — Aged paper with brown ink</option>
                         <option value="high-contrast" <?= ($settings['palette'] ?? '') === 'high-contrast' ? 'selected' : '' ?>>High Contrast — Maximum contrast (WCAG)</option>
                         <option value="pastel" <?= ($settings['palette'] ?? '') === 'pastel' ? 'selected' : '' ?>>Pastel — Soft, low-saturation washes</option>
+                        <option value="celestial" <?= ($settings['palette'] ?? '') === 'celestial' ? 'selected' : '' ?>>Celestial — Parchment &amp; amber on cosmic black</option>
                     </select>
                 </div>
             </div>
@@ -225,6 +226,14 @@ if (!in_array($tab, ['settings', 'design', 'assets', 'media'], true)) {
                         </div>
                     </div>
                 </div>
+            </div>
+            <div class="field" style="margin-top:1.5rem;">
+                <label for="design_custom_css">Custom CSS</label>
+                <textarea id="design_custom_css" name="custom_css" rows="12"
+                    style="font-family:monospace;font-size:0.8rem;white-space:pre;"
+                    placeholder="/* Add custom CSS overrides here — applied site-wide */"
+                ><?= e($settings['custom_css'] ?? '') ?></textarea>
+                <p class="admin-hint">Injected into every page as a &lt;style&gt; block. Use for animation tweaks, custom overrides, etc.</p>
             </div>
             <div class="form-actions" style="display:flex;gap:0.75rem;flex-wrap:wrap;align-items:center;">
                 <button type="submit" class="admin-btn">Save Design</button>
@@ -486,6 +495,20 @@ var PALETTES = {
     color_secondary_dark:'180 45% 70%',color_secondary_foreground_dark:'0 0% 0%',
     color_accent_dark:'340 60% 75%',color_accent_foreground_dark:'0 0% 0%',
     color_destructive_dark:'0 60% 65%',color_destructive_foreground_dark:'0 0% 100%'
+  },
+  celestial:{
+    color_background:'44 40% 93%',color_foreground:'267 25% 15%',
+    color_muted:'44 30% 87%',color_muted_foreground:'267 20% 38%',
+    color_primary:'33 60% 38%',color_primary_foreground:'44 40% 93%',
+    color_secondary:'231 45% 30%',color_secondary_foreground:'44 40% 93%',
+    color_accent:'33 60% 38%',color_accent_foreground:'44 40% 93%',
+    color_destructive:'0 65% 40%',color_destructive_foreground:'0 0% 100%',
+    color_background_dark:'0 0% 0%',color_foreground_dark:'44 47% 83%',
+    color_muted_dark:'30 8% 10%',color_muted_foreground_dark:'38 30% 62%',
+    color_primary_dark:'38 53% 51%',color_primary_foreground_dark:'0 0% 0%',
+    color_secondary_dark:'231 55% 55%',color_secondary_foreground_dark:'44 47% 83%',
+    color_accent_dark:'38 53% 51%',color_accent_foreground_dark:'0 0% 0%',
+    color_destructive_dark:'0 65% 55%',color_destructive_foreground_dark:'0 0% 100%'
   }
 };
 
@@ -503,7 +526,11 @@ var PREVIEW_MAP = {
   color_accent:'--sp-accent',color_accent_foreground:'--sp-accent-fg'
 };
 var PREVIEW_MAP_DARK = {
-  color_background_dark:'--sp-paper',color_foreground_dark:'--sp-ink'
+  color_background_dark:'--sp-paper',color_foreground_dark:'--sp-ink',
+  color_muted_dark:'--sp-paper-deep',color_muted_foreground_dark:'--sp-ink-soft',
+  color_primary_dark:'--sp-primary',color_primary_foreground_dark:'--sp-primary-fg',
+  color_secondary_dark:'--sp-secondary',color_secondary_foreground_dark:'--sp-secondary-fg',
+  color_accent_dark:'--sp-accent',color_accent_foreground_dark:'--sp-accent-fg'
 };
 var previewMode='light';
 function syncPreview(){

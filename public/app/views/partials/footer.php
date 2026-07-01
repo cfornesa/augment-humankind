@@ -8,12 +8,14 @@
     <footer class="site-footer">
         <p>&copy; <?= date('Y') ?> <?= e($_ahCopyrightLine !== '' ? $_ahCopyrightLine : app_site_name()) ?><?= $_ahFooterCredit !== '' ? '. ' . e($_ahFooterCredit) : '' ?></p>
         <nav aria-label="Footer navigation">
-            <a href="/">Home</a>
-            <a href="/portfolio">Portfolio</a>
-            <a href="/blog">Blog</a>
-            <a href="/contact">Contact</a>
+            <?php foreach ($navigationItems as $_ahFooterNavItem): ?>
+            <a href="<?= e($_ahFooterNavItem['url']) ?>"<?= !empty($_ahFooterNavItem['target']) ? ' target="' . e($_ahFooterNavItem['target']) . '"' : '' ?>><?= e($_ahFooterNavItem['label']) ?></a>
+            <?php endforeach ?>
         </nav>
     </footer>
     <script src="/assets/js/main.js" defer></script>
+    <?php if (($_ahFooterSettings['theme'] ?? '') === 'celestial'): ?>
+    <script src="/assets/js/cosmos.js" defer></script>
+    <?php endif ?>
 </body>
 </html>

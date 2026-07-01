@@ -5086,3 +5086,121 @@ Live testing confirmed the fullscreen button on platform collections did not wor
 - Fullscreen init: passes `{ mode: isIPhoneWebKitBrowser() ? 'focus' : 'fullscreen' }`
 
 The `window.addEventListener('message', ...)` handler and `creatr-iframe-ready` postMessage were already present in collection.php and needed no change.
+
+---
+
+## 2026-07-01 — Celestial Theme Import from fornesusart
+
+### Context
+
+The long-term goal is to retire `fornesusart` and reassign its database and domain to `augment-humankind`. As a prerequisite, the fornesusart visual identity needed to be importable as a selectable theme in augment-humankind's admin Design panel. Three phases of work were completed this session.
+
+### Phase 1 — Color Palette and Layout Theme Options
+
+Added "Celestial" as a new option in both the Layout Theme and Color Palette dropdowns in the admin Design tab (`/admin/site-identity?tab=design`).
+
+**Files changed:**
+- `public/app/controllers/Admin/SiteIdentityAdminController.php` — added `'celestial' => 'Celestial — Cosmic dark, parchment & amber glow'` to `themeOptions()`.
+- `public/app/views/admin/site-identity/index.php` — added `<option value="celestial">` to the palette `<select>` and a full 24-field `celestial:{...}` entry to the JS `PALETTES` object.
+
+**Color values** (HSL `"H S% L%"` format):
+- Light mode: warm parchment bg (`44 40% 93%`), deep charcoal ink (`267 25% 15%`), darkened amber primary (`33 60% 38%`), deep navy secondary (`231 45% 30%`). All meet WCAG AA.
+- Dark mode: pure black bg (`0 0% 0%`), parchment text (`44 47% 83%`), amber primary (`38 53% 51%`) — matches fornesusart exactly.
+
+### Phase 2 — Fonts, Animations, Preview Fix, Custom CSS Field
+
+**Preview Light/Dark button bug fixed:** `PREVIEW_MAP_DARK` in `index.php` only covered 2 of 10 dark color fields. Expanded to all 10 so clicking ☾/☀ in the admin correctly flips Primary/Secondary/Accent button colors as well as background/foreground.
+
+**Fonts imported from fornesusart (self-hosted woff2):**
+- Copied 4 files to `public/assets/fonts/`: `pinyon-script-latin.woff2`, `lora-normal-latin.woff2`, `lora-italic-latin.woff2`, `courier-prime-latin.woff2`.
+- Added `@font-face` declarations at top of `public/assets/styles.css`.
+- Set `data-layout-theme="celestial"` on `<html>` before first paint via inline script in `header.php` (reads `$_ahS['theme']`).
+- Added `[data-layout-theme="celestial"]` CSS rules: Pinyon Script for h1/h2/h3/`.brand`, Lora for body, Courier Prime for code/pre/kbd.
+
+**Cosmic background animations:**
+- Copied `cosmos.js` from fornesusart to `public/assets/js/cosmos.js`. No modifications needed — it already skips `admin-body` pages, respects `prefers-reduced-motion`, and uses no fornesusart-specific variables.
+- `header.php` injects `#celestial-background` div (3 nebula-wash divs + astrolabe SVG) immediately after `<body>` when `$_ahS['theme'] === 'celestial'`.
+- `footer.php` conditionally loads `cosmos.js` when celestial theme is active (using `$_ahFooterSettings['theme']`, already read there).
+- `styles.css` (end of file): added all CSS for the celestial system — `body::before` star field (45+ `radial-gradient` layers), nebula-wash + drift keyframes, astrolabe rotation, `#cosmos-stars` rotation, `.cosmos-star` twinkling, low-power overrides, `prefers-reduced-motion` and `prefers-contrast` media queries.
+- `body { background: transparent }` and `html { background: hsl(var(--paper)) }` when celestial theme is active — required for the `body::before` star field to be visible through the transparent body.
+
+**Custom CSS admin field:**
+- Added `custom_css` field: stored in `settings_json` fallback (no DB migration — `SiteSettings::current()` and `updateSettings()` already support this fallback path).
+- Added `custom_css` to `$allFields` and `resolveSettingsData()` in `SiteIdentityAdminController.php`.
+- Added monospace textarea in admin Design tab (12 rows, before Save button).
+- Injected as raw `<style><?= $_ahS['custom_css'] ?></style>` in `header.php` (admin-only input, no escaping needed).
+
+**Files changed:**
+- `public/app/views/admin/site-identity/index.php` — PREVIEW_MAP_DARK fix, Custom CSS textarea
+- `public/app/controllers/Admin/SiteIdentityAdminController.php` — `custom_css` field support
+- `public/assets/styles.css` — @font-face declarations + celestial layout theme CSS block
+- `public/app/views/partials/header.php` — `data-layout-theme` inline script, celestial background HTML, custom CSS injection
+- `public/app/views/partials/footer.php` — conditional `cosmos.js` load
+- `public/assets/fonts/` (new dir) — 4 woff2 font files
+- `public/assets/js/cosmos.js` (new file) — copied from fornesusart unchanged
+
+### Verification
+Live preview confirmed on PHP dev server (port 8080):
+- Dark mode: black void, parchment text (`44 47% 83%`), amber accents, star field, nebula blobs, rotating astrolabe, twinkling DOM stars, canvas shooting comets.
+- Light mode: warm parchment background, dark charcoal text, amber accents, subtle nebula wash visible as a soft cosmic blush on the parchment.
+- Fonts: Pinyon Script on all headings and site brand, Lora on body copy.
+- Admin preview Light/Dark toggle: verified via code review (OAuth blocks browser login in preview).
+
+---
+
+## 2026-07-01 — Headless CMS Compliance Audit and Gap Closure
+
+### Context
+
+User identified that storing `custom_css` in `settings_json` violates the headless CMS goal that all data lives in explicit MySQL columns. A full audit was run to assess compliance.
+
+### Audit Findings
+
+**Compliant (no action needed):**
+- JSON API: 20+ routes in `ApiController.php` serve posts, pages, art pieces, collections, media, and feeds as `application/json`
+- `site_settings`: 47+ fields are proper columns; only `custom_css` was missing
+- Public navigation: `ah_public_navigation_items()` reads from `navigation_items` table (DB-driven at runtime)
+- Admin nav ordering: `admin_nav_order_json` is a dedicated column (added 2026-06-17)
+- Hardcoded page fallbacks: placeholder content for home/services/notes/contact is overridden by managed pages; API always serves managed content, never the fallbacks
+- System nav items: defined in `NavigationItem::SYSTEM_ITEMS` in PHP but seeded to DB; runtime is DB-driven
+- `users.social_links` JSON blob: intentional; flexible key-value for arbitrary social platform URLs
+
+**Gaps closed:**
+
+#### Gap 1 — `custom_css` in `settings_json` blob
+`SiteIdentityAdminController::$allFields` included `custom_css` but the `site_settings` table had no column for it, causing values to be stored in the `settings_json` JSON blob — invisible to SQL, DB tooling, and API consumers.
+
+**Fix:** New migration `docs/migrations/2026-07-01-custom-css-column.sql` adds `custom_css MEDIUMTEXT NULL AFTER palette` and includes a one-time data migration to move any existing value from `settings_json`. No PHP changes needed — `SiteSettings::availableColumns()` queries `INFORMATION_SCHEMA.COLUMNS` at runtime; once the column exists, `updateSettings()` writes directly to it.
+
+**Migration must be applied manually:** `mysql … < docs/migrations/2026-07-01-custom-css-column.sql`
+
+#### Gap 2 — Footer navigation hardcoded in PHP
+`footer.php` hardcoded 4 navigation links (Home, Portfolio, Blog, Contact) as static HTML. Admin had no way to change footer links without editing PHP.
+
+**Fix:** Replaced with a loop over `$navigationItems` (already in scope from `header.php`'s call to `ah_public_navigation_items()`). Footer now reflects the same DB-driven, admin-orderable navigation items as the header. Live verification confirmed 8 DB items now render in the footer.
+
+### Files Changed
+- `docs/migrations/2026-07-01-custom-css-column.sql` (new)
+- `public/app/views/partials/footer.php` — hardcoded nav replaced with `$navigationItems` loop
+- `README.md` — new migration added to setup sequence
+
+---
+
+## 2026-07-01 — Session Summary: Celestial Theme and Headless CMS Closure
+
+All work from this session is live on the local dev server (`php -S 127.0.0.1:8080 -t public`) connected to the remote Hostinger MySQL database.
+
+### Accessible features
+
+**Public site (no login):**
+- Celestial theme active: black void, parchment text (`44 47% 83%`), amber accents (`38 53% 51%`), Pinyon Script headings, Lora body text, Courier Prime code
+- Cosmic animations: nebula wash (3 drifting blobs), rotating astrolabe SVG, twinkling DOM stars (14–28 spans), canvas shooting comets (3/min)
+- Light mode: warm parchment background (`44 40% 93%`), dark charcoal text, amber accents, subtle nebula blush
+- Footer navigation: DB-driven via `navigation_items` table (was 4 hardcoded links; now reflects all visible admin-managed items)
+
+**Admin panel (`/admin`, login required):**
+- Design tab: Celestial in both Layout Theme and Color Palette dropdowns; palette auto-fills all 24 color fields; Light/Dark preview buttons work correctly; Custom CSS textarea persists to `site_settings.custom_css` column and injects site-wide
+- All other admin sections unchanged
+
+### Migration applied
+`docs/migrations/2026-07-01-custom-css-column.sql` was applied to the live database. `custom_css MEDIUMTEXT NULL` is now a proper column in `site_settings`.

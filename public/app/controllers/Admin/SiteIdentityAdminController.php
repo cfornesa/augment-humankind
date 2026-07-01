@@ -28,6 +28,7 @@ class SiteIdentityAdminController
             'comfort'     => 'Comfort — Quicksand, pillowy radius',
             'audacious'   => 'Audacious — Bebas Neue, oversized borders',
             'artistic'    => 'Artistic — Caveat handwriting, hand-drawn feel',
+            'celestial'   => 'Celestial — Cosmic dark, parchment & amber glow',
         ];
     }
 
@@ -193,6 +194,9 @@ class SiteIdentityAdminController
         if (array_key_exists('palette', $_POST)) {
             $data['palette'] = mb_substr(trim((string) $_POST['palette']), 0, 32) ?: null;
         }
+        if (array_key_exists('custom_css', $_POST)) {
+            $data['custom_css'] = (string) $_POST['custom_css'];
+        }
 
         foreach (self::colorColumns() as $col) {
             if (!array_key_exists($col, $_POST)) {
@@ -239,7 +243,7 @@ class SiteIdentityAdminController
             'site_title', 'hero_heading', 'hero_subheading', 'about_heading',
             'about_body', 'copyright_line', 'footer_credit', 'cta_label',
             'cta_href', 'logo_url', 'logo_dark_url', 'logo_layout', 'default_theme_mode',
-            'theme', 'palette', 'canonical_public_url', 'admin_nav_order_json',
+            'theme', 'palette', 'custom_css', 'canonical_public_url', 'admin_nav_order_json',
             ...self::colorColumns(),
         ];
 
