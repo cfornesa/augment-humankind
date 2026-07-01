@@ -8,6 +8,9 @@ declare(strict_types=1);
 // cached copy of immersive-gallery.js indefinitely after a deploy.
 $galleryRuntimeVersion = (int) @filemtime(dirname(__DIR__, 3) . '/assets/js/immersive-gallery.js');
 
+// Pattern used to decide whether a C2 piece is interactive (pointer/mouse/touch listeners).
+$c2InteractivePattern = '/(?:addEventListener\s*\(\s*[\'"](?:pointerdown|pointerup|pointermove|mousedown|mouseup|mousemove|touchstart|touchmove|touchend|click)|on(?:click|mousedown|mouseup|mousemove|touchstart|touchmove|touchend|pointerdown|pointermove|pointerup)\s*=)/i';
+
 // Hydrate fields for display
 $hasP5 = false;
 $hasC2 = false;
@@ -39,6 +42,12 @@ foreach ($items as $index => $item) {
             default => strtoupper($engine),
         };
         $pieceDescription = $piece['description'] ?? '';
+        $piecePrompt = (string) ($version['prompt'] ?? $piece['prompt'] ?? '');
+        // Three.js and A-Frame are always interactive; C2 is interactive only when its
+        // generated code registers pointer/mouse/touch listeners.
+        $c2LikelyInteractive = $engine === 'c2'
+            && preg_match($c2InteractivePattern, (string) ($version['generated_code'] ?? '') . "\n" . (string) ($version['html_code'] ?? '')) === 1;
+        $isInteractivePiece = in_array($engine, ['three', 'aframe'], true) || $c2LikelyInteractive;
         $immersiveHref = '/immersive/pieces/' . (int) ($piece['id'] ?? 0)
             . '?returnTo=' . rawurlencode($immersiveCollectionReturnTo);
         $jsItems[] = [
@@ -53,10 +62,19 @@ foreach ($items as $index => $item) {
             'immersive_href' => $immersiveHref,
             'full_view' => [
                 'type' => 'iframe',
-                'srcdoc' => piece_render_document($piece, $version, ['disable_motion' => true]),
+                // Interactive engines (Three.js, A-Frame, interactive C2) get pointer-events
+                // enabled in the slideshow overlay so the user can orbit/interact. Static
+                // engines (P5, SVG, non-interactive C2) remain read-only previews.
+                'interactive' => $isInteractivePiece,
+                'srcdoc' => piece_render_document($piece, $version, [
+                    // Suppress A-Frame device-orientation controls inside the overlay (avoids
+                    // a gyro-permission prompt on mobile); mouse/touch orbit still works.
+                    // Has no effect on Three.js or C2.
+                    'disable_motion' => $engine === 'aframe',
+                ]),
                 'title' => $piece['title'] ?? 'Untitled Piece',
                 'subtitle' => $itemEngineLabel,
-                'description' => (string) ($pieceDescription !== '' ? $pieceDescription : ($version['prompt'] ?? $piece['prompt'] ?? '')),
+                'description' => (string) ($pieceDescription !== '' ? $pieceDescription : $piecePrompt),
             ],
         ];
         $detailItems[] = [
