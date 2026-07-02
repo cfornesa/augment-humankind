@@ -537,6 +537,104 @@ function manifest(): array
             }
         }],
 
+        ['forms + art starter templates (2026-07-02)', function (Ctx $ctx): void {
+            ensureColumn($ctx, 'page_sections', 'section_kind', "VARCHAR(32) NOT NULL DEFAULT 'content' AFTER page_id");
+            ensureColumn($ctx, 'page_sections', 'form_id', 'INT NULL AFTER section_kind');
+            ensureColumn($ctx, 'page_sections', 'config_json', 'LONGTEXT NULL AFTER form_id');
+            ensureColumn($ctx, 'page_sections', 'is_required', 'TINYINT(1) NOT NULL DEFAULT 0 AFTER config_json');
+
+            if (!tableExists($ctx->pdo, 'forms')) {
+                $ctx->apply(
+                    "CREATE TABLE forms (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        form_key VARCHAR(100) NOT NULL,
+                        title VARCHAR(255) NOT NULL,
+                        description TEXT NULL,
+                        form_type VARCHAR(32) NOT NULL DEFAULT 'email',
+                        status VARCHAR(16) NOT NULL DEFAULT 'active',
+                        recipient_email VARCHAR(255) NULL,
+                        recaptcha_site_key VARCHAR(255) NULL,
+                        encrypted_recaptcha_secret TEXT NULL,
+                        recaptcha_minimum_score DECIMAL(3,2) NOT NULL DEFAULT 0.50,
+                        success_message TEXT NULL,
+                        submit_label VARCHAR(100) NOT NULL DEFAULT 'Submit',
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                        UNIQUE KEY uniq_forms_form_key (form_key)
+                    )",
+                    'table forms'
+                );
+            }
+
+            if (!tableExists($ctx->pdo, 'form_fields')) {
+                $ctx->apply(
+                    "CREATE TABLE form_fields (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        form_id INT NOT NULL,
+                        field_key VARCHAR(100) NOT NULL,
+                        label VARCHAR(255) NOT NULL,
+                        field_type VARCHAR(32) NOT NULL DEFAULT 'text',
+                        help_text TEXT NULL,
+                        placeholder VARCHAR(255) NULL,
+                        options_json LONGTEXT NULL,
+                        is_required TINYINT(1) NOT NULL DEFAULT 0,
+                        sort_order INT NOT NULL DEFAULT 0,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                        UNIQUE KEY uniq_form_fields_key (form_id, field_key),
+                        KEY idx_form_fields_form (form_id),
+                        FOREIGN KEY (form_id) REFERENCES forms(id) ON DELETE CASCADE
+                    )",
+                    'table form_fields'
+                );
+            }
+
+            if (!tableExists($ctx->pdo, 'newsletter_subscribers')) {
+                $ctx->apply(
+                    "CREATE TABLE newsletter_subscribers (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        form_id INT NOT NULL,
+                        page_id INT NULL,
+                        email VARCHAR(255) NOT NULL,
+                        consent TINYINT(1) NOT NULL DEFAULT 1,
+                        source_path VARCHAR(255) NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                        UNIQUE KEY uniq_newsletter_subscriber_form_email (form_id, email),
+                        KEY idx_newsletter_subscribers_form (form_id),
+                        FOREIGN KEY (form_id) REFERENCES forms(id) ON DELETE CASCADE,
+                        FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE SET NULL
+                    )",
+                    'table newsletter_subscribers'
+                );
+            }
+
+            if (!tableExists($ctx->pdo, 'art_piece_starter_templates')) {
+                $ctx->apply(
+                    "CREATE TABLE art_piece_starter_templates (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        template_key VARCHAR(100) NOT NULL,
+                        engine VARCHAR(32) NOT NULL,
+                        generation_mode VARCHAR(32) NOT NULL,
+                        label VARCHAR(255) NOT NULL,
+                        description TEXT NULL,
+                        html_code MEDIUMTEXT NULL,
+                        css_code MEDIUMTEXT NULL,
+                        js_code MEDIUMTEXT NULL,
+                        is_default TINYINT(1) NOT NULL DEFAULT 0,
+                        is_active TINYINT(1) NOT NULL DEFAULT 1,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                        UNIQUE KEY uniq_art_piece_starter_template_key (template_key),
+                        KEY idx_art_piece_starter_templates_mode (generation_mode, is_default, is_active)
+                    )",
+                    'table art_piece_starter_templates'
+                );
+            }
+
+            seedFormsAndStarterTemplates($ctx);
+        }],
+
         ['site_settings baseline row (id=1)', function (Ctx $ctx): void {
             $stmt = $ctx->pdo->query('SELECT 1 FROM site_settings WHERE id = 1 LIMIT 1');
             if ($stmt->fetchColumn()) {
@@ -616,6 +714,250 @@ function themeCodeRowExists(PDO $pdo, string $themeName): bool
     $stmt = $pdo->prepare('SELECT 1 FROM site_theme_code WHERE theme_name = ? LIMIT 1');
     $stmt->execute([$themeName]);
     return (bool) $stmt->fetchColumn();
+}
+
+function seedFormsAndStarterTemplates(Ctx $ctx): void
+{
+    if ($ctx->dryRun && (!tableExists($ctx->pdo, 'forms') || !tableExists($ctx->pdo, 'art_piece_starter_templates'))) {
+        $ctx->changes[] = 'seed forms defaults';
+        $ctx->changes[] = 'seed art starter templates';
+        return;
+    }
+
+    seedDefaultForms($ctx);
+    seedDefaultArtStarterTemplates($ctx);
+}
+
+function seedDefaultForms(Ctx $ctx): void
+{
+    $contactId = ensureFormSeed($ctx, [
+        'form_key' => 'contact_form',
+        'title' => 'Contact Form',
+        'description' => 'Send a message using the configured recipient email.',
+        'form_type' => 'email',
+        'recipient_email' => getenv('CONTACT_TO_EMAIL') ?: null,
+        'recaptcha_site_key' => getenv('RECAPTCHA_SITE_KEY') ?: null,
+        'encrypted_recaptcha_secret' => encryptedSeedSecret(getenv('RECAPTCHA_SECRET_KEY') ?: ''),
+        'recaptcha_minimum_score' => getenv('RECAPTCHA_MIN_SCORE') ?: '0.50',
+        'success_message' => 'Thanks for reaching out. Your message was sent.',
+        'submit_label' => 'Send inquiry',
+    ]);
+    ensureFormFields($ctx, $contactId, [
+        ['name', 'Name', 'text', 1, 0, '', '', null],
+        ['email', 'Email', 'email', 1, 1, '', '', null],
+        ['organization', 'Organization', 'text', 0, 2, '', 'Optional', null],
+        ['inquiry_type', 'Inquiry type', 'select', 1, 3, '', '', [
+            ['value' => 'collaboration', 'label' => 'Collaboration'],
+            ['value' => 'hiring', 'label' => 'Hiring'],
+            ['value' => 'project_help', 'label' => 'Project help'],
+            ['value' => 'strategy_help', 'label' => 'Strategy help'],
+            ['value' => 'other', 'label' => 'Other'],
+        ]],
+        ['message', 'Message', 'textarea', 1, 4, '', '', null],
+    ]);
+
+    $newsletterId = ensureFormSeed($ctx, [
+        'form_key' => 'newsletter_signup',
+        'title' => 'Newsletter Signup',
+        'description' => 'Collect email addresses for future updates.',
+        'form_type' => 'newsletter',
+        'recipient_email' => null,
+        'recaptcha_site_key' => getenv('RECAPTCHA_SITE_KEY') ?: null,
+        'encrypted_recaptcha_secret' => encryptedSeedSecret(getenv('RECAPTCHA_SECRET_KEY') ?: ''),
+        'recaptcha_minimum_score' => getenv('RECAPTCHA_MIN_SCORE') ?: '0.50',
+        'success_message' => 'Thanks for signing up.',
+        'submit_label' => 'Sign up',
+    ]);
+    ensureFormFields($ctx, $newsletterId, [
+        ['email', 'Email', 'email', 1, 0, '', '', null],
+        ['consent', 'I consent to receive updates.', 'checkbox', 0, 1, 'Consent defaults to true for newsletter signups.', '', null],
+    ]);
+
+    ensureContactPageAndFormSection($ctx, $contactId);
+}
+
+function ensureFormSeed(Ctx $ctx, array $form): int
+{
+    $stmt = $ctx->pdo->prepare('SELECT id FROM forms WHERE form_key = ? LIMIT 1');
+    $stmt->execute([$form['form_key']]);
+    $existing = $stmt->fetchColumn();
+    if ($existing) {
+        backfillExistingFormSeed($ctx, (int) $existing, $form);
+        return (int) $existing;
+    }
+    if ($ctx->dryRun) {
+        $ctx->changes[] = 'seed form ' . $form['form_key'];
+        return 0;
+    }
+    $insert = $ctx->pdo->prepare(
+        'INSERT INTO forms
+            (form_key, title, description, form_type, status, recipient_email,
+             recaptcha_site_key, encrypted_recaptcha_secret, recaptcha_minimum_score,
+             success_message, submit_label)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    );
+    $insert->execute([
+        $form['form_key'],
+        $form['title'],
+        $form['description'],
+        $form['form_type'],
+        'active',
+        $form['recipient_email'],
+        $form['recaptcha_site_key'],
+        $form['encrypted_recaptcha_secret'],
+        $form['recaptcha_minimum_score'],
+        $form['success_message'],
+        $form['submit_label'],
+    ]);
+    $ctx->changes[] = 'seed form ' . $form['form_key'];
+    return (int) $ctx->pdo->lastInsertId();
+}
+
+function backfillExistingFormSeed(Ctx $ctx, int $formId, array $form): void
+{
+    if ($ctx->dryRun) {
+        return;
+    }
+    $stmt = $ctx->pdo->prepare(
+        "UPDATE forms
+            SET recipient_email = CASE WHEN (recipient_email IS NULL OR recipient_email = '') THEN ? ELSE recipient_email END,
+                recaptcha_site_key = CASE WHEN (recaptcha_site_key IS NULL OR recaptcha_site_key = '') THEN ? ELSE recaptcha_site_key END,
+                encrypted_recaptcha_secret = CASE WHEN (encrypted_recaptcha_secret IS NULL OR encrypted_recaptcha_secret = '') THEN ? ELSE encrypted_recaptcha_secret END,
+                recaptcha_minimum_score = CASE WHEN recaptcha_minimum_score IS NULL THEN ? ELSE recaptcha_minimum_score END
+          WHERE id = ?"
+    );
+    $stmt->execute([
+        $form['recipient_email'],
+        $form['recaptcha_site_key'],
+        $form['encrypted_recaptcha_secret'],
+        $form['recaptcha_minimum_score'],
+        $formId,
+    ]);
+}
+
+function ensureFormFields(Ctx $ctx, int $formId, array $fields): void
+{
+    if ($formId <= 0) {
+        return;
+    }
+    $exists = $ctx->pdo->prepare('SELECT 1 FROM form_fields WHERE form_id = ? AND field_key = ? LIMIT 1');
+    $insert = $ctx->pdo->prepare(
+        'INSERT INTO form_fields
+            (form_id, field_key, label, field_type, is_required, sort_order, help_text, placeholder, options_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    );
+    foreach ($fields as [$key, $label, $type, $required, $sort, $help, $placeholder, $options]) {
+        $exists->execute([$formId, $key]);
+        if ($exists->fetchColumn()) {
+            continue;
+        }
+        if ($ctx->dryRun) {
+            $ctx->changes[] = 'seed form field ' . $key;
+            continue;
+        }
+        $insert->execute([
+            $formId,
+            $key,
+            $label,
+            $type,
+            $required,
+            $sort,
+            $help ?: null,
+            $placeholder ?: null,
+            $options === null ? null : json_encode($options, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE),
+        ]);
+        $ctx->changes[] = 'seed form field ' . $key;
+    }
+}
+
+function ensureContactPageAndFormSection(Ctx $ctx, int $contactFormId): void
+{
+    if ($contactFormId <= 0) {
+        return;
+    }
+    $stmt = $ctx->pdo->query("SELECT id FROM pages WHERE system_key = 'contact' OR slug = 'contact' ORDER BY system_key = 'contact' DESC, id ASC LIMIT 1");
+    $pageId = (int) $stmt->fetchColumn();
+    if ($pageId <= 0) {
+        if ($ctx->dryRun) {
+            $ctx->changes[] = 'seed contact system page';
+            return;
+        }
+        $insert = $ctx->pdo->prepare(
+            "INSERT INTO pages (system_key, title, slug, status, template, nav_label, show_in_nav, sort_order)
+             VALUES ('contact', 'Contact', 'contact', 'published', 'standard', 'Contact', 1, 20)"
+        );
+        $insert->execute();
+        $pageId = (int) $ctx->pdo->lastInsertId();
+        $ctx->changes[] = 'seed contact system page';
+    } elseif (!$ctx->dryRun) {
+        $ctx->pdo->prepare("UPDATE pages SET system_key = 'contact', status = 'published' WHERE id = ? AND (system_key IS NULL OR system_key = '')")->execute([$pageId]);
+    }
+
+    $exists = $ctx->pdo->prepare("SELECT 1 FROM page_sections WHERE page_id = ? AND section_kind = 'form' AND form_id = ? LIMIT 1");
+    $exists->execute([$pageId, $contactFormId]);
+    if ($exists->fetchColumn()) {
+        return;
+    }
+    if ($ctx->dryRun) {
+        $ctx->changes[] = 'seed contact form page section';
+        return;
+    }
+    $insertSection = $ctx->pdo->prepare(
+        "INSERT INTO page_sections (page_id, section_kind, form_id, heading, content, wrapper_class, sort_order, is_required)
+         VALUES (?, 'form', ?, 'Contact Form', '', 'managed-section', 0, 1)"
+    );
+    $insertSection->execute([$pageId, $contactFormId]);
+    $ctx->changes[] = 'seed contact form page section';
+}
+
+function encryptedSeedSecret(string $secret): ?string
+{
+    $secret = trim($secret);
+    if ($secret === '') {
+        return null;
+    }
+    require_once __DIR__ . '/../public/app/helpers/encryption.php';
+    try {
+        return encrypt_string($secret, ai_encryption_key());
+    } catch (Throwable) {
+        return null;
+    }
+}
+
+function seedDefaultArtStarterTemplates(Ctx $ctx): void
+{
+    foreach (defaultArtStarterTemplates() as $template) {
+        $stmt = $ctx->pdo->prepare('SELECT 1 FROM art_piece_starter_templates WHERE template_key = ? LIMIT 1');
+        $stmt->execute([$template['template_key']]);
+        if ($stmt->fetchColumn()) {
+            continue;
+        }
+        if ($ctx->dryRun) {
+            $ctx->changes[] = 'seed art starter template ' . $template['template_key'];
+            continue;
+        }
+        $insert = $ctx->pdo->prepare(
+            'INSERT INTO art_piece_starter_templates
+                (template_key, engine, generation_mode, label, description, html_code, css_code, js_code, is_default, is_active)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, 1)'
+        );
+        $insert->execute([
+            $template['template_key'],
+            $template['engine'],
+            $template['generation_mode'],
+            $template['label'],
+            $template['description'],
+            $template['html_code'],
+            $template['css_code'],
+            $template['js_code'],
+        ]);
+        $ctx->changes[] = 'seed art starter template ' . $template['template_key'];
+    }
+}
+
+function defaultArtStarterTemplates(): array
+{
+    return require dirname(__DIR__) . '/public/app/config/art-starter-templates.php';
 }
 
 function applySeedSqlFile(Ctx $ctx, string $relativePath, string $desc): void

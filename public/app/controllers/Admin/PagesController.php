@@ -150,6 +150,7 @@ class PagesController
 
         $section = null;
         $sectionError = null;
+        $forms = class_exists('Form') ? Form::active() : [];
         require dirname(__DIR__, 2) . '/views/admin/pages/section-form.php';
     }
 
@@ -162,17 +163,27 @@ class PagesController
             exit;
         }
 
+        $sectionKind  = self::sanitiseSectionKind($_POST['section_kind'] ?? 'content');
+        $formId       = $sectionKind === 'form' ? (int) ($_POST['form_id'] ?? 0) : null;
         $heading      = trim($_POST['heading'] ?? '');
-        $content      = trim($_POST['content'] ?? '');
+        $content      = $sectionKind === 'form' ? '' : trim($_POST['content'] ?? '');
         $wrapperClass = self::sanitiseWrapperClass($_POST['wrapper_class'] ?? '');
-        if ($content === '') {
+        if ($sectionKind === 'content' && $content === '') {
             $section = null;
             $sectionError = 'Content is required.';
+            $forms = class_exists('Form') ? Form::active() : [];
+            require dirname(__DIR__, 2) . '/views/admin/pages/section-form.php';
+            return;
+        }
+        if ($sectionKind === 'form' && $formId <= 0) {
+            $section = null;
+            $sectionError = 'Choose a form.';
+            $forms = class_exists('Form') ? Form::active() : [];
             require dirname(__DIR__, 2) . '/views/admin/pages/section-form.php';
             return;
         }
 
-        PageSection::create((int) $pageId, $heading, $content, 0, $wrapperClass);
+        PageSection::create((int) $pageId, $heading, $content, 0, $wrapperClass, $sectionKind, $formId);
         header('Location: /admin/pages/' . (int) $pageId . '/edit');
         exit;
     }
@@ -187,6 +198,7 @@ class PagesController
         }
         $page = Page::find((int) $section['page_id']);
         $sectionError = null;
+        $forms = class_exists('Form') ? Form::active() : [];
         require dirname(__DIR__, 2) . '/views/admin/pages/section-form.php';
     }
 
@@ -200,16 +212,19 @@ class PagesController
         }
 
         $page         = Page::find((int) $section['page_id']);
+        $sectionKind  = !empty($section['is_required']) ? (string) ($section['section_kind'] ?? 'content') : self::sanitiseSectionKind($_POST['section_kind'] ?? 'content');
+        $formId       = $sectionKind === 'form' ? (int) ($_POST['form_id'] ?? ($section['form_id'] ?? 0)) : null;
         $heading      = trim($_POST['heading'] ?? '');
-        $content      = trim($_POST['content'] ?? '');
+        $content      = $sectionKind === 'form' ? '' : trim($_POST['content'] ?? '');
         $wrapperClass = self::sanitiseWrapperClass($_POST['wrapper_class'] ?? '');
-        if ($content === '') {
+        if ($sectionKind === 'content' && $content === '') {
             $sectionError = 'Content is required.';
+            $forms = class_exists('Form') ? Form::active() : [];
             require dirname(__DIR__, 2) . '/views/admin/pages/section-form.php';
             return;
         }
 
-        PageSection::update((int) $sectionId, $heading, $content, $wrapperClass);
+        PageSection::update((int) $sectionId, $heading, $content, $wrapperClass, $sectionKind, $formId);
         header('Location: /admin/pages/' . (int) $section['page_id'] . '/edit');
         exit;
     }
@@ -218,8 +233,11 @@ class PagesController
     {
         admin_check();
         $section = PageSection::find((int) $sectionId);
-        if ($section) {
+        if ($section && empty($section['is_required'])) {
             PageSection::delete((int) $sectionId);
+            header('Location: /admin/pages/' . (int) $section['page_id'] . '/edit');
+            exit;
+        } elseif ($section) {
             header('Location: /admin/pages/' . (int) $section['page_id'] . '/edit');
             exit;
         }
@@ -243,6 +261,11 @@ class PagesController
         $allowed = ['mission-band', 'callout', 'content-cards', 'managed-section'];
         $value = trim($raw);
         return in_array($value, $allowed, true) ? $value : null;
+    }
+
+    private static function sanitiseSectionKind(string $raw): string
+    {
+        return trim($raw) === 'form' ? 'form' : 'content';
     }
 
     private static function resolvePageData(?int $existingId): array

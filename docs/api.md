@@ -2,7 +2,7 @@
 
 ## `GET /contact`
 
-Renders the public contact form for collaboration, hiring, project help,
+Renders the managed Contact system page and its database-owned Contact Form for collaboration, hiring, project help,
 strategy help, and other inquiries.
 
 The page includes:
@@ -18,7 +18,7 @@ The page includes:
 
 ## `POST /contact`
 
-Processes the contact form and returns the `/contact` page with either an
+Processes the database-owned Contact Form and returns the `/contact` page with either an
 inline success message or validation errors.
 
 ### Accepted Fields

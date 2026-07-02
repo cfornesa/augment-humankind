@@ -108,13 +108,15 @@ ob_start();
                         <?php foreach ($sections as $section): ?>
                             <tr data-id="<?= (int) $section['id'] ?>">
                                 <td class="drag-handle" title="Drag to reorder">&#8597;</td>
-                                <td><?= $section['heading'] ? htmlspecialchars($section['heading'], ENT_QUOTES, 'UTF-8') : '<span class="admin-hint">Opening section</span>' ?></td>
+                                <td><?= $section['heading'] ? htmlspecialchars($section['heading'], ENT_QUOTES, 'UTF-8') : '<span class="admin-hint">' . (($section['section_kind'] ?? 'content') === 'form' ? 'Form section' : 'Opening section') . '</span>' ?><?= !empty($section['is_required']) ? ' <span class="status-badge">Required</span>' : '' ?></td>
                                 <td class="admin-actions">
                                     <a href="/admin/pages/sections/<?= (int) $section['id'] ?>/edit">Edit</a>
-                                    <form method="POST" action="/admin/pages/sections/<?= (int) $section['id'] ?>/delete"
-                                          onsubmit="return confirm('Delete this section?')">
-                                        <button type="submit" class="admin-del-btn">Delete</button>
-                                    </form>
+                                    <?php if (empty($section['is_required'])): ?>
+                                        <form method="POST" action="/admin/pages/sections/<?= (int) $section['id'] ?>/delete"
+                                              onsubmit="return confirm('Delete this section?')">
+                                            <button type="submit" class="admin-del-btn">Delete</button>
+                                        </form>
+                                    <?php endif; ?>
                                 </td>
                             </tr>
                         <?php endforeach ?>

@@ -58,6 +58,10 @@ require __DIR__ . '/partials/header.php';
         </section>
     <?php else: ?>
         <?php foreach ($sections as $section): ?>
+            <?php if (($section['section_kind'] ?? 'content') === 'form'): ?>
+                <?php require __DIR__ . '/partials/form-section.php'; ?>
+                <?php continue; ?>
+            <?php endif; ?>
             <?php if ($section['wrapper_class']): ?>
                 <section class="<?= e($section['wrapper_class']) ?>"<?= $section['heading'] ? ' aria-labelledby="managed-section-' . (int) $section['id'] . '"' : '' ?>>
                     <?php if ($section['heading']): ?>

@@ -36,11 +36,20 @@ class Page
             'sort_order' => 0,
             'show_description_section' => 1,
         ],
+        'contact' => [
+            'title' => 'Contact',
+            'slug' => 'contact',
+            'status' => 'published',
+            'template' => 'standard',
+            'nav_label' => 'Contact',
+            'show_in_nav' => true,
+            'sort_order' => 20,
+        ],
     ];
 
     /** Backward-compatible slug fallback for databases not yet migrated to
      * pages.system_key. */
-    public const PROTECTED_SLUGS = ['home', 'about'];
+    public const PROTECTED_SLUGS = ['home', 'about', 'contact'];
 
     public static function isProtectedSlug(string $slug): bool
     {

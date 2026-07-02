@@ -138,7 +138,7 @@ if ($path === '/portfolio' || str_starts_with($path, '/portfolio/')
 $page = $routes[$path] ?? null;
 
 $managedSlug = null;
-if ($page === 'home' || $page === 'services' || $page === 'notes') {
+if ($page === 'home' || $page === 'services' || $page === 'notes' || $page === 'contact') {
     $managedSlug = $page;
 } elseif ($page === null && preg_match('#^/([a-z0-9-]+)$#', $path, $slugMatch)) {
     $managedSlug = $slugMatch[1];
@@ -150,6 +150,9 @@ if ($managedSlug !== null) {
     require_once __DIR__ . '/app/models/SiteSettings.php';
     require_once __DIR__ . '/app/models/Page.php';
     require_once __DIR__ . '/app/models/PageSection.php';
+    require_once __DIR__ . '/app/models/Form.php';
+    require_once __DIR__ . '/app/helpers/encryption.php';
+    require_once __DIR__ . '/app/helpers/rate-limit.php';
     require_once __DIR__ . '/app/controllers/PageController.php';
 
     if (PageController::redirectIfSlugMoved($managedSlug)) {

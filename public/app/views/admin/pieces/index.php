@@ -8,6 +8,9 @@ $q      = $q      ?? '';
 $engine = $engine ?? '';
 $sort   = $sort   ?? 'sort_order';
 $dir    = $dir    ?? 'asc';
+$tab    = $tab    ?? 'art-pieces';
+$templates = $templates ?? [];
+$templatesTableReady = $templatesTableReady ?? true;
 
 function pieces_sort_link(string $col, string $label, string $cur, string $curDir, array $carry): string {
     $next  = ($cur === $col && $curDir === 'asc') ? 'desc' : 'asc';
@@ -25,6 +28,7 @@ ob_start();
     <span id="reorder-status" class="reorder-status" aria-live="polite"></span>
     <div class="admin-header-row">
         <h1>Art Pieces</h1>
+        <?php if ($tab === 'art-pieces'): ?>
         <div style="display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
             <?php if (!empty($pieces)): ?>
                 <button type="button" id="btn-regen-all" class="admin-btn admin-btn-ghost">Regenerate All Thumbnails</button>
@@ -33,9 +37,40 @@ ob_start();
             <a href="/admin/pieces/generate" class="admin-btn">Generate with AI</a>
             <a href="/admin/pieces/create" class="admin-btn admin-btn-ghost">Create Piece</a>
         </div>
+        <?php endif; ?>
     </div>
 
+    <nav class="admin-tabs" aria-label="Pieces tabs">
+        <a href="/admin/pieces?tab=art-pieces" class="admin-tab <?= $tab === 'art-pieces' ? 'active' : '' ?>">Art Pieces</a>
+        <a href="/admin/pieces?tab=templates" class="admin-tab <?= $tab === 'templates' ? 'active' : '' ?>">Templates</a>
+    </nav>
+
+    <?php if ($tab === 'templates'): ?>
+        <?php if (!$templatesTableReady): ?>
+            <p class="admin-empty">Starter templates are not installed in this database yet. Run the database setup script to create and seed them.</p>
+        <?php elseif (empty($templates)): ?>
+            <p class="admin-empty">No starter templates have been seeded yet. Run the database setup script.</p>
+        <?php else: ?>
+            <div class="admin-table-wrap">
+                <table class="admin-table">
+                    <thead><tr><th>Template</th><th>Mode</th><th>Default</th><th>Status</th><th></th></tr></thead>
+                    <tbody>
+                    <?php foreach ($templates as $template): ?>
+                        <tr>
+                            <td><strong><?= e($template['label']) ?></strong><br><code><?= e($template['template_key']) ?></code></td>
+                            <td><?= e($template['generation_mode']) ?></td>
+                            <td><?= !empty($template['is_default']) ? 'Yes' : 'No' ?></td>
+                            <td><?= !empty($template['is_active']) ? 'Active' : 'Inactive' ?></td>
+                            <td><a href="/admin/pieces/templates/<?= (int) $template['id'] ?>/edit" class="admin-link">Edit</a></td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        <?php endif; ?>
+    <?php else: ?>
     <form class="admin-filter-bar" action="/admin/pieces" method="get" role="search">
+        <input type="hidden" name="tab" value="art-pieces">
         <label class="sr-only" for="admin-pieces-q">Search pieces</label>
         <input id="admin-pieces-q" class="admin-filter-input" name="q" type="search"
                value="<?= e($q) ?>" placeholder="Search title, description, prompt…" autocomplete="off">
@@ -134,8 +169,10 @@ ob_start();
         </table>
         </div>
     <?php endif; ?>
+    <?php endif; ?>
 </div>
 
+<?php if ($tab === 'art-pieces'): ?>
 <script src="/assets/js/admin-piece-capture.js?v=<?= (int) @filemtime(dirname(__DIR__, 4) . '/assets/js/admin-piece-capture.js') ?>"></script>
 <script>
 (function () {
@@ -389,6 +426,7 @@ ob_start();
     });
 })();
 </script>
+<?php endif; ?>
 <?php
 $content = ob_get_clean();
 

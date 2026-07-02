@@ -593,6 +593,7 @@ test('A-Frame system prompt exists', function () {
     assert_contains($prompt, '<a-scene id="scene" embedded>');
     assert_contains($prompt, 'window.sketch');
     assert_contains($prompt, 'Do NOT include <script>');
+    assert_contains($prompt, '/image/123');
 });
 
 test('A-Frame preflight accepts a minimal safe scene', function () {
@@ -613,7 +614,20 @@ test('A-Frame preflight rejects missing scene root', function () {
 test('A-Frame preflight rejects external assets', function () {
     assert_throws(
         fn() => art_piece_preflight_document('aframe', '<a-scene id="scene" embedded><a-image src="https://example.com/x.png"></a-image></a-scene>', '', 'window.sketch = ({ scene }) => {};'),
-        'external or file assets'
+        'same-origin CMS media'
+    );
+});
+
+test('A-Frame preflight accepts same-origin CMS image assets', function () {
+    $html = '<a-scene id="scene" embedded><a-assets><img id="my-logo" src="/image/2"></a-assets><a-plane src="#my-logo" rotation="-90 0 0" width="9" height="9"></a-plane></a-scene>';
+    $result = art_piece_preflight_document('aframe', $html, '', 'window.sketch = ({ scene }) => {};');
+    assert_eq($result['html'], $html);
+});
+
+test('A-Frame preflight rejects undefined asset references', function () {
+    assert_throws(
+        fn() => art_piece_preflight_document('aframe', '<a-scene id="scene" embedded><a-plane src="#missing"></a-plane></a-scene>', '', 'window.sketch = ({ scene }) => {};'),
+        'defined in <a-assets>'
     );
 });
 

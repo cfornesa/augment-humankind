@@ -105,7 +105,8 @@ function art_piece_generation_system_prompt(string $engine): string
             "You MUST return your response as three separate Markdown code blocks (```html, ```css, and ```javascript).",
             "Return ONLY those three fenced code blocks. Do NOT include prose, explanations, titles, bullets, or notes before, between, or after the code blocks.",
             "The HTML block MUST contain exactly one `<a-scene id=\"scene\" embedded>` as the scene root. Include all generated A-Frame entities inside that scene.",
-            "Do NOT include <script>, <link>, <base>, <html>, <head>, <body>, <iframe>, <img>, <audio>, <video>, or asset-loading tags. Do NOT use external URLs or remote textures. Use primitive geometry, materials, lights, sky color, camera, cursor/raycaster, and generated entities only.",
+            "You MAY use existing same-origin CMS images by placing `<img id=\"asset-id\" src=\"/image/123\">` inside one `<a-assets>` block, then referencing it with `src=\"#asset-id\"` or `material=\"src: #asset-id\"`. Allowed image paths are `/image/{id}`, `/media/...`, and `/api/media-assets/{id}` only.",
+            "Do NOT include <script>, <link>, <base>, <html>, <head>, <body>, <iframe>, <audio>, <video>, or <a-asset-item>. Do NOT use external URLs or remote textures.",
             "The CSS block may style only `#scene`, `.a-canvas`, or classes/ids used by generated entities. Do NOT target global page chrome, and do NOT use `display: none`, `visibility: hidden`, or `opacity: 0` on the scene or canvas.",
             "The runtime provides AFRAME globally. Do NOT use import statements.",
             "The JS must assign its setup function to `window.sketch` like this: `window.sketch = ({ AFRAME, scene, startFrame }) => { /* optional event handlers or generated entities */ };`.",
@@ -407,8 +408,7 @@ function art_piece_preflight_document(string $engine, ?string $html, ?string $cs
             throw new RuntimeException('A-Frame HTML must contain exactly one <a-scene> root.');
         }
         $aframeHtmlRules = [
-            ['pattern' => '/<\/?(?:script|link|base|html|head|body|iframe|img|audio|video|a-assets|a-asset-item)\b/i', 'message' => 'A-Frame HTML cannot contain document, script, iframe, image, audio, video, or asset-loading tags.'],
-            ['pattern' => '/\bsrc\s*=|\bmaterial\s*=\s*["\'][^"\']*\bsrc\s*:/i', 'message' => 'A-Frame HTML cannot load external or file assets; use primitives and generated entities only.'],
+            ['pattern' => '/<\/?(?:script|link|base|html|head|body|iframe|audio|video|a-asset-item)\b/i', 'message' => 'A-Frame HTML cannot contain document, script, iframe, audio, video, or arbitrary asset-loading tags.'],
             ['pattern' => '/\burl\s*\(/i', 'message' => 'A-Frame CSS/HTML cannot reference external URL assets.'],
         ];
         foreach ($aframeHtmlRules as $rule) {
@@ -416,6 +416,7 @@ function art_piece_preflight_document(string $engine, ?string $html, ?string $cs
                 throw new RuntimeException($rule['message']);
             }
         }
+        validate_aframe_media_references($html);
         if (preg_match('/(?:#scene|a-scene|canvas|\.a-canvas)\s*\{[^}]*\bdisplay\s*:\s*none\b/i', $css)) {
             throw new RuntimeException('CSS cannot hide the A-Frame scene or canvas (display: none is forbidden).');
         }
@@ -437,6 +438,62 @@ function art_piece_preflight_document(string $engine, ?string $html, ?string $cs
     }
 
     return ['html' => $html, 'css' => $css, 'js' => $js];
+}
+
+function validate_aframe_media_references(string $html): void
+{
+    $allowedAssetIds = [];
+    if (preg_match_all('/<img\b([^>]*)>/i', $html, $imgMatches, PREG_SET_ORDER)) {
+        foreach ($imgMatches as $match) {
+            $attrs = $match[1] ?? '';
+            if (!preg_match('/\bid\s*=\s*(["\'])([^"\']+)\1/i', $attrs, $idMatch)) {
+                throw new RuntimeException('A-Frame image assets must have an id so scene materials can reference them.');
+            }
+            if (!preg_match('/\bsrc\s*=\s*(["\'])([^"\']+)\1/i', $attrs, $srcMatch)) {
+                throw new RuntimeException('A-Frame image assets must include a same-origin CMS image src.');
+            }
+            $src = trim((string) $srcMatch[2]);
+            if (!is_allowed_aframe_media_src($src)) {
+                throw new RuntimeException('A-Frame image assets must use same-origin CMS media paths such as /image/2, /media/..., or /api/media-assets/2.');
+            }
+            $allowedAssetIds[] = preg_quote((string) $idMatch[2], '/');
+        }
+    }
+
+    if (preg_match_all('/\bsrc\s*=\s*(["\'])([^"\']+)\1/i', $html, $srcMatches, PREG_SET_ORDER)) {
+        foreach ($srcMatches as $match) {
+            $src = trim((string) $match[2]);
+            if (str_starts_with($src, '#')) {
+                if ($allowedAssetIds === [] || !preg_match('/^#(?:' . implode('|', $allowedAssetIds) . ')$/', $src)) {
+                    throw new RuntimeException('A-Frame texture references must point to an <img> id defined in <a-assets>.');
+                }
+                continue;
+            }
+            if (!is_allowed_aframe_media_src($src)) {
+                throw new RuntimeException('A-Frame src attributes may only reference same-origin CMS media or #asset ids.');
+            }
+        }
+    }
+
+    if (preg_match_all('/\bmaterial\s*=\s*(["\'])([^"\']*\bsrc\s*:\s*([^;"\']+)[^"\']*)\1/i', $html, $materialMatches, PREG_SET_ORDER)) {
+        foreach ($materialMatches as $match) {
+            $src = trim((string) $match[3]);
+            if (str_starts_with($src, '#')) {
+                if ($allowedAssetIds === [] || !preg_match('/^#(?:' . implode('|', $allowedAssetIds) . ')$/', $src)) {
+                    throw new RuntimeException('A-Frame material texture references must point to an <img> id defined in <a-assets>.');
+                }
+                continue;
+            }
+            if (!is_allowed_aframe_media_src($src)) {
+                throw new RuntimeException('A-Frame material texture src may only reference same-origin CMS media or #asset ids.');
+            }
+        }
+    }
+}
+
+function is_allowed_aframe_media_src(string $src): bool
+{
+    return (bool) preg_match('#^/(?:image/[0-9]+|api/media-assets/[0-9]+|media/[A-Za-z0-9._~/%+-]+)(?:\?[A-Za-z0-9._~%=&+-]*)?$#', $src);
 }
 
 /**

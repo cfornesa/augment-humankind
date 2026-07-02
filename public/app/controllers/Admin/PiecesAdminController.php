@@ -8,6 +8,11 @@ class PiecesAdminController
     {
         admin_check();
 
+        $tab = (string) ($_GET['tab'] ?? 'art-pieces');
+        if (!in_array($tab, ['art-pieces', 'templates'], true)) {
+            $tab = 'art-pieces';
+        }
+
         $q      = trim((string) ($_GET['q'] ?? ''));
         $engine = (string) ($_GET['engine'] ?? '');
         $sort   = (string) ($_GET['sort'] ?? 'sort_order');
@@ -30,6 +35,8 @@ class PiecesAdminController
             $sort,
             $dir
         );
+        $templatesTableReady = class_exists('ArtPieceStarterTemplate') ? ArtPieceStarterTemplate::tableReady() : false;
+        $templates = $tab === 'templates' && $templatesTableReady ? ArtPieceStarterTemplate::all() : [];
 
         require dirname(__DIR__, 2) . '/views/admin/pieces/index.php';
     }
@@ -89,12 +96,69 @@ class PiecesAdminController
     public static function create(): void
     {
         admin_check();
-        $piece = null;
+        $defaultTemplate = class_exists('ArtPieceStarterTemplate') ? ArtPieceStarterTemplate::defaultForMode('p5') : false;
+        $piece = [
+            'engine' => 'p5',
+            'status' => 'active',
+            'current_version' => $defaultTemplate ? [
+                'html_code' => $defaultTemplate['html_code'] ?? '',
+                'css_code' => $defaultTemplate['css_code'] ?? '',
+                'generated_code' => $defaultTemplate['js_code'] ?? '',
+                'engine' => 'p5',
+            ] : [],
+        ];
         $error = null;
         $artMedia = Category::all();
         $assignedCategoryIds = [];
         [$profiles, $preferredProfileId, $personas] = self::loadProfilesData();
+        $starterTemplates = class_exists('ArtPieceStarterTemplate') ? ArtPieceStarterTemplate::defaultMap() : [];
         require dirname(__DIR__, 2) . '/views/admin/pieces/form.php';
+    }
+
+    public static function templates(): void
+    {
+        admin_check();
+        header('Location: /admin/pieces?tab=templates', true, 301);
+        exit;
+    }
+
+    public static function templateEdit(string $id): void
+    {
+        admin_check();
+        $template = ArtPieceStarterTemplate::find((int) $id);
+        if (!$template) {
+            header('Location: /admin/pieces?tab=templates');
+            exit;
+        }
+        $templateError = null;
+        require dirname(__DIR__, 2) . '/views/admin/pieces/template-form.php';
+    }
+
+    public static function templateUpdate(string $id): void
+    {
+        admin_check();
+        $template = ArtPieceStarterTemplate::find((int) $id);
+        if (!$template) {
+            header('Location: /admin/pieces?tab=templates');
+            exit;
+        }
+
+        try {
+            $engine = (string) ($template['engine'] ?? 'p5');
+            $html = (string) ($_POST['html_code'] ?? '');
+            $css = (string) ($_POST['css_code'] ?? '');
+            $js = (string) ($_POST['js_code'] ?? '');
+            if (function_exists('art_piece_preflight_document')) {
+                art_piece_preflight_document($engine, $html, $css, $js);
+            }
+            ArtPieceStarterTemplate::update((int) $id, $_POST);
+            header('Location: /admin/pieces?tab=templates');
+            exit;
+        } catch (Throwable $e) {
+            $template = array_merge($template, $_POST);
+            $templateError = $e->getMessage();
+            require dirname(__DIR__, 2) . '/views/admin/pieces/template-form.php';
+        }
     }
 
     public static function store(): void
@@ -138,6 +202,7 @@ class PiecesAdminController
             $artMedia = Category::all();
             $assignedCategoryIds = $piece['category_ids'];
             [$profiles, $preferredProfileId, $personas] = self::loadProfilesData();
+            $starterTemplates = class_exists('ArtPieceStarterTemplate') ? ArtPieceStarterTemplate::defaultMap() : [];
             require dirname(__DIR__, 2) . '/views/admin/pieces/form.php';
         }
         exit;
@@ -155,6 +220,7 @@ class PiecesAdminController
         $artMedia = Category::all();
         $assignedCategoryIds = PlatformArtPiece::categoryIds((int) $id);
         [$profiles, $preferredProfileId, $personas] = self::loadProfilesData();
+        $starterTemplates = class_exists('ArtPieceStarterTemplate') ? ArtPieceStarterTemplate::defaultMap() : [];
         require dirname(__DIR__, 2) . '/views/admin/pieces/form.php';
     }
 
@@ -246,6 +312,7 @@ class PiecesAdminController
             $artMedia = Category::all();
             $assignedCategoryIds = $piece['category_ids'];
             [$profiles, $preferredProfileId, $personas] = self::loadProfilesData();
+            $starterTemplates = class_exists('ArtPieceStarterTemplate') ? ArtPieceStarterTemplate::defaultMap() : [];
             require dirname(__DIR__, 2) . '/views/admin/pieces/form.php';
         }
         exit;
@@ -459,7 +526,7 @@ class PiecesAdminController
             throw new InvalidArgumentException('Title is required.');
         }
 
-        $engine = $_POST['engine'] ?? 'p5';
+        $engine = art_piece_generation_mode_to_engine($_POST['engine'] ?? 'p5');
         if (!in_array($engine, art_piece_supported_engines(), true)) {
             $engine = 'p5';
         }
@@ -494,7 +561,7 @@ class PiecesAdminController
             'id' => $existingId,
             'title' => trim((string) ($_POST['title'] ?? ($existing['title'] ?? ''))),
             'prompt' => trim((string) ($_POST['prompt'] ?? ($existing['prompt'] ?? ''))),
-            'engine' => $_POST['engine'] ?? ($existing['engine'] ?? 'p5'),
+            'engine' => art_piece_generation_mode_to_engine($_POST['engine'] ?? ($existing['engine'] ?? 'p5')),
             'status' => $_POST['status'] ?? ($existing['status'] ?? 'active'),
             'thumbnail_url' => trim((string) ($_POST['thumbnail_url'] ?? ($existing['thumbnail_url'] ?? ''))),
             'description' => trim((string) ($_POST['description'] ?? ($existing['description'] ?? ''))),
@@ -531,7 +598,7 @@ class PiecesAdminController
             throw new InvalidArgumentException('Prompt is required for a version.');
         }
 
-        $engine = $_POST['engine'] ?? 'p5';
+        $engine = art_piece_generation_mode_to_engine($_POST['engine'] ?? 'p5');
         if (!in_array($engine, art_piece_supported_engines(), true)) {
             $engine = 'p5';
         }
@@ -568,7 +635,7 @@ class PiecesAdminController
             'html_code' => trim((string) ($_POST['html_code'] ?? '')),
             'css_code' => trim((string) ($_POST['css_code'] ?? '')),
             'generated_code' => trim((string) ($_POST['generated_code'] ?? '')),
-            'engine' => $_POST['engine'] ?? 'p5',
+            'engine' => art_piece_generation_mode_to_engine($_POST['engine'] ?? 'p5'),
             'generation_vendor' => trim((string) ($_POST['generation_vendor'] ?? '')),
             'generation_model' => trim((string) ($_POST['generation_model'] ?? '')),
             'validation_status' => $_POST['validation_status'] ?? 'validated',
@@ -589,7 +656,7 @@ class PiecesAdminController
 
     private static function resolveVersionCodeFromPost(): array
     {
-        $engine = $_POST['engine'] ?? 'p5';
+        $engine = art_piece_generation_mode_to_engine($_POST['engine'] ?? 'p5');
         $html = trim((string) ($_POST['html_code'] ?? ''));
         $css = trim((string) ($_POST['css_code'] ?? ''));
         $js = trim((string) ($_POST['generated_code'] ?? ''));

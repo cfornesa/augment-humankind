@@ -417,6 +417,7 @@ $preferredProfileId = $preferredProfileId ?? null;
                                 <select id="engine" name="engine">
                                     <option value="p5" <?= ($piece['engine'] ?? 'p5') === 'p5' ? 'selected' : '' ?>>P5.js</option>
                                     <option value="c2" <?= ($piece['engine'] ?? '') === 'c2' ? 'selected' : '' ?>>C2.js</option>
+                                    <?php if (!$isEdit): ?><option value="c2_interactive">C2.js Interactive</option><?php endif; ?>
                                     <option value="three" <?= ($piece['engine'] ?? '') === 'three' ? 'selected' : '' ?>>Three.js</option>
                                     <option value="svg" <?= ($piece['engine'] ?? '') === 'svg' ? 'selected' : '' ?>>SVG</option>
                                     <option value="aframe" <?= ($piece['engine'] ?? '') === 'aframe' ? 'selected' : '' ?>>A-Frame</option>
@@ -653,6 +654,14 @@ if ($engineVal === 'p5') {
     var titleField = document.getElementById('title');
     var previewStage = document.getElementById('preview-stage-wrapper');
     var currentPieceId = <?= $isEdit ? (int) $piece['id'] : 'null' ?>;
+    var isEditMode = <?= $isEdit ? 'true' : 'false' ?>;
+    var starterTemplates = <?= json_encode(array_map(static fn (array $template): array => [
+        'html' => (string) ($template['html_code'] ?? ''),
+        'css' => (string) ($template['css_code'] ?? ''),
+        'js' => (string) ($template['js_code'] ?? ''),
+        'engine' => (string) ($template['engine'] ?? ''),
+    ], $starterTemplates ?? []), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
+    var lastTemplateMode = engineField.value || 'p5';
 
     var btnRefineAi = document.getElementById('btn-refine-ai');
     var aiRefineStatusEl = document.getElementById('ai-refine-status');
@@ -729,7 +738,8 @@ if ($engineVal === 'p5') {
     // 3. Update Live Preview function
     function updateLivePreview() {
         var title = titleField.value || 'Art piece';
-        var engine = engineField.value || 'p5';
+        var selectedMode = engineField.value || 'p5';
+        var engine = (starterTemplates[selectedMode] && starterTemplates[selectedMode].engine) || selectedMode;
         var html = htmlField.value || '';
         var css = cssField.value || '';
         var js = jsField.value || '';
@@ -764,9 +774,24 @@ if ($engineVal === 'p5') {
         var htmlTabButton = document.querySelector('.piece-edit-tabs button[data-tab="html"]');
         if (!htmlTabButton) return;
 
-        if (engine === 'svg' || engine === 'aframe') {
+        var selectedMode = engine || 'p5';
+        var template = starterTemplates[selectedMode] || null;
+        var previousTemplate = starterTemplates[lastTemplateMode] || null;
+        var codeIsTemplateOrEmpty = !isEditMode && (
+            (!htmlField.value.trim() && !cssField.value.trim() && !jsField.value.trim()) ||
+            (previousTemplate && htmlField.value === previousTemplate.html && cssField.value === previousTemplate.css && jsField.value === previousTemplate.js)
+        );
+        if (template && codeIsTemplateOrEmpty) {
+            htmlField.value = template.html;
+            cssField.value = template.css;
+            jsField.value = template.js;
+            lastTemplateMode = selectedMode;
+        }
+
+        var renderEngine = (template && template.engine) || selectedMode;
+        if (renderEngine === 'svg' || renderEngine === 'aframe') {
             htmlTabButton.style.display = '';
-        } else {
+        } else if (!template || !codeIsTemplateOrEmpty) {
             htmlTabButton.style.display = 'none';
             if (htmlTabButton.classList.contains('active')) {
                 var metaTabButton = document.querySelector('.piece-edit-tabs button[data-tab="meta"]');
@@ -775,13 +800,15 @@ if ($engineVal === 'p5') {
                 }
             }
 
-            if (engine === 'p5') {
+            if (renderEngine === 'p5') {
                 htmlField.value = '<div id="canvas-container"></div>';
-            } else if (engine === 'c2') {
+            } else if (renderEngine === 'c2') {
                 htmlField.value = '<canvas id="piece-canvas"></canvas>';
-            } else if (engine === 'three') {
+            } else if (renderEngine === 'three') {
                 htmlField.value = '<div id="container"></div>';
             }
+        } else {
+            htmlTabButton.style.display = 'none';
         }
     }
 

@@ -44,6 +44,7 @@ class PageController
         }
 
         $sections = PageSection::allForPage((int) $page['id']);
+        $formStates = class_exists('Form') ? Form::handlePageSubmission($page, $sections) : [];
         require dirname(__DIR__) . '/views/managed_page.php';
         return true;
     }

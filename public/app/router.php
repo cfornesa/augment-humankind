@@ -25,6 +25,8 @@ require_once __DIR__ . '/models/AdminIdentity.php';
 require_once __DIR__ . '/models/PlatformUser.php';
 require_once __DIR__ . '/models/Page.php';
 require_once __DIR__ . '/models/PageSection.php';
+require_once __DIR__ . '/models/Form.php';
+require_once __DIR__ . '/models/ArtPieceStarterTemplate.php';
 require_once __DIR__ . '/models/PostSection.php';
 require_once __DIR__ . '/models/SiteSettings.php';
 require_once __DIR__ . '/models/Category.php';
@@ -53,6 +55,7 @@ require_once __DIR__ . '/controllers/UserAuthController.php';
 require_once __DIR__ . '/controllers/SharedAuthController.php';
 require_once __DIR__ . '/controllers/UserProfileController.php';
 require_once __DIR__ . '/controllers/Admin/PagesController.php';
+require_once __DIR__ . '/controllers/Admin/FormsAdminController.php';
 require_once __DIR__ . '/controllers/Admin/PortfolioController.php';
 require_once __DIR__ . '/controllers/Admin/BlogAdminController.php';
 require_once __DIR__ . '/controllers/Admin/BlogCategoriesAdminController.php';
@@ -220,6 +223,17 @@ $adminRoutes = [
     ['POST', '/admin/pages/sections/([0-9]+)/delete',  [PagesController::class, 'sectionDelete']],
     ['POST', '/admin/pages/([0-9]+)/sections/reorder', [PagesController::class, 'sectionReorder']],
 
+    ['GET',  '/admin/forms',                           [FormsAdminController::class, 'index']],
+    ['GET',  '/admin/forms/create',                    [FormsAdminController::class, 'create']],
+    ['POST', '/admin/forms/create',                    [FormsAdminController::class, 'store']],
+    ['GET',  '/admin/forms/([0-9]+)/edit',             [FormsAdminController::class, 'edit']],
+    ['POST', '/admin/forms/([0-9]+)/edit',             [FormsAdminController::class, 'update']],
+    ['GET',  '/admin/forms/([0-9]+)/fields/create',    [FormsAdminController::class, 'fieldCreate']],
+    ['POST', '/admin/forms/([0-9]+)/fields/create',    [FormsAdminController::class, 'fieldStore']],
+    ['GET',  '/admin/forms/fields/([0-9]+)/edit',      [FormsAdminController::class, 'fieldEdit']],
+    ['POST', '/admin/forms/fields/([0-9]+)/edit',      [FormsAdminController::class, 'fieldUpdate']],
+    ['POST', '/admin/forms/fields/([0-9]+)/delete',    [FormsAdminController::class, 'fieldDelete']],
+
     ['GET',  '/admin/posts',                             [BlogAdminController::class, 'postsIndex']],
     ['GET',  '/admin/posts/calendar',                    [BlogAdminController::class, 'postCalendar']],
     ['GET',  '/admin/posts/create',                      [BlogAdminController::class, 'postCreate']],
@@ -304,6 +318,9 @@ $adminRoutes = [
     ['GET',  '/admin/pieces/generate/preview', [PiecesAdminController::class, 'generatePreview']],
     ['POST', '/admin/pieces/generate/save',    [PiecesAdminController::class, 'generateSave']],
     ['POST', '/admin/pieces/refine-ai',        [PiecesAdminController::class, 'refineAi']],
+    ['GET',  '/admin/pieces/templates',        [PiecesAdminController::class, 'templates']],
+    ['GET',  '/admin/pieces/templates/([0-9]+)/edit', [PiecesAdminController::class, 'templateEdit']],
+    ['POST', '/admin/pieces/templates/([0-9]+)/edit', [PiecesAdminController::class, 'templateUpdate']],
     ['GET',  '/admin/pieces/create',           [PiecesAdminController::class, 'create']],
     ['POST', '/admin/pieces/create',           [PiecesAdminController::class, 'store']],
     ['GET',  '/admin/pieces/([0-9]+)/edit',              [PiecesAdminController::class, 'edit']],

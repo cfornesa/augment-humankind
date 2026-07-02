@@ -15,6 +15,7 @@ function admin_navigation_registry(): array
         ['key' => 'users', 'label' => 'Users', 'href' => '/admin/user-profiles', 'description' => 'Public user accounts and profiles.'],
         ['key' => 'connections', 'label' => 'Connections', 'href' => '/admin/platform-connections', 'description' => 'Outbound platform syndication connections.'],
         ['key' => 'pages', 'label' => 'Pages', 'href' => '/admin/pages', 'description' => 'Managed pages and sections.'],
+        ['key' => 'forms', 'label' => 'Forms', 'href' => '/admin/forms', 'description' => 'Contact, newsletter, and reusable site forms.'],
         ['key' => 'exhibits', 'label' => 'Exhibits', 'href' => '/admin/exhibits', 'description' => 'Native exhibits.'],
         ['key' => 'pieces', 'label' => 'Pieces', 'href' => '/admin/pieces', 'description' => 'Platform art pieces and generation.'],
         ['key' => 'categories', 'label' => 'Categories', 'href' => '/admin/categories', 'description' => 'Blog categories.'],
