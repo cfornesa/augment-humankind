@@ -14,8 +14,8 @@
         </nav>
     </footer>
     <script src="/assets/js/main.js" defer></script>
-    <?php if (($_ahFooterSettings['theme'] ?? '') === 'celestial'): ?>
-    <script src="/assets/js/cosmos.js" defer></script>
+    <?php if (!empty($_ahFooterSettings['custom_js'])): ?>
+    <script><?= $_ahFooterSettings['custom_js'] ?></script>
     <?php endif ?>
 </body>
 </html>

@@ -15,6 +15,7 @@ require_once __DIR__ . '/helpers/audit-log.php';
 require_once __DIR__ . '/helpers/rate-limit.php';
 require_once __DIR__ . '/helpers/piece-render.php';
 require_once __DIR__ . '/helpers/art-piece-generation.php';
+require_once __DIR__ . '/helpers/site-theme-generation.php';
 require_once __DIR__ . '/helpers/navigation.php';
 require_once __DIR__ . '/helpers/admin-navigation.php';
 require_once __DIR__ . '/helpers/platform-ui.php';
@@ -41,6 +42,8 @@ require_once __DIR__ . '/models/PlatformArtPieceVersion.php';
 require_once __DIR__ . '/models/FeedSource.php';
 require_once __DIR__ . '/models/SiteAsset.php';
 require_once __DIR__ . '/models/MediaAsset.php';
+require_once __DIR__ . '/models/SiteThemeSnapshot.php';
+require_once __DIR__ . '/models/SiteThemeCode.php';
 require_once __DIR__ . '/models/UserAiSettings.php';
 require_once __DIR__ . '/models/PlatformConnection.php';
 require_once __DIR__ . '/models/PlatformOAuthApp.php';
@@ -344,6 +347,13 @@ $adminRoutes = [
     ['POST', '/admin/site-identity/assets', [SiteIdentityAdminController::class, 'assetCreate']],
     ['POST', '/admin/site-identity/assets/([0-9]+)/delete', [SiteIdentityAdminController::class, 'assetDelete']],
     ['POST', '/admin/site-identity/media/([0-9]+)/delete', [SiteIdentityAdminController::class, 'mediaAssetDelete']],
+    ['GET',  '/admin/site-identity/theme-code',           [SiteIdentityAdminController::class, 'themeCodeLoad']],
+    ['POST', '/admin/site-identity/theme-save-named',     [SiteIdentityAdminController::class, 'themeSaveNamed']],
+    ['POST', '/admin/site-identity/theme-reset-defaults', [SiteIdentityAdminController::class, 'themeResetDefaults']],
+    ['POST', '/admin/site-identity/theme-generate', [SiteIdentityAdminController::class, 'themeGenerate']],
+    ['POST', '/admin/site-identity/theme-refine', [SiteIdentityAdminController::class, 'themeRefine']],
+    ['POST', '/admin/site-identity/theme-save', [SiteIdentityAdminController::class, 'themeSave']],
+    ['POST', '/admin/site-identity/theme-revert/([0-9]+)', [SiteIdentityAdminController::class, 'themeRevert']],
 
     ['GET',  '/admin/user-profiles', [UserProfilesAdminController::class, 'index']],
     ['GET',  '/admin/user-profiles/([a-zA-Z0-9_-]+)/edit', [UserProfilesAdminController::class, 'userEdit']],

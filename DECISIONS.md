@@ -25,6 +25,93 @@ options regardless of session context. -->
 
 ---
 
+## 2026-07-01 — Celestial Theme z-index Fix (Public Site Stars/Nebulas Invisible)
+
+### Root Cause
+`styles.css:266` sets `html { background: var(--paper) }`. In WebKit/Safari and Chrome, `position: fixed` elements with negative z-index render *behind* the HTML element background and are completely invisible. The Celestial CSS used `#celestial-background { z-index: -3 }` and `#cosmos-stars { z-index: -1 }`, hiding the star field and nebula washes on the public site.
+
+### Fix
+In `scripts/seed-celestial-theme-code.php` (`$customCss` heredoc):
+- `#celestial-background { z-index: -3 }` → `z-index: 0`
+- `#cosmos-stars { z-index: -1 }` → `z-index: 0`
+- Added new rule: `[data-layout-theme="celestial"] .site-header, main, .site-footer { position: relative; z-index: 1 }` so page content stacks above the star field
+
+Both seed scripts re-run to push the updated CSS to `site_settings` and `site_theme_code` in the live DB.
+
+### Note
+`#cosmos-canvas` (comets, created by `cosmos.js`) was unaffected — it already uses inline `z-index: 9999` and was visible throughout.
+
+### Files Modified
+- `scripts/seed-celestial-theme-code.php` — three CSS changes in `$customCss` heredoc
+
+---
+
+## 2026-07-01 — Admin Preview Bugs Fixed (Light/Dark Toggle + Stars/Nebulas)
+
+### Bug 1 — Light/Dark toggle did nothing
+`syncPreview()` wrapped raw HSL channel values in `hsl()` before setting them as CSS custom properties: `setProperty('--sp-paper', 'hsl(40 49% 94%)')`. The CSS then evaluates `hsl(var(--sp-paper))` → `hsl(hsl(40 49% 94%))` — invalid, producing the same transparent result for both modes. Fixed by removing the `hsl()` wrapper so `--sp-paper` holds raw channel values (`40 49% 94%`).
+
+### Bug 2 — Stars/nebulas invisible in admin preview
+`.sp-header` and `.sp-body` had solid backgrounds covering `#celestial-background` (z-index 0). The preview frame also had no background for star dots to render against. Fixed by updating `injectPreviewCss()` to give `#design-preview-frame` a background of `hsl(var(--sp-paper, ...))` and override `.sp-header`/`.sp-body` to `background: transparent !important`.
+
+### Files Modified
+- `public/app/views/admin/site-identity/index.php` — `syncPreview()` lines 1110 & 1116 (removed `hsl()` wrapper); `injectPreviewCss()` scoping CSS (frame background + transparent overrides)
+
+---
+
+## 2026-07-01 — Per-Theme Code Storage + Preview Fix
+
+### Decision
+Added `site_theme_code` table as a per-theme code library. `site_settings.custom_*` remains the live injection path (unchanged); `site_theme_code` stores each theme's code independently. Dual-write keeps them in sync when the admin saves via form or AI accept.
+
+### New features
+- **Theme switch**: changing the Layout Theme dropdown fetches that theme's code into the CSS/JS/HTML editor tabs via AJAX, and applies `data-layout-theme` + injects the CSS into the preview frame.
+- **Preview fix**: `#design-preview-frame` now receives `data-layout-theme` attribute; a `<style id="preview-theme-css">` tag is dynamically populated so Pinyon Script, nebula CSS, and other layout-theme selectors render in the preview.
+- **Reset to defaults**: restores the seeded `default_*` columns for a theme without writing to DB until the user saves.
+- **Save as new theme**: creates a new row in `site_theme_code`, adds the option to the dropdown, and activates it.
+- Custom (non-builtin) themes appear in the Layout Theme dropdown automatically.
+
+### Files added
+- `docs/migrations/2026-07-01-site-theme-code.sql`
+- `scripts/seed-theme-code-table.php`
+- `public/app/models/SiteThemeCode.php`
+
+### Files modified
+- `public/app/controllers/Admin/SiteIdentityAdminController.php` — 3 new endpoints, dual-write, merged themeOptions
+- `public/app/views/admin/site-identity/index.php` — preview fix, theme-switch JS, Reset/Save-as-new buttons
+- `public/app/router.php` — 3 new routes + model require
+
+---
+
+## 2026-07-01 — Site Theme Code Editor + AI Generation
+
+### Decision
+Moved Celestial theme CSS (229 lines), JS (cosmos.js), and HTML (#celestial-background div) from static files into `site_settings` DB columns (`custom_css`, `custom_js`, `custom_html_body`). These are injected at runtime via `header.php` and `footer.php`.
+
+Added a tabbed CSS/JS/HTML/AI Assist editor in the admin Design section, mirroring the art piece code editor. Added four new endpoints: `theme-generate`, `theme-refine`, `theme-save`, `theme-revert`.
+
+Added `site_theme_snapshots` table for version history with draft/accept/reject flow identical to art piece generation.
+
+### Star Field Bug Fix
+Root cause: `body::before` radial-gradient star field was covered by `#celestial-background` (a DOM child). Fix: moved radial-gradient background-image onto `#celestial-background` directly; removed `body::before` Celestial block. Applied via seed script.
+
+### MySQL 9.x Constraint
+Both new migrations applied via `php scripts/run-migration.php` (PHP PDO), not `mysql` CLI — MySQL 9.x removed `mysql_native_password` auth plugin used by Hostinger.
+
+### Files Changed
+- `public/assets/styles.css` — Celestial block removed (CSS now in DB)
+- `public/app/views/partials/header.php` — generic `custom_css`/`custom_html_body` injection
+- `public/app/views/partials/footer.php` — generic `custom_js` injection
+- `public/app/views/admin/site-identity/index.php` — CSS/JS/HTML/AI tabs
+- `public/app/controllers/Admin/SiteIdentityAdminController.php` — 4 new AI endpoints + helpers
+- `public/app/helpers/site-theme-generation.php` — new helper
+- `public/app/models/SiteThemeSnapshot.php` — new model
+- `docs/migrations/2026-07-01-theme-code-columns.sql` — new
+- `docs/migrations/2026-07-01-site-theme-snapshots.sql` — new
+- `scripts/seed-celestial-theme-code.php` — one-time seed
+
+---
+
 ## 2026-06-11 — Phase 1 — Augment Humankind PHP Site
 
 ### Stack Confirmed

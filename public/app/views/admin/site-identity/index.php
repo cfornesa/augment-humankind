@@ -156,7 +156,7 @@ if (!in_array($tab, ['settings', 'design', 'assets', 'media'], true)) {
             <div class="field-grid">
                 <div class="field">
                     <label for="design_theme">Layout Theme</label>
-                    <select id="design_theme" name="theme">
+                    <select id="design_theme_select" name="theme">
                         <option value="" <?= ($settings['theme'] ?? '') === '' ? 'selected' : '' ?>>(default)</option>
                         <?php foreach ($themeOptions as $val => $label): ?>
                             <option value="<?= e($val) ?>" <?= ($settings['theme'] ?? '') === $val ? 'selected' : '' ?>><?= e($label) ?></option>
@@ -210,7 +210,7 @@ if (!in_array($tab, ['settings', 'design', 'assets', 'media'], true)) {
                         <button type="button" id="preview-mode-dark" class="admin-btn admin-btn-ghost admin-btn-sm">☾ Dark</button>
                     </div>
                 </div>
-                <div id="style-preview" class="style-preview">
+                <div id="design-preview-frame" class="style-preview" data-layout-theme="<?= e($settings['theme'] ?? '') ?>">
                     <div class="sp-header">
                         <span class="sp-brand">Site Name</span>
                         <span class="sp-nav-links">Coded Art · Feeds · Categories</span>
@@ -227,14 +227,582 @@ if (!in_array($tab, ['settings', 'design', 'assets', 'media'], true)) {
                     </div>
                 </div>
             </div>
-            <div class="field" style="margin-top:1.5rem;">
-                <label for="design_custom_css">Custom CSS</label>
-                <textarea id="design_custom_css" name="custom_css" rows="12"
-                    style="font-family:monospace;font-size:0.8rem;white-space:pre;"
-                    placeholder="/* Add custom CSS overrides here — applied site-wide */"
-                ><?= e($settings['custom_css'] ?? '') ?></textarea>
-                <p class="admin-hint">Injected into every page as a &lt;style&gt; block. Use for animation tweaks, custom overrides, etc.</p>
+            <!-- ─── Theme Code tabs ─────────────────────────────────────────── -->
+            <div class="theme-code-section" style="margin-top:1.5rem;">
+                <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;margin-bottom:0.75rem;">
+                    <h3 style="margin:0;font-size:0.95rem;font-weight:600;letter-spacing:0.03em;text-transform:uppercase;color:var(--ink-soft);">Theme Code</h3>
+                    <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;">
+                        <button type="button" id="theme-reset-btn" class="admin-btn admin-btn-ghost admin-btn-sm" disabled
+                                title="Restore this theme's original default code">Reset to defaults</button>
+                        <button type="button" id="theme-save-named-btn" class="admin-btn admin-btn-ghost admin-btn-sm">Save as new theme…</button>
+                    </div>
+                </div>
+                <!-- Save-as-new-theme inline form (hidden until triggered) -->
+                <div id="theme-save-named-form" hidden style="background:var(--paper-deep);border:1px solid var(--border);border-radius:0.5rem;padding:1rem;margin-bottom:0.75rem;">
+                    <div class="field-grid" style="margin-bottom:0.5rem;">
+                        <div class="field">
+                            <label for="new_theme_slug" style="font-size:0.85rem;">Theme slug <span style="font-weight:400;color:var(--ink-soft)">(lowercase, hyphens only)</span></label>
+                            <input id="new_theme_slug" type="text" pattern="[a-z0-9][a-z0-9\-]{0,62}" maxlength="64"
+                                   placeholder="my-theme" style="font-family:monospace;">
+                        </div>
+                        <div class="field">
+                            <label for="new_theme_label" style="font-size:0.85rem;">Display name</label>
+                            <input id="new_theme_label" type="text" maxlength="191" placeholder="My Theme">
+                        </div>
+                    </div>
+                    <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+                        <button type="button" id="theme-save-named-confirm" class="admin-btn" style="background:var(--green);color:var(--green-fg);">Save &amp; Activate</button>
+                        <button type="button" id="theme-save-named-cancel" class="admin-btn admin-btn-ghost">Cancel</button>
+                        <span id="theme-save-named-status" style="font-size:0.85rem;color:var(--ink-soft);align-self:center;"></span>
+                    </div>
+                </div>
+                <nav class="admin-tabs theme-code-tabs" aria-label="Theme code tabs" style="margin-bottom:0.75rem;">
+                    <button type="button" class="admin-tab active" data-theme-tab="css">CSS</button>
+                    <button type="button" class="admin-tab" data-theme-tab="js">JS</button>
+                    <button type="button" class="admin-tab" data-theme-tab="html">HTML</button>
+                    <button type="button" class="admin-tab" data-theme-tab="ai">AI Assist ✨</button>
+                </nav>
+
+                <div data-theme-panel="css">
+                    <textarea id="design_custom_css" name="custom_css" rows="18"
+                        style="font-family:monospace;font-size:0.8rem;white-space:pre;width:100%;box-sizing:border-box;"
+                        placeholder="/* Add custom CSS overrides here — applied site-wide */"
+                    ><?= e($settings['custom_css'] ?? '') ?></textarea>
+                    <p class="admin-hint">Injected as a &lt;style&gt; block in &lt;head&gt; on every page.</p>
+                </div>
+
+                <div data-theme-panel="js" hidden>
+                    <textarea id="design_custom_js" name="custom_js" rows="18"
+                        style="font-family:monospace;font-size:0.8rem;white-space:pre;width:100%;box-sizing:border-box;"
+                        placeholder="// Vanilla JS, no module syntax. Wrap in an IIFE: (function(){...})();"
+                    ><?= e($settings['custom_js'] ?? '') ?></textarea>
+                    <p class="admin-hint">Injected as a &lt;script&gt; before &lt;/body&gt;. Use vanilla JS — no ES module syntax.</p>
+                </div>
+
+                <div data-theme-panel="html" hidden>
+                    <textarea id="design_custom_html_body" name="custom_html_body" rows="18"
+                        style="font-family:monospace;font-size:0.8rem;white-space:pre;width:100%;box-sizing:border-box;"
+                        placeholder="<!-- Injected after <body> opens. Use for fixed background overlays. -->"
+                    ><?= e($settings['custom_html_body'] ?? '') ?></textarea>
+                    <p class="admin-hint">Injected after &lt;body&gt; opens. Use for fixed background overlays and containers.</p>
+                </div>
+
+                <div data-theme-panel="ai" hidden>
+                    <div class="admin-form" style="background:var(--paper-deep);border:1px solid var(--border);border-radius:0.5rem;padding:1.25rem;margin-bottom:1rem;">
+                        <div class="field-grid" style="margin-bottom:0.75rem;">
+                            <div class="field">
+                                <label for="theme_ai_profile">AI Profile</label>
+                                <select id="theme_ai_profile" class="theme-ai-select">
+                                    <option value="">— Select profile —</option>
+                                    <?php foreach ($profiles ?? [] as $p): ?>
+                                    <option value="<?= (int) $p['id'] ?>"><?= e($p['profile_name']) ?> (<?= e($p['vendor']) ?>)</option>
+                                    <?php endforeach ?>
+                                </select>
+                            </div>
+                            <div class="field">
+                                <label for="theme_ai_persona">Persona <span style="font-weight:400;color:var(--ink-soft)">(optional)</span></label>
+                                <select id="theme_ai_persona" class="theme-ai-select">
+                                    <option value="">— None —</option>
+                                    <?php foreach ($personas ?? [] as $p): ?>
+                                    <option value="<?= (int) $p['id'] ?>"><?= e($p['name']) ?></option>
+                                    <?php endforeach ?>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="field" style="margin-bottom:0.75rem;">
+                            <label for="theme_ai_prompt">Describe what you want</label>
+                            <textarea id="theme_ai_prompt" rows="4" style="width:100%;box-sizing:border-box;"
+                                placeholder="E.g. 'A moody nebula with drifting star clouds and slow amber auroras…'"></textarea>
+                        </div>
+                        <div style="display:flex;gap:0.75rem;flex-wrap:wrap;align-items:center;">
+                            <button type="button" id="theme-ai-generate-btn" class="admin-btn">Generate New</button>
+                            <button type="button" id="theme-ai-refine-btn" class="admin-btn admin-btn-ghost">Refine Existing</button>
+                            <span id="theme-ai-spinner" hidden style="color:var(--ink-soft);font-size:0.875rem;">Working…</span>
+                        </div>
+                    </div>
+
+                    <!-- AI result area -->
+                    <div id="theme-ai-result" hidden style="margin-bottom:1rem;">
+                        <div id="theme-ai-plan" style="background:var(--paper-deep);border-left:3px solid var(--cyan);padding:0.75rem 1rem;margin-bottom:0.75rem;border-radius:0 0.25rem 0.25rem 0;font-size:0.875rem;white-space:pre-wrap;"></div>
+                        <div style="display:flex;gap:0.75rem;flex-wrap:wrap;align-items:center;margin-bottom:0.75rem;">
+                            <button type="button" id="theme-ai-accept-btn" class="admin-btn" style="background:var(--green);color:var(--green-fg);">Accept</button>
+                            <button type="button" id="theme-ai-reject-btn" class="admin-btn admin-btn-ghost">Reject</button>
+                            <button type="button" id="theme-ai-retry-btn" class="admin-btn admin-btn-ghost" hidden>Try Again</button>
+                            <span id="theme-ai-attempt-badge" style="color:var(--ink-soft);font-size:0.8rem;"></span>
+                        </div>
+                        <p class="admin-hint" style="margin:0;">Accepting will save the generated code to the live site. You can revert from Snapshot History below.</p>
+                    </div>
+
+                    <div id="theme-ai-error" hidden style="margin-bottom:1rem;padding:0.75rem;background:hsl(0 60% 95%);border-radius:0.25rem;color:hsl(0 70% 35%);font-size:0.875rem;"></div>
+                </div>
             </div>
+
+            <!-- ─── Snapshot History ─────────────────────────────────────────── -->
+            <?php if (!empty($themeSnapshots)): ?>
+            <div class="theme-snapshots" style="margin-top:1.5rem;">
+                <h3 style="margin:0 0 0.75rem;font-size:0.95rem;font-weight:600;letter-spacing:0.03em;text-transform:uppercase;color:var(--ink-soft);">Snapshot History</h3>
+                <table class="admin-table" style="font-size:0.85rem;">
+                    <thead><tr><th>#</th><th>Date</th><th>Source</th><th>Actions</th></tr></thead>
+                    <tbody>
+                        <?php foreach ($themeSnapshots as $snap): ?>
+                        <tr>
+                            <td><?= (int) $snap['snapshot_number'] ?></td>
+                            <td><?= e(date('M j, Y H:i', strtotime($snap['created_at']))) ?></td>
+                            <td><?= e($snap['label'] ?? ($snap['generation_prompt'] ? 'AI' : 'Manual')) ?></td>
+                            <td>
+                                <button type="button" class="admin-link theme-revert-btn"
+                                    data-snapshot-id="<?= (int) $snap['id'] ?>"
+                                    onclick="if(confirm('Revert to this snapshot? The current code will be auto-saved first.'))themeRevert(<?= (int) $snap['id'] ?>)">Revert</button>
+                            </td>
+                        </tr>
+                        <?php endforeach ?>
+                    </tbody>
+                </table>
+            </div>
+            <?php endif; ?>
+
+            <script>
+            (function(){
+                // ── Tab switching ──
+                var tabBtns = document.querySelectorAll('[data-theme-tab]');
+                var panels = document.querySelectorAll('[data-theme-panel]');
+                tabBtns.forEach(function(btn){
+                    btn.addEventListener('click', function(){
+                        tabBtns.forEach(function(b){ b.classList.remove('active'); });
+                        panels.forEach(function(p){ p.hidden = true; });
+                        btn.classList.add('active');
+                        var panel = document.querySelector('[data-theme-panel="' + btn.dataset.themeTab + '"]');
+                        if(panel) panel.hidden = false;
+                    });
+                });
+
+                // ── AI state ──
+                var _aiState = {
+                    sequenceToken: null,
+                    draftSnapshotId: null,
+                    lastRaw: null,
+                    attemptNumber: 1,
+                    pendingCss: null,
+                    pendingJs: null,
+                    pendingHtml: null,
+                };
+
+                function genToken(){
+                    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,function(c){
+                        var r=Math.random()*16|0,v=c==='x'?r:(r&0x3|0x8);return v.toString(16);
+                    });
+                }
+
+                function getProfile(){ return document.getElementById('theme_ai_profile').value; }
+                function getPersona(){ return document.getElementById('theme_ai_persona').value; }
+                function getPrompt(){  return document.getElementById('theme_ai_prompt').value.trim(); }
+
+                function getCurrentCode(){
+                    return {
+                        css:  document.getElementById('design_custom_css').value,
+                        js:   document.getElementById('design_custom_js').value,
+                        html: document.getElementById('design_custom_html_body').value,
+                    };
+                }
+
+                function applyPendingToEditors(){
+                    if(_aiState.pendingCss  !== null) document.getElementById('design_custom_css').value  = _aiState.pendingCss;
+                    if(_aiState.pendingJs   !== null) document.getElementById('design_custom_js').value   = _aiState.pendingJs;
+                    if(_aiState.pendingHtml !== null) document.getElementById('design_custom_html_body').value = _aiState.pendingHtml;
+                }
+
+                function setSpinner(on){
+                    document.getElementById('theme-ai-spinner').hidden = !on;
+                    document.getElementById('theme-ai-generate-btn').disabled = on;
+                    document.getElementById('theme-ai-refine-btn').disabled = on;
+                }
+
+                function showError(msg){
+                    var el = document.getElementById('theme-ai-error');
+                    el.textContent = msg;
+                    el.hidden = false;
+                }
+
+                function clearError(){ document.getElementById('theme-ai-error').hidden = true; }
+
+                function showResult(data, mode){
+                    clearError();
+                    var resultDiv = document.getElementById('theme-ai-result');
+                    var planDiv   = document.getElementById('theme-ai-plan');
+                    var retryBtn  = document.getElementById('theme-ai-retry-btn');
+                    var badge     = document.getElementById('theme-ai-attempt-badge');
+
+                    if(data.plan){ planDiv.textContent = data.plan; planDiv.hidden = false; }
+                    else { planDiv.hidden = true; }
+
+                    badge.textContent = 'Attempt ' + (data.attempt_number || 1) + ' / <?= SITE_THEME_MAX_ATTEMPTS ?>';
+                    retryBtn.hidden = true;
+                    resultDiv.hidden = false;
+
+                    _aiState.pendingCss  = data.css  !== undefined ? data.css  : null;
+                    _aiState.pendingJs   = data.js   !== undefined ? data.js   : null;
+                    _aiState.pendingHtml = data.html !== undefined ? data.html : null;
+                    _aiState.lastRaw         = data.raw_response || null;
+                    _aiState.attemptNumber   = (data.attempt_number || 1) + 1;
+                    _aiState.draftSnapshotId = data.draft_snapshot_id || null;
+                    _aiState.sequenceToken   = data.sequence_token   || _aiState.sequenceToken;
+                    _aiState._lastMode = mode;
+                }
+
+                function callAi(endpoint, body){
+                    setSpinner(true);
+                    clearError();
+                    document.getElementById('theme-ai-result').hidden = true;
+                    fetch(endpoint, {
+                        method:'POST',
+                        headers:{'Content-Type':'application/json'},
+                        body: JSON.stringify(body),
+                    })
+                    .then(function(r){ return r.json(); })
+                    .then(function(data){
+                        setSpinner(false);
+                        if(data.success){
+                            showResult(data, endpoint.includes('refine') ? 'refine' : 'generate');
+                        } else {
+                            showError(data.error || 'Unknown error');
+                            if(data.can_retry){
+                                var retryBtn = document.getElementById('theme-ai-retry-btn');
+                                retryBtn.hidden = false;
+                                _aiState.lastRaw       = data.raw_response || null;
+                                _aiState.attemptNumber = (data.attempt_number || 1) + 1;
+                                _aiState._lastError    = data.error || '';
+                            }
+                        }
+                    })
+                    .catch(function(err){
+                        setSpinner(false);
+                        showError('Network error: ' + err.message);
+                    });
+                }
+
+                document.getElementById('theme-ai-generate-btn').addEventListener('click', function(){
+                    var prompt = getPrompt();
+                    var profile = getProfile();
+                    if(!prompt){ alert('Please enter a prompt.'); return; }
+                    if(!profile){ alert('Please select an AI profile.'); return; }
+                    _aiState.sequenceToken   = genToken();
+                    _aiState.attemptNumber   = 1;
+                    _aiState.lastRaw         = null;
+                    _aiState._lastError      = '';
+                    callAi('/admin/site-identity/theme-generate', {
+                        prompt:           prompt,
+                        profile_id:       parseInt(profile,10),
+                        persona_id:       parseInt(getPersona(),10) || 0,
+                        attempt_number:   1,
+                        sequence_token:   _aiState.sequenceToken,
+                    });
+                });
+
+                document.getElementById('theme-ai-refine-btn').addEventListener('click', function(){
+                    var prompt = getPrompt();
+                    var profile = getProfile();
+                    if(!prompt){ alert('Please enter a refinement prompt.'); return; }
+                    if(!profile){ alert('Please select an AI profile.'); return; }
+                    if(!_aiState.sequenceToken) _aiState.sequenceToken = genToken();
+                    _aiState._lastError = '';
+                    var code = getCurrentCode();
+                    callAi('/admin/site-identity/theme-refine', {
+                        prompt:                prompt,
+                        profile_id:            parseInt(profile,10),
+                        persona_id:            parseInt(getPersona(),10) || 0,
+                        current_css:           code.css,
+                        current_js:            code.js,
+                        current_html:          code.html,
+                        attempt_number:        _aiState.attemptNumber,
+                        previous_raw_response: _aiState.lastRaw,
+                        last_error:            _aiState._lastError || '',
+                        sequence_token:        _aiState.sequenceToken,
+                    });
+                });
+
+                document.getElementById('theme-ai-retry-btn').addEventListener('click', function(){
+                    var mode = _aiState._lastMode || 'generate';
+                    var prompt = getPrompt();
+                    var profile = getProfile();
+                    var code = getCurrentCode();
+                    if(mode === 'refine'){
+                        callAi('/admin/site-identity/theme-refine', {
+                            prompt:                prompt,
+                            profile_id:            parseInt(profile,10),
+                            persona_id:            parseInt(getPersona(),10) || 0,
+                            current_css:           code.css,
+                            current_js:            code.js,
+                            current_html:          code.html,
+                            attempt_number:        _aiState.attemptNumber,
+                            previous_raw_response: _aiState.lastRaw,
+                            last_error:            _aiState._lastError || '',
+                            sequence_token:        _aiState.sequenceToken,
+                        });
+                    } else {
+                        callAi('/admin/site-identity/theme-generate', {
+                            prompt:                prompt,
+                            profile_id:            parseInt(profile,10),
+                            persona_id:            parseInt(getPersona(),10) || 0,
+                            attempt_number:        _aiState.attemptNumber,
+                            previous_raw_response: _aiState.lastRaw,
+                            last_error:            _aiState._lastError || '',
+                            sequence_token:        _aiState.sequenceToken,
+                        });
+                    }
+                });
+
+                document.getElementById('theme-ai-accept-btn').addEventListener('click', function(){
+                    if(_aiState.pendingCss === null && _aiState.pendingJs === null && _aiState.pendingHtml === null) return;
+                    applyPendingToEditors();
+                    fetch('/admin/site-identity/theme-save', {
+                        method:'POST',
+                        headers:{'Content-Type':'application/json'},
+                        body: JSON.stringify({
+                            css:              _aiState.pendingCss  || '',
+                            js:               _aiState.pendingJs   || '',
+                            html:             _aiState.pendingHtml || '',
+                            draft_snapshot_id: _aiState.draftSnapshotId,
+                            sequence_token:   _aiState.sequenceToken,
+                            label:            'AI: ' + getPrompt().slice(0,80),
+                        }),
+                    })
+                    .then(function(r){ return r.json(); })
+                    .then(function(data){
+                        document.getElementById('theme-ai-result').hidden = true;
+                        if(data.success){
+                            var flash = document.createElement('div');
+                            flash.className = 'form-status form-status-success';
+                            flash.setAttribute('role','alert');
+                            flash.innerHTML = '<p>Theme code accepted and saved. The page will reload…</p>';
+                            document.querySelector('.theme-code-section').prepend(flash);
+                            setTimeout(function(){ window.location.reload(); }, 1200);
+                        } else {
+                            showError(data.error || 'Save failed');
+                        }
+                    })
+                    .catch(function(err){ showError('Network error: ' + err.message); });
+                });
+
+                document.getElementById('theme-ai-reject-btn').addEventListener('click', function(){
+                    document.getElementById('theme-ai-result').hidden = true;
+                    _aiState.pendingCss = _aiState.pendingJs = _aiState.pendingHtml = null;
+                    _aiState.draftSnapshotId = null;
+                    clearError();
+                });
+
+                window.themeRevert = function(snapshotId){
+                    fetch('/admin/site-identity/theme-revert/' + snapshotId, {
+                        method:'POST',
+                        headers:{'Content-Type':'application/json'},
+                        body:'{}',
+                    })
+                    .then(function(r){ return r.json(); })
+                    .then(function(data){
+                        if(data.success){ window.location.reload(); }
+                        else { alert('Revert failed: ' + (data.error||'unknown error')); }
+                    })
+                    .catch(function(err){ alert('Network error: ' + err.message); });
+                };
+            })();
+            </script>
+
+            <script>
+            // ── Theme-switch: load code per theme + fix preview ──────────────
+            (function(){
+                var themeSelect  = document.getElementById('design_theme_select');
+                var previewFrame = document.getElementById('design-preview-frame');
+                var resetBtn     = document.getElementById('theme-reset-btn');
+                var cssArea      = document.getElementById('design_custom_css');
+                var jsArea       = document.getElementById('design_custom_js');
+                var htmlArea     = document.getElementById('design_custom_html_body');
+
+                // Inject the theme's CSS into a <style> tag with preview-scoping rules
+                // so layout-theme selectors render but fixed-position elements stay bounded.
+                function injectPreviewCss(css) {
+                    var el = document.getElementById('preview-theme-css');
+                    if (!el) {
+                        el = document.createElement('style');
+                        el.id = 'preview-theme-css';
+                        document.head.appendChild(el);
+                    }
+                    var scope = css
+                        ? '#design-preview-frame{position:relative;isolation:isolate;overflow:hidden;background:hsl(var(--sp-paper,40 49% 94%));}' +
+                          '#design-preview-frame #celestial-background{position:absolute!important;inset:0!important;width:100%!important;height:100%!important;z-index:0;}' +
+                          '#design-preview-frame .nebula-wash{filter:blur(40px);}' +
+                          '#design-preview-frame .sp-header,#design-preview-frame .sp-body{position:relative;z-index:1;background:transparent!important;}'
+                        : '';
+                    el.textContent = scope + (css || '');
+                }
+
+                // Inject the theme's HTML body content into the preview frame as a
+                // background layer (behind .sp-header / .sp-body via z-index).
+                function injectPreviewHtml(html) {
+                    var existing = previewFrame ? previewFrame.querySelector('.preview-theme-html-layer') : null;
+                    if (existing) existing.remove();
+                    if (!html || !previewFrame) return;
+                    var wrapper = document.createElement('div');
+                    wrapper.className = 'preview-theme-html-layer';
+                    wrapper.innerHTML = html;
+                    previewFrame.insertBefore(wrapper, previewFrame.firstChild);
+                }
+
+                function loadThemeCode(theme, callback) {
+                    if (!theme) {
+                        injectPreviewCss('');
+                        injectPreviewHtml('');
+                        if (previewFrame) previewFrame.dataset.layoutTheme = '';
+                        if (resetBtn) { resetBtn.disabled = true; }
+                        if (callback) callback({ css: '', js: '', html: '', has_defaults: false });
+                        return;
+                    }
+                    fetch('/admin/site-identity/theme-code?theme=' + encodeURIComponent(theme))
+                        .then(function(r){ return r.json(); })
+                        .then(function(data){
+                            if (previewFrame) previewFrame.dataset.layoutTheme = theme;
+                            injectPreviewCss(data.css || '');
+                            injectPreviewHtml(data.html || '');
+                            if (resetBtn) resetBtn.disabled = !data.has_defaults;
+                            if (callback) callback(data);
+                        })
+                        .catch(function(){});
+                }
+
+                // On page load: apply preview for the current saved theme.
+                // The textareas already have the current saved code from PHP, so
+                // we only need to fix the preview (do not overwrite textarea values).
+                (function(){
+                    var currentTheme = themeSelect ? themeSelect.value : '';
+                    loadThemeCode(currentTheme, function(data){
+                        // Only enable reset btn based on has_defaults; don't touch textareas.
+                        if (resetBtn) resetBtn.disabled = !data.has_defaults;
+                        syncPreview();
+                    });
+                })();
+
+                // On theme dropdown change: load code for the new theme into textareas.
+                if (themeSelect) {
+                    themeSelect.addEventListener('change', function(){
+                        var theme = this.value;
+                        loadThemeCode(theme, function(data){
+                            if (cssArea)  cssArea.value  = data.css  || '';
+                            if (jsArea)   jsArea.value   = data.js   || '';
+                            if (htmlArea) htmlArea.value = data.html || '';
+                        });
+                    });
+                }
+
+                // ── Reset to defaults ──
+                if (resetBtn) {
+                    resetBtn.addEventListener('click', function(){
+                        var theme = themeSelect ? themeSelect.value : '';
+                        if (!theme) return;
+                        if (!confirm('Reset "' + theme + '" to its original defaults? (The textareas will update but nothing is saved until you click Save Design.)')) return;
+                        fetch('/admin/site-identity/theme-reset-defaults', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({theme_name: theme}),
+                        })
+                        .then(function(r){ return r.json(); })
+                        .then(function(data){
+                            if (data.success) {
+                                if (cssArea)  cssArea.value  = data.css  || '';
+                                if (jsArea)   jsArea.value   = data.js   || '';
+                                if (htmlArea) htmlArea.value = data.html || '';
+                                injectPreviewCss(data.css || '');
+                                injectPreviewHtml(data.html || '');
+                            } else {
+                                alert('Could not reset: ' + (data.error || 'unknown error'));
+                            }
+                        })
+                        .catch(function(err){ alert('Network error: ' + err.message); });
+                    });
+                }
+
+                // ── Save as new theme ──
+                var saveNamedBtn    = document.getElementById('theme-save-named-btn');
+                var saveNamedForm   = document.getElementById('theme-save-named-form');
+                var saveNamedConfirm = document.getElementById('theme-save-named-confirm');
+                var saveNamedCancel = document.getElementById('theme-save-named-cancel');
+                var saveNamedStatus = document.getElementById('theme-save-named-status');
+
+                if (saveNamedBtn) {
+                    saveNamedBtn.addEventListener('click', function(){
+                        saveNamedForm.hidden = !saveNamedForm.hidden;
+                        if (!saveNamedForm.hidden) {
+                            // Pre-fill label from current theme
+                            var theme = themeSelect ? themeSelect.value : '';
+                            var labelEl = document.getElementById('new_theme_label');
+                            if (labelEl && labelEl.value === '' && theme) {
+                                labelEl.value = theme.replace(/-/g,' ').replace(/\b\w/g, function(c){return c.toUpperCase();}) + ' (copy)';
+                            }
+                            document.getElementById('new_theme_slug').focus();
+                        }
+                    });
+                }
+
+                if (saveNamedCancel) {
+                    saveNamedCancel.addEventListener('click', function(){
+                        saveNamedForm.hidden = true;
+                        saveNamedStatus.textContent = '';
+                    });
+                }
+
+                if (saveNamedConfirm) {
+                    saveNamedConfirm.addEventListener('click', function(){
+                        var slug  = document.getElementById('new_theme_slug').value.trim();
+                        var label = document.getElementById('new_theme_label').value.trim();
+                        if (!slug) { alert('Theme slug is required.'); return; }
+                        if (!/^[a-z0-9][a-z0-9\-]{0,62}$/.test(slug)) {
+                            alert('Slug must be lowercase letters, numbers, and hyphens only.');
+                            return;
+                        }
+                        saveNamedStatus.textContent = 'Saving…';
+                        saveNamedConfirm.disabled = true;
+
+                        fetch('/admin/site-identity/theme-save-named', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({
+                                theme_name: slug,
+                                label:      label || slug,
+                                css:        cssArea  ? cssArea.value  : '',
+                                js:         jsArea   ? jsArea.value   : '',
+                                html:       htmlArea ? htmlArea.value : '',
+                                set_active: true,
+                            }),
+                        })
+                        .then(function(r){ return r.json(); })
+                        .then(function(data){
+                            saveNamedConfirm.disabled = false;
+                            if (data.success) {
+                                saveNamedStatus.textContent = 'Saved!';
+                                saveNamedForm.hidden = true;
+                                // Add option to the theme dropdown and select it
+                                if (themeSelect) {
+                                    var existing = themeSelect.querySelector('option[value="' + data.theme_name + '"]');
+                                    if (!existing) {
+                                        var opt = document.createElement('option');
+                                        opt.value = data.theme_name;
+                                        opt.textContent = data.label + ' (custom)';
+                                        themeSelect.appendChild(opt);
+                                    }
+                                    themeSelect.value = data.theme_name;
+                                }
+                                // Page reload so the form reflects the new active theme
+                                setTimeout(function(){ window.location.reload(); }, 600);
+                            } else {
+                                saveNamedStatus.textContent = 'Error: ' + (data.error || 'save failed');
+                            }
+                        })
+                        .catch(function(err){
+                            saveNamedConfirm.disabled = false;
+                            saveNamedStatus.textContent = 'Network error: ' + err.message;
+                        });
+                    });
+                }
+            })();
+            </script>
+
             <div class="form-actions" style="display:flex;gap:0.75rem;flex-wrap:wrap;align-items:center;">
                 <button type="submit" class="admin-btn">Save Design</button>
                 <button type="button" id="reset-palette-btn" class="admin-btn admin-btn-ghost">Reset to palette defaults</button>
@@ -534,18 +1102,18 @@ var PREVIEW_MAP_DARK = {
 };
 var previewMode='light';
 function syncPreview(){
-  var p=document.getElementById('style-preview');
+  var p=document.getElementById('design-preview-frame');
   if(!p)return;
   // Apply light vars first
   Object.keys(PREVIEW_MAP).forEach(function(col){
     var v=document.getElementById('design_'+col)||document.getElementById(col);
-    if(v&&v.value) p.style.setProperty(PREVIEW_MAP[col],'hsl('+v.value+')');
+    if(v&&v.value) p.style.setProperty(PREVIEW_MAP[col], v.value);
   });
   // Overlay dark vars if previewing dark mode
   if(previewMode==='dark'){
     Object.keys(PREVIEW_MAP_DARK).forEach(function(col){
       var v=document.getElementById('design_'+col)||document.getElementById(col);
-      if(v&&v.value) p.style.setProperty(PREVIEW_MAP_DARK[col],'hsl('+v.value+')');
+      if(v&&v.value) p.style.setProperty(PREVIEW_MAP_DARK[col], v.value);
     });
   }
 }
