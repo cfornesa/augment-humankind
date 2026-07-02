@@ -131,13 +131,39 @@ function bootCanvasRuntime(extra) {
       return false;
     }
   }
+  function drawImageCover(image, x, y, width, height) {
+    if (!mediaContext || !image || image.dataset?.creatrLoaded !== '1') return false;
+    const sourceWidth = image.naturalWidth || image.width;
+    const sourceHeight = image.naturalHeight || image.height;
+    if (!sourceWidth || !sourceHeight || !width || !height) return false;
+    const sourceAspect = sourceWidth / sourceHeight;
+    const targetAspect = width / height;
+    let sx = 0;
+    let sy = 0;
+    let sw = sourceWidth;
+    let sh = sourceHeight;
+    if (sourceAspect > targetAspect) {
+      sw = sourceHeight * targetAspect;
+      sx = (sourceWidth - sw) / 2;
+    } else {
+      sh = sourceWidth / targetAspect;
+      sy = (sourceHeight - sh) / 2;
+    }
+    try {
+      mediaContext.drawImage(image, sx, sy, sw, sh, x, y, width, height);
+      return true;
+    } catch (error) {
+      showPieceError(error);
+      return false;
+    }
+  }
   function instrumentedStartFrame(callback) {
     return startFrame((count) => {
       callback(count);
       if (!readySignaled) { readySignaled = true; signalCanvasReady(canvas); }
     });
   }
-  try { window.sketch({ canvas, startFrame: instrumentedStartFrame, loadImage, drawImage, ...(extra || {}) }); } catch (error) { showPieceError(error); }
+  try { window.sketch({ canvas, startFrame: instrumentedStartFrame, loadImage, drawImage, drawImageCover, ...(extra || {}) }); } catch (error) { showPieceError(error); }
 }
 function bootP5() {
   const script = document.createElement('script');

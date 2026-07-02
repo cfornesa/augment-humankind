@@ -208,7 +208,10 @@
 ## A-Frame Runtime (Self-Hosted)
 
 - **Purpose:** Runs generated experimental A-Frame art pieces in previews,
-  public piece views, embeds, immersive views, and thumbnail capture.
+  public piece views, embeds, immersive views, and thumbnail capture. Downloaded
+  standalone HTML exports use the upstream CDN version documented under "Piece
+  Renderer CDN Runtimes" so the exported file is portable outside this CMS
+  without bundling the vendored asset.
 - **Package/runtime file:** A-Frame `1.6.0` (`aframe-master.min.js`),
   vendored as `/assets/js/aframe.min.js`.
 - **Data sent off-domain:** None at runtime. Browsers load the runtime from
@@ -268,21 +271,27 @@
 
 ## Piece Renderer CDN Runtimes
 
-- **Purpose:** PHP piece pages, standard embed routes, and immersive
-  gallery/exhibit viewer views render generative sketches. P5, C2, and
-  Three.js use client-side dynamic libraries loaded from CDNs; A-Frame is
-  documented separately above because it is self-hosted.
+- **Purpose:** PHP piece pages, standard embed routes, immersive gallery/exhibit
+  viewer views, and downloadable HTML exports render generative sketches. P5,
+  C2, and Three.js use client-side dynamic libraries loaded from CDNs in the
+  CMS runtime. A-Frame is self-hosted in the CMS runtime but uses the upstream
+  CDN in downloadable HTML exports.
 - **External endpoints:**
   - P5.js: `https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js`
   - C2.js: `https://cdn.jsdelivr.net/npm/c2.js@1.0.9/dist/c2.min.js`
   - Three.js Core: `https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js`
   - Three.js OrbitControls: `https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js`
+  - A-Frame export runtime: `https://aframe.io/releases/1.6.0/aframe.min.js`
 - **Data sent off-domain:** The browser requests the runtime script from the CDN. Piece content and database data are not sent by the PHP server.
 - **What breaks if unavailable or changed:** P5, C2, and Three.js-based piece
-  pages, embeds, and immersive views fail to render until local runtime
-  copies are served. A-Frame failures are covered by the self-hosted runtime
-  entry above.
-- **Self-hosting alternative:** Store p5.js, c2.min.js, three.module.js, and OrbitControls.js under `public/assets/vendor/` and load them from the PHP site.
+  pages, embeds, immersive views, and exports fail to render until local runtime
+  copies are served. A-Frame CMS pages remain covered by the self-hosted runtime
+  entry above, but downloaded A-Frame HTML exports fail if the upstream A-Frame
+  CDN is unavailable.
+- **Self-hosting alternative:** Store p5.js, c2.min.js, three.module.js,
+  OrbitControls.js, and aframe.min.js under `public/assets/vendor/` and load
+  them from the PHP site or provide ZIP/offline exports that bundle the runtime
+  files.
 
 ## Three.js DeviceOrientationControls (Self-Hosted)
 

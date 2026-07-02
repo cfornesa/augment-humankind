@@ -1680,6 +1680,13 @@ h3 {
     text-underline-offset: 0.24rem;
 }
 
+.piece-action-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 1.25rem;
+    align-items: center;
+}
+
 @media (max-width: 860px) {
     .artwork-card.size-large  { grid-column: span 8; }
     .artwork-card.size-medium { grid-column: span 6; }

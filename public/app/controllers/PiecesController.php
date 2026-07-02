@@ -88,6 +88,21 @@ class PiecesController
         require dirname(__DIR__) . '/views/pieces/show.php';
     }
 
+    public static function download(string $id): void
+    {
+        $versionId = isset($_GET['version']) ? (int) $_GET['version'] : null;
+        $data = EmbedController::loadPieceVersion((int) $id, $versionId && $versionId > 0 ? $versionId : null);
+        if ($data === null) {
+            self::notFound();
+        }
+
+        $filename = piece_export_filename($data['piece']);
+        header('Content-Type: text/html; charset=utf-8');
+        header('Content-Disposition: attachment; filename="' . addcslashes($filename, "\"\\") . '"');
+        echo piece_export_document($data['piece'], $data['version']);
+        exit;
+    }
+
     public static function commentsJson(string $id): void
     {
         header('Content-Type: application/json');

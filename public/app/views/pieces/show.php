@@ -38,7 +38,10 @@ $engineLabel = match (strtolower((string) ($version['engine'] ?? $piece['engine'
         <div class="piece-canvas-container">
             <?= piece_render_iframe($piece, $version, 560) ?>
         </div>
-        <a href="/immersive/pieces/<?= (int) $piece['id'] ?>?returnTo=<?= rawurlencode($_SERVER['REQUEST_URI'] ?? '') ?>" target="_blank" rel="noopener" class="piece-immersive-link">View in Immersive / VR Mode</a>
+        <div class="piece-action-row">
+            <a href="/immersive/pieces/<?= (int) $piece['id'] ?>?returnTo=<?= rawurlencode($_SERVER['REQUEST_URI'] ?? '') ?>" target="_blank" rel="noopener" class="piece-immersive-link">View in Immersive / VR Mode</a>
+            <a href="/pieces/<?= (int) $piece['id'] ?>/download" class="piece-immersive-link">Download HTML</a>
+        </div>
     <?php else: ?>
         <div class="piece-placeholder">
             <p>This piece has no rendered version yet.</p>

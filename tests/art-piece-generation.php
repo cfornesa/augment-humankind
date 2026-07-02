@@ -7,6 +7,8 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../public/app/helpers/art-piece-generation.php';
+require_once __DIR__ . '/../public/app/helpers/slugify.php';
+require_once __DIR__ . '/../public/app/helpers/piece-render.php';
 
 $passed = 0;
 $failed = 0;
@@ -598,9 +600,13 @@ test('A-Frame system prompt exists', function () {
 
 test('generation prompts document same-origin CMS media for each engine', function () {
     assert_contains(art_piece_generation_system_prompt('p5'), "p.loadImage('/image/2')");
+    assert_contains(art_piece_generation_system_prompt('p5'), 'drawImageCover');
     assert_contains(art_piece_generation_system_prompt('three'), "new THREE.TextureLoader().load('/image/2')");
+    assert_contains(art_piece_generation_system_prompt('three'), 'coverTexture');
     assert_contains(art_piece_generation_system_prompt('c2'), "runtime.loadImage('/image/2')");
+    assert_contains(art_piece_generation_system_prompt('c2'), 'runtime.drawImageCover');
     assert_contains(art_piece_generation_system_prompt('c2_interactive'), "runtime.loadImage('/image/2')");
+    assert_contains(art_piece_generation_system_prompt('c2_interactive'), 'runtime.drawImageCover');
     assert_contains(art_piece_generation_system_prompt('svg'), '<image href="/image/2"');
 });
 
@@ -609,6 +615,13 @@ test('p5 preflight accepts same-origin CMS image loading', function () {
     $js = "let img; window.sketch = (p) => { p.preload = () => { img = p.loadImage('/image/2'); }; p.setup = () => { p.createCanvas(400, 300); }; p.draw = () => { if (img) p.image(img, 0, 0, p.width, p.height); }; };";
     $result = art_piece_preflight_document('p5', $html, '#canvas-container{width:100%;height:100%;}', $js);
     assert_eq($result['js'], $js);
+});
+
+test('p5 preflight accepts local cover-image helper using CMS media', function () {
+    $html = '<div id="canvas-container"></div>';
+    $js = "let img; window.sketch = (p) => { p.preload = () => { img = p.loadImage('/image/3'); }; p.setup = () => { p.createCanvas(400, 300); }; function drawImageCover(image, x, y, width, height) { p.image(image, x, y, width, height, 0, 0, image.width, image.height); } p.draw = () => { if (img) drawImageCover(img, 0, 0, p.width, p.height); }; };";
+    $result = art_piece_preflight_document('p5', $html, '#canvas-container{width:100%;height:100%;}', $js);
+    assert_contains($result['js'], 'drawImageCover');
 });
 
 test('p5 preflight rejects remote image loading', function () {
@@ -625,6 +638,13 @@ test('Three.js preflight accepts same-origin CMS texture loading', function () {
     assert_contains($result['js'], "TextureLoader");
 });
 
+test('Three.js preflight accepts camera-frame cover texture helper', function () {
+    $html = '<div id="container"></div>';
+    $js = "window.sketch = (runtime) => { const { THREE } = runtime; function coverTexture(texture, backgroundWidth, backgroundHeight) { texture.repeat.set(1, 1); texture.offset.set(0, 0); } const texture = new THREE.TextureLoader().load('/image/3', () => coverTexture(texture, 16, 9)); const plane = new THREE.Mesh(new THREE.PlaneGeometry(16, 9), new THREE.MeshBasicMaterial({ map: texture })); };";
+    $result = art_piece_preflight_document('three', $html, '#container{width:100%;height:100%;}', $js);
+    assert_contains($result['js'], 'coverTexture');
+});
+
 test('Three.js preflight rejects remote texture loading', function () {
     assert_throws(
         fn() => art_piece_preflight_document('three', '<div id="container"></div>', '', "window.sketch = (runtime) => { const texture = new THREE.TextureLoader().load('https://example.com/texture.png'); };"),
@@ -637,6 +657,13 @@ test('C2 preflight accepts runtime media helpers', function () {
     $js = "window.sketch = (runtime) => { const { c2, canvas, startFrame } = runtime; const renderer = new c2.Renderer(canvas); const img = runtime.loadImage('/image/2'); startFrame(() => { renderer.clear('#000'); runtime.drawImage(img, 0, 0, canvas.width, canvas.height); }); };";
     $result = art_piece_preflight_document('c2', $html, '#piece-canvas{width:100%;height:100%;}', $js);
     assert_contains($result['js'], 'runtime.drawImage');
+});
+
+test('C2 preflight accepts runtime cover media helper', function () {
+    $html = '<canvas id="piece-canvas"></canvas>';
+    $js = "window.sketch = (runtime) => { const { c2, canvas, startFrame } = runtime; const renderer = new c2.Renderer(canvas); const img = runtime.loadImage('/image/3'); startFrame(() => { renderer.clear('#000'); runtime.drawImageCover(img, 0, 0, canvas.width, canvas.height); }); };";
+    $result = art_piece_preflight_document('c2', $html, '#piece-canvas{width:100%;height:100%;}', $js);
+    assert_contains($result['js'], 'runtime.drawImageCover');
 });
 
 test('C2 preflight rejects raw canvas image APIs', function () {
@@ -774,6 +801,127 @@ test('starter templates expose editable foreground and full-frame background siz
 
     assert_contains($byKey['svg_default'], '<image href="/image/3" x="0" y="0" width="800" height="600"');
     assert_contains($byKey['svg_default'], '<image href="/image/2" x="312" y="212" width="176" height="176"');
+});
+
+test('starter templates use cover helpers for full-frame raster backgrounds', function () {
+    $templates = require __DIR__ . '/../public/app/config/art-starter-templates.php';
+    $byKey = [];
+    foreach ($templates as $template) {
+        $byKey[(string) $template['template_key']] = (string) $template['html_code'] . "\n" . (string) $template['css_code'] . "\n" . (string) $template['js_code'];
+    }
+
+    assert_contains($byKey['p5_default'], 'function drawImageCover');
+    assert_contains($byKey['p5_default'], 'drawImageCover(backdrop, 0, 0, backgroundWidth, backgroundHeight)');
+    assert_contains($byKey['c2_default'], 'runtime.drawImageCover(backdrop, 0, 0, backgroundWidth, backgroundHeight)');
+    assert_contains($byKey['three_default'], 'function coverTexture');
+    assert_contains($byKey['three_default'], "textureLoader.load('/image/3'");
+    assert_contains($byKey['three_default'], 'camera.add(backgroundPlane)');
+});
+
+test('piece export document creates standalone download HTML without presentation controls', function () {
+    $_SERVER['HTTP_HOST'] = 'example.test';
+    $_SERVER['HTTPS'] = 'on';
+    $piece = ['id' => 42, 'title' => 'Portable Test Piece', 'engine' => 'p5'];
+    $version = [
+        'engine' => 'p5',
+        'html_code' => '<div id="canvas-container"></div>',
+        'css_code' => '#canvas-container{width:100%;height:100%;background:url("/media/example.png");}',
+        'generated_code' => "let img; window.sketch = (p) => { p.preload = () => { img = p.loadImage('/image/2'); }; p.setup = () => { p.createCanvas(100, 100); }; p.draw = () => { p.background(0); }; };",
+    ];
+
+    $document = piece_export_document($piece, $version);
+    assert_contains($document, '<!DOCTYPE html>');
+    assert_contains($document, '<body>');
+    assert_contains($document, '<div id="runtime-root"><div id="canvas-container"></div></div>');
+    assert_contains($document, 'https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js');
+    assert_contains($document, 'https://example.test/image/2');
+    assert_contains($document, 'https://example.test/media/example.png');
+    assert_contains($document, 'window.sketch = (p)');
+    assert_not_contains($document, 'Immersive View');
+    assert_not_contains($document, 'copyEmbed');
+    assert_eq(piece_export_filename($piece), 'portable-test-piece.html');
+});
+
+test('piece export document uses CDN imports for every engine', function () {
+    $cases = [
+        'p5' => 'https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js',
+        'c2' => 'https://cdn.jsdelivr.net/npm/c2.js@1.0.9/dist/c2.min.js',
+        'three' => 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js',
+        'aframe' => 'https://aframe.io/releases/1.6.0/aframe.min.js',
+    ];
+
+    foreach ($cases as $engine => $cdn) {
+        $document = piece_export_document(
+            ['id' => 7, 'title' => strtoupper($engine), 'engine' => $engine],
+            [
+                'engine' => $engine,
+                'html_code' => $engine === 'aframe'
+                    ? '<a-scene id="scene" embedded><a-box position="0 1 -3"></a-box></a-scene>'
+                    : ($engine === 'c2' ? '<canvas id="piece-canvas"></canvas>' : '<div id="' . ($engine === 'three' ? 'container' : 'canvas-container') . '"></div>'),
+                'css_code' => '',
+                'generated_code' => $engine === 'aframe'
+                    ? 'window.sketch = ({ AFRAME, scene, startFrame }) => { startFrame(() => {}); };'
+                    : 'window.sketch = () => {};',
+            ]
+        );
+        assert_contains($document, $cdn, $engine);
+    }
+
+    $aframeDocument = piece_export_document(
+        ['id' => 90, 'title' => 'A-Frame Piece', 'engine' => 'aframe'],
+        [
+            'engine' => 'aframe',
+            'html_code' => '<a-scene id="scene" embedded><a-sky color="#000"></a-sky></a-scene>',
+            'css_code' => '#scene{width:100%;height:100%;}',
+            'generated_code' => 'window.sketch = ({ AFRAME, scene, startFrame }) => { startFrame(() => {}); };',
+        ]
+    );
+    assert_not_contains($aframeDocument, '/assets/js/aframe.min.js');
+    assert_contains($aframeDocument, '<a-scene id="scene" embedded>');
+    assert_contains($aframeDocument, 'window.sketch = ({ AFRAME, scene, startFrame })');
+    assert_contains($aframeDocument, 'window.sketch({ AFRAME: window.AFRAME, scene, startFrame })');
+});
+
+test('piece export document keeps Three, A-Frame, and C2 interactive in downloaded HTML', function () {
+    $threeDocument = piece_export_document(
+        ['id' => 83, 'title' => 'Interactive Three', 'engine' => 'three'],
+        [
+            'engine' => 'three',
+            'html_code' => '<div id="container"></div>',
+            'css_code' => '#container{width:100%;height:100%;}',
+            'generated_code' => "window.sketch = ({ THREE, canvas, startFrame }) => { const scene = new THREE.Scene(); const camera = new THREE.PerspectiveCamera(60, canvas.width / canvas.height, 0.1, 100); camera.position.z = 5; const renderer = new THREE.WebGLRenderer({ canvas }); renderer.setSize(canvas.width, canvas.height); startFrame(() => renderer.render(scene, camera)); };",
+        ]
+    );
+    assert_contains($threeDocument, 'instrumentedThree.WebGLRenderer');
+    assert_contains($threeDocument, 'new OrbitControls(state.camera, canvas)');
+    assert_contains($threeDocument, 'userHasInteracted');
+    assert_contains($threeDocument, "canvas.style.touchAction = 'none'");
+
+    $aframeDocument = piece_export_document(
+        ['id' => 90, 'title' => 'Interactive A-Frame', 'engine' => 'aframe'],
+        [
+            'engine' => 'aframe',
+            'html_code' => '<a-scene id="scene" embedded><a-box id="target" position="0 1 -3"></a-box></a-scene>',
+            'css_code' => '#scene{width:100%;height:100%;}',
+            'generated_code' => "window.sketch = ({ scene }) => { scene.querySelector('#target')?.addEventListener('click', () => {}); };",
+        ]
+    );
+    assert_contains($aframeDocument, 'https://aframe.io/releases/1.6.0/aframe.min.js');
+    assert_contains($aframeDocument, "addEventListener('click'");
+    assert_contains($aframeDocument, 'window.sketch({ AFRAME: window.AFRAME, scene, startFrame })');
+
+    $c2Document = piece_export_document(
+        ['id' => 91, 'title' => 'Interactive C2', 'engine' => 'c2'],
+        [
+            'engine' => 'c2',
+            'html_code' => '<canvas id="piece-canvas"></canvas>',
+            'css_code' => '#piece-canvas{width:100%;height:100%;}',
+            'generated_code' => "window.sketch = ({ canvas, startFrame }) => { canvas.addEventListener('pointerdown', () => {}); startFrame(() => {}); };",
+        ]
+    );
+    assert_contains($c2Document, 'https://cdn.jsdelivr.net/npm/c2.js@1.0.9/dist/c2.min.js');
+    assert_contains($c2Document, "canvas.addEventListener('pointerdown'");
+    assert_contains($c2Document, 'window.sketch({ c2: window.c2, canvas, startFrame, loadImage, drawImage, drawImageCover })');
 });
 
 echo "\n=== Results ===\n";

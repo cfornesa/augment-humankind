@@ -25,6 +25,44 @@ options regardless of session context. -->
 
 ---
 
+## 2026-07-02 — Art Piece Templates, CMS Media, And Portable HTML Exports
+
+### Decision
+Art piece starter templates are database-owned installation data, edited under
+`/admin/pieces?tab=templates` rather than as an action button. The default
+templates are meant to be usable immediately after setup and educational by
+default: each engine can demonstrate optional CMS-owned media, using `/image/2`
+as an explicitly resizable foreground example and `/image/3` as a full-frame
+background example. Image source declarations do not control rendered size;
+each engine sizes media where drawing/rendering happens.
+
+Generated and hand-authored piece code remains CMS-runtime compatible through
+the `window.sketch` contract. Existing media is allowed only through safe
+same-origin CMS paths (`/image/{id}`, `/media/...`, `/api/media-assets/{id}`);
+remote URLs, scripts, iframes, arbitrary fetch/storage/navigation, and raw C2
+canvas context access remain blocked.
+
+Public piece pages now expose `GET /pieces/{id}/download`, returning a
+single-file HTML export for the current or selected version. Exports include
+engine CDN imports and rewrite CMS media paths to absolute site URLs. They are
+portable to another browser context with internet access, not offline bundles.
+Exports intentionally omit immersive/admin/embed controls. Three.js exports
+mirror the CMS viewer's interaction layer by instrumenting scene/camera/renderer
+creation and attaching OrbitControls; A-Frame and C2 interactive exports pass
+the live scene/canvas through so authored events remain interactive.
+
+### Verification
+- `php -l public/app/helpers/piece-render.php`
+- `php tests/art-piece-generation.php` — 91 passed
+- `node --check public/assets/js/piece-runtime.js`
+- `git diff --check`
+- Live route check: `/pieces/83/download` returned `200 OK`, correct attachment
+  filename, Three.js CDN import map, and the OrbitControls export bootstrap.
+
+### Known Limit
+Downloaded files depend on CDN libraries and live CMS media URLs. ZIP/offline
+bundling is intentionally deferred.
+
 ## 2026-07-02 — pages.meta_description / og_description Widened to TEXT
 
 ### Decision

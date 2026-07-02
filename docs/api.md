@@ -64,6 +64,24 @@ On success, the handler:
 
 No separate success URL is added.
 
+## Forms CMS
+
+Forms are database-owned records managed under `/admin/forms`. Setup seeds two
+default forms:
+
+- Contact Form — required on the Contact system page; emails submissions to the
+  configured recipient and does not store payloads.
+- Newsletter Signup — stores email addresses in `newsletter_subscribers` with
+  consent defaulting to true; it does not require a recipient email and does
+  not send email by default.
+
+Form settings can store recipient email, reCAPTCHA site key, encrypted
+reCAPTCHA secret, and minimum score in the database. Existing `.env` values are
+runtime fallback/backfill values when database settings are empty.
+
+Page sections can include form sections. Required system form sections, such as
+the Contact Form on the Contact page, cannot be deleted from that page.
+
 ## Public User Routes
 
 - `GET /user/login` — login form (OAuth buttons: GitHub, Google)
@@ -222,12 +240,25 @@ Migrated platform generative art pieces live under their own namespace:
 
 - `GET /pieces`
 - `GET /pieces/[id]`
+- `GET /pieces/[id]/download`
 - `GET /exhibits`
 - `GET /exhibits/[slug]`
 
 `/pieces` lists all active art pieces. `/pieces/[id]` renders an individual
 piece with its current version's generated code. Numeric IDs are canonical
 because the migrated platform `art_pieces` records do not include slugs.
+`/pieces/[id]/download` returns the current version as a single downloadable
+HTML file, with engine imports, body HTML, CSS, JavaScript, and a small
+standalone bootstrap. It accepts `?version=[version-id]` to export a specific
+version. The export intentionally omits immersive/admin/embed controls and
+rewrites CMS image/media references such as `/image/2` to absolute site URLs.
+Downloaded files use CDN library imports for p5.js, C2.js, Three.js, and
+A-Frame, so they are portable to another browser context with internet access
+but are not offline bundles. The exported bootstrap preserves engine-native
+interactivity: A-Frame receives its live `<a-scene>`, C2 receives the real
+canvas plus safe media helpers, and Three.js downloads attach OrbitControls to
+the exported scene/camera/renderer so drag/touch orbiting works even when the
+piece code itself only animates.
 
 `/exhibits` lists migrated `platform_exhibits` rows (name, description, item
 count, and a thumbnail drawn from the first item). `/exhibits/[slug]` renders
@@ -314,13 +345,16 @@ through same-origin paths:
 Engine-specific safe media examples:
 
 - p5.js: `p.preload = () => { img = p.loadImage('/image/2'); };`
-  then `p.image(img, x, y, width, height)`
+  then `p.image(...)`, or a local `drawImageCover(...)` helper for full-frame
+  cover-cropped backgrounds
 - Three.js: `new THREE.TextureLoader().load('/image/2')`, then map the
-  texture onto explicit geometry dimensions
+  texture onto explicit geometry dimensions; full-frame background textures
+  should configure repeat/offset cover behavior
 - A-Frame: `<a-assets><img id="asset" src="/image/2"></a-assets>` and
   `src="#asset"` or `material="src: #asset"` on a rendered entity
 - SVG: `<image href="/image/2" x="0" y="0" width="800" height="600" />`
-- C2.js: `runtime.loadImage('/image/2')` and `runtime.drawImage(...)`
+- C2.js: `runtime.loadImage('/image/2')`, `runtime.drawImage(...)`, and
+  `runtime.drawImageCover(...)`
 
 Media asset declarations only define the source image. Rendered size belongs
 to the engine's drawing surface: p5/C2 draw calls use their width/height
@@ -328,6 +362,12 @@ arguments, SVG `<image>` uses `x/y/width/height`, Three.js uses geometry size,
 and A-Frame uses the dimensions of the entity that references the asset. Full
 background examples use the current canvas/frame dimensions or, for 3D engines,
 camera-aware plane dimensions computed from FOV, aspect ratio, and distance.
+Stored piece code remains CMS-runtime compatible and must keep its
+`window.sketch` contract. Portable standalone files are produced by the
+download/export wrapper rather than by adding document, script, import, or
+presentation-control code to the stored HTML/CSS/JS blocks. Export-only URL
+rewriting converts CMS media paths into absolute live site URLs; stored code
+continues to use same-origin CMS paths.
 
 Remote URLs, `fetch`, XHR, imports, scripts, iframes, arbitrary asset-loading
 tags, storage access, page navigation, and parent/top-window access remain

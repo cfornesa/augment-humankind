@@ -141,6 +141,7 @@ $publicRoutes = [
     ['GET', '/portfolio/exhibit/([a-z0-9-]+)',       [PortfolioController::class, 'exhibit']],
 
     ['GET', '/pieces',                               [PiecesController::class, 'index']],
+    ['GET', '/pieces/([0-9]+)/download',             [PiecesController::class, 'download']],
     ['GET', '/pieces/([0-9]+)',                      [PiecesController::class, 'show']],
     ['GET', '/collections',                          [CollectionsController::class, 'index']],
     ['GET', '/collections/([a-z0-9-]+)',             [CollectionsController::class, 'show']],

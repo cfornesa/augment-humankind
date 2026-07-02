@@ -43,6 +43,7 @@ this instance's content.
 - `/search` — public blog post search
 - `/pieces` — public gallery listing of generative art pieces
 - `/pieces/[id]` — public render page of a generative art piece
+- `/pieces/[id]/download` — downloadable single-file HTML export for the piece's current version, using CDN engine imports and absolute CMS media URLs
 - `/collections` and `/collections/[slug]` — public archive/detail for migrated platform art collections
 - `/embed/pieces/[id]` — public embeddable HTML of a generative art piece
 - `/embed/pieces/[id]/data` — public JSON feed of art piece parameters and source code
@@ -65,7 +66,8 @@ Admin routes are flat and protected by OAuth login:
 - `/admin/site-identity` — site settings and assets management
 - `/admin/user-profiles` — admin users, AI vendor configurations, API keys, and profile photo uploads
 - `/admin/platform-connections` — syndication platforms (Bluesky, WordPress, Blogger, Substack, LinkedIn, Meta) with OAuth credential acquisition and a diagnostics page
-- `/admin/pieces` — platform generative art pieces and version history (with AI-driven generation at `/admin/pieces/generate`, including C2.js Interactive and A-Frame Experimental modes, and AI refinement at `/admin/pieces/refine-ai`)
+- `/admin/forms` — database-owned Contact Form and Newsletter Signup records, fields, signups, and form settings
+- `/admin/pieces` — platform generative art pieces, version history, and starter templates (with AI-driven generation at `/admin/pieces/generate`, including C2.js Interactive and A-Frame Experimental modes, and AI refinement at `/admin/pieces/refine-ai`)
 - `/admin/ai/process` — AI text improvement endpoint (used by the Tiptap editor)
 - `/admin/ai/describe-image` — AI alt-text generation endpoint (used by the media library)
 - `/admin/trash` — trash bins for soft-deleted content
@@ -115,6 +117,39 @@ a fixed `visualViewport`-sized mode, page scrolling is locked, safe-area insets
 are respected, and the button state uses "Expand immersive view" / "Return to
 page" language instead of promising true browser fullscreen.
 
+## Art Piece Downloads And Templates
+
+Art pieces store CMS-runtime-compatible HTML/CSS/JS, but public piece pages
+also expose `Download HTML`. The downloaded file is a complete standalone HTML
+document with the current version's code, engine imports, a small bootstrap,
+and no admin, embed, or immersive presentation controls.
+
+Downloaded files reference CDN runtimes for p5.js, C2.js, Three.js, and
+A-Frame, and rewrite CMS media references such as `/image/2`, `/media/...`, and
+`/api/media-assets/...` to absolute site URLs. The files therefore work in
+another browser context with internet access to the CDN and live CMS media
+routes, but they are not offline bundles.
+
+The export bootstrap preserves interaction semantics for the engines that need
+runtime help:
+
+- Three.js downloads attach OrbitControls to the exported scene, camera, and
+  renderer so drag/touch orbiting works even when the authored piece only
+  animates.
+- A-Frame downloads receive the live `<a-scene>` and can use authored scene
+  events.
+- C2.js interactive downloads receive the real canvas, `startFrame`, and safe
+  image helpers, so authored pointer/click/touch/drag handlers continue to
+  work.
+
+Starter templates are database-owned and seeded by `scripts/setup-database.php`.
+In `/admin/pieces`, the `Art Pieces` subtab holds the current piece list and
+actions; the `Templates` subtab edits starter template metadata and
+HTML/CSS/JS. The seeded templates demonstrate optional CMS media usage with
+`/image/2` as a resizable foreground example and `/image/3` as a full-frame
+background example, using engine-appropriate sizing rather than asset-tag
+dimensions.
+
 ## Deployed File Layout
 
 The production document root should include:
@@ -140,13 +175,15 @@ homepage should serve from the root once the domain points at `public_html`.
 This step is specific to Hostinger's product split between Website Builder
 and PHP hosting — other hosts don't have this concern.
 
-## Contact Form Configuration
+## Forms Configuration
 
-The `/contact` form uses Google reCAPTCHA v3 and standard SMTP — any
-provider works (Gmail, AWS SES, Mailgun, Hostinger, etc.), since
-`SMTP_USERNAME` does not need to match `SMTP_FROM_EMAIL`. Create a protected
-`.env` file in the deployed document root using `env.example` as the
-template.
+The `/contact` page is a managed system page with a required Contact Form
+section. Forms are configured in `/admin/forms`; `.env` values are used as
+fallback/backfill when database settings are empty. The Contact Form uses Google
+reCAPTCHA v3 and standard SMTP — any provider works (Gmail, AWS SES, Mailgun,
+Hostinger, etc.), since `SMTP_USERNAME` does not need to match
+`SMTP_FROM_EMAIL`. Create a protected `.env` file in the deployed document root
+using `env.example` as the template.
 
 Required values:
 
@@ -164,6 +201,12 @@ Required values:
   same address as `SMTP_FROM_EMAIL`
 
 Do not commit real secret values.
+
+The installer seeds both Contact Form and Newsletter Signup. Contact and other
+ordinary forms email the configured recipient and do not store payloads.
+Newsletter Signup stores email/consent rows in `newsletter_subscribers`,
+defaults consent to true, does not require a recipient email, and does not send
+email by default.
 
 For reCAPTCHA, create a Google reCAPTCHA v3 property for the public domain.
 Use the generated site key for `RECAPTCHA_SITE_KEY` and the generated secret

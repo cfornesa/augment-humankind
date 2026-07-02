@@ -57,13 +57,30 @@ window.sketch = (p) => {
     }
   }
 
+  function drawImageCover(img, x, y, width, height) {
+    const sourceAspect = img.width / img.height;
+    const targetAspect = width / height;
+    let sx = 0;
+    let sy = 0;
+    let sw = img.width;
+    let sh = img.height;
+    if (sourceAspect > targetAspect) {
+      sw = img.height * targetAspect;
+      sx = (img.width - sw) / 2;
+    } else {
+      sh = img.width / targetAspect;
+      sy = (img.height - sh) / 2;
+    }
+    p.image(img, x, y, width, height, sx, sy, sw, sh);
+  }
+
   p.draw = () => {
     p.noStroke();
     if (backdrop) {
       const backgroundWidth = p.width;
       const backgroundHeight = p.height;
       p.tint(228, 35, 92, 62);
-      p.image(backdrop, 0, 0, backgroundWidth, backgroundHeight);
+      drawImageCover(backdrop, 0, 0, backgroundWidth, backgroundHeight);
       p.noTint();
     } else {
       p.fill(228, 35, 7, 7);
@@ -128,7 +145,7 @@ window.sketch = (runtime) => {
     renderer.clear('#08101c');
     const backgroundWidth = canvas.width;
     const backgroundHeight = canvas.height;
-    runtime.drawImage(backdrop, 0, 0, backgroundWidth, backgroundHeight);
+    runtime.drawImageCover(backdrop, 0, 0, backgroundWidth, backgroundHeight);
     const cx = canvas.width / 2;
     const cy = canvas.height / 2;
     const unit = Math.min(canvas.width, canvas.height);
@@ -189,7 +206,7 @@ window.sketch = (runtime) => {
     renderer.clear('#0d0b18');
     const backgroundWidth = canvas.width;
     const backgroundHeight = canvas.height;
-    runtime.drawImage(backdrop, 0, 0, backgroundWidth, backgroundHeight);
+    runtime.drawImageCover(backdrop, 0, 0, backgroundWidth, backgroundHeight);
     const portraitWidth = Math.min(canvas.width, canvas.height) * 0.18;
     const portraitHeight = portraitWidth;
     const anchor = marks[marks.length - 1] || { x: canvas.width * 0.5, y: canvas.height * 0.5 };
@@ -231,6 +248,7 @@ window.sketch = (runtime) => {
   const camera = new THREE.PerspectiveCamera(48, width / height, 0.1, 100);
   camera.position.set(0, 2.4, 7.5);
   camera.lookAt(0, 0, 0);
+  scene.add(camera);
 
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -242,19 +260,38 @@ window.sketch = (runtime) => {
   key.position.set(4, 7, 5);
   scene.add(key);
 
-  const portraitTexture = new THREE.TextureLoader().load('/image/2');
+  function coverTexture(texture, planeWidth, planeHeight) {
+    const image = texture.image;
+    if (!image?.width || !image?.height) return;
+    const imageAspect = image.width / image.height;
+    const planeAspect = planeWidth / planeHeight;
+    texture.wrapS = THREE.ClampToEdgeWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+    if (imageAspect > planeAspect) {
+      texture.repeat.set(planeAspect / imageAspect, 1);
+      texture.offset.set((1 - texture.repeat.x) / 2, 0);
+    } else {
+      texture.repeat.set(1, imageAspect / planeAspect);
+      texture.offset.set(0, (1 - texture.repeat.y) / 2);
+    }
+    texture.needsUpdate = true;
+  }
+
+  const textureLoader = new THREE.TextureLoader();
+  const portraitTexture = textureLoader.load('/image/2');
   portraitTexture.colorSpace = THREE.SRGBColorSpace;
-  const backdropTexture = new THREE.TextureLoader().load('/image/3');
-  backdropTexture.colorSpace = THREE.SRGBColorSpace;
   const backgroundDepth = 10;
   const backgroundHeight = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * backgroundDepth;
   const backgroundWidth = backgroundHeight * camera.aspect;
+  const backdropTexture = textureLoader.load('/image/3', () => coverTexture(backdropTexture, backgroundWidth, backgroundHeight));
+  backdropTexture.colorSpace = THREE.SRGBColorSpace;
   const backgroundPlane = new THREE.Mesh(
     new THREE.PlaneGeometry(backgroundWidth, backgroundHeight),
     new THREE.MeshBasicMaterial({ map: backdropTexture, color: 0xffffff })
   );
-  backgroundPlane.position.set(0, 1.1, camera.position.z - backgroundDepth);
-  scene.add(backgroundPlane);
+  backgroundPlane.name = 'camera_background_photo';
+  backgroundPlane.position.set(0, 0, -backgroundDepth);
+  camera.add(backgroundPlane);
 
   const core = new THREE.Mesh(
     new THREE.IcosahedronGeometry(1.05, 2),
