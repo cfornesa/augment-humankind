@@ -49,6 +49,14 @@ ob_start();
         <fieldset class="form-fieldset">
             <legend>Metadata</legend>
             <div class="form-row">
+                <label for="page-description">Description</label>
+                <textarea id="page-description" name="description" rows="8"><?= htmlspecialchars($page['description'] ?? '', ENT_QUOTES, 'UTF-8') ?></textarea>
+                <p class="admin-hint">Shown on the page itself (not in search results) when the toggle below is on. Blank lines create separate paragraphs.</p>
+            </div>
+            <div class="toggle-group">
+                <label class="toggle-opt"><input type="checkbox" name="show_description_section" value="1" <?= !empty($page['show_description_section']) ? 'checked' : '' ?>> Show description as the page's first section</label>
+            </div>
+            <div class="form-row">
                 <label for="page-meta-title">Meta Title</label>
                 <input id="page-meta-title" type="text" name="meta_title" value="<?= htmlspecialchars($page['meta_title'] ?? '', ENT_QUOTES, 'UTF-8') ?>">
             </div>

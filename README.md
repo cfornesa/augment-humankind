@@ -191,48 +191,70 @@ the database.
 
 ### Setting up a fresh database
 
-`schema.sql` alone is **not** sufficient — it only covers the native
-portfolio/CMS tables and has a forward dependency (`post_sections` → `posts`)
-on a table created later in the sequence. Apply these files, against an
-empty database, in exactly this order (verified end-to-end against a fresh
-MySQL 9 database with zero errors):
+One command handles everything — a completely empty database or an existing
+one that needs to catch up:
 
 ```sh
-mysql -h "$DB_HOST" -u "$DB_USER" -p "$DB_NAME" < schema.sql
-mysql -h "$DB_HOST" -u "$DB_USER" -p "$DB_NAME" < migrations/2026-06-14-platform-assimilation.sql
-mysql -h "$DB_HOST" -u "$DB_USER" -p "$DB_NAME" < migrations/2026-06-15-comments-polymorphic.sql
-mysql -h "$DB_HOST" -u "$DB_USER" -p "$DB_NAME" < docs/migrations/2026-06-17-admin-ia-and-canonical-origin.sql
-mysql -h "$DB_HOST" -u "$DB_USER" -p "$DB_NAME" < docs/migrations/2026-06-18-ai-personas.sql
-mysql -h "$DB_HOST" -u "$DB_USER" -p "$DB_NAME" < docs/migrations/2026-06-18-operational-hardening.sql
-mysql -h "$DB_HOST" -u "$DB_USER" -p "$DB_NAME" < docs/migrations/2026-06-19-media-draft-confirm.sql
-mysql -h "$DB_HOST" -u "$DB_USER" -p "$DB_NAME" < docs/migrations/2026-06-19-exhibits-collections-updated-at.sql
-mysql -h "$DB_HOST" -u "$DB_USER" -p "$DB_NAME" < docs/migrations/2026-06-19-portfolio-status.sql
-mysql -h "$DB_HOST" -u "$DB_USER" -p "$DB_NAME" < docs/migrations/2026-06-20-art-piece-version-ai-attribution.sql
-mysql -h "$DB_HOST" -u "$DB_USER" -p "$DB_NAME" < docs/migrations/2026-07-01-custom-css-column.sql
-php scripts/run-sql.php docs/migrations/2026-07-01-theme-code-columns.sql
-php scripts/run-sql.php docs/migrations/2026-07-01-site-theme-snapshots.sql
-php scripts/run-sql.php docs/migrations/2026-07-01-site-theme-code.sql
-php scripts/seed-theme-code-table.php
-mysql -h "$DB_HOST" -u "$DB_USER" -p "$DB_NAME" < scripts/add-post-sections-table.sql
-php scripts/apply-portfolio-taxonomy-schema.php
-php scripts/apply-portfolio-ordering-schema.php
+php scripts/setup-database.php
 ```
 
-None of the `.sql` files in this list are safe to re-run against a database
-that already has their columns (plain MySQL doesn't support
-`ADD COLUMN IF NOT EXISTS`) — run each exactly once on a fresh database. The
-two `apply-*.php` scripts at the end *are* idempotent and safe to re-run.
+The installer is **idempotent and probe-based**: every table, column, and
+index is checked against `INFORMATION_SCHEMA` before being created, so the
+same command works on an empty database, resumes after a partial failure,
+and safely no-ops on a database that is already up to date. It never
+destroys data. Flags:
+
+- `--dry-run` — report which schema changes are applied/missing without
+  writing anything. Safe to run against production.
+- `--with-example-content` — additionally seed example `/`, `/services`, and
+  `/notes` pages and the Celestial theme code. Each seed is skipped when the
+  target content already exists, so it can never overwrite a customized
+  site. Without this flag those routes fall back to generic placeholder
+  copy until you create real pages from the admin Pages screen.
+
+Process environment variables always win over `.env`, so a different
+database can be targeted without editing config:
+
+```sh
+DB_HOST=127.0.0.1 DB_NAME=my_new_site DB_USER=root DB_PASS=... php scripts/setup-database.php
+```
+
+The installer supersedes the old manual `mysql < file.sql` sequence, which
+(a) fails on MySQL 9.x local auth, (b) breaks on a fresh database because
+`schema.sql` was rolled forward and now overlaps two later migrations, and
+(c) omitted `docs/migrations/2026-06-21-art-piece-version-draft-attempts.sql`
+and `docs/migrations/2026-07-02-system-page-identity.sql`. The dated files in
+`migrations/` and `docs/migrations/` remain the documentation of record for
+each change; the installer is the mechanism that applies them.
+
+### Multi-site deployments
+
+This codebase is designed to be copied as-is into any number of independent
+site deployments. Each deployment gets its own database, `.env`, and OAuth
+apps — no code changes. To stand up a new site: copy the code, fill out
+`.env`, run `php scripts/setup-database.php`, then sign in at `/admin` to
+complete first-run setup. To keep an existing deployment aligned after
+pulling code updates: run `php scripts/setup-database.php` again.
+
+### Adding a schema change
+
+Every future schema change must ship as **both**:
+
+1. A new dated file in `docs/migrations/YYYY-MM-DD-name.sql` — the
+   documentation of record.
+2. One probe-guarded step appended to the manifest in
+   `scripts/setup-database.php` — the mechanism that applies it everywhere.
+
+`schema.sql` is **frozen** — do not roll new changes into it. It remains the
+bootstrap for the twelve core tables only; everything after it is a manifest
+step. This keeps `git pull && php scripts/setup-database.php` sufficient to
+align every deployment.
 
 The remaining files in `scripts/*.sql` (`add-wrapper-class-column.sql`,
 `add-exhibit-content-slide.sql`) and `scripts/migrate-home-nav-label.sql` are
 **not** part of fresh-install setup — their columns already live in
 `schema.sql` for new installs, and the nav-label script is a one-off content
-fixup for this instance's pre-existing data. They only matter when patching
-an older, already-deployed database that predates those columns. Likewise,
-`seed_homepage.sql` and `seed_phase2_pages.sql` are optional example content
-for `/`, `/services`, and `/notes`, not required schema — without them, those
-routes fall back to generic placeholder copy until you create real pages
-from the admin Pages screen.
+fixup for this instance's pre-existing data.
 
 ## Media Uploads
 

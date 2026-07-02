@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 class Page
 {
+    private static ?bool $systemKeyColumnExists = null;
+    private static ?bool $descriptionColumnsExist = null;
+    private static ?bool $slugRedirectTableExists = null;
+
     private const RESERVED_SLUGS = [
         'admin', 'api', 'atom', 'blog', 'categories', 'contact', 'embed',
         'export', 'feed.json', 'feed.xml', 'feeds', 'home', 'image', 'jsonfeed',
@@ -11,8 +15,31 @@ class Page
         'sign-up', 'users',
     ];
 
-    /** The only two pages that can never be deleted — their slugs carry the
-     * mandatory Hero/CTA and About top sections rendered in managed_page.php. */
+    private const SYSTEM_PAGES = [
+        'home' => [
+            'title' => 'Home',
+            'slug' => 'home',
+            'status' => 'published',
+            'template' => 'standard',
+            'nav_label' => 'Home',
+            'show_in_nav' => true,
+            'sort_order' => 0,
+        ],
+        'about' => [
+            'title' => 'About',
+            'slug' => 'about',
+            'aliases' => ['bio'],
+            'status' => 'published',
+            'template' => 'standard',
+            'nav_label' => null,
+            'show_in_nav' => false,
+            'sort_order' => 0,
+            'show_description_section' => 1,
+        ],
+    ];
+
+    /** Backward-compatible slug fallback for databases not yet migrated to
+     * pages.system_key. */
     public const PROTECTED_SLUGS = ['home', 'about'];
 
     public static function isProtectedSlug(string $slug): bool
@@ -20,26 +47,66 @@ class Page
         return in_array($slug, self::PROTECTED_SLUGS, true);
     }
 
-    /** Idempotent, self-healing: ensures the About system page exists.
-     * Home is assumed to already exist (seeded by earlier migrations). */
+    public static function isSystemPage(array $page): bool
+    {
+        $systemKey = (string) ($page['system_key'] ?? '');
+        if ($systemKey !== '') {
+            return isset(self::SYSTEM_PAGES[$systemKey]);
+        }
+
+        return self::isProtectedSlug((string) ($page['slug'] ?? ''));
+    }
+
+    public static function systemKeyForPage(array $page): ?string
+    {
+        $systemKey = (string) ($page['system_key'] ?? '');
+        if ($systemKey !== '') {
+            return isset(self::SYSTEM_PAGES[$systemKey]) ? $systemKey : null;
+        }
+
+        $slug = (string) ($page['slug'] ?? '');
+        return self::isProtectedSlug($slug) ? $slug : null;
+    }
+
+    /** Idempotent, self-healing: ensures required system pages exist and have
+     * stable identity when the database supports pages.system_key. */
     public static function ensureSystemPages(): void
     {
-        if (self::findBySlug('about') === false) {
-            self::create([
-                'title' => 'About',
-                'slug' => 'about',
-                'status' => 'published',
-                'template' => 'standard',
-                'nav_label' => null,
-                'show_in_nav' => false,
+        self::ensureSystemStorageReady();
+        self::backfillSystemKeys();
+        self::quarantineSystemSlugDuplicates();
+
+        foreach (self::SYSTEM_PAGES as $systemKey => $defaults) {
+            if (self::findBySystemKey($systemKey) !== false) {
+                continue;
+            }
+
+            if (self::findBySlug((string) $defaults['slug']) !== false) {
+                continue;
+            }
+
+            self::create($defaults + [
+                'system_key' => $systemKey,
                 'meta_title' => null,
                 'meta_description' => null,
                 'og_title' => null,
                 'og_description' => null,
                 'og_image' => null,
-                'sort_order' => 0,
             ]);
         }
+    }
+
+    private static function normalizeSlug(string $slug): string
+    {
+        if (function_exists('slugify')) {
+            return slugify($slug);
+        }
+
+        $slug = mb_strtolower($slug, 'UTF-8');
+        $slug = preg_replace('/[^\p{L}\p{N}\s-]/u', '', $slug) ?? '';
+        $slug = preg_replace('/[\s_]+/', '-', $slug) ?? '';
+        $slug = preg_replace('/-+/', '-', $slug) ?? '';
+        return trim($slug, '-');
     }
 
     public static function all(): array
@@ -70,6 +137,18 @@ class Page
     {
         $stmt = db()->prepare('SELECT * FROM pages WHERE slug = ? AND deleted_at IS NULL');
         $stmt->execute([$slug]);
+        return $stmt->fetch();
+    }
+
+    public static function findBySystemKey(string $systemKey): array|false
+    {
+        if (!self::hasSystemKeyColumn()) {
+            $defaults = self::SYSTEM_PAGES[$systemKey] ?? null;
+            return $defaults ? self::findBySlug((string) $defaults['slug']) : false;
+        }
+
+        $stmt = db()->prepare('SELECT * FROM pages WHERE system_key = ? AND deleted_at IS NULL LIMIT 1');
+        $stmt->execute([$systemKey]);
         return $stmt->fetch();
     }
 
@@ -129,13 +208,12 @@ class Page
 
     public static function create(array $data): int
     {
-        $stmt = db()->prepare(
-            'INSERT INTO pages
-                (title, slug, status, template, nav_label, show_in_nav,
-                 meta_title, meta_description, og_title, og_description, og_image, sort_order)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-        );
-        $stmt->execute([
+        $columns = [
+            'title', 'slug', 'status', 'template', 'nav_label', 'show_in_nav',
+            'meta_title', 'meta_description', 'og_title', 'og_description',
+            'og_image', 'sort_order',
+        ];
+        $values = [
             $data['title'],
             $data['slug'],
             $data['status'],
@@ -148,19 +226,38 @@ class Page
             $data['og_description'] ?: null,
             $data['og_image'] ?: null,
             $data['sort_order'] ?? 0,
-        ]);
+        ];
+
+        if (self::hasSystemKeyColumn()) {
+            array_unshift($columns, 'system_key');
+            array_unshift($values, $data['system_key'] ?? null);
+        }
+
+        if (self::hasDescriptionColumns()) {
+            $columns[] = 'description';
+            $values[] = ($data['description'] ?? '') !== '' ? $data['description'] : null;
+            $columns[] = 'show_description_section';
+            $values[] = !empty($data['show_description_section']) ? 1 : 0;
+        }
+
+        $stmt = db()->prepare(
+            'INSERT INTO pages (' . implode(', ', $columns) . ')
+             VALUES (' . implode(', ', array_fill(0, count($columns), '?')) . ')'
+        );
+        $stmt->execute($values);
         return (int) db()->lastInsertId();
     }
 
     public static function update(int $id, array $data): void
     {
-        $stmt = db()->prepare(
-            'UPDATE pages SET
-                title = ?, slug = ?, status = ?, template = ?, nav_label = ?, show_in_nav = ?,
-                meta_title = ?, meta_description = ?, og_title = ?, og_description = ?, og_image = ?, sort_order = ?
-             WHERE id = ?'
-        );
-        $stmt->execute([
+        $existing = self::find($id);
+
+        $assignments = [
+            'title = ?', 'slug = ?', 'status = ?', 'template = ?', 'nav_label = ?',
+            'show_in_nav = ?', 'meta_title = ?', 'meta_description = ?',
+            'og_title = ?', 'og_description = ?', 'og_image = ?', 'sort_order = ?',
+        ];
+        $values = [
             $data['title'],
             $data['slug'],
             $data['status'],
@@ -173,8 +270,29 @@ class Page
             $data['og_description'] ?: null,
             $data['og_image'] ?: null,
             $data['sort_order'] ?? 0,
-            $id,
-        ]);
+        ];
+
+        if (self::hasSystemKeyColumn()) {
+            $assignments[] = 'system_key = ?';
+            $values[] = $data['system_key'] ?? ($existing['system_key'] ?? null) ?? ($existing ? self::systemKeyForPage($existing) : null);
+        }
+
+        if (self::hasDescriptionColumns()) {
+            $assignments[] = 'description = ?';
+            $values[] = ($data['description'] ?? '') !== '' ? $data['description'] : null;
+            $assignments[] = 'show_description_section = ?';
+            $values[] = !empty($data['show_description_section']) ? 1 : 0;
+        }
+
+        $values[] = $id;
+        $stmt = db()->prepare(
+            'UPDATE pages SET ' . implode(', ', $assignments) . ' WHERE id = ?'
+        );
+        $stmt->execute($values);
+
+        if ($existing && self::isSystemPage($existing) && (string) $existing['slug'] !== (string) $data['slug']) {
+            self::recordSlugRedirect((string) $existing['slug'], $id, self::systemKeyForPage($existing));
+        }
     }
 
     public static function softDelete(int $id): void
@@ -194,7 +312,7 @@ class Page
     private static function guardAgainstDeletingProtected(int $id): void
     {
         $page = self::find($id);
-        if ($page && self::isProtectedSlug((string) $page['slug'])) {
+        if ($page && self::isSystemPage($page)) {
             throw new InvalidArgumentException('The Home and About pages cannot be deleted.');
         }
     }
@@ -229,7 +347,7 @@ class Page
 
     public static function validateSlug(string $slug, int $excludeId = 0): string
     {
-        $slug = slugify($slug);
+        $slug = self::normalizeSlug($slug);
         if ($slug === '') {
             throw new InvalidArgumentException('Slug is required.');
         }
@@ -248,9 +366,302 @@ class Page
 
     private static function isExistingSystemPage(string $slug, int $excludeId): bool
     {
+        if ($excludeId > 0 && self::isProtectedSlug($slug)) {
+            $page = self::find($excludeId);
+            if ($page && self::isSystemPage($page)) {
+                return true;
+            }
+        }
+
         $stmt = db()->prepare('SELECT id FROM pages WHERE slug = ?');
         $stmt->execute([$slug]);
         $existingId = $stmt->fetchColumn();
         return $existingId !== false && (int) $existingId === $excludeId;
+    }
+
+    public static function redirectForSlug(string $slug): array|false
+    {
+        $slug = self::normalizeSlug($slug);
+        if ($slug === '') {
+            return false;
+        }
+
+        if (self::hasSlugRedirectTable()) {
+            try {
+                $stmt = db()->prepare(
+                    'SELECT r.old_slug, p.slug AS target_slug
+                       FROM page_slug_redirects r
+                       JOIN pages p ON p.id = r.page_id
+                      WHERE r.old_slug = ?
+                        AND p.deleted_at IS NULL
+                        AND p.slug != r.old_slug
+                      LIMIT 1'
+                );
+                $stmt->execute([$slug]);
+                $redirect = $stmt->fetch();
+                if ($redirect) {
+                    return $redirect;
+                }
+            } catch (Throwable) {
+                // Fall through to default system slug lookup.
+            }
+        }
+
+        if (isset(self::SYSTEM_PAGES[$slug])) {
+            $page = self::findBySystemKey($slug);
+            if ($page && (string) $page['slug'] !== $slug) {
+                return ['old_slug' => $slug, 'target_slug' => (string) $page['slug']];
+            }
+        }
+
+        return false;
+    }
+
+    private static function backfillSystemKeys(): void
+    {
+        if (!self::hasSystemKeyColumn()) {
+            return;
+        }
+
+        foreach (self::SYSTEM_PAGES as $systemKey => $defaults) {
+            $existingSystemPage = self::findBySystemKey($systemKey);
+            $bestCandidate = self::findSystemBackfillCandidate($systemKey, $defaults);
+
+            if (
+                $existingSystemPage
+                && $bestCandidate
+                && (int) $existingSystemPage['id'] !== (int) $bestCandidate['id']
+                && (string) $existingSystemPage['slug'] === (string) $defaults['slug']
+                && (string) $bestCandidate['slug'] !== (string) $defaults['slug']
+            ) {
+                self::transferSystemKey((int) $existingSystemPage['id'], (int) $bestCandidate['id'], $systemKey);
+                self::recordSlugRedirect((string) $defaults['slug'], (int) $bestCandidate['id'], $systemKey);
+                continue;
+            }
+
+            if ($existingSystemPage !== false) {
+                continue;
+            }
+
+            if ($bestCandidate) {
+                self::assignSystemKey((int) $bestCandidate['id'], $systemKey);
+                if ((string) $bestCandidate['slug'] !== (string) $defaults['slug']) {
+                    self::recordSlugRedirect((string) $defaults['slug'], (int) $bestCandidate['id'], $systemKey);
+                }
+            }
+        }
+    }
+
+    private static function quarantineSystemSlugDuplicates(): void
+    {
+        if (!self::hasSystemKeyColumn()) {
+            return;
+        }
+
+        foreach (self::SYSTEM_PAGES as $systemKey => $defaults) {
+            $systemPage = self::findBySystemKey($systemKey);
+            if (!$systemPage || (string) $systemPage['slug'] === (string) $defaults['slug']) {
+                continue;
+            }
+
+            try {
+                $stmt = db()->prepare(
+                    'UPDATE pages
+                        SET status = ?, show_in_nav = 0
+                      WHERE slug = ?
+                        AND deleted_at IS NULL
+                        AND system_key IS NULL'
+                );
+                $stmt->execute(['draft', (string) $defaults['slug']]);
+            } catch (Throwable) {
+                continue;
+            }
+        }
+    }
+
+    private static function findSystemBackfillCandidate(string $systemKey, array $defaults): array|false
+    {
+        $defaultSlug = (string) $defaults['slug'];
+        $aliases = array_values(array_unique(array_merge([$defaultSlug], $defaults['aliases'] ?? [])));
+        $placeholders = implode(',', array_fill(0, count($aliases), '?'));
+
+        try {
+            $stmt = db()->prepare(
+                "SELECT *
+                   FROM pages
+                  WHERE deleted_at IS NULL
+                    AND system_key IS NULL
+                    AND slug IN ($placeholders)
+                  ORDER BY CASE WHEN slug != ? THEN 0 ELSE 1 END, id ASC
+                  LIMIT 1"
+            );
+            $stmt->execute([...$aliases, $defaultSlug]);
+            $candidate = $stmt->fetch();
+            if ($candidate) {
+                return $candidate;
+            }
+        } catch (Throwable) {
+            return false;
+        }
+
+        return false;
+    }
+
+    private static function assignSystemKey(int $pageId, string $systemKey): void
+    {
+        try {
+            $stmt = db()->prepare('UPDATE pages SET system_key = ? WHERE id = ? AND system_key IS NULL');
+            $stmt->execute([$systemKey, $pageId]);
+        } catch (Throwable) {
+            return;
+        }
+    }
+
+    private static function transferSystemKey(int $fromPageId, int $toPageId, string $systemKey): void
+    {
+        try {
+            db()->beginTransaction();
+            $clear = db()->prepare('UPDATE pages SET system_key = NULL WHERE id = ? AND system_key = ?');
+            $clear->execute([$fromPageId, $systemKey]);
+
+            $assign = db()->prepare('UPDATE pages SET system_key = ? WHERE id = ? AND system_key IS NULL');
+            $assign->execute([$systemKey, $toPageId]);
+            db()->commit();
+        } catch (Throwable) {
+            if (db()->inTransaction()) {
+                db()->rollBack();
+            }
+        }
+    }
+
+    private static function ensureSystemStorageReady(): void
+    {
+        if (!self::hasSystemKeyColumn()) {
+            try {
+                db()->exec('ALTER TABLE pages ADD COLUMN system_key VARCHAR(100) NULL AFTER id');
+                self::$systemKeyColumnExists = true;
+            } catch (Throwable) {
+                self::$systemKeyColumnExists = self::databaseColumnExists('pages', 'system_key');
+            }
+        }
+
+        if (self::hasSystemKeyColumn()) {
+            try {
+                db()->exec('ALTER TABLE pages ADD UNIQUE KEY uniq_pages_system_key (system_key)');
+            } catch (Throwable) {
+                // Duplicate-key and unsupported-schema states are non-fatal.
+            }
+        }
+
+        if (!self::hasSlugRedirectTable()) {
+            try {
+                db()->exec(
+                    "CREATE TABLE IF NOT EXISTS page_slug_redirects (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        old_slug VARCHAR(255) NOT NULL,
+                        page_id INT NOT NULL,
+                        system_key VARCHAR(100) NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE KEY uniq_page_slug_redirect_old_slug (old_slug),
+                        KEY idx_page_slug_redirect_page (page_id),
+                        FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE
+                    )"
+                );
+                self::$slugRedirectTableExists = true;
+            } catch (Throwable) {
+                self::$slugRedirectTableExists = self::databaseTableExists('page_slug_redirects');
+            }
+        }
+    }
+
+    private static function recordSlugRedirect(string $oldSlug, int $pageId, ?string $systemKey): void
+    {
+        if (!self::hasSlugRedirectTable()) {
+            return;
+        }
+
+        $oldSlug = self::normalizeSlug($oldSlug);
+        if ($oldSlug === '') {
+            return;
+        }
+
+        try {
+            $stmt = db()->prepare(
+                'INSERT INTO page_slug_redirects (old_slug, page_id, system_key)
+                 VALUES (?, ?, ?)
+                 ON DUPLICATE KEY UPDATE page_id = VALUES(page_id), system_key = VALUES(system_key)'
+            );
+            $stmt->execute([$oldSlug, $pageId, $systemKey]);
+        } catch (Throwable) {
+            return;
+        }
+    }
+
+    private static function hasDescriptionColumns(): bool
+    {
+        if (self::$descriptionColumnsExist !== null) {
+            return self::$descriptionColumnsExist;
+        }
+
+        return self::$descriptionColumnsExist = self::databaseColumnExists('pages', 'show_description_section');
+    }
+
+    private static function hasSystemKeyColumn(): bool
+    {
+        if (self::$systemKeyColumnExists !== null) {
+            return self::$systemKeyColumnExists;
+        }
+
+        if (function_exists('ah_column_exists')) {
+            return self::$systemKeyColumnExists = ah_column_exists('pages', 'system_key');
+        }
+
+        return self::$systemKeyColumnExists = self::databaseColumnExists('pages', 'system_key');
+    }
+
+    private static function hasSlugRedirectTable(): bool
+    {
+        if (self::$slugRedirectTableExists !== null) {
+            return self::$slugRedirectTableExists;
+        }
+
+        if (function_exists('ah_table_exists')) {
+            return self::$slugRedirectTableExists = ah_table_exists('page_slug_redirects');
+        }
+
+        return self::$slugRedirectTableExists = self::databaseTableExists('page_slug_redirects');
+    }
+
+    private static function databaseColumnExists(string $tableName, string $columnName): bool
+    {
+        try {
+            $stmt = db()->prepare(
+                'SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+                  WHERE TABLE_SCHEMA = DATABASE()
+                    AND TABLE_NAME = ?
+                    AND COLUMN_NAME = ?
+                  LIMIT 1'
+            );
+            $stmt->execute([$tableName, $columnName]);
+            return (bool) $stmt->fetchColumn();
+        } catch (Throwable) {
+            return false;
+        }
+    }
+
+    private static function databaseTableExists(string $tableName): bool
+    {
+        try {
+            $stmt = db()->prepare(
+                'SELECT 1 FROM INFORMATION_SCHEMA.TABLES
+                  WHERE TABLE_SCHEMA = DATABASE()
+                    AND TABLE_NAME = ?
+                  LIMIT 1'
+            );
+            $stmt->execute([$tableName]);
+            return (bool) $stmt->fetchColumn();
+        } catch (Throwable) {
+            return false;
+        }
     }
 }

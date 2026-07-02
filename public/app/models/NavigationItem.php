@@ -273,6 +273,11 @@ class NavigationItem
             return;
         }
 
+        if (class_exists('Page') && Page::isSystemPage($pageData)) {
+            self::deletePageItem($pageId);
+            return;
+        }
+
         $existing = self::findByPageId($pageId);
         $isVisible = !empty($pageData['show_in_nav']) ? 1 : 0;
         $label = trim((string) ($pageData['nav_label'] ?? ''));
@@ -371,25 +376,16 @@ class NavigationItem
     private static function syncAllPages(): void
     {
         try {
-            $systemSlugs = self::systemSlugs();
-            $slugClause = '';
-            $params = [];
-            if ($systemSlugs !== []) {
-                $slugClause = ' AND p.slug NOT IN (' . implode(',', array_fill(0, count($systemSlugs), '?')) . ')';
-                $params = $systemSlugs;
-            }
-
             $stmt = db()->prepare(
-                "SELECT p.id, p.slug, p.title, p.nav_label, p.show_in_nav
+                "SELECT p.*
                  FROM pages p
                  LEFT JOIN navigation_items n
                     ON n.source_type = 'page' AND n.page_id = p.id
                  WHERE p.deleted_at IS NULL
                    AND n.id IS NULL
-                   $slugClause
                  ORDER BY p.show_in_nav DESC, p.sort_order ASC, p.id ASC"
             );
-            $stmt->execute($params);
+            $stmt->execute();
             $pages = $stmt->fetchAll();
         } catch (Throwable) {
             return;
@@ -709,6 +705,27 @@ class NavigationItem
                AND p.slug IN ($placeholders)"
         );
         $stmt->execute($systemSlugs);
+
+        if (!class_exists('Page')) {
+            return;
+        }
+
+        try {
+            $rows = db()->query(
+                "SELECT n.id AS navigation_id, p.*
+                   FROM navigation_items n
+                   JOIN pages p ON p.id = n.page_id
+                  WHERE n.source_type = 'page'"
+            )->fetchAll();
+        } catch (Throwable) {
+            return;
+        }
+
+        foreach ($rows as $row) {
+            if (Page::isSystemPage($row)) {
+                self::deleteItem((int) $row['navigation_id']);
+            }
+        }
     }
 
     private static function nextSortOrder(bool $isVisible): int
@@ -722,7 +739,7 @@ class NavigationItem
     {
         $pageId = (int) ($pageData['id'] ?? 0);
         $slug = (string) ($pageData['slug'] ?? '');
-        if ($pageId <= 0 || $slug === '' || in_array($slug, self::systemSlugs(), true) || self::findByPageId($pageId)) {
+        if ($pageId <= 0 || $slug === '' || Page::isSystemPage($pageData) || in_array($slug, self::systemSlugs(), true) || self::findByPageId($pageId)) {
             return;
         }
 
@@ -758,6 +775,18 @@ class NavigationItem
         $stmt = db()->prepare('SELECT * FROM navigation_items WHERE source_type = ? AND page_id = ? LIMIT 1');
         $stmt->execute([self::SOURCE_PAGE, $pageId]);
         return $stmt->fetch();
+    }
+
+    private static function deletePageItem(int $pageId): void
+    {
+        $stmt = db()->prepare('DELETE FROM navigation_items WHERE source_type = ? AND page_id = ?');
+        $stmt->execute([self::SOURCE_PAGE, $pageId]);
+    }
+
+    private static function deleteItem(int $id): void
+    {
+        $stmt = db()->prepare('DELETE FROM navigation_items WHERE id = ?');
+        $stmt->execute([$id]);
     }
 
     private static function systemSlugs(): array

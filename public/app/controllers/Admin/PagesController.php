@@ -267,6 +267,8 @@ class PagesController
             'template'         => 'standard',
             'nav_label'        => trim($_POST['nav_label'] ?? ''),
             'show_in_nav'      => !empty($_POST['show_in_nav']) ? 1 : 0,
+            'description'      => trim($_POST['description'] ?? ''),
+            'show_description_section' => !empty($_POST['show_description_section']) ? 1 : 0,
             'meta_title'       => trim($_POST['meta_title'] ?? ''),
             'meta_description' => trim($_POST['meta_description'] ?? ''),
             'og_title'         => trim($_POST['og_title'] ?? ''),

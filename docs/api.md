@@ -104,6 +104,9 @@ compatibility URLs issue permanent redirects when a mapped target exists:
   categories
 - `/feeds` redirects to `/blog/feeds`
 - `/p/[slug]` redirects to the reconciled top-level CMS page
+- Renamed system CMS page slugs redirect permanently to the page's current
+  slug. For example, if the identified About page is renamed from `/about` to
+  `/bio`, existing `/about` links return `301 Location: /bio`.
 
 Feed aliases remain public and must continue to work for existing clients:
 

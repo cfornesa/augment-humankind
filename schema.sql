@@ -117,6 +117,7 @@ CREATE TABLE collection_exhibits (
 
 CREATE TABLE pages (
     id                INT AUTO_INCREMENT PRIMARY KEY,
+    system_key        VARCHAR(100) NULL,
     title             VARCHAR(255) NOT NULL,
     slug              VARCHAR(255) NOT NULL UNIQUE,
     status            ENUM('published', 'draft') NOT NULL DEFAULT 'published',
@@ -131,7 +132,19 @@ CREATE TABLE pages (
     sort_order        INT DEFAULT 0,
     deleted_at        TIMESTAMP NULL DEFAULT NULL,
     created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    updated_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uniq_pages_system_key (system_key)
+);
+
+CREATE TABLE page_slug_redirects (
+    id          INT AUTO_INCREMENT PRIMARY KEY,
+    old_slug    VARCHAR(255) NOT NULL,
+    page_id     INT NOT NULL,
+    system_key  VARCHAR(100) NULL,
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uniq_page_slug_redirect_old_slug (old_slug),
+    KEY idx_page_slug_redirect_page (page_id),
+    FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE
 );
 
 CREATE TABLE page_sections (

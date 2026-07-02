@@ -6,6 +6,7 @@ $pageTitle = $page['meta_title'] ?: ($page['title'] . ' | ' . app_site_name());
 $pageDescription = $page['meta_description']
     ?: (seo_excerpt($sections[0]['content'] ?? '', 160) ?? ($page['title'] . ' — ' . app_site_name() . '.'));
 $bodyClass = bodyClass($page['slug']);
+$systemKey = class_exists('Page') ? Page::systemKeyForPage($page) : null;
 $ogTitle = $page['og_title'] ?: $pageTitle;
 $ogDescription = $page['og_description'] ?: $pageDescription;
 $ogImage = $page['og_image'] ?: null;
@@ -18,40 +19,37 @@ require __DIR__ . '/partials/header.php';
         $statusBannerNote = 'This page is still in draft status. Only signed-in admins can see this preview at the public URL.';
         require __DIR__ . '/partials/status-banner.php';
     endif; ?>
-    <?php if ($page['slug'] === 'home' || $page['slug'] === 'about'): ?>
-        <?php $siteSettings = class_exists('SiteSettings') ? (SiteSettings::current() ?: []) : []; ?>
-        <?php if ($page['slug'] === 'home'): ?>
-            <?php
-            $heroHeading = trim((string) ($siteSettings['hero_heading'] ?? ''));
-            $heroSubheading = trim((string) ($siteSettings['hero_subheading'] ?? ''));
-            $ctaLabel = trim((string) ($siteSettings['cta_label'] ?? ''));
-            $ctaHref = trim((string) ($siteSettings['cta_href'] ?? '')) ?: '/';
-            ?>
-            <?php if ($heroHeading !== '' || $heroSubheading !== '' || $ctaLabel !== ''): ?>
-                <section class="hero section-grid" aria-labelledby="home-hero-title">
-                    <div class="hero-copy">
-                        <?php if ($heroHeading !== ''): ?><h1 id="home-hero-title"><?= e($heroHeading) ?></h1><?php endif; ?>
-                        <?php if ($heroSubheading !== ''): ?><p class="hero-statement"><?= e($heroSubheading) ?></p><?php endif; ?>
-                        <?php if ($ctaLabel !== ''): ?>
-                            <div class="hero-actions" aria-label="Primary action">
-                                <a class="button button-primary" href="<?= e($ctaHref) ?>"><?= e($ctaLabel) ?></a>
-                            </div>
-                        <?php endif; ?>
-                    </div>
-                </section>
-            <?php endif; ?>
-        <?php else: /* about */ ?>
-            <?php
-            $aboutHeading = trim((string) ($siteSettings['about_heading'] ?? ''));
-            $aboutBody = trim((string) ($siteSettings['about_body'] ?? ''));
-            ?>
-            <?php if ($aboutHeading !== '' || $aboutBody !== ''): ?>
-                <section class="mission-band" aria-labelledby="about-heading">
-                    <?php if ($aboutHeading !== ''): ?><h1 id="about-heading"><?= e($aboutHeading) ?></h1><?php endif; ?>
-                    <?php if ($aboutBody !== ''): ?><p><?= e($aboutBody) ?></p><?php endif; ?>
-                </section>
-            <?php endif; ?>
+    <?php if ($systemKey === 'home'): ?>
+        <?php
+        $siteSettings = class_exists('SiteSettings') ? (SiteSettings::current() ?: []) : [];
+        $heroHeading = trim((string) ($siteSettings['hero_heading'] ?? ''));
+        $heroSubheading = trim((string) ($siteSettings['hero_subheading'] ?? ''));
+        $ctaLabel = trim((string) ($siteSettings['cta_label'] ?? ''));
+        $ctaHref = trim((string) ($siteSettings['cta_href'] ?? '')) ?: '/';
+        ?>
+        <?php if ($heroHeading !== '' || $heroSubheading !== '' || $ctaLabel !== ''): ?>
+            <section class="hero section-grid" aria-labelledby="home-hero-title">
+                <div class="hero-copy">
+                    <?php if ($heroHeading !== ''): ?><h1 id="home-hero-title"><?= e($heroHeading) ?></h1><?php endif; ?>
+                    <?php if ($heroSubheading !== ''): ?><p class="hero-statement"><?= e($heroSubheading) ?></p><?php endif; ?>
+                    <?php if ($ctaLabel !== ''): ?>
+                        <div class="hero-actions" aria-label="Primary action">
+                            <a class="button button-primary" href="<?= e($ctaHref) ?>"><?= e($ctaLabel) ?></a>
+                        </div>
+                    <?php endif; ?>
+                </div>
+            </section>
         <?php endif; ?>
+    <?php endif; ?>
+    <?php $descriptionText = trim((string) ($page['description'] ?? '')); ?>
+    <?php if (!empty($page['show_description_section']) && $descriptionText !== ''): ?>
+        <section class="mission-band" aria-labelledby="page-description-heading">
+            <h1 id="page-description-heading"><?= e($page['title']) ?></h1>
+            <?php foreach (preg_split('/\R{2,}/', $descriptionText) ?: [] as $descriptionParagraph): ?>
+                <?php if (trim($descriptionParagraph) === '') { continue; } ?>
+                <p><?= nl2br(e(trim($descriptionParagraph))) ?></p>
+            <?php endforeach; ?>
+        </section>
     <?php endif; ?>
     <?php if (empty($sections)): ?>
         <section class="page-hero" aria-labelledby="managed-empty-title">

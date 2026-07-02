@@ -19,12 +19,24 @@ class PageController
     public static function show(string $slug): bool
     {
         $page = Page::safeFindPublishedBySlug($slug);
+        if (!$page && $slug === 'home') {
+            $page = Page::findBySystemKey('home');
+            if ($page && ($page['status'] ?? 'draft') !== 'published') {
+                $page = false;
+            }
+        }
         $isPreview = false;
         if (!$page && self::canPreviewDrafts()) {
             $candidate = Page::safeFindBySlug($slug);
             if ($candidate && ($candidate['status'] ?? 'draft') === 'draft') {
                 $page = $candidate;
                 $isPreview = true;
+            } elseif ($slug === 'home') {
+                $candidate = Page::findBySystemKey('home');
+                if ($candidate && ($candidate['status'] ?? 'draft') === 'draft') {
+                    $page = $candidate;
+                    $isPreview = true;
+                }
             }
         }
         if (!$page) {
@@ -33,6 +45,17 @@ class PageController
 
         $sections = PageSection::allForPage((int) $page['id']);
         require dirname(__DIR__) . '/views/managed_page.php';
+        return true;
+    }
+
+    public static function redirectIfSlugMoved(string $slug): bool
+    {
+        $redirect = Page::redirectForSlug($slug);
+        if (!$redirect) {
+            return false;
+        }
+
+        header('Location: /' . rawurlencode((string) $redirect['target_slug']), true, 301);
         return true;
     }
 

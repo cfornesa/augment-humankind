@@ -10,13 +10,20 @@
  */
 declare(strict_types=1);
 
-// Load .env manually (bootstrap expects index.php to have done this)
+// Load .env manually (bootstrap expects index.php to have done this).
+// Process environment always wins, so DB_* overrides (e.g. from
+// scripts/setup-database.php targeting a scratch DB) are respected.
 $envPath = __DIR__ . '/../.env';
 if (file_exists($envPath)) {
     foreach (file($envPath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
         if (str_starts_with(trim($line), '#') || !str_contains($line, '=')) continue;
         [$name, $value] = explode('=', $line, 2);
         $name = trim($name); $value = trim($value);
+        $current = $_ENV[$name] ?? getenv($name);
+        if (is_string($current) && $current !== '') {
+            $_ENV[$name] = $current;
+            continue;
+        }
         putenv("{$name}={$value}");
         $_ENV[$name] = $value;
     }
@@ -257,12 +264,22 @@ $customCss = <<<CSS
     }
 }
 
-/* Page content stacks above the cosmic background */
-[data-layout-theme="celestial"] .site-header,
+/* Page chrome/content stack above the cosmic background without blocking links */
 [data-layout-theme="celestial"] main,
 [data-layout-theme="celestial"] .site-footer {
     position: relative;
     z-index: 1;
+}
+[data-layout-theme="celestial"] .site-header {
+    position: relative;
+    z-index: 30;
+}
+[data-layout-theme="celestial"] .site-header.nav-open {
+    z-index: 80;
+}
+[data-layout-theme="celestial"] .site-header.nav-open .site-nav,
+[data-layout-theme="celestial"] .account-menu-panel {
+    z-index: 90;
 }
 CSS;
 

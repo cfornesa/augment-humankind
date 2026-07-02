@@ -25,6 +25,96 @@ options regardless of session context. -->
 
 ---
 
+## 2026-07-02 — pages.meta_description / og_description Widened to TEXT
+
+### Decision
+Both columns were `VARCHAR(320)`; MySQL (non-strict mode on Hostinger) silently truncated longer admin input mid-word on save. Widened both to `TEXT NULL` so the stored value is always exactly what the admin entered (search engines/social scrapers apply their own display truncation). `posts` has no equivalent columns — pages was the only affected table.
+
+### Migration (per convention)
+- `docs/migrations/2026-07-02-page-meta-descriptions-text.sql` — record
+- New probe-guarded manifest step (probes `INFORMATION_SCHEMA DATA_TYPE = 'varchar'` via new `columnDataType()` helper) in `scripts/setup-database.php`; applied to live (step 21/22 ✓).
+
+### Data repair
+Bio's meta_description and og_description had been truncated to exactly 320 chars; both repaired to the full 521-char description text they were pasted from. Verified the rendered `<meta name="description">` now carries the complete text.
+
+---
+
+## 2026-07-02 — Per-Page Description Section Toggle
+
+### Decision
+Every page now has a `description` (TEXT) field and a `show_description_section` toggle (TINYINT, default 0/off), both edited in the page form's Metadata section. When the toggle is on and the description is non-empty, the public page renders a mission-band first section: the page title as H1 plus the description text. This generalizes what was previously an about-page-only special case.
+
+The site-wide `site_settings.about_body` intro mechanism is retired: the view's about-system-page branch was replaced by the generic toggle block, and the "Page Intro" field was removed from Site Identity (the `about_body`/`about_heading` DB columns remain, unused; the legacy platform migration script still writes them). The `about` system-page defaults set `show_description_section = 1` so fresh installs keep the intro-capable about page behavior.
+
+### Migration (per the frozen-schema.sql convention)
+- `docs/migrations/2026-07-02-page-description-section.sql` — record
+- New probe-guarded manifest step in `scripts/setup-database.php`, with a one-time backfill (runs only when the column is first added): copies `site_settings.about_body` onto the about-type system page's `description` and sets its toggle on.
+
+### Files modified
+- `public/app/models/Page.php` — guarded `description`/`show_description_section` in create/update (self-healing on pre-migration DBs via `hasDescriptionColumns()`); about system-page default toggle
+- `public/app/controllers/Admin/PagesController.php` — resolveData fields
+- `public/app/views/admin/pages/form.php` — Description textarea + toggle in Metadata
+- `public/app/views/managed_page.php` — generic description-section block replaces the about branch
+- `public/app/views/admin/site-identity/index.php` + `SiteIdentityAdminController.php` — Page Intro field retired
+
+### Verification (all passed)
+- Installer against live: applied exactly the two new columns + backfill; Bio has toggle=1 with its 547-char intro, all other pages toggle=0/NULL.
+- `/bio` renders identical markup (mission-band, H1 "Bio", intro text); homepage contains no description section.
+- Fresh scratch-DB install with the new 21-step manifest: clean run, columns present. `tests/system-page-identity.php` passes.
+
+---
+
+## 2026-07-02 — Portable-Codebase Installer + Bio Heading + Baseline Security Headers
+
+### Decision: one-command idempotent DB installer
+Added `scripts/setup-database.php` — a pure probe-based installer (no tracking table) that brings any database, empty or existing, to the full current schema in one command. Every table/column/index change is guarded by an `INFORMATION_SCHEMA` probe, matching the proven `apply-*-schema.php` house pattern. Flags: `--dry-run` (report only, zero writes) and `--with-example-content` (demo pages + Celestial theme, each seed probe-guarded so it can never overwrite a customized site). This is the portability core: copy the codebase, fill out `.env`, run one script — and re-run it after any code pull to keep every deployment aligned.
+
+Findings that forced this design: `schema.sql` had been rolled forward and overlaps two later migrations (the README's manual sequence would fail on a fresh DB); the README sequence omitted two required migrations (2026-06-21 draft attempts — its column is queried by `PlatformArtPieceVersion` — and 2026-07-02 system page identity); nothing ever created the `site_settings` id=1 row on a fresh DB (the installer now does).
+
+### Convention: schema.sql frozen
+`schema.sql` is frozen as the twelve-core-table bootstrap. Every future schema change = new dated `docs/migrations/*.sql` (record) + one probe-guarded manifest step in the installer (mechanism). Documented in README "Adding a schema change".
+
+### Supporting fixes
+- Env loaders in `scripts/seed-celestial-theme-code.php`, `scripts/seed-theme-code-table.php`, and `public/index.php` now let process environment win over `.env` and normalize real process env into `$_ENV` (CLI `variables_order=GPCS` excludes E, so `db()`'s `$_ENV` reads previously ignored genuine environment variables). Enables scratch-DB targeting and host-panel env config.
+- Baseline security headers in `public/index.php`: `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, and `X-Frame-Options: SAMEORIGIN` (skipped for `/embed/*`, which is designed to be iframed cross-origin). CSP/HSTS deferred.
+
+### Bio heading
+The about-type system page's intro H1 now renders the page's own title (e.g. "Bio") instead of `site_settings.about_heading`. The About Heading admin field was removed; About Body was relabeled "Page Intro (Bio/About page)". The `about_heading` DB column remains (unused, harmless).
+
+### Verification (all passed)
+- `--dry-run` vs live DB: read-only; truthfully surfaced that live was missing the 2026-06-17 columns (`site_settings.canonical_public_url`, `admin_nav_order_json`). **Resolved same day:** user approved; installer run against live applied exactly those two columns (step 4), all other steps "already applied"; follow-up dry-run reports schema fully up to date; site healthy.
+- Fresh install on local MySQL 9.6 scratch DB: 20/20 steps ✓; second run: all "already applied"; app boots against scratch DB (serves designed first-run setup page, `/admin/login` 200).
+- `--with-example-content` on recreated scratch: home/services/notes pages + Celestial theme seeded; second run skips all. Live DB confirmed untouched throughout. Scratch DB + test user dropped.
+- Headers present on `/` and `/bio`; `X-Frame-Options` correctly absent on `/embed/*`. `tests/system-page-identity.php` passes.
+
+---
+
+## 2026-07-02 — Bio Page Claims About Identity; About Page Removed
+
+### Decision
+The Bio page (id 7, slug `bio`) now carries `system_key='about'`, giving it the About system-page capabilities — including the intro section (`site_settings.about_heading` + `about_body`) rendered as the first section of the page. `/about` 301-redirects permanently to `/bio` via `page_slug_redirects` (Rule 5 satisfied). The leftover quarantined draft "About" page (id 8, `system_key` NULL) was soft-deleted to Trash.
+
+### Deletion method
+`Page::softDelete(8)` was blocked by the system-page guard: `isSystemPage()` has a slug-based fallback (`Page.php:55`) that protects any page with slug `home`/`about` even when `system_key` is NULL (backward compatibility for pre-migration databases). Per user decision, the page was soft-deleted via direct SQL (`UPDATE pages SET deleted_at = NOW() WHERE id = 8 AND system_key IS NULL`) rather than modifying the guard. **Known quirk:** future quarantined duplicates with protected slugs will also require direct SQL to delete, unless the guard is refined later.
+
+### Verification
+- `tests/system-page-identity.php` passes
+- `/about` → 301 → `/bio`; `/bio` renders the About intro band plus its own sections
+- `Page::all()` no longer lists About; it appears in `Page::trashed()`
+
+### Headless CMS Readiness Audit (for fornesusart)
+**Verdict: partially ready.** JSON endpoints exist for posts, categories, single page by slug (`/api/p/[slug]`), art pieces + versions, platform collections, media (`/image/{id}`, `/media/{id}` with ETag/range/immutable caching), and Atom/JSON Feed/mf2 feeds.
+
+Gaps before fornesusart can consume this as a headless CMS:
+1. **Missing JSON endpoints**: portfolio exhibits, exhibit collections, art-media taxonomy, navigation menu, site settings/identity, page listing (only known-slug lookup exists), user profiles.
+2. **No CORS headers** anywhere — browser `fetch()` from another origin will fail; server-side consumers unaffected.
+3. **No machine auth** — public API is anonymous-only; admin is OAuth-session; cron is `X-Cron-Secret`. Non-public content or write access would need an API-token scheme.
+4. **Single-DB per deployment** — but fully `.env`-driven with no hardcoded content, so a second deployment of this codebase pointed at the fornesusart DB works by config alone. One codebase serving two DBs simultaneously would be new work.
+
+No fornesusart actions taken; this is the roadmap for a future session.
+
+---
+
 ## 2026-07-01 — Celestial Theme z-index Fix (Public Site Stars/Nebulas Invisible)
 
 ### Root Cause

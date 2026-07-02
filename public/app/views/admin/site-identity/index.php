@@ -49,16 +49,6 @@ if (!in_array($tab, ['settings', 'design', 'assets', 'media'], true)) {
                 <textarea id="hero_subheading" name="hero_subheading" rows="3"><?= e($settings['hero_subheading'] ?? '') ?></textarea>
             </div>
             <div class="field">
-                <label for="about_heading">About Heading</label>
-                <input id="about_heading" name="about_heading" type="text" maxlength="255"
-                       value="<?= e($settings['about_heading'] ?? '') ?>">
-                <p class="admin-hint">Rendered as the top section of the About page, above its other content.</p>
-            </div>
-            <div class="field">
-                <label for="about_body">About Body</label>
-                <textarea id="about_body" name="about_body" rows="4"><?= e($settings['about_body'] ?? '') ?></textarea>
-            </div>
-            <div class="field">
                 <label for="copyright_line">Copyright Line</label>
                 <input id="copyright_line" name="copyright_line" type="text" maxlength="255"
                        value="<?= e($settings['copyright_line'] ?? '') ?>">

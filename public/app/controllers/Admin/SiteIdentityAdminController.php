@@ -191,8 +191,6 @@ class SiteIdentityAdminController
             'site_title' => 'My Site',
             'hero_heading' => '',
             'hero_subheading' => '',
-            'about_heading' => '',
-            'about_body' => '',
             'copyright_line' => '',
             'footer_credit' => '',
             'cta_label' => '',
@@ -279,8 +277,8 @@ class SiteIdentityAdminController
     private static function updateSettings(array $data): void
     {
         $allFields = [
-            'site_title', 'hero_heading', 'hero_subheading', 'about_heading',
-            'about_body', 'copyright_line', 'footer_credit', 'cta_label',
+            'site_title', 'hero_heading', 'hero_subheading',
+            'copyright_line', 'footer_credit', 'cta_label',
             'cta_href', 'logo_url', 'logo_dark_url', 'logo_layout', 'default_theme_mode',
             'theme', 'palette', 'custom_css', 'custom_js', 'custom_html_body',
             'canonical_public_url', 'admin_nav_order_json',

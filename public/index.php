@@ -74,6 +74,14 @@ if (PHP_SAPI === 'cli-server') {
 
 $path = rtrim($path, '/') ?: '/';
 
+// Baseline security headers on every response. /embed/* is excluded from
+// X-Frame-Options because embeds exist to be iframed cross-origin.
+header('X-Content-Type-Options: nosniff');
+header('Referrer-Policy: strict-origin-when-cross-origin');
+if (!str_starts_with($path, '/embed/')) {
+    header('X-Frame-Options: SAMEORIGIN');
+}
+
 loadEnvFile(__DIR__ . '/.env');
 loadEnvFile(dirname(__DIR__) . '/.env');
 
@@ -143,6 +151,10 @@ if ($managedSlug !== null) {
     require_once __DIR__ . '/app/models/Page.php';
     require_once __DIR__ . '/app/models/PageSection.php';
     require_once __DIR__ . '/app/controllers/PageController.php';
+
+    if (PageController::redirectIfSlugMoved($managedSlug)) {
+        exit;
+    }
 
     if (PageController::show($managedSlug)) {
         exit;
@@ -278,6 +290,9 @@ function loadEnvFile(string $path): void
 
         $existingValue = $_ENV[$name] ?? getenv($name);
         if (is_string($existingValue) && $existingValue !== '') {
+            // Normalize real process env into $_ENV: variables_order often
+            // excludes E, and db()/configValue read $_ENV first.
+            $_ENV[$name] = $existingValue;
             continue;
         }
 

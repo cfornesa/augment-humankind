@@ -47,7 +47,7 @@ ob_start();
                         <td><?= !empty($page['show_in_nav']) ? 'Visible' : 'Hidden' ?></td>
                         <td class="admin-actions">
                             <a href="/admin/pages/<?= (int) $page['id'] ?>/edit">Edit</a>
-                            <?php if (Page::isProtectedSlug($page['slug'])): ?>
+                            <?php if (Page::isSystemPage($page)): ?>
                                 <span class="admin-hint">System page</span>
                             <?php else: ?>
                                 <form method="POST" action="/admin/pages/<?= (int) $page['id'] ?>/delete"
