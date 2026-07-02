@@ -596,6 +596,76 @@ test('A-Frame system prompt exists', function () {
     assert_contains($prompt, '/image/123');
 });
 
+test('generation prompts document same-origin CMS media for each engine', function () {
+    assert_contains(art_piece_generation_system_prompt('p5'), "p.loadImage('/image/2')");
+    assert_contains(art_piece_generation_system_prompt('three'), "new THREE.TextureLoader().load('/image/2')");
+    assert_contains(art_piece_generation_system_prompt('c2'), "runtime.loadImage('/image/2')");
+    assert_contains(art_piece_generation_system_prompt('c2_interactive'), "runtime.loadImage('/image/2')");
+    assert_contains(art_piece_generation_system_prompt('svg'), '<image href="/image/2"');
+});
+
+test('p5 preflight accepts same-origin CMS image loading', function () {
+    $html = '<div id="canvas-container"></div>';
+    $js = "let img; window.sketch = (p) => { p.preload = () => { img = p.loadImage('/image/2'); }; p.setup = () => { p.createCanvas(400, 300); }; p.draw = () => { if (img) p.image(img, 0, 0, p.width, p.height); }; };";
+    $result = art_piece_preflight_document('p5', $html, '#canvas-container{width:100%;height:100%;}', $js);
+    assert_eq($result['js'], $js);
+});
+
+test('p5 preflight rejects remote image loading', function () {
+    assert_throws(
+        fn() => art_piece_preflight_document('p5', '<div id="canvas-container"></div>', '', "window.sketch = (p) => { p.preload = () => { p.loadImage('https://example.com/cat.png'); }; };"),
+        'same-origin CMS media'
+    );
+});
+
+test('Three.js preflight accepts same-origin CMS texture loading', function () {
+    $html = '<div id="container"></div>';
+    $js = "window.sketch = (runtime) => { const { THREE, canvas } = runtime; const texture = new THREE.TextureLoader().load('/image/2'); texture.colorSpace = THREE.SRGBColorSpace; const material = new THREE.MeshBasicMaterial({ map: texture }); };";
+    $result = art_piece_preflight_document('three', $html, '#container{width:100%;height:100%;}', $js);
+    assert_contains($result['js'], "TextureLoader");
+});
+
+test('Three.js preflight rejects remote texture loading', function () {
+    assert_throws(
+        fn() => art_piece_preflight_document('three', '<div id="container"></div>', '', "window.sketch = (runtime) => { const texture = new THREE.TextureLoader().load('https://example.com/texture.png'); };"),
+        'same-origin CMS media'
+    );
+});
+
+test('C2 preflight accepts runtime media helpers', function () {
+    $html = '<canvas id="piece-canvas"></canvas>';
+    $js = "window.sketch = (runtime) => { const { c2, canvas, startFrame } = runtime; const renderer = new c2.Renderer(canvas); const img = runtime.loadImage('/image/2'); startFrame(() => { renderer.clear('#000'); runtime.drawImage(img, 0, 0, canvas.width, canvas.height); }); };";
+    $result = art_piece_preflight_document('c2', $html, '#piece-canvas{width:100%;height:100%;}', $js);
+    assert_contains($result['js'], 'runtime.drawImage');
+});
+
+test('C2 preflight rejects raw canvas image APIs', function () {
+    assert_throws(
+        fn() => art_piece_preflight_document('c2', '<canvas id="piece-canvas"></canvas>', '', "window.sketch = (runtime) => { const ctx = runtime.canvas.getContext('2d'); const img = new Image(); ctx.drawImage(img, 0, 0); };"),
+        'raw canvas image APIs'
+    );
+});
+
+test('C2 preflight rejects remote runtime media loading', function () {
+    assert_throws(
+        fn() => art_piece_preflight_document('c2', '<canvas id="piece-canvas"></canvas>', '', "window.sketch = (runtime) => { runtime.loadImage('https://example.com/x.png'); };"),
+        'same-origin CMS media'
+    );
+});
+
+test('SVG preflight accepts same-origin CMS image elements', function () {
+    $html = '<svg viewBox="0 0 800 600" xmlns="http://www.w3.org/2000/svg" width="100%" height="100%"><image href="/image/2" x="0" y="0" width="800" height="600"/></svg>';
+    $result = art_piece_preflight_document('svg', $html, 'svg { display:block; width:100%; height:100%; }', 'window.sketch = () => {};');
+    assert_eq($result['html'], $html);
+});
+
+test('SVG preflight rejects remote image elements', function () {
+    assert_throws(
+        fn() => art_piece_preflight_document('svg', '<svg viewBox="0 0 800 600" xmlns="http://www.w3.org/2000/svg"><image href="https://example.com/x.png"/></svg>', '', 'window.sketch = () => {};'),
+        'same-origin CMS media'
+    );
+});
+
 test('A-Frame preflight accepts a minimal safe scene', function () {
     $html = '<a-scene id="scene" embedded><a-sky color="#101014"></a-sky><a-box position="0 1 -3" color="#ffcc00" animation="property: rotation; to: 0 360 0; loop: true; dur: 4000"></a-box></a-scene>';
     $css = '#scene { width: 100%; height: 100%; }';
@@ -643,6 +713,67 @@ test('A-Frame preflight rejects hidden scene CSS', function () {
         fn() => art_piece_preflight_document('aframe', '<a-scene id="scene" embedded></a-scene>', '#scene { display: none; }', 'window.sketch = ({ scene }) => {};'),
         'display: none'
     );
+});
+
+test('default art starter templates pass preflight', function () {
+    $templates = require __DIR__ . '/../public/app/config/art-starter-templates.php';
+    assert_eq(count($templates), 6);
+    foreach ($templates as $template) {
+        $engine = (string) $template['engine'];
+        art_piece_preflight_document(
+            $engine,
+            (string) $template['html_code'],
+            (string) $template['css_code'],
+            (string) $template['js_code']
+        );
+    }
+});
+
+test('starter templates demonstrate CMS foreground photo ID 2', function () {
+    $templates = require __DIR__ . '/../public/app/config/art-starter-templates.php';
+    foreach ($templates as $template) {
+        $combined = (string) $template['html_code'] . "\n" . (string) $template['css_code'] . "\n" . (string) $template['js_code'];
+        assert_contains($combined, '/image/2', (string) ($template['template_key'] ?? 'template'));
+    }
+});
+
+test('starter templates demonstrate full-frame CMS background photo ID 3', function () {
+    $templates = require __DIR__ . '/../public/app/config/art-starter-templates.php';
+    foreach ($templates as $template) {
+        $combined = (string) $template['html_code'] . "\n" . (string) $template['css_code'] . "\n" . (string) $template['js_code'];
+        assert_contains($combined, '/image/3', (string) ($template['template_key'] ?? 'template'));
+    }
+});
+
+test('starter templates expose editable foreground and full-frame background sizing', function () {
+    $templates = require __DIR__ . '/../public/app/config/art-starter-templates.php';
+    $byKey = [];
+    foreach ($templates as $template) {
+        $byKey[(string) $template['template_key']] = (string) $template['html_code'] . "\n" . (string) $template['css_code'] . "\n" . (string) $template['js_code'];
+    }
+
+    foreach (['p5_default', 'c2_default', 'c2_interactive_default'] as $key) {
+        assert_contains($byKey[$key], 'backgroundWidth');
+        assert_contains($byKey[$key], 'backgroundHeight');
+        assert_contains($byKey[$key], 'portraitWidth');
+        assert_contains($byKey[$key], 'portraitHeight');
+    }
+
+    assert_contains($byKey['three_default'], 'backgroundDepth');
+    assert_contains($byKey['three_default'], 'backgroundWidth');
+    assert_contains($byKey['three_default'], 'backgroundHeight');
+    assert_contains($byKey['three_default'], 'PlaneGeometry(backgroundWidth, backgroundHeight)');
+
+    assert_contains($byKey['aframe_default'], 'id="background-plane"');
+    assert_contains($byKey['aframe_default'], 'backgroundDistance');
+    assert_contains($byKey['aframe_default'], 'backgroundWidth');
+    assert_contains($byKey['aframe_default'], 'backgroundHeight');
+    assert_contains($byKey['aframe_default'], "backgroundPlane.setAttribute('width', backgroundWidth)");
+    assert_contains($byKey['aframe_default'], 'portraitWidth');
+    assert_contains($byKey['aframe_default'], 'portraitHeight');
+
+    assert_contains($byKey['svg_default'], '<image href="/image/3" x="0" y="0" width="800" height="600"');
+    assert_contains($byKey['svg_default'], '<image href="/image/2" x="312" y="212" width="176" height="176"');
 });
 
 echo "\n=== Results ===\n";

@@ -15,6 +15,13 @@ return [
 window.sketch = (p) => {
   const particles = [];
   const palette = [];
+  let portrait;
+  let backdrop;
+
+  p.preload = () => {
+    portrait = p.loadImage('/image/2');
+    backdrop = p.loadImage('/image/3');
+  };
 
   p.setup = () => {
     const parent = p._userNode || document.getElementById('canvas-container');
@@ -52,8 +59,31 @@ window.sketch = (p) => {
 
   p.draw = () => {
     p.noStroke();
-    p.fill(228, 35, 7, 7);
-    p.rect(0, 0, p.width, p.height);
+    if (backdrop) {
+      const backgroundWidth = p.width;
+      const backgroundHeight = p.height;
+      p.tint(228, 35, 92, 62);
+      p.image(backdrop, 0, 0, backgroundWidth, backgroundHeight);
+      p.noTint();
+    } else {
+      p.fill(228, 35, 7, 7);
+      p.rect(0, 0, p.width, p.height);
+    }
+    if (portrait) {
+      const portraitWidth = Math.min(p.width, p.height) * 0.34;
+      const portraitHeight = portraitWidth;
+      const x = p.width * 0.5;
+      const y = p.height * 0.5;
+      p.drawingContext.save();
+      p.drawingContext.beginPath();
+      p.drawingContext.arc(x, y, portraitWidth * 0.5, 0, Math.PI * 2);
+      p.drawingContext.clip();
+      p.imageMode(p.CENTER);
+      p.tint(210, 42, 100, 68);
+      p.image(portrait, x, y, portraitWidth, portraitHeight);
+      p.noTint();
+      p.drawingContext.restore();
+    }
     particles.forEach((particle, i) => {
       const scale = 0.0026;
       const angle = p.noise(particle.x * scale, particle.y * scale, p.frameCount * 0.004) * p.TWO_PI * 2.2;
@@ -86,6 +116,8 @@ JS,
 window.sketch = (runtime) => {
   const { c2, canvas, startFrame } = runtime;
   const renderer = new c2.Renderer(canvas);
+  const portrait = runtime.loadImage('/image/2');
+  const backdrop = runtime.loadImage('/image/3');
   const nodes = Array.from({ length: 28 }, (_, i) => ({
     phase: i * 0.37,
     ring: 0.18 + (i % 7) * 0.045,
@@ -94,9 +126,15 @@ window.sketch = (runtime) => {
 
   startFrame((frameCount) => {
     renderer.clear('#08101c');
+    const backgroundWidth = canvas.width;
+    const backgroundHeight = canvas.height;
+    runtime.drawImage(backdrop, 0, 0, backgroundWidth, backgroundHeight);
     const cx = canvas.width / 2;
     const cy = canvas.height / 2;
     const unit = Math.min(canvas.width, canvas.height);
+    const portraitWidth = unit * 0.24;
+    const portraitHeight = portraitWidth;
+    runtime.drawImage(portrait, cx - portraitWidth / 2, cy - portraitHeight / 2, portraitWidth, portraitHeight);
     renderer.lineWidth(2);
     nodes.forEach((node, i) => {
       const t = frameCount * 0.012 + node.phase;
@@ -131,6 +169,8 @@ JS,
 window.sketch = (runtime) => {
   const { c2, canvas, startFrame } = runtime;
   const renderer = new c2.Renderer(canvas);
+  const portrait = runtime.loadImage('/image/2');
+  const backdrop = runtime.loadImage('/image/3');
   const marks = [];
   const addMark = (event) => {
     const rect = canvas.getBoundingClientRect();
@@ -147,6 +187,13 @@ window.sketch = (runtime) => {
 
   startFrame((frameCount) => {
     renderer.clear('#0d0b18');
+    const backgroundWidth = canvas.width;
+    const backgroundHeight = canvas.height;
+    runtime.drawImage(backdrop, 0, 0, backgroundWidth, backgroundHeight);
+    const portraitWidth = Math.min(canvas.width, canvas.height) * 0.18;
+    const portraitHeight = portraitWidth;
+    const anchor = marks[marks.length - 1] || { x: canvas.width * 0.5, y: canvas.height * 0.5 };
+    runtime.drawImage(portrait, anchor.x - portraitWidth / 2, anchor.y - portraitHeight / 2, portraitWidth, portraitHeight);
     renderer.lineWidth(2);
     for (let i = 0; i < marks.length; i++) {
       const mark = marks[i];
@@ -195,9 +242,23 @@ window.sketch = (runtime) => {
   key.position.set(4, 7, 5);
   scene.add(key);
 
+  const portraitTexture = new THREE.TextureLoader().load('/image/2');
+  portraitTexture.colorSpace = THREE.SRGBColorSpace;
+  const backdropTexture = new THREE.TextureLoader().load('/image/3');
+  backdropTexture.colorSpace = THREE.SRGBColorSpace;
+  const backgroundDepth = 10;
+  const backgroundHeight = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * backgroundDepth;
+  const backgroundWidth = backgroundHeight * camera.aspect;
+  const backgroundPlane = new THREE.Mesh(
+    new THREE.PlaneGeometry(backgroundWidth, backgroundHeight),
+    new THREE.MeshBasicMaterial({ map: backdropTexture, color: 0xffffff })
+  );
+  backgroundPlane.position.set(0, 1.1, camera.position.z - backgroundDepth);
+  scene.add(backgroundPlane);
+
   const core = new THREE.Mesh(
     new THREE.IcosahedronGeometry(1.05, 2),
-    new THREE.MeshStandardMaterial({ color: 0xd99638, metalness: 0.2, roughness: 0.38, emissive: 0x311308 })
+    new THREE.MeshStandardMaterial({ map: portraitTexture, color: 0xf7e7ba, metalness: 0.12, roughness: 0.42, emissive: 0x180804 })
   );
   scene.add(core);
 
@@ -253,10 +314,45 @@ JS,
         'generation_mode' => 'aframe',
         'label' => 'A-Frame spatial gallery',
         'description' => 'A declarative A-Frame room with primitives, lights, cursor interaction, and looping component animations.',
-        'html_code' => '<a-scene id="scene" embedded background="color: #060812"><a-entity position="0 1.6 4"><a-camera look-controls="magicWindowTrackingEnabled: false"><a-cursor color="#f1d28a" fuse="false"></a-cursor></a-camera></a-entity><a-entity light="type: ambient; intensity: 0.55; color: #f7e7ba"></a-entity><a-entity light="type: directional; intensity: 1.2; color: #ffffff" position="3 5 4"></a-entity><a-plane rotation="-90 0 0" width="9" height="9" color="#111827" material="roughness: 0.8; metalness: 0.1"></a-plane><a-torus id="focus-knot" position="0 1.55 -2.8" radius="0.72" radius-tubular="0.055" color="#d99638" material="metalness: 0.35; roughness: 0.28"></a-torus><a-box class="plinth" position="-1.8 0.55 -2.6" depth="0.7" height="1.1" width="0.7" color="#75b7d8"></a-box><a-sphere class="plinth" position="1.8 0.75 -2.9" radius="0.46" color="#d7438a"></a-sphere><a-ring position="0 1.55 -3.05" radius-inner="1.35" radius-outer="1.39" color="#f1d28a"></a-ring></a-scene>',
+        'html_code' => '<a-scene id="scene" embedded background="color: #060812"><a-assets><img id="shape-photo" src="/image/2"><img id="background-photo" src="/image/3"></a-assets><a-entity position="0 1.6 4"><a-camera look-controls="magicWindowTrackingEnabled: false"><a-cursor color="#f1d28a" fuse="false"></a-cursor></a-camera></a-entity><a-entity light="type: ambient; intensity: 0.55; color: #f7e7ba"></a-entity><a-entity light="type: directional; intensity: 1.2; color: #ffffff" position="3 5 4"></a-entity><a-plane id="background-plane" src="#background-photo" position="0 1.5 -6" material="shader: flat; side: double; opacity: 0.72"></a-plane><a-plane id="shape-plane" src="#shape-photo" rotation="-90 0 0" material="roughness: 0.8; metalness: 0.1"></a-plane><a-torus id="focus-knot" position="0 1.55 -2.8" radius="0.72" radius-tubular="0.055" color="#d99638" material="metalness: 0.35; roughness: 0.28"></a-torus><a-box class="plinth" position="-1.8 0.55 -2.6" depth="0.7" height="1.1" width="0.7" color="#75b7d8"></a-box><a-sphere class="plinth" position="1.8 0.75 -2.9" radius="0.46" color="#d7438a"></a-sphere><a-ring position="0 1.55 -3.05" radius-inner="1.35" radius-outer="1.39" color="#f1d28a"></a-ring></a-scene>',
         'css_code' => '#scene{width:100%;height:100%;}.a-canvas{width:100%!important;height:100%!important;}',
         'js_code' => <<<'JS'
-window.sketch = ({ scene }) => {
+window.sketch = ({ AFRAME, scene }) => {
+  const backgroundPlane = scene.querySelector('#background-plane');
+  const shapePlane = scene.querySelector('#shape-plane');
+  const camera = scene.querySelector('a-camera, [camera]');
+
+  function sizeImagePlanes() {
+    if (shapePlane) {
+      const portraitWidth = 9;
+      const portraitHeight = 9;
+      shapePlane.setAttribute('width', portraitWidth);
+      shapePlane.setAttribute('height', portraitHeight);
+    }
+
+    if (backgroundPlane && camera && AFRAME?.THREE) {
+      const cameraWorld = new AFRAME.THREE.Vector3();
+      const backgroundWorld = new AFRAME.THREE.Vector3();
+      camera.object3D.getWorldPosition(cameraWorld);
+      backgroundPlane.object3D.getWorldPosition(backgroundWorld);
+      const backgroundDistance = Math.max(0.1, cameraWorld.distanceTo(backgroundWorld));
+      const cameraData = camera.getAttribute('camera') || {};
+      const cameraFov = Number(cameraData.fov || 80);
+      const frameWidth = scene.clientWidth || 1280;
+      const frameHeight = scene.clientHeight || 720;
+      const frameAspect = Math.max(1, frameWidth / Math.max(1, frameHeight));
+      const backgroundHeight = 2 * Math.tan((cameraFov * Math.PI / 180) / 2) * backgroundDistance;
+      const backgroundWidth = backgroundHeight * frameAspect;
+      backgroundPlane.setAttribute('width', backgroundWidth);
+      backgroundPlane.setAttribute('height', backgroundHeight);
+    }
+  }
+
+  scene.addEventListener('loaded', sizeImagePlanes, { once: true });
+  window.addEventListener('resize', sizeImagePlanes);
+  requestAnimationFrame(sizeImagePlanes);
+  setTimeout(sizeImagePlanes, 250);
+
   const knot = scene.querySelector('#focus-knot');
   if (knot) {
     knot.setAttribute('animation__spin', 'property: rotation; to: 0 360 360; loop: true; dur: 9000; easing: linear');
@@ -276,7 +372,7 @@ JS,
         'generation_mode' => 'svg',
         'label' => 'SVG kinetic poster',
         'description' => 'A crisp animated SVG using gradients, masks, CSS transforms, and a small runtime hook.',
-        'html_code' => '<svg viewBox="0 0 800 600" xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" role="img" aria-label="Animated SVG kinetic poster"><defs><radialGradient id="glow" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#f1d28a"/><stop offset="55%" stop-color="#d7438a"/><stop offset="100%" stop-color="#111827"/></radialGradient><linearGradient id="stroke" x1="0%" x2="100%" y1="0%" y2="100%"><stop offset="0%" stop-color="#75b7d8"/><stop offset="50%" stop-color="#f1d28a"/><stop offset="100%" stop-color="#d99638"/></linearGradient></defs><rect width="800" height="600" fill="#08090d"/><g class="orbit" transform="translate(400 300)"><ellipse rx="260" ry="96" fill="none" stroke="url(#stroke)" stroke-width="7"/><ellipse rx="190" ry="70" fill="none" stroke="#75b7d8" stroke-width="3" opacity=".65"/><circle r="78" fill="url(#glow)"/></g><g class="glyphs" fill="#f7e7ba"><circle cx="156" cy="160" r="16"/><rect x="600" y="128" width="42" height="42" rx="4"/><path d="M615 430l36 62h-72z"/></g></svg>',
+        'html_code' => '<svg viewBox="0 0 800 600" xmlns="http://www.w3.org/2000/svg" width="100%" height="100%" role="img" aria-label="Animated SVG kinetic poster"><defs><radialGradient id="glow" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#f1d28a"/><stop offset="55%" stop-color="#d7438a"/><stop offset="100%" stop-color="#111827"/></radialGradient><linearGradient id="stroke" x1="0%" x2="100%" y1="0%" y2="100%"><stop offset="0%" stop-color="#75b7d8"/><stop offset="50%" stop-color="#f1d28a"/><stop offset="100%" stop-color="#d99638"/></linearGradient><clipPath id="photo-medallion"><circle cx="400" cy="300" r="88"/></clipPath></defs><image href="/image/3" x="0" y="0" width="800" height="600" preserveAspectRatio="xMidYMid slice" opacity=".46"/><rect width="800" height="600" fill="#08090d" opacity=".64"/><image href="/image/2" x="312" y="212" width="176" height="176" preserveAspectRatio="xMidYMid slice" clip-path="url(#photo-medallion)" opacity=".78"/><g class="orbit" transform="translate(400 300)"><ellipse rx="260" ry="96" fill="none" stroke="url(#stroke)" stroke-width="7"/><ellipse rx="190" ry="70" fill="none" stroke="#75b7d8" stroke-width="3" opacity=".65"/><circle r="78" fill="url(#glow)" opacity=".42"/></g><g class="glyphs" fill="#f7e7ba"><circle cx="156" cy="160" r="16"/><rect x="600" y="128" width="42" height="42" rx="4"/><path d="M615 430l36 62h-72z"/></g></svg>',
         'css_code' => 'svg{display:block;width:100%;height:100%;background:#08090d}.orbit{transform-origin:400px 300px;animation:orbitSpin 14s linear infinite}.orbit circle{animation:corePulse 3s ease-in-out infinite alternate}.glyphs>*{transform-box:fill-box;transform-origin:center;animation:glyphFloat 4s ease-in-out infinite alternate}.glyphs>*:nth-child(2){animation-delay:.6s}.glyphs>*:nth-child(3){animation-delay:1.2s}@keyframes orbitSpin{to{transform:translate(400px,300px) rotate(360deg)}}@keyframes corePulse{to{r:96;opacity:.72}}@keyframes glyphFloat{to{transform:translateY(-18px) scale(1.12);opacity:.58}}',
         'js_code' => 'window.sketch = () => {};',
     ],

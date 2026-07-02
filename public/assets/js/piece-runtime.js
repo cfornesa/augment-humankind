@@ -62,6 +62,9 @@ function sizeCanvas(canvas) {
   canvas.width = w;
   canvas.height = h;
 }
+function isCmsMediaPath(src) {
+  return typeof src === 'string' && /^\/(?:image\/[0-9]+|api\/media-assets\/[0-9]+|media\/[A-Za-z0-9._~/%+-]+)(?:\?[A-Za-z0-9._~%=&+-]*)?$/.test(src);
+}
 function startFrame(callback) {
   let count = 0;
   function tick() {
@@ -100,13 +103,41 @@ function bootCanvasRuntime(extra) {
   // signal fires after its first tick actually runs, not merely once
   // bootstrapping has handed control to the piece.
   let readySignaled = false;
+  const mediaContext = PIECE_ENGINE === 'c2' ? canvas.getContext('2d') : null;
+  const imageCache = new Map();
+  function loadImage(src) {
+    if (!isCmsMediaPath(src)) {
+      showPieceError('C2 media helpers may only load same-origin CMS media paths such as /image/2, /media/..., or /api/media-assets/2.');
+      return null;
+    }
+    if (imageCache.has(src)) return imageCache.get(src);
+    const image = new Image();
+    image.decoding = 'async';
+    image.loading = 'eager';
+    image.dataset.creatrLoaded = '0';
+    image.onload = () => { image.dataset.creatrLoaded = '1'; };
+    image.onerror = () => showPieceError('Could not load CMS media asset: ' + src);
+    image.src = src;
+    imageCache.set(src, image);
+    return image;
+  }
+  function drawImage(image, x, y, width, height) {
+    if (!mediaContext || !image || image.dataset?.creatrLoaded !== '1') return false;
+    try {
+      mediaContext.drawImage(image, x, y, width, height);
+      return true;
+    } catch (error) {
+      showPieceError(error);
+      return false;
+    }
+  }
   function instrumentedStartFrame(callback) {
     return startFrame((count) => {
       callback(count);
       if (!readySignaled) { readySignaled = true; signalCanvasReady(canvas); }
     });
   }
-  try { window.sketch({ canvas, startFrame: instrumentedStartFrame, ...(extra || {}) }); } catch (error) { showPieceError(error); }
+  try { window.sketch({ canvas, startFrame: instrumentedStartFrame, loadImage, drawImage, ...(extra || {}) }); } catch (error) { showPieceError(error); }
 }
 function bootP5() {
   const script = document.createElement('script');

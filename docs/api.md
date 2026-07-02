@@ -297,11 +297,42 @@ finished.
 The generation form's engine selector groups stable engines separately from
 `C2.js Interactive` and `A-Frame Experimental`. `C2.js Interactive` uses the
 same C2 runtime contract as normal C2 pieces (`runtime.c2`, `canvas`,
-`startFrame`) while explicitly allowing native `canvas.addEventListener()`
+`startFrame`, plus the safe `loadImage()` / `drawImage()` CMS-media helpers)
+while explicitly allowing native `canvas.addEventListener()`
 pointer/click/touch/drag state. `A-Frame Experimental` requires exactly one
 `<a-scene id="scene" embedded>` root, no external assets or networked media,
 and optional setup code assigned as
 `window.sketch = ({ AFRAME, scene, startFrame }) => { ... }`.
+
+Generated and edited art pieces may reference existing CMS-owned media only
+through same-origin paths:
+
+- `/image/[id]`
+- `/media/[id-or-path]`
+- `/api/media-assets/[id]`
+
+Engine-specific safe media examples:
+
+- p5.js: `p.preload = () => { img = p.loadImage('/image/2'); };`
+  then `p.image(img, x, y, width, height)`
+- Three.js: `new THREE.TextureLoader().load('/image/2')`, then map the
+  texture onto explicit geometry dimensions
+- A-Frame: `<a-assets><img id="asset" src="/image/2"></a-assets>` and
+  `src="#asset"` or `material="src: #asset"` on a rendered entity
+- SVG: `<image href="/image/2" x="0" y="0" width="800" height="600" />`
+- C2.js: `runtime.loadImage('/image/2')` and `runtime.drawImage(...)`
+
+Media asset declarations only define the source image. Rendered size belongs
+to the engine's drawing surface: p5/C2 draw calls use their width/height
+arguments, SVG `<image>` uses `x/y/width/height`, Three.js uses geometry size,
+and A-Frame uses the dimensions of the entity that references the asset. Full
+background examples use the current canvas/frame dimensions or, for 3D engines,
+camera-aware plane dimensions computed from FOV, aspect ratio, and distance.
+
+Remote URLs, `fetch`, XHR, imports, scripts, iframes, arbitrary asset-loading
+tags, storage access, page navigation, and parent/top-window access remain
+blocked in generated piece code. This keeps existing CMS media usable as a
+creative input without turning art pieces into unrestricted web documents.
 
 A-Frame pieces use the self-hosted `/assets/js/aframe.min.js` runtime. Public
 piece pages, embeds, admin previews, thumbnail capture, and

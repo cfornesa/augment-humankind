@@ -35,6 +35,7 @@ function art_piece_generation_system_prompt(string $engine): string
             "The CSS block may style only mount IDs/classes that you define in the HTML block. Do NOT target `html`, `body`, or global `canvas`, and do NOT use `position: fixed`, `display: none`, `visibility: hidden`, or `opacity: 0`.",
             "Do NOT use import statements for p5; the runtime provides it globally.",
             "Use p5 instance mode. The JS must assign its sketch function to `window.sketch = (p) => { ... }` and follow this shape: `window.sketch = (p) => { p.setup = () => {}; p.draw = () => {}; };`.",
+            "You MAY use existing same-origin CMS images with p5's preload pattern: `let img; window.sketch = (p) => { p.preload = () => { img = p.loadImage('/image/2'); }; p.setup = () => {}; p.draw = () => { const backgroundWidth = p.width; const backgroundHeight = p.height; if (img) p.image(img, 0, 0, backgroundWidth, backgroundHeight); }; };`. Allowed media paths are `/image/{id}`, `/media/...`, and `/api/media-assets/{id}` only. Image assets define the source; `p.image(..., width, height)` defines rendered size.",
             "Always call `p.createCanvas(p.windowWidth, p.windowHeight)` inside `setup()` so the sketch fills the iframe. Do NOT hardcode small fixed dimensions like `createCanvas(400, 400)`.",
             "CRITICAL: Animations MUST be infinite and engaging. Use periodic functions like Math.sin() or Math.cos() combined with p.frameCount to ensure movement loops or pulsates indefinitely.",
             "Avoid logic that permanently removes all elements from the screen. If elements are destroyed, they must be periodically respawned.",
@@ -50,6 +51,7 @@ function art_piece_generation_system_prompt(string $engine): string
             "The CSS block may style only mount IDs/classes that you define in the HTML block. Do NOT target `html`, `body`, or global `canvas`, and do NOT use `position: fixed`, `display: none`, `visibility: hidden`, or `opacity: 0`.",
             "Do NOT use import statements for c2; the runtime provides it globally.",
             "The JS must assign its setup function to `window.sketch` like this: `window.sketch = (runtime) => { const { c2, canvas, startFrame } = runtime; const renderer = new c2.Renderer(canvas); startFrame((frameCount) => { renderer.clear(); /* draw */ }); };`. CALL `startFrame(handler)` inside the sketch to register the animation loop — do NOT return it or return an object containing it.",
+            "You MAY use existing same-origin CMS images through the runtime helpers only: `const img = runtime.loadImage('/image/2');` during setup, then `runtime.drawImage(img, x, y, width, height);` inside the frame loop. To fill the frame, use editable sizing such as `const backgroundWidth = canvas.width; const backgroundHeight = canvas.height; runtime.drawImage(img, 0, 0, backgroundWidth, backgroundHeight);`. Allowed media paths are `/image/{id}`, `/media/...`, and `/api/media-assets/{id}` only. Image assets define the source; `runtime.drawImage(..., width, height)` defines rendered size. Do NOT call canvas.getContext(), drawImage(), new Image(), fetch(), or external URLs yourself.",
             "Do NOT include any <script src> tags — the runtime is already loaded, and any <script src> referencing an external file will cause a fatal error.",
             "Use `new c2.Renderer(canvas)` to create the renderer. Do NOT call any canvas-sizing or canvas-context methods directly.",
             "RENDERER API (call on the renderer object): renderer.clear(), renderer.clear(cssColor) [fills canvas with that color — use this for background fills], renderer.fill(cssColor), renderer.stroke(cssColor), renderer.fill(false), renderer.stroke(false), renderer.lineWidth(n), renderer.alpha(a), renderer.fontSize(n), renderer.fontFamily(f), renderer.textAlign(a), renderer.text(str,x,y). IMPORTANT: renderer.background(c) only sets a CSS style and does NOT paint the canvas — NEVER use renderer.background() for background fills; use renderer.clear('#color') instead.",
@@ -70,6 +72,7 @@ function art_piece_generation_system_prompt(string $engine): string
             "The CSS block may style only mount IDs/classes that you define in the HTML block. Do NOT target `html`, `body`, or global `canvas`, and do NOT use `position: fixed`, `display: none`, `visibility: hidden`, or `opacity: 0`.",
             "Do NOT use import statements for c2; the runtime provides it through the runtime object.",
             "The JS must assign its setup function to `window.sketch` like this: `window.sketch = (runtime) => { const { c2, canvas, startFrame } = runtime; const renderer = new c2.Renderer(canvas); startFrame((frameCount) => { renderer.clear('#101014'); /* draw */ }); };`. CALL `startFrame(handler)` inside the sketch to register the animation loop.",
+            "You MAY use existing same-origin CMS images through the runtime helpers only: `const img = runtime.loadImage('/image/2');` during setup, then `runtime.drawImage(img, x, y, width, height);` inside the frame loop. To fill the frame, use editable sizing such as `const backgroundWidth = canvas.width; const backgroundHeight = canvas.height; runtime.drawImage(img, 0, 0, backgroundWidth, backgroundHeight);`. Allowed media paths are `/image/{id}`, `/media/...`, and `/api/media-assets/{id}` only. Image assets define the source; `runtime.drawImage(..., width, height)` defines rendered size. Do NOT call canvas.getContext(), drawImage(), new Image(), fetch(), or external URLs yourself.",
             "This mode MUST include direct user interaction. Use native `canvas.addEventListener()` handlers for `pointerdown`, `pointermove`, `pointerup`, `click`, or `touchstart` to update local state, hit-test shapes, spawn elements, drag anchors, toggle colors, or otherwise visibly change the artwork.",
             "For pointer coordinates, use `const rect = canvas.getBoundingClientRect(); const x = (event.clientX - rect.left) * (canvas.width / rect.width); const y = (event.clientY - rect.top) * (canvas.height / rect.height);` so interaction works after responsive scaling.",
             "Keep every interaction state variable inside the `window.sketch` closure. Do NOT use localStorage, cookies, fetch, parent/top window access, or navigation.",
@@ -89,6 +92,7 @@ function art_piece_generation_system_prompt(string $engine): string
             "The runtime provides THREE globally. Do NOT use import statements.",
             "The JS must assign its setup function to `window.sketch` like this:",
             "`window.sketch = (runtime) => { const { THREE, canvas, startFrame, width, height } = runtime; /* setup scene, return cleanup function */ return () => {}; };`.",
+            "You MAY use existing same-origin CMS images as textures with `const texture = new THREE.TextureLoader().load('/image/2'); texture.colorSpace = THREE.SRGBColorSpace; const material = new THREE.MeshBasicMaterial({ map: texture });`. Allowed media paths are `/image/{id}`, `/media/...`, and `/api/media-assets/{id}` only. Image assets define the source; geometry dimensions define rendered size. For full-frame backgrounds, compute `backgroundHeight` and `backgroundWidth` from camera FOV, aspect, and distance, then apply the texture to `new THREE.PlaneGeometry(backgroundWidth, backgroundHeight)`.",
             "CRITICAL: Always create the WebGLRenderer with the provided canvas: `new THREE.WebGLRenderer({ canvas, antialias: true })`. If you omit `{ canvas }`, Three.js creates a second canvas element that is not positioned in the DOM — the scene will be invisible. NEVER call `document.body.appendChild(renderer.domElement)` — the canvas is already in the correct position.",
             'CRITICAL: The HTML container div MUST use id="container" — do NOT use custom ids such as \'book-container\', \'scene-container\', \'app\', or \'root\'. The runtime only mounts the WebGL canvas inside elements with known ids (container, canvas-container, sketch-container). Any other id causes the canvas to be placed outside the styled container, making the scene invisible in the normal preview.',
             "CRITICAL: Use `width` and `height` from the runtime for ALL sizing — never use `window.innerWidth` or `window.innerHeight`. Pass `false` as the third argument to `renderer.setSize(width, height, false)` to prevent CSS override. Do NOT add `window.addEventListener('resize', ...)` — the runtime handles resize. Incorrect sizing makes the scene invisible in the default post view.",
@@ -105,7 +109,7 @@ function art_piece_generation_system_prompt(string $engine): string
             "You MUST return your response as three separate Markdown code blocks (```html, ```css, and ```javascript).",
             "Return ONLY those three fenced code blocks. Do NOT include prose, explanations, titles, bullets, or notes before, between, or after the code blocks.",
             "The HTML block MUST contain exactly one `<a-scene id=\"scene\" embedded>` as the scene root. Include all generated A-Frame entities inside that scene.",
-            "You MAY use existing same-origin CMS images by placing `<img id=\"asset-id\" src=\"/image/123\">` inside one `<a-assets>` block, then referencing it with `src=\"#asset-id\"` or `material=\"src: #asset-id\"`. Allowed image paths are `/image/{id}`, `/media/...`, and `/api/media-assets/{id}` only.",
+            "You MAY use existing same-origin CMS images by placing `<img id=\"asset-id\" src=\"/image/123\">` inside one `<a-assets>` block, then referencing it with `src=\"#asset-id\"` or `material=\"src: #asset-id\"`. Allowed image paths are `/image/{id}`, `/media/...`, and `/api/media-assets/{id}` only. Image assets define the source; rendered A-Frame entities define size. Do NOT put width/height on the `<img>` asset expecting it to resize the scene. Set width/height on the `<a-plane>` or entity that references it; for full-frame backgrounds, compute and set the plane's `backgroundWidth` and `backgroundHeight` from camera FOV, aspect, and distance in `window.sketch`.",
             "Do NOT include <script>, <link>, <base>, <html>, <head>, <body>, <iframe>, <audio>, <video>, or <a-asset-item>. Do NOT use external URLs or remote textures.",
             "The CSS block may style only `#scene`, `.a-canvas`, or classes/ids used by generated entities. Do NOT target global page chrome, and do NOT use `display: none`, `visibility: hidden`, or `opacity: 0` on the scene or canvas.",
             "The runtime provides AFRAME globally. Do NOT use import statements.",
@@ -119,6 +123,7 @@ function art_piece_generation_system_prompt(string $engine): string
             "You generate animated SVG art pieces for display as a self-contained iframe.",
             "Return ONLY three Markdown code blocks: ```html, ```css, ```javascript. No prose, titles, or notes.",
             'HTML block: one `<svg viewBox="0 0 800 600" xmlns="http://www.w3.org/2000/svg" width="100%" height="100%">` as root. All shapes, paths, groups, and `<defs>` go inside it. No <style>, <script>, <html>, <head>, or <body> tags.',
+            'You MAY use existing same-origin CMS images with SVG `<image href="/image/3" x="0" y="0" width="800" height="600" preserveAspectRatio="xMidYMid slice" />` for a full-frame background and `<image href="/image/2" x="312" y="212" width="176" height="176" preserveAspectRatio="xMidYMid slice" />` for a foreground image. Allowed media paths are `/image/{id}`, `/media/...`, and `/api/media-assets/{id}` only. Image assets define the source; SVG `<image>` x/y/width/height attributes define rendered size.',
             'CRITICAL: Never leave SVG groups empty. If you create a group to hold dynamic content (e.g. `<g id="particles"></g>`), you MUST populate it — either with inline children in the HTML block (for static elements) or by appending children in `window.sketch` (for dynamic/spawning elements). An empty placeholder group is a generation failure.',
             "CSS block: MUST start with `svg { display: block; width: 100%; height: 100%; } body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: transparent; }`. MUST add `@keyframes` animations on actual SVG elements (shapes, paths, groups by ID or class) using `animation: name duration easing infinite`. Targeting only `body` and `html` in CSS with no SVG element animations is not acceptable.",
             "CRITICAL: CSS `@keyframes` must be `animation-iteration-count: infinite`. Use staggered `animation-delay` across elements for organic motion.",
@@ -305,6 +310,10 @@ function art_piece_preflight_code(string $engine, string $code, ?string $html = 
             [
                 'pattern' => '/\bc2\s*\.\s*(Mouse|Keyboard|Touch)\b|\b(Mouse|Keyboard|Touch)\s*\(|\.(pressed|released|dragged)\b/',
                 'message' => 'Generated C2.js code cannot use c2 input helpers or .pressed/.released/.dragged state; this runtime only provides c2, canvas, and startFrame.'
+            ],
+            [
+                'pattern' => '/\.getContext\s*\(|\bnew\s+Image\s*\(|(?<!\.)\bdrawImage\s*\(/i',
+                'message' => 'Generated C2.js code cannot use raw canvas image APIs; use runtime.loadImage() and runtime.drawImage() with same-origin CMS media instead.'
             ]
         ];
         foreach ($c2Rules as $rule) {
@@ -357,6 +366,8 @@ function art_piece_preflight_code(string $engine, string $code, ?string $html = 
             }
         }
     }
+
+    validate_art_piece_media_references($engine, null, null, $validatedCode);
 
     // Static check for window.sketch definition. Requires an actual
     // assignment (a single `=` not followed by another `=`) rather than
@@ -437,7 +448,73 @@ function art_piece_preflight_document(string $engine, ?string $html, ?string $cs
         }
     }
 
+    validate_art_piece_media_references($engine, $html, $css, $js);
+
     return ['html' => $html, 'css' => $css, 'js' => $js];
+}
+
+function validate_art_piece_media_references(string $engine, ?string $html, ?string $css, ?string $js): void
+{
+    $parts = [
+        'HTML' => (string) $html,
+        'CSS' => (string) $css,
+        'JavaScript' => (string) $js,
+    ];
+
+    foreach ($parts as $label => $content) {
+        if ($content === '') {
+            continue;
+        }
+        if (preg_match_all('/url\s*\(\s*([\'"]?)([^)\'"]+)\1\s*\)/i', $content, $urlMatches, PREG_SET_ORDER)) {
+            foreach ($urlMatches as $match) {
+                $src = trim((string) $match[2]);
+                if (str_starts_with($src, '#') || str_starts_with($src, 'data:')) {
+                    continue;
+                }
+                if (!is_allowed_art_piece_media_src($src)) {
+                    throw new RuntimeException("CSS url() media references may only use same-origin CMS media paths such as /image/2, /media/..., or /api/media-assets/2.");
+                }
+            }
+        }
+    }
+
+    if ($html !== null && preg_match_all('/\b(?:src|href|xlink:href)\s*=\s*(["\'])([^"\']+)\1/i', $html, $attrMatches, PREG_SET_ORDER)) {
+        foreach ($attrMatches as $match) {
+            $src = trim((string) $match[2]);
+            if ($src === '' || str_starts_with($src, '#') || str_starts_with($src, 'data:')) {
+                continue;
+            }
+            if (!is_allowed_art_piece_media_src($src)) {
+                throw new RuntimeException('HTML media attributes may only reference same-origin CMS media paths or local #asset ids.');
+            }
+        }
+    }
+
+    if ($engine === 'p5' && $js !== null) {
+        validate_literal_media_call_urls($js, '/\bp\s*\.\s*loadImage\s*\(\s*(["\'])([^"\']+)\1/i', 'p5 loadImage()');
+    }
+
+    if ($engine === 'three' && $js !== null) {
+        validate_literal_media_call_urls($js, '/\bTextureLoader\s*\(\s*\)\s*\.\s*load\s*\(\s*(["\'])([^"\']+)\1/i', 'Three.js TextureLoader.load()');
+        validate_literal_media_call_urls($js, '/\.\s*load\s*\(\s*(["\'])([^"\']+)\1/i', 'Three.js asset loader calls');
+    }
+
+    if ($engine === 'c2' && $js !== null) {
+        validate_literal_media_call_urls($js, '/\bruntime\s*\.\s*loadImage\s*\(\s*(["\'])([^"\']+)\1/i', 'C2 runtime.loadImage()');
+    }
+}
+
+function validate_literal_media_call_urls(string $code, string $pattern, string $label): void
+{
+    if (!preg_match_all($pattern, $code, $matches, PREG_SET_ORDER)) {
+        return;
+    }
+    foreach ($matches as $match) {
+        $src = trim((string) $match[2]);
+        if (!is_allowed_art_piece_media_src($src)) {
+            throw new RuntimeException("{$label} may only load same-origin CMS media paths such as /image/2, /media/..., or /api/media-assets/2.");
+        }
+    }
 }
 
 function validate_aframe_media_references(string $html): void
@@ -453,7 +530,7 @@ function validate_aframe_media_references(string $html): void
                 throw new RuntimeException('A-Frame image assets must include a same-origin CMS image src.');
             }
             $src = trim((string) $srcMatch[2]);
-            if (!is_allowed_aframe_media_src($src)) {
+            if (!is_allowed_art_piece_media_src($src)) {
                 throw new RuntimeException('A-Frame image assets must use same-origin CMS media paths such as /image/2, /media/..., or /api/media-assets/2.');
             }
             $allowedAssetIds[] = preg_quote((string) $idMatch[2], '/');
@@ -469,7 +546,7 @@ function validate_aframe_media_references(string $html): void
                 }
                 continue;
             }
-            if (!is_allowed_aframe_media_src($src)) {
+            if (!is_allowed_art_piece_media_src($src)) {
                 throw new RuntimeException('A-Frame src attributes may only reference same-origin CMS media or #asset ids.');
             }
         }
@@ -484,14 +561,14 @@ function validate_aframe_media_references(string $html): void
                 }
                 continue;
             }
-            if (!is_allowed_aframe_media_src($src)) {
+            if (!is_allowed_art_piece_media_src($src)) {
                 throw new RuntimeException('A-Frame material texture src may only reference same-origin CMS media or #asset ids.');
             }
         }
     }
 }
 
-function is_allowed_aframe_media_src(string $src): bool
+function is_allowed_art_piece_media_src(string $src): bool
 {
     return (bool) preg_match('#^/(?:image/[0-9]+|api/media-assets/[0-9]+|media/[A-Za-z0-9._~/%+-]+)(?:\?[A-Za-z0-9._~%=&+-]*)?$#', $src);
 }
@@ -541,7 +618,7 @@ function art_piece_refine_system_prompt(string $engine): string
     $engineConstraint = $isSvg
         ? "CRITICAL: For svg engine pieces, the HTML code MUST retain the <svg> element. The CSS must never hide the SVG or container (display: none and visibility: hidden on svg or container elements are strictly forbidden)."
         : ($isAframe
-            ? "CRITICAL: For aframe engine pieces, the HTML code MUST retain exactly one <a-scene id=\"scene\" embedded> root. Do not add external assets, scripts, media, iframes, or remote URLs. The CSS must never hide the scene or canvas."
+            ? "CRITICAL: For aframe engine pieces, the HTML code MUST retain exactly one <a-scene id=\"scene\" embedded> root. Do not add external assets, scripts, iframes, or remote URLs. Same-origin CMS image assets are allowed only through `<a-assets><img src=\"/image/2\"></a-assets>` and `#asset` references. The CSS must never hide the scene or canvas."
             : "CRITICAL: For {$engine} engine pieces, HTML changes are STRICTLY FORBIDDEN. The HTML container is managed automatically. Do not write a 'PATCH html:' block. Focus your edits solely on CSS or JS. The CSS must never hide the canvas or container (display: none and visibility: hidden on canvas or container elements are strictly forbidden).");
 
     return implode(' ', [
