@@ -366,7 +366,10 @@ C2.js pieces in the immersive gallery/exhibit wall are texture-projected
 (no native pointer events reach the off-screen canvas); clicking the framed
 piece opens a fullscreen interactive overlay — the same on-screen render
 document `/pieces/[id]` uses — for full click/touch/drag, closable via an
-X button or Escape.
+X button or Escape. The off-screen C2 runtime used for the projected gallery
+frame still follows the same safe CMS-media helper contract as normal C2
+renders: `runtime.loadImage()`, `runtime.drawImage()`, and
+`runtime.drawImageCover()` are available for same-origin CMS media paths.
 
 `POST /admin/pieces/generate` request fields (in addition to `prompt`,
 `generation_mode`, `profile_id`, `persona_id`):

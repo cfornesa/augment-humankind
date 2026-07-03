@@ -1237,6 +1237,116 @@ function loadAFrameRuntime() {
   return aframeRuntimePromise;
 }
 
+let p5RuntimePromise = null;
+function loadP5Runtime() {
+  if (typeof window.p5 === "function") return Promise.resolve(window.p5);
+  if (p5RuntimePromise) return p5RuntimePromise;
+  p5RuntimePromise = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js";
+    script.onload = () => {
+      if (typeof window.p5 === "function") {
+        resolve(window.p5);
+      } else {
+        reject(new Error("p5.js loaded but did not expose window.p5."));
+      }
+    };
+    script.onerror = () => reject(new Error("Could not load p5.js runtime."));
+    document.head.appendChild(script);
+  });
+  return p5RuntimePromise;
+}
+
+let c2RuntimePromise = null;
+function loadC2Runtime() {
+  if (window.c2 && typeof window.c2.Renderer === "function") return Promise.resolve(window.c2);
+  if (c2RuntimePromise) return c2RuntimePromise;
+  c2RuntimePromise = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "https://cdn.jsdelivr.net/npm/c2.js@1.0.9/dist/c2.min.js";
+    script.onload = () => {
+      if (window.c2 && typeof window.c2.Renderer === "function") {
+        resolve(window.c2);
+      } else {
+        reject(new Error("c2.js loaded but did not expose window.c2.Renderer."));
+      }
+    };
+    script.onerror = () => reject(new Error("Could not load c2.js runtime."));
+    document.head.appendChild(script);
+  });
+  return c2RuntimePromise;
+}
+
+function isCmsMediaPath(src) {
+  return typeof src === "string" && /^\/(?:image\/[0-9]+|api\/media-assets\/[0-9]+|media\/[A-Za-z0-9._~/%+-]+)(?:\?[A-Za-z0-9._~%=&+-]*)?$/.test(src);
+}
+
+function createC2MediaHelpers(canvas, onError = console.error) {
+  const mediaContext = canvas.getContext("2d");
+  const imageCache = new Map();
+
+  function reportError(error) {
+    if (typeof onError === "function") onError(error);
+  }
+
+  function loadImage(src) {
+    if (!isCmsMediaPath(src)) {
+      reportError("C2 media helpers may only load same-origin CMS media paths such as /image/2, /media/..., or /api/media-assets/2.");
+      return null;
+    }
+    if (imageCache.has(src)) return imageCache.get(src);
+    const image = new Image();
+    image.decoding = "async";
+    image.loading = "eager";
+    image.dataset.creatrLoaded = "0";
+    image.onload = () => { image.dataset.creatrLoaded = "1"; };
+    image.onerror = () => reportError("Could not load CMS media asset: " + src);
+    image.src = src;
+    imageCache.set(src, image);
+    return image;
+  }
+
+  function drawImage(image, x, y, width, height) {
+    if (!mediaContext || !image || image.dataset?.creatrLoaded !== "1") return false;
+    try {
+      mediaContext.drawImage(image, x, y, width, height);
+      return true;
+    } catch (error) {
+      reportError(error);
+      return false;
+    }
+  }
+
+  function drawImageCover(image, x, y, width, height) {
+    if (!mediaContext || !image || image.dataset?.creatrLoaded !== "1") return false;
+    const sourceWidth = image.naturalWidth || image.width;
+    const sourceHeight = image.naturalHeight || image.height;
+    if (!sourceWidth || !sourceHeight || !width || !height) return false;
+    const sourceAspect = sourceWidth / sourceHeight;
+    const targetAspect = width / height;
+    let sx = 0;
+    let sy = 0;
+    let sw = sourceWidth;
+    let sh = sourceHeight;
+    if (sourceAspect > targetAspect) {
+      sw = sourceHeight * targetAspect;
+      sx = (sourceWidth - sw) / 2;
+    } else {
+      sh = sourceWidth / targetAspect;
+      sy = (sourceHeight - sh) / 2;
+    }
+    try {
+      mediaContext.drawImage(image, sx, sy, sw, sh, x, y, width, height);
+      return true;
+    } catch (error) {
+      reportError(error);
+      return false;
+    }
+  }
+
+  return { loadImage, drawImage, drawImageCover };
+}
+
 export function createFrameLabel(title, subtitle) {
   const cw = 512, ch = 80;
   const canvas = document.createElement("canvas");
@@ -2591,10 +2701,11 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
   async function bootRuntime() {
     try {
       if (engine === "p5") {
+        const P5 = await loadP5Runtime();
         const sketchFactory = resolveSketchFactory(code);
         const mountNode = host.querySelector("#canvas-container") || host.querySelector("#sketch-container") || host;
         const preExistingCanvases = new Set(document.querySelectorAll("canvas"));
-        p5Instance = new window.p5(sketchFactory, mountNode);
+        p5Instance = new P5(sketchFactory, mountNode);
         pollForCanvas(mountNode, "This p5 piece did not produce a canvas for immersive mode.", preExistingCanvases);
         return;
       }
@@ -2708,6 +2819,7 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
       }
 
       // c2 and generic
+      const c2Runtime = engine === "c2" ? await loadC2Runtime() : window.c2;
       const sketchFactory = resolveSketchFactory(code);
       const managedCanvas = host.querySelector("canvas") || document.createElement("canvas");
       managedCanvas.width = runtimeSize.width;
@@ -2729,10 +2841,12 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
         return () => window.cancelAnimationFrame(rafId);
       };
 
+      const c2MediaHelpers = engine === "c2" ? createC2MediaHelpers(managedCanvas, onError) : {};
       const cleanup = sketchFactory({
-        c2: window.c2,
+        c2: c2Runtime,
         canvas: managedCanvas,
         startFrame,
+        ...c2MediaHelpers,
         size: runtimeSize,
         width: runtimeSize.width,
         height: runtimeSize.height,
@@ -2952,6 +3066,7 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
   const activeRuntimes = new Map(); // index -> { host, canvas, stop, texture, p5Instance }
 
   let frameId = 0;
+  let disposed = false;
   let viewerControls = null;
   let readOnlyOverlay = null;
   let disposeSlotFullViewClick = null;
@@ -3029,10 +3144,11 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
   }
 
   function updateProgressiveLoading() {
+    if (disposed) return;
     const liveSlots = getLiveSlots();
     
     // Boot up newly live slots
-    liveSlots.forEach(index => {
+    liveSlots.forEach(async index => {
       const existing = activeRuntimes.get(index);
       if (existing) {
         if (!existing.failed) return; // already active and healthy
@@ -3145,12 +3261,28 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
         slot.artMaterial.needsUpdate = true;
       }
 
+      activeRuntimes.set(index, {
+        host,
+        sourceCanvas: null,
+        stop: () => host.remove(),
+        texture: null,
+        p5Instance: null,
+        svgInterval: null,
+        failed: false,
+        pending: true,
+      });
+
       try {
         if (item.engine === "p5") {
+          const P5 = await loadP5Runtime();
+          if (disposed || !activeRuntimes.has(index)) {
+            host.remove();
+            return;
+          }
           const sketchFactory = resolveSketchFactory(item.generated_code);
           const mount = host.querySelector("#canvas-container") || host.querySelector("#sketch-container") || host;
           const preExistingCanvases = new Set(document.querySelectorAll("canvas"));
-          p5Instance = new window.p5(sketchFactory, mount);
+          p5Instance = new P5(sketchFactory, mount);
 
           let attempts = 0;
           const poll = () => {
@@ -3258,6 +3390,11 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
           }
         } else {
           // c2 / three / generic
+          const c2Runtime = item.engine === "c2" ? await loadC2Runtime() : window.c2;
+          if (disposed || !activeRuntimes.has(index)) {
+            host.remove();
+            return;
+          }
           const sketchFactory = resolveSketchFactory(item.generated_code);
           const managedCanvas = host.querySelector("canvas") || document.createElement("canvas");
           managedCanvas.width = runtimeSize.width;
@@ -3287,12 +3424,16 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
             return () => cancelAnimationFrame(rafId);
           };
 
+          const c2MediaHelpers = item.engine === "c2" ? createC2MediaHelpers(managedCanvas, (err) => {
+            console.warn(`Progressive slot ${index} (${item.title || "untitled"}, c2) media helper error:`, err);
+          }) : {};
           if (!window.THREE) window.THREE = THREE;
           const cleanup = sketchFactory({
             THREE: THREE, // Hand global THREE for inline three pieces on exhibit walls
-            c2: window.c2,
+            c2: c2Runtime,
             canvas: managedCanvas,
             startFrame,
+            ...c2MediaHelpers,
             size: runtimeSize,
             width: runtimeSize.width,
             height: runtimeSize.height
@@ -3305,9 +3446,21 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
         }
       } catch (err) {
         console.warn(`Progressive slot ${index} (${item.title || "untitled"}, ${item.engine}) failed to boot:`, err);
+        const runtime = activeRuntimes.get(index);
+        if (runtime) runtime.failed = true;
       }
 
-      activeRuntimes.set(index, { host, sourceCanvas, stop, texture, p5Instance, svgInterval, failed: !sourceCanvas && !stop });
+      const currentRuntime = activeRuntimes.get(index);
+      activeRuntimes.set(index, {
+        host,
+        sourceCanvas,
+        stop,
+        texture,
+        p5Instance,
+        svgInterval,
+        failed: Boolean(currentRuntime?.failed) || (!sourceCanvas && !stop),
+        pending: false,
+      });
     });
 
     // Tear down no-longer-live slots
@@ -3468,6 +3621,7 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
   resizeObserver.observe(stageEl);
 
   function destroy() {
+    disposed = true;
     resizeObserver.disconnect();
     cancelAnimationFrame(frameId);
     activeRuntimes.forEach(runtime => {

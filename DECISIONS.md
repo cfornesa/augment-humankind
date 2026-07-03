@@ -32,6 +32,46 @@ None.
 
 ---
 
+## 2026-07-03 — Immersive Gallery Runtime Contract Parity For C2.js
+
+### Decision
+The direct `/immersive/pieces/{id}` gallery-frame runtime and progressive
+`/immersive/collections/{slug}` wall runtime now honor the same C2.js runtime
+contract as `piece-runtime.js` and the fullscreen/slideshow srcdoc path. Valid
+C2 code generated for the documented CMS contract may use `runtime.c2`,
+`canvas`, `startFrame`, `runtime.loadImage()`, `runtime.drawImage()`, and
+`runtime.drawImageCover()` on every C2 render surface.
+
+### Root Cause
+Piece 95 exposed two runtime-surface mismatches rather than a generation defect:
+`immersive-gallery.js` could run C2 code before the `window.c2` CDN global was
+available, then after that fix it still passed a smaller runtime object than
+`piece-runtime.js` did. The fullscreen "Click to interact" view rendered
+correctly because it uses the canonical `piece_render_document()` /
+`piece-runtime.js` path, which already loads C2 and supplies the safe CMS media
+helpers.
+
+### Scope
+The fix stays runtime-local: `immersive-gallery.js` now has cached async loaders
+for p5 and C2, and C2-only media helpers for same-origin CMS paths
+(`/image/{id}`, `/media/...`, `/api/media-assets/{id}`) in both direct piece
+mounting and collection wall slots. Prompts, validation, URLs, schema, public
+API endpoints, and vendor dependencies were not changed. Other engines were
+reviewed for this class of mismatch: p5 uses native `p.loadImage`, Three.js
+uses `THREE.TextureLoader`, A-Frame uses `<a-assets>`, and SVG uses
+`<image>`/DOM APIs, so this helper parity issue is C2-specific even though the
+larger watch item is runtime contract drift across surfaces.
+
+### Verification
+- `node --check public/assets/js/immersive-gallery.js`
+- `git diff --check`
+- `php tests/art-piece-generation.php` — 91 passed
+- `php tests/feature-flags.php` — 20 passed
+- Local route smoke: `GET /immersive/pieces/95` returned `200 OK` and emitted
+  the updated cache-busted `immersive-gallery.js` import.
+
+---
+
 ## 2026-07-03 — Legacy Platform Tooling Removed After Deletion
 
 ### Decision
