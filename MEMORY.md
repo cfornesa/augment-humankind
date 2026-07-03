@@ -254,3 +254,6 @@ Fixed in `public/app/views/immersive/piece.php` line 1041 for the P5/C2/SVG `ful
 2026-07-02 DECISION Public piece downloads (`/pieces/{id}/download`) are single-file HTML exports with CDN engine imports and absolute live CMS media URLs, not offline bundles. Stored piece code remains CMS-runtime-compatible via `window.sketch`; exports add the standalone bootstrap. Three.js downloads must attach OrbitControls in the export bootstrap so pieces like ID 83 remain drag/touch interactive even when the authored sketch only animates.
 
 2026-07-02 DECISION Forms are the reusable special page element abstraction. Installer/setup seeds Contact Form and Newsletter Signup; newsletter signups persist to `newsletter_subscribers` with consent defaulting true and do not require recipient email or send email by default. Ordinary forms email the configured recipient and do not store payloads.
+
+2026-07-02 DECISION Portable-CMS setup readiness is complete: SETUP.md is the canonical human/agent setup procedure, setup-database.php pre-flights existing data (TTY confirm, `--yes`/non-TTY proceeds after summary), env loading is unified in public/app/helpers/env.php, and empty-DB placeholders are runtime-rendered in index.php, never installer-seeded.
+Source: DECISIONS.md 2026-07-02 Portable-CMS Setup Readiness Remediation (commit edf36a5).
