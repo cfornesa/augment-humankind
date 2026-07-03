@@ -662,3 +662,31 @@ Confirmed to the user: the codebase is ready to copy as-is to a new
 deployment (empty DB + .env + OAuth apps), and future changes propagate
 safely provided the three conventions now codified in AGENTS.md → Project
 Specific Rules are honored.
+
+## 2026-07-02 — Remaining Agent-Specific Markdown Alignment
+
+### Context
+Follow-up to the agentic markdown reconfiguration: user asked for the same
+treatment on Gemini, Replit, and any other agent-specific files not
+explicitly mentioned. Survey found `.github/copilot-instructions.md` (stale,
+inherited from the IndieWeb/Next.js predecessor project), `.gemini/settings.json`
+(already correct), synced `.agents/skills/` + `.claude/skills/` dirs, and no
+Replit config (platform/ is the retired app's reference export).
+
+### Implemented
+- `.github/copilot-instructions.md` rewritten as a thin shim: Seven Rules
+  priority (was "Six"), removed nonexistent skills (indieweb-specs,
+  indieweb-principles, posse-syndication, security) and Next.js/microformats
+  guidance (Server Components, `use client`) left over from the predecessor
+  project; added Copilot mode mapping onto AGENTS.md → Mode and the
+  coupled-CMS reminder. Durable behaviors kept: feed-route protection,
+  AGENTS.md edit guard, no auto-syndication.
+- `replit.md` (new, root): thin shim declaring Replit is NOT a runtime
+  target (production is Hostinger/PHP), `platform/` is reference-only with a
+  read-only legacy DB, plus the correct run command and SETUP.md pointer if
+  the repo is ever opened in Replit.
+- No shims created for Codex, Opencode Go, or Antigravity — they read
+  AGENTS.md natively; speculative per-tool files would add maintenance
+  burden without benefit.
+- `platform/`'s own legacy memory markdown left untouched by design:
+  reference-only, slated for deletion behind the OPEN ITEMS block.
