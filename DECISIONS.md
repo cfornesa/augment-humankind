@@ -690,3 +690,47 @@ Replit config (platform/ is the retired app's reference export).
   burden without benefit.
 - `platform/`'s own legacy memory markdown left untouched by design:
   reference-only, slated for deletion behind the OPEN ITEMS block.
+
+## 2026-07-02 — Platform Folder Redundancy Audit (findings only, no changes)
+
+### Context
+User asked whether `platform/`'s best features are implemented or improved in
+the PHP app. Explore agent inventoried ~90 platform capabilities (agent loop
+logged per Agent Use rule); uncertain parity items verified directly against
+PHP code.
+
+### Verdict
+`platform/` is functionally redundant — every user-facing feature is
+implemented in PHP, most improved. Cron blocker from
+docs/platform-route-matrix.md is stale: scheduled-tasks.yml now hits PHP
+endpoints (/api/cron/refresh-feeds, /api/cron/publish-posts).
+
+### Gaps where the platform version was better (reference value before deletion)
+1. Search depth: platform had FULLTEXT boolean MATCH/AGAINST with relevance
+   ranking, prefix matching, short-token LIKE fallback, and highlighted
+   HTML-safe snippets (lib/post-search.ts). PHP /search is LIKE-only,
+   newest-first (its "relevance" option doesn't rank), no snippets — though
+   PHP search is broader (6 content types vs posts-only) and platform's
+   filter-rich search UI (date range/sources/author/recent searches) has no
+   PHP equivalent.
+2. Medium adapter: platform had 9 adapters incl. medium.ts; PHP has 8 (no
+   Medium). Possibly intentional (Medium's write API is moribund) — confirm.
+3. Stored-HTML sanitization: platform sanitized HTML to an allowlist
+   (lib/html.ts). PHP strips tags for content_text but appears to store/render
+   feed-imported HTML unsanitized — potential third-party-feed XSS; verify.
+4. Typed API contract chain (OpenAPI→Zod→React client via Orval): no PHP
+   equivalent; docs/api.md is hand-maintained. Architecturally N/A for
+   no-framework PHP; the drift-prevention idea is the loss.
+5. /api/healthz: absent in PHP (trivial).
+
+### Improved beyond platform (highlights)
+Polymorphic comments (4 content types vs posts-only); AI refine plan+patch
+protocol with draft attempts/forks; 10 themes + per-theme DB code + AI theme
+generation; feature flags; portable installer + SETUP.md; forms/newsletter;
+unified media library; piece downloads/templates; cron via GitHub Actions
+(no resident worker — right for shared hosting).
+
+### Deletion readiness after this audit
+Remaining: confirm two operational items (2026-06-18 AI Personas SQL
+migration + thumbnail-migration re-run on production), decide whether to
+port gaps 1–3 first, then owner sign-off per OPEN ITEMS.
