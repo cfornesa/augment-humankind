@@ -1,11 +1,17 @@
-# PHP CMS Shell
+# Portable PHP CMS Shell
 
-A no-framework PHP application — blog, portfolio/gallery, generative art
-pieces, immersive/VR piece and collection rendering, AI-assisted content
-tools, and multi-platform syndication — designed to be deployable to any
-host by filling out `.env` (see `env.example`) and running the database
-setup below. No code changes should be required to point an existing
-deployment's database at a new host, or to stand up a brand-new site.
+A no-framework PHP application — browser-admin CMS, rendered public site,
+blog, portfolio/gallery, generative art pieces, immersive/VR rendering,
+AI-assisted content tools, public read APIs, and multi-platform syndication —
+designed to be deployable to any host by filling out `.env` (see
+`env.example`) and running the database setup below. No code changes should be
+required to point an existing deployment's database at a new host, or to stand
+up a brand-new site.
+
+This is a portable CMS-backed PHP site with public read APIs. It is not yet a
+complete API-first/headless CMS: there is no machine-auth write API, no full
+remote admin contract, and no CORS guarantee for browser clients on other
+origins unless that is explicitly added later.
 
 ## This Deployment
 
@@ -64,7 +70,9 @@ Admin routes are flat and protected by OAuth login:
 - `/admin/media` — media library uploads and migrated media assets (with AI alt-text generation for images)
 - `/admin/feed-sources` — RSS/Atom feed ingestion sources and approval queue
 - `/admin/site-identity` — site settings and assets management
-- `/admin/user-profiles` — admin users, AI vendor configurations, API keys, and profile photo uploads
+- `/admin/user-profiles` — public user account and profile photo management
+- `/admin/ai-settings` — AI profiles, API keys, personas, and preferred workflow profiles; configuration stays accessible even when AI runtime features are disabled
+- `/admin/features` — content-safe module and AI runtime toggles; disabled content modules stay manageable while records exist, and AI buttons are hidden per use-case flag
 - `/admin/platform-connections` — syndication platforms (Bluesky, WordPress, Blogger, Substack, LinkedIn, Meta) with OAuth credential acquisition and a diagnostics page
 - `/admin/forms` — database-owned Contact Form and Newsletter Signup records, fields, signups, and form settings
 - `/admin/pieces` — platform generative art pieces, version history, and starter templates (with AI-driven generation at `/admin/pieces/generate`, including C2.js Interactive and A-Frame Experimental modes, and AI refinement at `/admin/pieces/refine-ai`)
@@ -72,6 +80,14 @@ Admin routes are flat and protected by OAuth login:
 - `/admin/ai/describe-image` — AI alt-text generation endpoint (used by the media library)
 - `/admin/trash` — trash bins for soft-deleted content
 - `/admin/navigation` — custom menu headers registry
+
+Public read APIs:
+
+- `/api/site` — public site identity, canonical origin, theme basics, logo/CTA metadata, feed links, and color tokens
+- `/api/navigation` — public navigation items as rendered by the site header
+- `/api/pages` — published page index with slugs and public metadata
+- `/api/p/[slug]` — one published page plus sections
+- `/api/posts`, `/api/posts/[id]`, `/api/categories`, `/api/art-pieces`, `/api/collections` — existing public content/compatibility feeds
 
 Cron endpoints:
 
@@ -82,7 +98,7 @@ Cron endpoints:
 
 - `/portfolio` is a sampler page, not the full archive. Each visible section now loads a small initial batch and keeps fetching more cards as the visitor scrolls.
 - `Exhibit Collections` is the public/admin name for the native `collections` model that groups exhibits.
-- `Art Media` is the public/admin name for the portfolio taxonomy stored in `categories` with `category_scope='portfolio'`, and it now applies to pieces rather than exhibits.
+- `Art Media` is the public/admin name for the portfolio taxonomy stored in `categories` with `category_scope='portfolio'`, shared by pieces and exhibits.
 - `Categories` in the admin now refers only to blog/post categories stored in `categories` with `category_scope='blog'`.
 
 ## Immersive Piece Controls
@@ -218,8 +234,9 @@ never used by this app.
 
 ## Database Configuration
 
-Everything except the static mission/contact pages — blog, portfolio,
-managed pages, admin, auth, AI features — is stored in MySQL.
+Everything except generic starter/error states is stored in MySQL: managed
+pages, navigation, blog, portfolio, media, forms, admin identities, auth
+records, AI settings, and public read API content.
 
 Required values:
 
@@ -228,9 +245,35 @@ Required values:
 - `DB_USER`
 - `DB_PASS`
 
-The public mission and contact routes still have safe static behavior if the
-database is unavailable. Managed pages, `/portfolio/*`, and `/admin/*` require
-the database.
+The public mission/contact-style starter routes have generic placeholder or
+configuration-error behavior before setup is complete. Managed pages,
+`/portfolio/*`, `/blog/*`, public APIs, and `/admin/*` require a configured
+database.
+
+Admin sign-in also requires at least one OAuth provider to be configured:
+
+- GitHub: `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, and
+  `ADMIN_GITHUB_USERNAMES`
+- Google: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and
+  `ADMIN_GOOGLE_EMAILS`
+
+Register exactly one callback URL per provider:
+
+- GitHub: `https://yourdomain.com/auth/github/callback`
+- Google: `https://yourdomain.com/auth/google/callback`
+
+Feature-gated values are only required when you enable those features:
+`AI_SETTINGS_ENCRYPTION_KEY` is required before storing AI keys, platform
+OAuth app secrets, platform access tokens, or database-owned reCAPTCHA
+secrets. `RECAPTCHA_*` and `SMTP_*` are required for live contact-form email
+delivery. `CRON_SECRET` is required only for protected scheduled-task
+endpoints.
+
+Feature toggles are content-safe. Turning off Blog, Pieces, Exhibits, or
+Collections hides new creation/import actions, but existing records and related
+management surfaces remain reachable while there is content to manage. Turning
+off AI runtime toggles hides matching AI buttons and blocks the endpoints, but
+does not remove AI profiles, keys, personas, or preferred profile settings.
 
 ### Setting up a fresh database
 
@@ -261,6 +304,15 @@ database can be targeted without editing config:
 ```sh
 DB_HOST=127.0.0.1 DB_NAME=my_new_site DB_USER=root DB_PASS=... php scripts/setup-database.php
 ```
+
+After setup, run the read-only readiness checker:
+
+```sh
+php scripts/check-portable-launch-readiness.php
+```
+
+It reports blocking database/schema issues as failures and feature-gated
+configuration gaps as warnings.
 
 The installer supersedes the old manual `mysql < file.sql` sequence, which
 (a) fails on MySQL 9.x local auth, (b) breaks on a fresh database because

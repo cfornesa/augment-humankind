@@ -744,6 +744,15 @@ class PiecesAdminController
         $selectedProfileId = null;
         $selectedPersonaId = null;
         $attemptLogs = null;
+        $generationModes = self::aiGenerationModes();
+        $availableGenerationModes = array_filter(
+            $generationModes,
+            static fn (array $mode): bool => feature_ai_piece_generation_mode_enabled((string) $mode['value'])
+        );
+        if ($availableGenerationModes !== []) {
+            $generationMode = (string) array_key_first($availableGenerationModes);
+            $engine = art_piece_generation_mode_to_engine($generationMode);
+        }
 
         // Pre-select owner preferred art piece profile
         $owner = PlatformUser::owner();
@@ -752,6 +761,18 @@ class PiecesAdminController
         }
 
         require dirname(__DIR__, 2) . '/views/admin/pieces/generate-form.php';
+    }
+
+    private static function aiGenerationModes(): array
+    {
+        return [
+            'p5' => ['value' => 'p5', 'label' => 'P5.js (Interactive canvas drawing)', 'group' => 'Stable engines'],
+            'c2' => ['value' => 'c2', 'label' => 'C2.js (Animated drawing & geometry)', 'group' => 'Stable engines'],
+            'c2_interactive' => ['value' => 'c2_interactive', 'label' => 'C2.js Interactive (Click, touch & drag)', 'group' => 'Stable engines'],
+            'three' => ['value' => 'three', 'label' => 'Three.js (3D WebGL scenes & lights)', 'group' => 'Stable engines'],
+            'svg' => ['value' => 'svg', 'label' => 'SVG (Vector paths & CSS animation)', 'group' => 'Stable engines'],
+            'aframe' => ['value' => 'aframe', 'label' => 'A-Frame Experimental (Self-contained 3D scene)', 'group' => 'Experimental engines'],
+        ];
     }
 
     private static function loadPersonas(): array
@@ -798,6 +819,14 @@ class PiecesAdminController
         if (!in_array($engine, art_piece_supported_engines(), true) || !in_array($generationMode, array_merge(art_piece_supported_engines(), ['c2_interactive']), true)) {
             $generationMode = 'p5';
             $engine = 'p5';
+        }
+        if (!feature_ai_piece_generation_mode_enabled($generationMode)) {
+            http_response_code(403);
+            echo json_encode([
+                'success' => false,
+                'error' => 'AI generation is disabled for this piece type. Enable it under Admin → Features → AI.',
+            ]);
+            exit;
         }
         $profileId = (int) ($_POST['profile_id'] ?? 0);
         $personaId = (int) ($_POST['persona_id'] ?? 0);
@@ -960,6 +989,7 @@ class PiecesAdminController
         }
 
         $engine = (string) ($pending['engine'] ?? 'p5');
+        $generationMode = (string) ($pending['generation_mode'] ?? $engine);
         $htmlCode = (string) ($pending['html_code'] ?? '');
         if (in_array($engine, art_piece_canvas_managed_engines(), true)) {
             $htmlCode = self::getStandardHtmlForEngine($engine);
@@ -994,6 +1024,12 @@ class PiecesAdminController
             $engine = $_POST['engine'] ?? 'p5';
             if (!in_array($engine, art_piece_supported_engines(), true)) {
                 throw new InvalidArgumentException('Unsupported art piece engine.');
+            }
+            $generationMode = trim((string) ($_POST['generation_mode'] ?? $engine));
+            if (!feature_ai_piece_generation_mode_enabled($generationMode)) {
+                http_response_code(403);
+                echo json_encode(['success' => false, 'error' => 'AI generation is disabled for this piece type. Enable it under Admin → Features → AI.']);
+                exit;
             }
             $status = $_POST['status'] ?? 'draft';
 
@@ -1076,6 +1112,17 @@ class PiecesAdminController
     {
         admin_check();
         header('Content-Type: application/json; charset=utf-8');
+
+        // Shared endpoint across every editor: the caller declares which
+        // area it is so the matching per-area editor-AI flag applies.
+        $context = (string) ($_POST['context'] ?? '');
+        $contextFlag = feature_ai_text_flag_for_context($context);
+        if ($contextFlag === null || !feature_enabled($contextFlag)) {
+            http_response_code(403);
+            echo json_encode(['error' => 'AI text assistance is disabled for this editor. Enable it under Admin → Features.']);
+            exit;
+        }
+
         $startedAt = microtime(true);
         $actorId = (int) (admin_identity()['id'] ?? 0);
         $limit = rate_limit_consume('ai_process_text', rate_limit_subject_for_scope('ai_process_text', $actorId > 0 ? $actorId : null));
@@ -1393,6 +1440,11 @@ class PiecesAdminController
             $input = json_decode(file_get_contents('php://input'), true) ?? [];
             $prompt = trim((string) ($input['prompt'] ?? ''));
             $engine = trim((string) ($input['engine'] ?? 'p5'));
+            if (!feature_ai_piece_engine_enabled($engine)) {
+                http_response_code(403);
+                echo json_encode(['success' => false, 'error' => 'AI Refine is disabled for this piece engine. Enable it under Admin → Features → AI.']);
+                exit;
+            }
             $profileId = (int) ($input['profile_id'] ?? 0);
             $personaId = (int) ($input['persona_id'] ?? 0);
             $html = (string) ($input['html_code'] ?? '');
@@ -1685,6 +1737,11 @@ class PiecesAdminController
         if (!$currentVersion) {
             http_response_code(400);
             echo json_encode(['success' => false, 'error' => 'This piece has no current version to refine.']);
+            exit;
+        }
+        if (!feature_ai_piece_engine_enabled((string) ($piece['engine'] ?? 'p5'))) {
+            http_response_code(403);
+            echo json_encode(['success' => false, 'error' => 'AI Refine is disabled for this piece engine. Enable it under Admin → Features → AI.']);
             exit;
         }
 

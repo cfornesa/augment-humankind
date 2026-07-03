@@ -244,7 +244,7 @@ CREATE TABLE IF NOT EXISTS site_settings (
   id INT NOT NULL PRIMARY KEY DEFAULT 1,
   theme VARCHAR(32) NOT NULL DEFAULT 'bauhaus',
   palette VARCHAR(32) NOT NULL DEFAULT 'bauhaus',
-  site_title VARCHAR(255) NOT NULL DEFAULT 'Augment Humankind',
+  site_title VARCHAR(255) NOT NULL DEFAULT 'My Site',
   hero_heading VARCHAR(255) NOT NULL DEFAULT '',
   hero_subheading TEXT NOT NULL,
   about_heading VARCHAR(255) NOT NULL DEFAULT '',

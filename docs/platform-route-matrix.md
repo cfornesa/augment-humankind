@@ -77,7 +77,7 @@ Status values:
 | Comments/reactions moderation | implemented in PHP | `/admin/comments`. |
 | Feed sources and pending imports | implemented in PHP | Pending imports are stored in `feed_import_items`; approval creates draft posts from full item data. |
 | Site settings/assets/media | implemented in PHP | `/admin/site-identity`, `/admin/media` (unified library — merges native `media_files` uploads with the 102 migrated `media_assets`, with full metadata editing and soft/hard delete CRUD parity supported via `/admin/media/asset/{id}/update|trash|destroy` and `/admin/trash`). |
-| User profiles and AI settings | implemented in PHP | `/admin/user-profiles`. |
+| User profiles and AI settings | implemented in PHP | `/admin/user-profiles` manages users and profile photos. `/admin/ai-settings` manages AI profiles, keys, personas, and preferred workflow profiles; it remains reachable even when AI runtime features are disabled. |
 | Platform connections and syndication | implemented in PHP | Tokens are encrypted on save; publish results upsert by post/connection. Adapter dry-run tests remain required before real publishing. |
 | Art pieces and versions | implemented in PHP | `/pieces`, `/embed/pieces`, and `/immersive/pieces` use the PHP piece renderer, and `/admin/pieces/{id}/edit` supports code tabs. TipTap has a dedicated "Pieces/Collections" `<dialog>` picker/inserter with thumbnails (`initPiecePicker()` in `tiptap-editor.js`, backed by `GET /admin/pieces/library`). |
 | Platform collections (migrated platform exhibits) | implemented in PHP | Public immersive collection route renders migrated collection items; collections are surfaced consistently at `/collections`, `/admin/platform-collections`, and the TipTap picker's Collections tab. |

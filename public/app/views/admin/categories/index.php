@@ -5,6 +5,9 @@ $taxonomyCreatePath = $taxonomyCreatePath ?? '/admin/categories/create';
 $taxonomyReorderPath = $taxonomyReorderPath ?? '/admin/categories/reorder';
 $taxonomyIndexPath = $taxonomyIndexPath ?? '/admin/categories';
 $taxonomyDeleteMessage = $taxonomyDeleteMessage ?? ('Move this ' . strtolower($taxonomyLabel) . ' to the recycle bin?');
+// Shared between blog categories and art media; only the blog taxonomy is feature-gated.
+$taxonomyFeature = $taxonomyIndexPath === '/admin/categories' ? 'blog' : null;
+$taxonomyCanCreate = $taxonomyCanCreate ?? ($taxonomyFeature === null || feature_enabled($taxonomyFeature));
 $pageTitle = $taxonomyPlural . ' — ' . app_site_name() . ' Admin';
 ob_start();
 ?>
@@ -12,8 +15,12 @@ ob_start();
     <span id="reorder-status" class="reorder-status" aria-live="polite"></span>
     <div class="admin-section-head">
         <h1 class="admin-heading"><?= htmlspecialchars($taxonomyPlural) ?></h1>
-        <a href="<?= htmlspecialchars($taxonomyCreatePath) ?>" class="admin-btn">+ New <?= htmlspecialchars($taxonomyLabel) ?></a>
+        <?php if ($taxonomyCanCreate): ?>
+            <a href="<?= htmlspecialchars($taxonomyCreatePath) ?>" class="admin-btn">+ New <?= htmlspecialchars($taxonomyLabel) ?></a>
+        <?php endif ?>
     </div>
+
+    <?= $taxonomyFeature !== null ? feature_disabled_notice($taxonomyFeature) : '' ?>
 
     <?php if (empty($categories)): ?>
         <p class="admin-empty">No <?= htmlspecialchars(strtolower($taxonomyPlural)) ?> yet.</p>

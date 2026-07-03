@@ -27,11 +27,11 @@
   riskier to maintain because TLS, authentication, headers, encoding, and
   injection protections are easy to get wrong.
 
-## Hostinger SMTP
+## SMTP Provider
 
 - **Purpose:** Deliver contact form submissions to the configured destination
   email address.
-- **Data sent off-domain:** Contact form fields are sent through Hostinger's
+- **Data sent off-domain:** Contact form fields are sent through the configured
   SMTP service.
 - **What breaks if unavailable or changed:** Successful form submissions may
   stop sending email if credentials, limits, pricing, or service availability
@@ -41,39 +41,38 @@
 - **Required config:** `SMTP_HOST`, `SMTP_PORT`, `SMTP_ENCRYPTION`,
   `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL`, `SMTP_FROM_NAME`,
   `CONTACT_TO_EMAIL`
-- **Expected Hostinger SMTP config:** `SMTP_HOST=smtp.hostinger.com`.
-  `SMTP_USERNAME` and `SMTP_FROM_EMAIL` should be the same Hostinger mailbox
-  address, such as `contact@augmenthumankind.com`. Use `SMTP_PORT=465` with
-  `SMTP_ENCRYPTION=smtps` or `SMTP_PORT=587` with `SMTP_ENCRYPTION=starttls`.
+- **Typical config:** Use the SMTP hostname, username, password, verified
+  sender address, port, and TLS mode provided by your mail provider. Common
+  combinations are `SMTP_PORT=465` with `SMTP_ENCRYPTION=smtps` or
+  `SMTP_PORT=587` with `SMTP_ENCRYPTION=starttls`.
 - **Not used by the contact form:** IMAP settings such as
-  `imap.hostinger.com` are only for reading mail in an email client. The
-  contact form only sends outbound messages through SMTP.
+  provider-specific incoming-mail hosts are only for reading mail in an email
+  client. The contact form only sends outbound messages through SMTP.
 
-## MySQL Database (Portfolio + Admin CMS)
+## MySQL Database (Portable CMS)
 
-- **Purpose:** Stores the Portfolio gallery (artworks, categories, exhibits,
-  media library) and the admin-managed Pages/Navigation CMS.
+- **Purpose:** Stores managed pages, navigation, blog, portfolio/gallery
+  records, media blobs, forms, admin identities, public-user records, AI
+  settings, syndication settings, and public read API content.
 - **Data sent off-domain:** None — the database is queried directly via PDO.
-- **External dependency:** A MySQL-compatible database instance. Development
-  is configured to point at the same instance/provider used in production
-  (via `DB_HOST`/`DB_NAME`/`DB_USER`/`DB_PASS`) so schema and data stay aligned.
-- **What breaks if unavailable or changed:** `/admin/*` and `/portfolio/*`
-  become unavailable. `/services` and `/notes` fall back to their built-in
-  static content (see `public/index.php`), and `/`, `/contact` are unaffected.
-- **Self-hosting alternative:** N/A — this is already self-hosted (Hostinger
-  MySQL or equivalent). No third-party SaaS is introduced.
+- **External dependency:** A MySQL-compatible database instance configured via
+  `DB_HOST`/`DB_NAME`/`DB_USER`/`DB_PASS`.
+- **What breaks if unavailable or changed:** Database-backed public routes,
+  public read APIs, and `/admin/*` become unavailable. Generic starter/error
+  states may still render, but normal CMS operation requires MySQL.
+- **Self-hosting alternative:** N/A — this is already self-hosted MySQL or an
+  equivalent MySQL-compatible database. No third-party SaaS is introduced.
 - **Required config:** `DB_HOST`, `DB_NAME`, `DB_USER`, `DB_PASS`
-- **Schema:** No single file is sufficient — `schema.sql` only covers the
-  native portfolio/CMS tables. See README.md's "Setting up a fresh database"
-  section for the full, verified setup order across `schema.sql`, the
-  `migrations/`/`docs/migrations/` SQL files, and two idempotent
-  `scripts/apply-*.php` appliers.
+- **Schema:** Use `php scripts/setup-database.php` as the single setup and
+  alignment mechanism. The SQL files are documentation/seed inputs; the
+  installer is the idempotent probe-guarded path for empty and existing
+  databases.
 - **Media storage:** Uploaded/imported admin media is stored in `media_files`
   blobs and served publicly through `/media/[id]` and `/image/[id]`.
 - **Upload limits:** `.htaccess` requests `upload_max_filesize=64M`,
   `post_max_size=72M`, `max_execution_time=120`, and `max_input_time=120`.
-  If Hostinger rejects `php_value` directives, configure those values in the
-  Hostinger PHP settings panel instead.
+  If your host rejects `php_value` directives, configure those values in the
+  host's PHP settings panel instead.
 
 ## Platform Source MySQL Database (Read-Only Migration Source)
 
@@ -157,7 +156,7 @@
 - **Required config:** `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`,
   `ADMIN_GITHUB_USERNAMES` (comma-separated allowlist of GitHub usernames
   permitted to bootstrap an admin identity)
-- **Callback URL to register:** `https://augmenthumankind.com/admin/auth/github/callback`
+- **Callback URL to register:** `https://yourdomain.com/auth/github/callback`
 
 ## Google OAuth (Admin Login)
 
@@ -179,7 +178,7 @@
 - **Required config:** `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`,
   `ADMIN_GOOGLE_EMAILS` (comma-separated allowlist of Google account emails
   permitted to bootstrap an admin identity)
-- **Callback URL to register:** `https://augmenthumankind.com/admin/auth/google/callback`
+- **Callback URL to register:** `https://yourdomain.com/auth/google/callback`
 
 ## Tiptap (Rich Text Editor, via esm.sh CDN)
 
@@ -267,7 +266,7 @@
 - **What breaks if unavailable or changed:** OAuth-based credential acquisition fails for the affected platform. Existing saved connections remain stored locally.
 - **Self-hosting alternative:** Continue using credential types that do not require provider OAuth apps (for example Bluesky app passwords, Substack session cookies, or WordPress application passwords).
 - **Required config:** Provider app credentials are stored in the PHP site's own `platform_oauth_apps` table through `/admin/platform-connections`, not in environment variables.
-- **Callback URLs to register:** `https://augmenthumankind.com/admin/platform-connections/auth/{platform}/callback` where `{platform}` is one of `wordpress-com`, `blogger`, `linkedin`, `facebook`, `instagram`.
+- **Callback URLs to register:** `https://yourdomain.com/admin/platform-connections/auth/{platform}/callback` where `{platform}` is one of `wordpress-com`, `blogger`, `linkedin`, `facebook`, `instagram`.
 
 ## Piece Renderer CDN Runtimes
 

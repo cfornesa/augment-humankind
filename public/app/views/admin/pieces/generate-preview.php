@@ -36,6 +36,7 @@ $defaultTitle = 'AI ' . strtoupper($engine) . ' Piece - ' . date('M d, Y H:i');
     <form class="admin-form" data-save-url="/admin/pieces/generate/save">
         <!-- Hidden inputs for AI generation details -->
         <input type="hidden" name="engine" value="<?= e($engine) ?>">
+        <input type="hidden" name="generation_mode" value="<?= e($generationMode ?? $engine) ?>">
         <input type="hidden" name="generation_vendor" value="<?= e($profile['vendor'] ?? '') ?>">
         <input type="hidden" name="generation_model" value="<?= e($profile['model'] ?? '') ?>">
         <input type="hidden" name="generation_attempt_count" value="<?= (int) $attemptCount ?>">

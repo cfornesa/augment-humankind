@@ -27,8 +27,12 @@ ob_start();
     <span id="reorder-status" class="reorder-status" aria-live="polite"></span>
     <div class="admin-section-head">
         <h1 class="admin-heading"><?= htmlspecialchars($collectionPlural) ?></h1>
-        <a href="<?= htmlspecialchars($collectionCreatePath) ?>" class="admin-btn">+ New <?= htmlspecialchars($collectionLabel) ?></a>
+        <?php if (feature_enabled('exhibit_collections')): ?>
+            <a href="<?= htmlspecialchars($collectionCreatePath) ?>" class="admin-btn">+ New <?= htmlspecialchars($collectionLabel) ?></a>
+        <?php endif ?>
     </div>
+
+    <?= feature_disabled_notice('exhibit_collections') ?>
 
     <form class="admin-filter-bar" action="<?= htmlspecialchars($collectionIndexPath) ?>" method="get" role="search">
         <label class="sr-only" for="admin-col-q">Search <?= htmlspecialchars(strtolower($collectionPlural)) ?></label>

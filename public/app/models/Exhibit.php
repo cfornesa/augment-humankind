@@ -43,6 +43,13 @@ class Exhibit
         )->fetchColumn();
     }
 
+    public static function countExisting(): int
+    {
+        return (int) db()->query(
+            'SELECT COUNT(*) FROM exhibits WHERE deleted_at IS NULL'
+        )->fetchColumn();
+    }
+
     public static function latestActive(int $limit = 3): array
     {
         // GREATEST(created_at, updated_at), not plain created_at — must match

@@ -12,6 +12,7 @@ class NavigationController
         $hiddenItems = NavigationItem::adminItems(false);
         $navigationMode = $navigationReady ? 'registry' : 'legacy';
         $navigationError = $_GET['error'] ?? null;
+        $adminNavItems = function_exists('admin_navigation_ordered_items') ? admin_navigation_ordered_items() : [];
         require dirname(__DIR__, 2) . '/views/admin/navigation.php';
     }
 

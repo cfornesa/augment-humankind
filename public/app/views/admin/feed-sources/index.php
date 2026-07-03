@@ -14,8 +14,12 @@ $error = $_GET['error'] ?? null;
 <div class="admin-container">
     <div class="admin-header-row">
         <h1>Feed Sources</h1>
-        <a href="/admin/feed-sources/create" class="admin-btn">Add Source</a>
+        <?php if (feature_enabled('blog')): ?>
+            <a href="/admin/feed-sources/create" class="admin-btn">Add Source</a>
+        <?php endif ?>
     </div>
+
+    <?= feature_disabled_notice('blog') ?>
 
     <?php if ($error): ?>
         <div class="form-status form-status-error" role="alert">
@@ -36,7 +40,7 @@ $error = $_GET['error'] ?? null;
     <?php if ($tab === 'sources'): ?>
         <p class="admin-copy">Feeds follow the same guided pattern as platform connections: connect the source, choose refresh cadence, ingest new items, then approve or reject them in the review queue.</p>
         <?php if (empty($sources)): ?>
-            <p>No feed sources yet. <a href="/admin/feed-sources/create">Add the first one</a>.</p>
+            <p>No feed sources yet.<?= feature_enabled('blog') ? ' <a href="/admin/feed-sources/create">Add the first one</a>.' : '' ?></p>
         <?php else: ?>
             <div class="dashboard-stats">
                 <?php foreach ($sources as $source): ?>
@@ -53,9 +57,11 @@ $error = $_GET['error'] ?? null;
                         </div>
                         <p class="admin-hint" style="margin:0;">Last fetched: <?= e($source['last_fetched_at'] ?? 'Never') ?> • Imported items: <?= (int) ($source['items_imported'] ?? 0) ?></p>
                         <div class="dashboard-links">
-                            <form method="post" action="/admin/feed-sources/<?= (int) $source['id'] ?>/ingest" class="inline-form">
-                                <button type="submit" class="admin-btn">Run Ingest</button>
-                            </form>
+                            <?php if (feature_enabled('blog')): ?>
+                                <form method="post" action="/admin/feed-sources/<?= (int) $source['id'] ?>/ingest" class="inline-form">
+                                    <button type="submit" class="admin-btn">Run Ingest</button>
+                                </form>
+                            <?php endif ?>
                             <a href="/admin/feed-sources/<?= (int) $source['id'] ?>/edit" class="admin-btn admin-btn-ghost">Edit</a>
                             <a href="/admin/feed-sources?tab=pending" class="admin-btn admin-btn-ghost">Review Queue</a>
                             <form method="post" action="/admin/feed-sources/<?= (int) $source['id'] ?>/delete" class="inline-form" onsubmit="return confirm('Delete this feed source permanently?')">
@@ -68,7 +74,7 @@ $error = $_GET['error'] ?? null;
         <?php endif; ?>
     <?php else: ?>
         <?php if (empty($pending)): ?>
-            <p>No pending imports. Run <strong>Ingest</strong> on a feed source to populate this review queue.</p>
+            <p>No pending imports.<?= feature_enabled('blog') ? ' Run <strong>Ingest</strong> on a feed source to populate this review queue.' : '' ?></p>
         <?php else: ?>
             <p class="admin-copy">Each imported item lands here before it becomes a draft post. Approve what belongs on your site and reject the rest.</p>
             <table class="admin-table">
@@ -93,11 +99,13 @@ $error = $_GET['error'] ?? null;
                             </td>
                             <td><?= e($item['created_at'] ?? $item['seen_at'] ?? '') ?></td>
                             <td>
-                                <form method="post" action="/admin/feed-sources/approve" class="inline-form">
-                                    <input type="hidden" name="seen_id" value="<?= (int) $item['id'] ?>">
-                                    <input type="hidden" name="source_id" value="<?= (int) $item['source_id'] ?>">
-                                    <button type="submit" class="admin-link">Approve</button>
-                                </form>
+                                <?php if (feature_enabled('blog')): ?>
+                                    <form method="post" action="/admin/feed-sources/approve" class="inline-form">
+                                        <input type="hidden" name="seen_id" value="<?= (int) $item['id'] ?>">
+                                        <input type="hidden" name="source_id" value="<?= (int) $item['source_id'] ?>">
+                                        <button type="submit" class="admin-link">Approve</button>
+                                    </form>
+                                <?php endif ?>
                                 <form method="post" action="/admin/feed-sources/reject" class="inline-form">
                                     <input type="hidden" name="seen_id" value="<?= (int) $item['id'] ?>">
                                     <button type="submit" class="admin-link danger">Reject</button>

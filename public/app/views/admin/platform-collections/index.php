@@ -29,9 +29,13 @@ ob_start();
                 <button type="button" id="btn-regen-all" class="admin-btn admin-btn-ghost">Regenerate All Thumbnails</button>
                 <span id="regen-status" style="font-weight: bold; font-size: 0.9rem;"></span>
             <?php endif; ?>
-            <a href="/admin/platform-collections/create" class="admin-btn">+ New Collection</a>
+            <?php if (feature_enabled('platform_collections')): ?>
+                <a href="/admin/platform-collections/create" class="admin-btn">+ New Collection</a>
+            <?php endif ?>
         </div>
     </div>
+
+    <?= feature_disabled_notice('platform_collections') ?>
 
     <p>Curated collections migrated from the platform app. Manage their metadata, items, layouts, and external embeds here.</p>
 

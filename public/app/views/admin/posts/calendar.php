@@ -22,7 +22,9 @@ ob_start();
 <div class="admin-section">
     <div class="admin-section-head">
         <h1 class="admin-heading">Posts Calendar</h1>
-        <a href="/admin/posts/create" class="admin-btn">+ New Post</a>
+        <?php if (feature_enabled('blog')): ?>
+            <a href="/admin/posts/create" class="admin-btn">+ New Post</a>
+        <?php endif ?>
     </div>
 
     <div style="display:flex;align-items:center;gap:1rem;margin-bottom:1.2rem;flex-wrap:wrap">
@@ -48,7 +50,9 @@ ob_start();
                 </div>
                 <div class="post-calendar-col-body">
                     <?php if (empty($dayPosts)): ?>
-                        <a href="/admin/posts/create" class="post-cal-new-btn" title="New post on <?= $day->format('D j M') ?>">+</a>
+                        <?php if (feature_enabled('blog')): ?>
+                            <a href="/admin/posts/create" class="post-cal-new-btn" title="New post on <?= $day->format('D j M') ?>">+</a>
+                        <?php endif ?>
                     <?php else: ?>
                         <?php foreach ($dayPosts as $p): ?>
                             <?php
@@ -65,7 +69,9 @@ ob_start();
                                 </div>
                             </div>
                         <?php endforeach ?>
-                        <a href="/admin/posts/create" class="post-cal-new-btn" title="New post on <?= $day->format('D j M') ?>">+</a>
+                        <?php if (feature_enabled('blog')): ?>
+                            <a href="/admin/posts/create" class="post-cal-new-btn" title="New post on <?= $day->format('D j M') ?>">+</a>
+                        <?php endif ?>
                     <?php endif ?>
                 </div>
             </div>

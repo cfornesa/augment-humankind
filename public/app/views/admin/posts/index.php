@@ -16,9 +16,13 @@ ob_start();
         <h1 class="admin-heading">Posts</h1>
         <div style="display:flex;gap:0.5rem">
             <a href="/admin/posts/calendar" class="admin-btn admin-btn-ghost">Calendar</a>
-            <a href="/admin/posts/create" class="admin-btn">+ New Post</a>
+            <?php if (feature_enabled('blog')): ?>
+                <a href="/admin/posts/create" class="admin-btn">+ New Post</a>
+            <?php endif ?>
         </div>
     </div>
+
+    <?= feature_disabled_notice('blog') ?>
 
     <?php if (!empty($_GET['syndication_error'])): ?>
         <p class="admin-error" style="margin-bottom:1rem">

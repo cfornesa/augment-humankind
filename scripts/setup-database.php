@@ -642,7 +642,7 @@ function manifest(): array
             }
             // hero_subheading and about_body are TEXT NOT NULL with no
             // default, and the id default was stripped at table creation.
-            $ctx->apply("INSERT INTO site_settings (id, hero_subheading, about_body) VALUES (1, '', '')", 'row site_settings id=1');
+            $ctx->apply("INSERT INTO site_settings (id, site_title, hero_subheading, about_body) VALUES (1, 'My Site', '', '')", 'row site_settings id=1');
         }],
 
     ];

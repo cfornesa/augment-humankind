@@ -21,6 +21,8 @@ class UserProfilesAdminController
         $owner = PlatformUser::owner();
         $profiles = $owner ? UserAiVendorSettings::allForUser((string) $owner['id']) : [];
         $personas = self::allPersonas();
+        $siteSettings = SiteSettings::current() ?: [];
+        $themeDefaultProfileId = (int) ($siteSettings['ai_theme_default_profile_id'] ?? 0);
         $capabilitiesSchemaSupported = UserAiVendorSettings::supportsCapabilitiesColumn();
         $personasSchemaSupported = ah_table_exists('ai_personas');
         $tab = $_GET['tab'] ?? 'profiles';
@@ -302,6 +304,8 @@ class UserProfilesAdminController
                 'preferred_alt_text_profile_id' => trim($_POST['preferred_alt_text_profile_id'] ?? '') ?: null,
                 'image' => null,
             ]);
+            $themeProfileId = (int) ($_POST['ai_theme_default_profile_id'] ?? 0);
+            SiteSettings::updateJsonSetting('ai_theme_default_profile_id', $themeProfileId > 0 ? $themeProfileId : null);
             header('Location: ' . self::aiSettingsPath('vendor') . '&success=vendor');
         } catch (Throwable $e) {
             header('Location: ' . self::aiSettingsPath('vendor') . '&error=' . urlencode($e->getMessage()));

@@ -130,12 +130,17 @@ class PortfolioAdminController
         $taxonomyCreatePath = '/admin/art-media/create';
         $taxonomyReorderPath = '/admin/art-media/reorder';
         $taxonomyDeleteMessage = 'Move this art medium to the recycle bin? Pieces will become unassigned.';
+        $taxonomyCanCreate = feature_art_media_creation_enabled();
         require dirname(__DIR__, 2) . '/views/admin/categories/index.php';
     }
 
     public static function categoryCreate(): void
     {
         admin_check();
+        if (!feature_art_media_creation_enabled()) {
+            feature_blocked_response('pieces', 'GET', '/admin/art-media/create');
+            exit;
+        }
         $category = null;
         $error = null;
         $taxonomyLabel = 'Art Medium';
@@ -150,6 +155,10 @@ class PortfolioAdminController
     public static function categoryStore(): void
     {
         admin_check();
+        if (!feature_art_media_creation_enabled()) {
+            feature_blocked_response('pieces', 'POST', '/admin/art-media/create');
+            exit;
+        }
         $name = trim($_POST['name'] ?? '');
         if ($name === '') {
             $category = null;
@@ -194,6 +203,11 @@ class PortfolioAdminController
     {
         admin_check();
         header('Content-Type: application/json');
+        if (!feature_art_media_creation_enabled()) {
+            http_response_code(403);
+            echo json_encode(['error' => 'Art media creation is disabled while both Pieces and Exhibits are off.']);
+            exit;
+        }
 
         $name = trim($_POST['name'] ?? '');
         if ($name === '') {

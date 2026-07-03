@@ -56,6 +56,17 @@ class PlatformCollection
         )->fetchColumn();
     }
 
+    public static function countExisting(): int
+    {
+        if (!self::tableExists()) {
+            return 0;
+        }
+
+        return (int) db()->query(
+            'SELECT COUNT(*) FROM platform_collections WHERE deleted_at IS NULL'
+        )->fetchColumn();
+    }
+
     public static function latestActive(int $limit = 3): array
     {
         if (!self::tableExists()) {

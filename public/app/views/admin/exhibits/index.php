@@ -21,8 +21,12 @@ ob_start();
     <span id="reorder-status" class="reorder-status" aria-live="polite"></span>
     <div class="admin-section-head">
         <h1 class="admin-heading">Exhibits</h1>
-        <a href="/admin/exhibits/create" class="admin-btn">+ Add Exhibit</a>
+        <?php if (feature_enabled('exhibits')): ?>
+            <a href="/admin/exhibits/create" class="admin-btn">+ Add Exhibit</a>
+        <?php endif ?>
     </div>
+
+    <?= feature_disabled_notice('exhibits') ?>
 
     <form class="admin-filter-bar" action="/admin/exhibits" method="get" role="search">
         <label class="sr-only" for="admin-exhibits-q">Search exhibits</label>

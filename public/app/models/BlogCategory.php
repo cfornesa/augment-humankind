@@ -64,6 +64,22 @@ class BlogCategory
         }
     }
 
+    public static function countExisting(): int
+    {
+        if (!self::tableReady()) {
+            return 0;
+        }
+
+        try {
+            return (int) db()->query(
+                "SELECT COUNT(*) FROM categories
+                 WHERE category_scope = 'blog' AND deleted_at IS NULL"
+            )->fetchColumn();
+        } catch (Throwable) {
+            return 0;
+        }
+    }
+
     public static function create(
         string $name,
         string $slug,

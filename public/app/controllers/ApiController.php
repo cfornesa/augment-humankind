@@ -4,6 +4,86 @@ declare(strict_types=1);
 
 class ApiController
 {
+    public static function site(): void
+    {
+        $settings = SiteSettings::current() ?: [];
+        $meta = function_exists('seo_site_meta')
+            ? seo_site_meta()
+            : ['title' => 'My Site', 'description' => ''];
+
+        self::json([
+            'site' => [
+                'title' => (string) ($meta['title'] ?? 'My Site'),
+                'description' => (string) ($meta['description'] ?? ''),
+                'canonicalPublicUrl' => function_exists('seo_origin') ? seo_origin() : null,
+                'theme' => (string) ($settings['theme'] ?? ''),
+                'palette' => (string) ($settings['palette'] ?? ''),
+                'defaultThemeMode' => (string) ($settings['default_theme_mode'] ?? 'system'),
+                'logo' => [
+                    'light' => self::nullableString($settings['logo_url'] ?? null),
+                    'dark' => self::nullableString($settings['logo_dark_url'] ?? null),
+                    'layout' => (string) ($settings['logo_layout'] ?? 'text_only'),
+                ],
+                'cta' => [
+                    'label' => self::nullableString($settings['cta_label'] ?? null),
+                    'href' => self::nullableString($settings['cta_href'] ?? null),
+                ],
+                'colors' => self::publicColorTokens($settings),
+                'feeds' => [
+                    'atom' => '/feed.xml',
+                    'json' => '/feed.json',
+                    'mf2' => '/feeds/mf2',
+                ],
+            ],
+        ]);
+    }
+
+    public static function navigation(): void
+    {
+        self::json(['navigation' => ah_public_navigation_items()]);
+    }
+
+    public static function pages(): void
+    {
+        if (!ah_table_exists('pages')) {
+            self::json(['pages' => []]);
+        }
+
+        $columns = [
+            'id',
+            'system_key',
+            'title',
+            'slug',
+            'nav_label',
+            'description',
+            'show_description_section',
+            'meta_title',
+            'meta_description',
+            'og_title',
+            'og_description',
+            'og_image',
+            'sort_order',
+            'created_at',
+            'updated_at',
+        ];
+        $select = ah_existing_columns('pages', $columns);
+        if ($select === []) {
+            self::json(['pages' => []]);
+        }
+
+        $order = in_array('sort_order', $select, true) ? 'sort_order ASC, id ASC' : 'id ASC';
+        $stmt = db()->query(
+            'SELECT ' . implode(', ', array_map(static fn (string $column): string => '`' . $column . '`', $select)) . '
+               FROM pages
+              WHERE status = "published"
+                AND deleted_at IS NULL
+              ORDER BY ' . $order
+        );
+
+        $pages = array_map([self::class, 'publicPagePayload'], $stmt->fetchAll());
+        self::json(['pages' => $pages]);
+    }
+
     public static function feedsCatalog(): void
     {
         $feeds = [
@@ -194,5 +274,68 @@ class ApiController
         header('Content-Type: application/json; charset=utf-8');
         echo json_encode($payload, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         exit;
+    }
+
+    private static function nullableString(mixed $value): ?string
+    {
+        $value = trim((string) $value);
+        return $value !== '' ? $value : null;
+    }
+
+    private static function publicColorTokens(array $settings): array
+    {
+        $tokens = [
+            'background',
+            'foreground',
+            'primary',
+            'primary_foreground',
+            'secondary',
+            'secondary_foreground',
+            'accent',
+            'accent_foreground',
+            'muted',
+            'muted_foreground',
+            'destructive',
+            'destructive_foreground',
+        ];
+
+        $colors = ['light' => [], 'dark' => []];
+        foreach ($tokens as $token) {
+            $light = self::nullableString($settings['color_' . $token] ?? null);
+            if ($light !== null) {
+                $colors['light'][$token] = $light;
+            }
+
+            $dark = self::nullableString($settings['color_' . $token . '_dark'] ?? null);
+            if ($dark !== null) {
+                $colors['dark'][$token] = $dark;
+            }
+        }
+
+        return $colors;
+    }
+
+    private static function publicPagePayload(array $page): array
+    {
+        return [
+            'id' => (int) ($page['id'] ?? 0),
+            'systemKey' => self::nullableString($page['system_key'] ?? null),
+            'title' => (string) ($page['title'] ?? ''),
+            'slug' => (string) ($page['slug'] ?? ''),
+            'url' => '/' . ltrim((string) ($page['slug'] ?? ''), '/'),
+            'navLabel' => self::nullableString($page['nav_label'] ?? null),
+            'description' => self::nullableString($page['description'] ?? null),
+            'showDescriptionSection' => !empty($page['show_description_section']),
+            'meta' => [
+                'title' => self::nullableString($page['meta_title'] ?? null),
+                'description' => self::nullableString($page['meta_description'] ?? null),
+                'ogTitle' => self::nullableString($page['og_title'] ?? null),
+                'ogDescription' => self::nullableString($page['og_description'] ?? null),
+                'ogImage' => self::nullableString($page['og_image'] ?? null),
+            ],
+            'sortOrder' => isset($page['sort_order']) ? (int) $page['sort_order'] : 0,
+            'createdAt' => self::nullableString($page['created_at'] ?? null),
+            'updatedAt' => self::nullableString($page['updated_at'] ?? null),
+        ];
     }
 }

@@ -29,6 +29,11 @@ class Category
         )->fetchColumn();
     }
 
+    public static function countExisting(): int
+    {
+        return self::countVisible();
+    }
+
     public static function find(int $id): array|false
     {
         $stmt = db()->prepare('SELECT * FROM categories WHERE id = ? AND deleted_at IS NULL' . self::portfolioScopeSql());

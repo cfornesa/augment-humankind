@@ -9,6 +9,8 @@ ob_start();
 $piece = $piece ?? [];
 $profiles = $profiles ?? [];
 $preferredProfileId = $preferredProfileId ?? null;
+$pieceEngine = (string) ($piece['engine'] ?? 'p5');
+$aiRefineEnabled = feature_enabled('ai_pieces_code') && feature_ai_piece_engine_enabled($pieceEngine);
 ?>
 <style>
 .editor-workspace {
@@ -400,7 +402,9 @@ $preferredProfileId = $preferredProfileId ?? null;
                         <button type="button" class="admin-tab" data-tab="html" role="tab" aria-selected="false">HTML</button>
                         <button type="button" class="admin-tab" data-tab="css" role="tab" aria-selected="false">CSS</button>
                         <button type="button" class="admin-tab" data-tab="js" role="tab" aria-selected="false">JS</button>
-                        <button type="button" class="admin-tab" data-tab="ai" role="tab" aria-selected="false" style="border-color: var(--yellow); background: rgba(254, 224, 72, 0.1);">AI Refine ✨</button>
+                        <?php if ($aiRefineEnabled): ?>
+                            <button type="button" class="admin-tab" data-tab="ai" role="tab" aria-selected="false" style="border-color: var(--yellow); background: rgba(254, 224, 72, 0.1);">AI Refine ✨</button>
+                        <?php endif ?>
                     </div>
 
                     <!-- Metadata Tab -->
@@ -572,6 +576,7 @@ if ($engineVal === 'p5') {
                     </div>
 
                     <!-- AI Refine Tab -->
+                    <?php if ($aiRefineEnabled): ?>
                     <div id="tab-ai" class="piece-tab-panel is-hidden" role="tabpanel">
                         <div class="field">
                             <label for="ai_profile_id">AI Profile</label>
@@ -603,6 +608,7 @@ if ($engineVal === 'p5') {
                             <button type="button" id="btn-refine-ai" class="admin-btn" style="background: var(--yellow);">Request AI Changes</button>
                         </div>
                     </div>
+                    <?php endif ?>
 
                     <div class="form-actions" style="margin-top: 1.5rem; border-top: 3px solid var(--line); padding-top: 1.5rem;">
                         <button type="submit" class="admin-btn"><?= $isEdit ? 'Update' : 'Create' ?> Piece</button>
@@ -1335,9 +1341,11 @@ if ($engineVal === 'p5') {
         dialog.showModal();
     }
 
-    btnRefineAi.addEventListener('click', function () {
-        requestAiRefine('');
-    });
+    if (btnRefineAi) {
+        btnRefineAi.addEventListener('click', function () {
+            requestAiRefine('');
+        });
+    }
 
     var failedDialog = document.getElementById('refine-attempt-failed-dialog');
     if (failedDialog) {

@@ -10,7 +10,6 @@ class SiteIdentityAdminController
         $settings = SiteSettings::current() ?: [];
         $assets = SiteAsset::all();
         $mediaAssets = MediaAsset::all();
-        $adminNavItems = function_exists('admin_navigation_ordered_items') ? admin_navigation_ordered_items() : [];
         $themeOptions = self::themeOptions();
         $colorGroups = self::colorGroups();
         [$profiles, , $personas] = self::loadProfilesData();

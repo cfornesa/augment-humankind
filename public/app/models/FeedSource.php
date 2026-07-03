@@ -26,6 +26,19 @@ class FeedSource
         return $stmt->fetch() ?: false;
     }
 
+    public static function countExisting(): int
+    {
+        if (!self::tableExists()) {
+            return 0;
+        }
+
+        try {
+            return (int) db()->query('SELECT COUNT(*) FROM feed_sources')->fetchColumn();
+        } catch (Throwable) {
+            return 0;
+        }
+    }
+
     public static function create(array $data): int
     {
         $stmt = db()->prepare(
@@ -124,6 +137,27 @@ class FeedSource
              WHERE fi.post_id IS NULL
              ORDER BY fi.seen_at DESC"
         )->fetchAll();
+    }
+
+    public static function countPendingImports(): int
+    {
+        if (!self::tableExists()) {
+            return 0;
+        }
+
+        try {
+            if (self::feedImportTableExists()) {
+                return (int) db()->query(
+                    "SELECT COUNT(*) FROM feed_import_items WHERE status = 'pending'"
+                )->fetchColumn();
+            }
+
+            return (int) db()->query(
+                'SELECT COUNT(*) FROM feed_items_seen WHERE post_id IS NULL'
+            )->fetchColumn();
+        } catch (Throwable) {
+            return 0;
+        }
     }
 
     public static function markAsProcessed(int $seenId, int $postId): void

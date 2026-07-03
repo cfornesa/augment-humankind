@@ -133,14 +133,16 @@ ob_start();
                     <p class="admin-hint" id="post-no-cats-hint">No categories yet.</p>
                 <?php endif ?>
             </div>
-            <button type="button" id="new-cat-toggle-btn" class="admin-btn admin-btn-ghost admin-btn-sm" style="margin-top:0.5rem">+ New category</button>
-            <div id="new-cat-form" style="display:none;margin-top:0.45rem">
-                <div style="display:flex;gap:0.5rem;align-items:center">
-                    <input type="text" id="new-cat-name" placeholder="Category name" style="flex:1">
-                    <button type="button" id="new-cat-save" class="admin-btn admin-btn-sm">Create</button>
+            <?php if (feature_enabled('blog')): ?>
+                <button type="button" id="new-cat-toggle-btn" class="admin-btn admin-btn-ghost admin-btn-sm" style="margin-top:0.5rem">+ New category</button>
+                <div id="new-cat-form" style="display:none;margin-top:0.45rem">
+                    <div style="display:flex;gap:0.5rem;align-items:center">
+                        <input type="text" id="new-cat-name" placeholder="Category name" style="flex:1">
+                        <button type="button" id="new-cat-save" class="admin-btn admin-btn-sm">Create</button>
+                    </div>
+                    <p id="new-cat-error" style="color:#c0392b;font-size:0.78rem;margin:0.3rem 0 0;display:none"></p>
                 </div>
-                <p id="new-cat-error" style="color:#c0392b;font-size:0.78rem;margin:0.3rem 0 0;display:none"></p>
-            </div>
+            <?php endif ?>
         </fieldset>
 
         <!-- Publish to platforms -->
@@ -243,34 +245,38 @@ document.querySelectorAll('.platform-conn-checkbox').forEach(function (cb) {
 });
 
 // Inline category creation toggle
-document.getElementById('new-cat-toggle-btn').addEventListener('click', function () {
-    var form = document.getElementById('new-cat-form');
-    form.style.display = form.style.display === 'none' ? '' : 'none';
-    if (form.style.display !== 'none') document.getElementById('new-cat-name').focus();
-});
+var newCatToggle = document.getElementById('new-cat-toggle-btn');
+var newCatSave = document.getElementById('new-cat-save');
+if (newCatToggle && newCatSave) {
+    newCatToggle.addEventListener('click', function () {
+        var form = document.getElementById('new-cat-form');
+        form.style.display = form.style.display === 'none' ? '' : 'none';
+        if (form.style.display !== 'none') document.getElementById('new-cat-name').focus();
+    });
 
-document.getElementById('new-cat-save').addEventListener('click', function () {
-    var name = document.getElementById('new-cat-name').value.trim();
-    var errEl = document.getElementById('new-cat-error');
-    errEl.style.display = 'none';
-    if (!name) { errEl.textContent = 'Name required'; errEl.style.display = 'block'; return; }
-    fetch('/admin/blog/categories/create-inline', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: 'name=' + encodeURIComponent(name)
-    }).then(function (r) { return r.json(); }).then(function (data) {
-        if (data.error) { errEl.textContent = data.error; errEl.style.display = 'block'; return; }
-        var list = document.getElementById('post-categories-list');
-        var hint = document.getElementById('post-no-cats-hint');
-        if (hint) hint.remove();
-        var label = document.createElement('label');
-        label.className = 'exhibit-artwork-check';
-        label.innerHTML = '<input type="checkbox" name="category_ids[]" value="' + data.id + '" checked><span>' + data.name + '</span>';
-        list.appendChild(label);
-        document.getElementById('new-cat-name').value = '';
-        document.getElementById('new-cat-form').style.display = 'none';
-    }).catch(function () { errEl.textContent = 'Request failed'; errEl.style.display = 'block'; });
-});
+    newCatSave.addEventListener('click', function () {
+        var name = document.getElementById('new-cat-name').value.trim();
+        var errEl = document.getElementById('new-cat-error');
+        errEl.style.display = 'none';
+        if (!name) { errEl.textContent = 'Name required'; errEl.style.display = 'block'; return; }
+        fetch('/admin/blog/categories/create-inline', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: 'name=' + encodeURIComponent(name)
+        }).then(function (r) { return r.json(); }).then(function (data) {
+            if (data.error) { errEl.textContent = data.error; errEl.style.display = 'block'; return; }
+            var list = document.getElementById('post-categories-list');
+            var hint = document.getElementById('post-no-cats-hint');
+            if (hint) hint.remove();
+            var label = document.createElement('label');
+            label.className = 'exhibit-artwork-check';
+            label.innerHTML = '<input type="checkbox" name="category_ids[]" value="' + data.id + '" checked><span>' + data.name + '</span>';
+            list.appendChild(label);
+            document.getElementById('new-cat-name').value = '';
+            document.getElementById('new-cat-form').style.display = 'none';
+        }).catch(function () { errEl.textContent = 'Request failed'; errEl.style.display = 'block'; });
+    });
+}
 
 (function () {
     let sectionCount = <?= count($sections) ?>;

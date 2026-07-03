@@ -54,6 +54,21 @@ class CronController
         $startedAt = microtime(true);
         $subjectHash = operational_request_subject_hash('cron_refresh_feeds');
 
+        // Feed ingest creates new posts; content-safe blog gating skips it.
+        // (Scheduled publishing of existing posts stays active regardless.)
+        if (!feature_enabled('blog')) {
+            audit_log_event('cron', 'cron_refresh_feeds', 'success', [
+                'subject_hash' => $subjectHash,
+                'http_status' => 200,
+                'metadata' => ['skipped' => 'blog disabled'],
+            ]);
+
+            http_response_code(200);
+            header('Content-Type: application/json');
+            echo json_encode(['ok' => true, 'skipped' => 'blog disabled'], JSON_PRETTY_PRINT);
+            exit;
+        }
+
         try {
             $sourceCount = 0;
             $importedCount = 0;

@@ -18,6 +18,7 @@ require_once __DIR__ . '/helpers/art-piece-generation.php';
 require_once __DIR__ . '/helpers/site-theme-generation.php';
 require_once __DIR__ . '/helpers/navigation.php';
 require_once __DIR__ . '/helpers/admin-navigation.php';
+require_once __DIR__ . '/helpers/features.php';
 require_once __DIR__ . '/helpers/platform-ui.php';
 require_once __DIR__ . '/helpers/reorder.php';
 require_once __DIR__ . '/lib/ai/AiProviderClient.php';
@@ -64,6 +65,7 @@ require_once __DIR__ . '/controllers/Admin/TrashController.php';
 require_once __DIR__ . '/controllers/Admin/NavigationController.php';
 require_once __DIR__ . '/controllers/Admin/FeedSourcesAdminController.php';
 require_once __DIR__ . '/controllers/Admin/SiteIdentityAdminController.php';
+require_once __DIR__ . '/controllers/Admin/FeaturesAdminController.php';
 require_once __DIR__ . '/controllers/Admin/UserProfilesAdminController.php';
 require_once __DIR__ . '/lib/syndication/AdapterFactory.php';
 require_once __DIR__ . '/controllers/Admin/PlatformConnectionsAdminController.php';
@@ -153,6 +155,9 @@ $publicRoutes = [
     ['GET', '/immersive/collections/([a-z0-9-]+)',    [ImmersiveController::class, 'collection']],
     ['GET', '/immersive/exhibits/([a-z0-9-]+)',       [ImmersiveController::class, 'redirectCollection']],
 
+    ['GET', '/api/site',                             [ApiController::class, 'site']],
+    ['GET', '/api/navigation',                       [ApiController::class, 'navigation']],
+    ['GET', '/api/pages',                            [ApiController::class, 'pages']],
     ['GET', '/api/feeds',                            [ApiController::class, 'feedsCatalog']],
     ['GET', '/api/feeds/atom',                       [BlogController::class, 'atom']],
     ['GET', '/api/feeds/json',                       [BlogController::class, 'jsonFeed']],
@@ -237,9 +242,9 @@ $adminRoutes = [
 
     ['GET',  '/admin/posts',                             [BlogAdminController::class, 'postsIndex']],
     ['GET',  '/admin/posts/calendar',                    [BlogAdminController::class, 'postCalendar']],
-    ['GET',  '/admin/posts/create',                      [BlogAdminController::class, 'postCreate']],
-    ['POST', '/admin/posts/create',                      [BlogAdminController::class, 'postStore']],
-    ['POST', '/admin/blog/categories/create-inline',     [BlogAdminController::class, 'categoryCreateInline']],
+    ['GET',  '/admin/posts/create',                      [BlogAdminController::class, 'postCreate'], 'blog'],
+    ['POST', '/admin/posts/create',                      [BlogAdminController::class, 'postStore'], 'blog'],
+    ['POST', '/admin/blog/categories/create-inline',     [BlogAdminController::class, 'categoryCreateInline'], 'blog'],
     ['GET',  '/admin/posts/([0-9]+)/edit',               [BlogAdminController::class, 'postEdit']],
     ['POST', '/admin/posts/([0-9]+)/edit',               [BlogAdminController::class, 'postUpdate']],
     ['POST', '/admin/posts/([0-9]+)/delete',             [BlogAdminController::class, 'postDelete']],
@@ -249,16 +254,16 @@ $adminRoutes = [
     ['POST', '/admin/reactions/([0-9]+)/delete', [BlogAdminController::class, 'reactionDelete']],
 
     ['GET',  '/admin/exhibits',                 [PortfolioAdminController::class, 'exhibitsIndex']],
-    ['GET',  '/admin/exhibits/create',          [PortfolioAdminController::class, 'exhibitCreate']],
-    ['POST', '/admin/exhibits/create',          [PortfolioAdminController::class, 'exhibitStore']],
+    ['GET',  '/admin/exhibits/create',          [PortfolioAdminController::class, 'exhibitCreate'], 'exhibits'],
+    ['POST', '/admin/exhibits/create',          [PortfolioAdminController::class, 'exhibitStore'], 'exhibits'],
     ['GET',  '/admin/exhibits/([0-9]+)/edit',   [PortfolioAdminController::class, 'exhibitEdit']],
     ['POST', '/admin/exhibits/([0-9]+)/edit',   [PortfolioAdminController::class, 'exhibitUpdate']],
     ['POST', '/admin/exhibits/([0-9]+)/delete', [PortfolioAdminController::class, 'exhibitDelete']],
     ['POST', '/admin/exhibits/reorder',         [PortfolioAdminController::class, 'exhibitReorder']],
 
     ['GET',  '/admin/categories',                     [BlogCategoriesAdminController::class, 'index']],
-    ['GET',  '/admin/categories/create',              [BlogCategoriesAdminController::class, 'create']],
-    ['POST', '/admin/categories/create',              [BlogCategoriesAdminController::class, 'store']],
+    ['GET',  '/admin/categories/create',              [BlogCategoriesAdminController::class, 'create'], 'blog'],
+    ['POST', '/admin/categories/create',              [BlogCategoriesAdminController::class, 'store'], 'blog'],
     ['GET',  '/admin/categories/([0-9]+)/edit',       [BlogCategoriesAdminController::class, 'edit']],
     ['POST', '/admin/categories/([0-9]+)/edit',       [BlogCategoriesAdminController::class, 'update']],
     ['POST', '/admin/categories/([0-9]+)/delete',     [BlogCategoriesAdminController::class, 'delete']],
@@ -274,18 +279,18 @@ $adminRoutes = [
     ['POST', '/admin/art-media/reorder',               [PortfolioAdminController::class, 'categoryReorder']],
 
     ['GET',  '/admin/exhibit-collections',             [PortfolioAdminController::class, 'collectionsIndex']],
-    ['GET',  '/admin/exhibit-collections/create',      [PortfolioAdminController::class, 'collectionCreate']],
-    ['POST', '/admin/exhibit-collections/create',      [PortfolioAdminController::class, 'collectionStore']],
-    ['POST', '/admin/exhibit-collections/create-inline', [PortfolioAdminController::class, 'collectionCreateInline']],
+    ['GET',  '/admin/exhibit-collections/create',      [PortfolioAdminController::class, 'collectionCreate'], 'exhibit_collections'],
+    ['POST', '/admin/exhibit-collections/create',      [PortfolioAdminController::class, 'collectionStore'], 'exhibit_collections'],
+    ['POST', '/admin/exhibit-collections/create-inline', [PortfolioAdminController::class, 'collectionCreateInline'], 'exhibit_collections'],
     ['GET',  '/admin/exhibit-collections/([0-9]+)/edit', [PortfolioAdminController::class, 'collectionEdit']],
     ['POST', '/admin/exhibit-collections/([0-9]+)/edit', [PortfolioAdminController::class, 'collectionUpdate']],
     ['POST', '/admin/exhibit-collections/([0-9]+)/delete', [PortfolioAdminController::class, 'collectionDelete']],
     ['POST', '/admin/exhibit-collections/reorder',     [PortfolioAdminController::class, 'collectionReorder']],
 
     ['GET',  '/admin/collections',                     [PortfolioAdminController::class, 'collectionsIndex']],
-    ['GET',  '/admin/collections/create',              [PortfolioAdminController::class, 'collectionCreate']],
-    ['POST', '/admin/collections/create',              [PortfolioAdminController::class, 'collectionStore']],
-    ['POST', '/admin/collections/create-inline',       [PortfolioAdminController::class, 'collectionCreateInline']],
+    ['GET',  '/admin/collections/create',              [PortfolioAdminController::class, 'collectionCreate'], 'exhibit_collections'],
+    ['POST', '/admin/collections/create',              [PortfolioAdminController::class, 'collectionStore'], 'exhibit_collections'],
+    ['POST', '/admin/collections/create-inline',       [PortfolioAdminController::class, 'collectionCreateInline'], 'exhibit_collections'],
     ['GET',  '/admin/collections/([0-9]+)/edit',       [PortfolioAdminController::class, 'collectionEdit']],
     ['POST', '/admin/collections/([0-9]+)/edit',       [PortfolioAdminController::class, 'collectionUpdate']],
     ['POST', '/admin/collections/([0-9]+)/delete',     [PortfolioAdminController::class, 'collectionDelete']],
@@ -313,36 +318,36 @@ $adminRoutes = [
     ['GET',  '/admin/pieces',                  [PiecesAdminController::class, 'index']],
     ['POST', '/admin/pieces/reorder',          [PiecesAdminController::class, 'reorder']],
     ['GET',  '/admin/pieces/library',          [PiecesAdminController::class, 'library']],
-    ['GET',  '/admin/ai/profiles',             [PiecesAdminController::class, 'aiProfilesLibrary']],
-    ['GET',  '/admin/pieces/generate',         [PiecesAdminController::class, 'generateForm']],
-    ['POST', '/admin/pieces/generate',         [PiecesAdminController::class, 'generate']],
-    ['GET',  '/admin/pieces/generate/preview', [PiecesAdminController::class, 'generatePreview']],
-    ['POST', '/admin/pieces/generate/save',    [PiecesAdminController::class, 'generateSave']],
-    ['POST', '/admin/pieces/refine-ai',        [PiecesAdminController::class, 'refineAi']],
+    ['GET',  '/admin/ai/profiles',             [PiecesAdminController::class, 'aiProfilesLibrary'], 'ai'],
+    ['GET',  '/admin/pieces/generate',         [PiecesAdminController::class, 'generateForm'], 'ai_pieces_code'],
+    ['POST', '/admin/pieces/generate',         [PiecesAdminController::class, 'generate'], 'ai_pieces_code'],
+    ['GET',  '/admin/pieces/generate/preview', [PiecesAdminController::class, 'generatePreview'], 'ai_pieces_code'],
+    ['POST', '/admin/pieces/generate/save',    [PiecesAdminController::class, 'generateSave'], 'ai_pieces_code'],
+    ['POST', '/admin/pieces/refine-ai',        [PiecesAdminController::class, 'refineAi'], 'ai_pieces_code'],
     ['GET',  '/admin/pieces/templates',        [PiecesAdminController::class, 'templates']],
     ['GET',  '/admin/pieces/templates/([0-9]+)/edit', [PiecesAdminController::class, 'templateEdit']],
     ['POST', '/admin/pieces/templates/([0-9]+)/edit', [PiecesAdminController::class, 'templateUpdate']],
-    ['GET',  '/admin/pieces/create',           [PiecesAdminController::class, 'create']],
-    ['POST', '/admin/pieces/create',           [PiecesAdminController::class, 'store']],
+    ['GET',  '/admin/pieces/create',           [PiecesAdminController::class, 'create'], 'pieces'],
+    ['POST', '/admin/pieces/create',           [PiecesAdminController::class, 'store'], 'pieces'],
     ['GET',  '/admin/pieces/([0-9]+)/edit',              [PiecesAdminController::class, 'edit']],
     ['POST', '/admin/pieces/([0-9]+)/edit',              [PiecesAdminController::class, 'update']],
-    ['POST', '/admin/pieces/([0-9]+)/refine-save',       [PiecesAdminController::class, 'refineSave']],
+    ['POST', '/admin/pieces/([0-9]+)/refine-save',       [PiecesAdminController::class, 'refineSave'], 'ai_pieces_code'],
     ['POST', '/admin/pieces/([0-9]+)/capture-thumbnail', [PiecesAdminController::class, 'captureThumbnail']],
     ['POST', '/admin/pieces/([0-9]+)/set-status',        [PiecesAdminController::class, 'setStatus']],
     ['POST', '/admin/pieces/([0-9]+)/delete',            [PiecesAdminController::class, 'delete']],
     ['GET',  '/admin/pieces/([0-9]+)/versions', [PiecesAdminController::class, 'versions']],
-    ['GET',  '/admin/pieces/([0-9]+)/versions/create', [PiecesAdminController::class, 'versionCreate']],
-    ['POST', '/admin/pieces/([0-9]+)/versions/create', [PiecesAdminController::class, 'versionStore']],
+    ['GET',  '/admin/pieces/([0-9]+)/versions/create', [PiecesAdminController::class, 'versionCreate'], 'pieces'],
+    ['POST', '/admin/pieces/([0-9]+)/versions/create', [PiecesAdminController::class, 'versionStore'], 'pieces'],
     ['GET',  '/admin/pieces/([0-9]+)/versions/([0-9]+)/edit', [PiecesAdminController::class, 'versionEdit']],
     ['POST', '/admin/pieces/([0-9]+)/versions/([0-9]+)/edit', [PiecesAdminController::class, 'versionUpdate']],
     ['POST', '/admin/pieces/([0-9]+)/versions/([0-9]+)/delete', [PiecesAdminController::class, 'versionDelete']],
     ['POST', '/admin/pieces/([0-9]+)/versions/([0-9]+)/set-current', [PiecesAdminController::class, 'versionSetCurrent']],
-    ['POST', '/admin/pieces/([0-9]+)/versions/([0-9]+)/fork', [PiecesAdminController::class, 'versionFork']],
+    ['POST', '/admin/pieces/([0-9]+)/versions/([0-9]+)/fork', [PiecesAdminController::class, 'versionFork'], 'pieces'],
 
     ['GET',  '/admin/platform-collections',         [PlatformCollectionsAdminController::class, 'index']],
     ['POST', '/admin/platform-collections/reorder', [PlatformCollectionsAdminController::class, 'reorder']],
-    ['GET',  '/admin/platform-collections/create',  [PlatformCollectionsAdminController::class, 'create']],
-    ['POST', '/admin/platform-collections/create',  [PlatformCollectionsAdminController::class, 'store']],
+    ['GET',  '/admin/platform-collections/create',  [PlatformCollectionsAdminController::class, 'create'], 'platform_collections'],
+    ['POST', '/admin/platform-collections/create',  [PlatformCollectionsAdminController::class, 'store'], 'platform_collections'],
     ['GET',  '/admin/platform-collections/([0-9]+)/edit', [PlatformCollectionsAdminController::class, 'edit']],
     ['POST', '/admin/platform-collections/([0-9]+)/edit', [PlatformCollectionsAdminController::class, 'update']],
     ['POST', '/admin/platform-collections/([0-9]+)/capture-thumbnail', [PlatformCollectionsAdminController::class, 'captureThumbnail']],
@@ -350,14 +355,17 @@ $adminRoutes = [
     ['GET',  '/admin/platform-collections/library', [PlatformCollectionsAdminController::class, 'library']],
 
     ['GET',  '/admin/feed-sources',        [FeedSourcesAdminController::class, 'index']],
-    ['GET',  '/admin/feed-sources/create', [FeedSourcesAdminController::class, 'create']],
-    ['POST', '/admin/feed-sources/create', [FeedSourcesAdminController::class, 'store']],
+    ['GET',  '/admin/feed-sources/create', [FeedSourcesAdminController::class, 'create'], 'blog'],
+    ['POST', '/admin/feed-sources/create', [FeedSourcesAdminController::class, 'store'], 'blog'],
     ['GET',  '/admin/feed-sources/([0-9]+)/edit', [FeedSourcesAdminController::class, 'edit']],
     ['POST', '/admin/feed-sources/([0-9]+)/edit', [FeedSourcesAdminController::class, 'update']],
     ['POST', '/admin/feed-sources/([0-9]+)/delete', [FeedSourcesAdminController::class, 'delete']],
-    ['POST', '/admin/feed-sources/([0-9]+)/ingest', [FeedSourcesAdminController::class, 'ingest']],
-    ['POST', '/admin/feed-sources/approve', [FeedSourcesAdminController::class, 'approveImport']],
+    ['POST', '/admin/feed-sources/([0-9]+)/ingest', [FeedSourcesAdminController::class, 'ingest'], 'blog'],
+    ['POST', '/admin/feed-sources/approve', [FeedSourcesAdminController::class, 'approveImport'], 'blog'],
     ['POST', '/admin/feed-sources/reject',  [FeedSourcesAdminController::class, 'rejectImport']],
+
+    ['GET',  '/admin/features',      [FeaturesAdminController::class, 'index']],
+    ['POST', '/admin/features/save', [FeaturesAdminController::class, 'save']],
 
     ['GET',  '/admin/site-identity', [SiteIdentityAdminController::class, 'index']],
     ['POST', '/admin/site-identity/settings', [SiteIdentityAdminController::class, 'settingsUpdate']],
@@ -368,8 +376,8 @@ $adminRoutes = [
     ['GET',  '/admin/site-identity/theme-code',           [SiteIdentityAdminController::class, 'themeCodeLoad']],
     ['POST', '/admin/site-identity/theme-save-named',     [SiteIdentityAdminController::class, 'themeSaveNamed']],
     ['POST', '/admin/site-identity/theme-reset-defaults', [SiteIdentityAdminController::class, 'themeResetDefaults']],
-    ['POST', '/admin/site-identity/theme-generate', [SiteIdentityAdminController::class, 'themeGenerate']],
-    ['POST', '/admin/site-identity/theme-refine', [SiteIdentityAdminController::class, 'themeRefine']],
+    ['POST', '/admin/site-identity/theme-generate', [SiteIdentityAdminController::class, 'themeGenerate'], 'ai_theme'],
+    ['POST', '/admin/site-identity/theme-refine', [SiteIdentityAdminController::class, 'themeRefine'], 'ai_theme'],
     ['POST', '/admin/site-identity/theme-save', [SiteIdentityAdminController::class, 'themeSave']],
     ['POST', '/admin/site-identity/theme-revert/([0-9]+)', [SiteIdentityAdminController::class, 'themeRevert']],
 
@@ -410,8 +418,8 @@ $adminRoutes = [
     ['GET',  '/admin/platform-connections/oauth-apps/([a-z-]+)/edit', [PlatformConnectionsAdminController::class, 'oauthAppEdit']],
     ['POST', '/admin/platform-connections/oauth-apps/([a-z-]+)/edit', [PlatformConnectionsAdminController::class, 'oauthAppUpdate']],
 
-    ['POST', '/admin/ai/process', [PiecesAdminController::class, 'aiProcessText']],
-    ['POST', '/admin/ai/describe-image', [PiecesAdminController::class, 'aiDescribeImage']],
+    ['POST', '/admin/ai/process', [PiecesAdminController::class, 'aiProcessText'], 'ai'],
+    ['POST', '/admin/ai/describe-image', [PiecesAdminController::class, 'aiDescribeImage'], 'ai_alt_text'],
 
     ['POST', '/admin/user-profiles/([a-zA-Z0-9_-]+)/photo', [UserProfilesAdminController::class, 'userPhotoUpload']],
 
@@ -433,6 +441,20 @@ foreach ([...$publicRoutes, ...$adminRoutes] as $route) {
     [$routeMethod, $pattern, $handler] = $route;
     if ($method !== $routeMethod || !preg_match('#^' . $pattern . '$#', $path, $matches)) {
         continue;
+    }
+
+    // Optional trailing feature key: 4th element (no extra args) or 5th
+    // (after the extra-args array). Content-safe gating — only creation and
+    // AI routes carry a key; manage/browse routes never do.
+    $featureKey = null;
+    if (isset($route[4]) && is_string($route[4])) {
+        $featureKey = $route[4];
+    } elseif (isset($route[3]) && is_string($route[3])) {
+        $featureKey = $route[3];
+    }
+    if ($featureKey !== null && !feature_enabled($featureKey)) {
+        feature_blocked_response($featureKey, $method, $pattern);
+        exit;
     }
 
     array_shift($matches);

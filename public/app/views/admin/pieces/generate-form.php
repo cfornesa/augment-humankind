@@ -61,7 +61,12 @@ ob_start();
         </div>
     <?php endif; ?>
 
-    <?php if (empty($profiles)): ?>
+    <?php if (empty($availableGenerationModes ?? [])): ?>
+        <div class="form-status form-status-error" role="alert">
+            <p>All piece AI generation modes are disabled. Enable at least one mode under Admin → Features → AI before generating a piece.</p>
+            <p style="margin-top: 0.5rem;"><a href="/admin/features?tab=ai" class="admin-btn">Open AI Features</a></p>
+        </div>
+    <?php elseif (empty($profiles)): ?>
         <div class="form-status form-status-error" role="alert">
             <p>No active AI Settings profiles found. You must configure and enable at least one AI Profile in the settings page to generate pieces.</p>
             <p style="margin-top: 0.5rem;"><a href="/admin/user-profiles" class="admin-btn">Configure AI Profiles &amp; Keys</a></p>
@@ -105,17 +110,23 @@ ob_start();
             <div class="field">
                 <label for="generation_mode">Art Engine / Runtime Environment</label>
                 <select id="generation_mode" name="generation_mode" required>
-                    <optgroup label="Stable engines">
-                        <option value="p5" <?= ($generationMode ?? $engine ?? 'p5') === 'p5' ? 'selected' : '' ?>>P5.js (Interactive canvas drawing)</option>
-                        <option value="c2" <?= ($generationMode ?? $engine ?? '') === 'c2' ? 'selected' : '' ?>>C2.js (Animated drawing &amp; geometry)</option>
-                        <option value="c2_interactive" <?= ($generationMode ?? '') === 'c2_interactive' ? 'selected' : '' ?>>C2.js Interactive (Click, touch &amp; drag)</option>
-                        <option value="three" <?= ($generationMode ?? $engine ?? '') === 'three' ? 'selected' : '' ?>>Three.js (3D WebGL scenes &amp; lights)</option>
-                        <option value="svg" <?= ($generationMode ?? $engine ?? '') === 'svg' ? 'selected' : '' ?>>SVG (Vector paths &amp; CSS animation)</option>
-                    </optgroup>
-                    <optgroup label="Experimental engines">
-                        <option value="aframe" <?= ($generationMode ?? $engine ?? '') === 'aframe' ? 'selected' : '' ?>>A-Frame Experimental (Self-contained 3D scene)</option>
-                    </optgroup>
+                    <?php
+                    $modesByGroup = [];
+                    foreach (($availableGenerationModes ?? []) as $mode) {
+                        $modesByGroup[$mode['group']][] = $mode;
+                    }
+                    ?>
+                    <?php foreach ($modesByGroup as $groupLabel => $modes): ?>
+                        <optgroup label="<?= e($groupLabel) ?>">
+                            <?php foreach ($modes as $mode): ?>
+                                <option value="<?= e($mode['value']) ?>" <?= ($generationMode ?? $engine ?? 'p5') === $mode['value'] ? 'selected' : '' ?>>
+                                    <?= e($mode['label']) ?>
+                                </option>
+                            <?php endforeach ?>
+                        </optgroup>
+                    <?php endforeach ?>
                 </select>
+                <small>Only modes enabled under Admin → Features → AI appear here.</small>
             </div>
 
             <div class="field">

@@ -25,6 +25,50 @@ options regardless of session context. -->
 
 ---
 
+## 2026-07-02 — Feature Modularity: Content-Safe Toggles For Portfolio Types, Blog, And AI
+
+### Decision
+Site modules are now toggleable from a new `/admin/features` panel (subtabs:
+Art Pieces, Exhibits, Blog, AI) with **content-safe** semantics chosen
+explicitly by the human: toggling a feature OFF blocks creating new content
+and hides empty sections from navigation, while existing published content
+keeps its public URLs, stays in public nav/listings and feeds, and remains
+editable/deletable in admin ("manage existing only" badge on gated admin nav
+entries with content). All flags default ON and fail open when settings are
+missing, so fresh installs work before database setup. Pages have no toggle.
+
+Dependencies are enforced at read time and in the panel UI: exhibit
+collections require exhibits; platform collections require art pieces. AI has
+a master switch plus per-capability flags — `ai_pieces_code` (generate +
+refine, also requires pieces), `ai_theme` (Site Identity AI Assist, with a new
+site-wide default theme-generation profile setting), `ai_alt_text`, and
+per-area editor text flags (`ai_text_pages|blog|pieces|exhibits|
+platform_collections|media`). The shared `/admin/ai/process` endpoint now
+requires a validated `context` field; the shared TipTap bundle reads flags and
+context from body data attributes set by the admin layout.
+
+### Storage (gallery: Embedded / Columns / Ledger, Reframe: install-time site profiles)
+Embedded was selected: flags live as one `features_json` map inside the
+existing `site_settings.settings_json` JSON column via a new
+`SiteSettings::updateJsonSetting()`, matching the `admin_nav_order_json`
+idiom. No schema change (Rule 3). Saves are audit-logged
+(`admin_settings` / `feature_flags_save`). The Reframe — choosing a site's
+module set at install time in `setup-database.php` — remains open.
+
+### Implementation Notes
+- `public/app/helpers/features.php`: registry, effective-value logic,
+  content checks, blocked-route responses, `feature_flags_override()` test seam.
+- Router dispatch honors an optional trailing feature key on route tuples;
+  only creation/AI routes carry keys. **No public route is gated** (Rule 5).
+- `POST /api/cron/refresh-feeds` skips ingest (200 + skipped) while blog is
+  off; scheduled publishing and syndication of existing posts stay active
+  (human chose to keep syndication available).
+- New CLI suite `tests/feature-flags.php` (13 tests). Pre-existing
+  `tests/three-runtime-consistency.php` failures (2) are unrelated.
+- `docs/api.md` gained a Feature Flags section; public contract unchanged.
+
+---
+
 ## 2026-07-02 — Art Piece Templates, CMS Media, And Portable HTML Exports
 
 ### Decision

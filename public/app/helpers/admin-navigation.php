@@ -10,6 +10,7 @@ function admin_navigation_registry(): array
         ['key' => 'comments', 'label' => 'Comments', 'href' => '/admin/comments', 'description' => 'Moderate comments and reactions.'],
         ['key' => 'feed', 'label' => 'External Feeds', 'href' => '/admin/feed-sources', 'description' => 'Connect, manage, and review imported feed items.'],
         ['key' => 'identity', 'label' => 'Identity', 'href' => '/admin/site-identity', 'description' => 'Site-wide copy and brand settings.'],
+        ['key' => 'features', 'label' => 'Features', 'href' => '/admin/features', 'description' => 'Enable or disable site modules and AI capabilities.'],
         ['key' => 'navigation', 'label' => 'Navigation', 'href' => '/admin/navigation', 'description' => 'Public navigation links and ordering.'],
         ['key' => 'ai_settings', 'label' => 'AI Settings', 'href' => '/admin/ai-settings', 'description' => 'Profiles, keys, and preferred AI vendors.'],
         ['key' => 'users', 'label' => 'Users', 'href' => '/admin/user-profiles', 'description' => 'Public user accounts and profiles.'],
@@ -35,6 +36,21 @@ function admin_navigation_default_order(): array
     );
 }
 
+/** Admin nav keys gated by a feature flag. */
+function admin_navigation_feature_map(): array
+{
+    return [
+        'posts' => 'blog',
+        'comments' => 'blog',
+        'feed' => 'blog',
+        'categories' => 'blog',
+        'exhibits' => 'exhibits',
+        'exhibit_collections' => 'exhibit_collections',
+        'pieces' => 'pieces',
+        'platform_collections' => 'platform_collections',
+    ];
+}
+
 function admin_navigation_ordered_items(): array
 {
     $registry = admin_navigation_registry();
@@ -58,7 +74,109 @@ function admin_navigation_ordered_items(): array
         }
     }
 
-    return $ordered;
+    return admin_navigation_apply_feature_gating($ordered);
+}
+
+/**
+ * Content-safe gating: a disabled feature's entry disappears when empty,
+ * but stays (flagged manage-only) while non-deleted content exists so it
+ * can still be edited or deleted.
+ */
+function admin_navigation_apply_feature_gating(array $items): array
+{
+    if (!function_exists('feature_enabled')) {
+        return $items;
+    }
+
+    $map = admin_navigation_feature_map();
+    $filtered = [];
+    foreach ($items as $item) {
+        $key = (string) $item['key'];
+
+        // Art media taxonomy serves both exhibits and pieces.
+        if ($key === 'art_media') {
+            $visible = feature_enabled('exhibits') || feature_enabled('pieces')
+                || feature_has_existing_content('exhibits') || feature_has_existing_content('pieces')
+                || self_admin_nav_count_existing('Category') > 0;
+            if ($visible) {
+                if (!feature_enabled('exhibits') && !feature_enabled('pieces')) {
+                    $item['manage_only'] = true;
+                }
+                $filtered[] = $item;
+            }
+            continue;
+        }
+
+        if ($key === 'categories') {
+            if (feature_enabled('blog')) {
+                $filtered[] = $item;
+            } elseif (self_admin_nav_count_existing('BlogCategory') > 0) {
+                $item['manage_only'] = true;
+                $filtered[] = $item;
+            }
+            continue;
+        }
+
+        if ($key === 'comments') {
+            $existingComments = self_admin_nav_count_existing('Comment') + self_admin_nav_count_existing('Reaction');
+            if (feature_enabled('blog')) {
+                $filtered[] = $item;
+            } elseif ($existingComments > 0) {
+                $item['manage_only'] = true;
+                $filtered[] = $item;
+            }
+            continue;
+        }
+
+        if ($key === 'feed') {
+            $existingFeedRecords = self_admin_nav_count_existing('FeedSource') + self_admin_nav_count_pending_feed_imports();
+            if (feature_enabled('blog')) {
+                $filtered[] = $item;
+            } elseif ($existingFeedRecords > 0) {
+                $item['manage_only'] = true;
+                $filtered[] = $item;
+            }
+            continue;
+        }
+
+        $feature = $map[$key] ?? null;
+        if ($feature === null || feature_enabled($feature)) {
+            $filtered[] = $item;
+            continue;
+        }
+        if (feature_has_existing_content($feature)) {
+            $item['manage_only'] = true;
+            $filtered[] = $item;
+        }
+    }
+
+    return $filtered;
+}
+
+function self_admin_nav_count_existing(string $class): int
+{
+    if (!class_exists($class) || !method_exists($class, 'countExisting')) {
+        return 0;
+    }
+
+    try {
+        return max(0, (int) $class::countExisting());
+    } catch (Throwable) {
+        return 0;
+    }
+}
+
+function self_admin_nav_count_pending_feed_imports(): int
+{
+    if (!class_exists('FeedSource') || !method_exists('FeedSource', 'countPendingImports')) {
+        return 0;
+    }
+
+    try {
+        return max(0, (int) FeedSource::countPendingImports());
+    } catch (Throwable) {
+        return 0;
+    }
 }
 
 function admin_navigation_is_active(string $currentPath, string $href): bool

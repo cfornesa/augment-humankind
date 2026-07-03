@@ -51,6 +51,28 @@ class BlogPost
         return self::attachMeta($stmt->fetchAll());
     }
 
+    public static function countPublished(): int
+    {
+        if (!self::tableExists('posts')) {
+            return 0;
+        }
+
+        return (int) db()->query(
+            "SELECT COUNT(*) FROM posts WHERE status = 'published' AND deleted_at IS NULL"
+        )->fetchColumn();
+    }
+
+    public static function countExisting(): int
+    {
+        if (!self::tableExists('posts')) {
+            return 0;
+        }
+
+        return (int) db()->query(
+            'SELECT COUNT(*) FROM posts WHERE deleted_at IS NULL'
+        )->fetchColumn();
+    }
+
     public static function search(string $query, int $limit = 25): array
     {
         $query = trim($query);

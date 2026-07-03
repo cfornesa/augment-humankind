@@ -3,13 +3,39 @@ document.querySelectorAll('tbody[data-reorder-url]').forEach(tbody => {
     const url = tbody.dataset.reorderUrl;
     const visibility = tbody.dataset.reorderVisibility || '';
     const statusId = tbody.dataset.reorderStatus || 'reorder-status';
+    const allowNarrowDrag = tbody.dataset.reorderNarrow === 'true';
     let dragging = null;
+
+    function canDragRows() {
+        return allowNarrowDrag || window.innerWidth > 1024;
+    }
+
+    function saveOrder() {
+        const ids = [...tbody.querySelectorAll('tr[data-id]')]
+            .map(r => r.dataset.id)
+            .join(',');
+
+        const status = document.getElementById(statusId);
+        const body = new URLSearchParams({ ids });
+        if (visibility) {
+            body.set('visibility', visibility);
+        }
+        fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: body.toString(),
+        })
+        .then(r => r.json())
+        .then(() => {
+            if (status) { status.textContent = 'Order saved.'; setTimeout(() => status.textContent = '', 2000); }
+        });
+    }
 
     tbody.querySelectorAll('tr').forEach(row => {
         row.setAttribute('draggable', 'true');
 
         row.addEventListener('dragstart', e => {
-            if (window.innerWidth <= 1024) {
+            if (!canDragRows()) {
                 e.preventDefault();
                 return;
             }
@@ -19,33 +45,16 @@ document.querySelectorAll('tbody[data-reorder-url]').forEach(tbody => {
         });
 
         row.addEventListener('dragend', () => {
-            if (window.innerWidth <= 1024) return;
+            if (!canDragRows()) return;
             row.classList.remove('drag-active');
             tbody.querySelectorAll('tr').forEach(r => r.classList.remove('drag-over'));
             dragging = null;
 
-            const ids = [...tbody.querySelectorAll('tr[data-id]')]
-                .map(r => r.dataset.id)
-                .join(',');
-
-            const status = document.getElementById(statusId);
-            const body = new URLSearchParams({ ids });
-            if (visibility) {
-                body.set('visibility', visibility);
-            }
-            fetch(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                body: body.toString(),
-            })
-            .then(r => r.json())
-            .then(() => {
-                if (status) { status.textContent = 'Order saved.'; setTimeout(() => status.textContent = '', 2000); }
-            });
+            saveOrder();
         });
 
         row.addEventListener('dragover', e => {
-            if (window.innerWidth <= 1024) return;
+            if (!canDragRows()) return;
             e.preventDefault();
             if (!dragging || dragging === row) return;
             const rect = row.getBoundingClientRect();
@@ -54,14 +63,30 @@ document.querySelectorAll('tbody[data-reorder-url]').forEach(tbody => {
         });
 
         row.addEventListener('dragenter', e => {
-            if (window.innerWidth <= 1024) return;
+            if (!canDragRows()) return;
             e.preventDefault();
             if (row !== dragging) row.classList.add('drag-over');
         });
 
         row.addEventListener('dragleave', () => {
-            if (window.innerWidth <= 1024) return;
+            if (!canDragRows()) return;
             row.classList.remove('drag-over');
+        });
+    });
+
+    tbody.querySelectorAll('[data-reorder-move]').forEach(button => {
+        button.addEventListener('click', () => {
+            const row = button.closest('tr[data-id]');
+            if (!row) return;
+            if (button.dataset.reorderMove === 'up' && row.previousElementSibling) {
+                tbody.insertBefore(row, row.previousElementSibling);
+                saveOrder();
+                row.querySelector('[data-reorder-move="up"]')?.focus();
+            } else if (button.dataset.reorderMove === 'down' && row.nextElementSibling) {
+                tbody.insertBefore(row.nextElementSibling, row);
+                saveOrder();
+                row.querySelector('[data-reorder-move="down"]')?.focus();
+            }
         });
     });
 });

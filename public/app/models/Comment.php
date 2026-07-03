@@ -34,6 +34,19 @@ class Comment
         return $stmt->fetchAll();
     }
 
+    public static function countExisting(): int
+    {
+        if (!self::tableExists()) {
+            return 0;
+        }
+
+        try {
+            return (int) db()->query('SELECT COUNT(*) FROM comments WHERE deleted_at IS NULL')->fetchColumn();
+        } catch (Throwable) {
+            return 0;
+        }
+    }
+
     public static function trashed(): array
     {
         if (!self::tableExists()) {

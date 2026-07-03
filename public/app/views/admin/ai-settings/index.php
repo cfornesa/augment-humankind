@@ -136,6 +136,18 @@ $success = $_GET['success'] ?? null;
                 </select>
             </div>
             <div class="field">
+                <label for="ai_theme_default_profile_id">Theme Generation</label>
+                <select id="ai_theme_default_profile_id" name="ai_theme_default_profile_id">
+                    <option value="">— None —</option>
+                    <?php foreach ($profiles as $p): ?>
+                        <option value="<?= (int) $p['id'] ?>" <?= ((int) ($themeDefaultProfileId ?? 0) === (int) $p['id']) ? 'selected' : '' ?>>
+                            <?= e($p['profile_name'] ?? 'Default') ?> (<?= e($p['vendor']) ?>)
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+                <p class="admin-hint">Preselected in Site Identity → Design → AI Assist.</p>
+            </div>
+            <div class="field">
                 <label for="preferred_text_improve_profile_id">Text Improvement</label>
                 <select id="preferred_text_improve_profile_id" name="preferred_text_improve_profile_id">
                     <option value="">— None —</option>

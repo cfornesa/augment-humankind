@@ -34,11 +34,17 @@ ob_start();
                 <button type="button" id="btn-regen-all" class="admin-btn admin-btn-ghost">Regenerate All Thumbnails</button>
                 <span id="regen-status" style="font-weight: bold; font-size: 0.9rem;"></span>
             <?php endif; ?>
-            <a href="/admin/pieces/generate" class="admin-btn">Generate with AI</a>
-            <a href="/admin/pieces/create" class="admin-btn admin-btn-ghost">Create Piece</a>
+            <?php if (feature_enabled('ai_pieces_code') && feature_any_ai_piece_generation_mode_enabled()): ?>
+                <a href="/admin/pieces/generate" class="admin-btn">Generate with AI</a>
+            <?php endif ?>
+            <?php if (feature_enabled('pieces')): ?>
+                <a href="/admin/pieces/create" class="admin-btn admin-btn-ghost">Create Piece</a>
+            <?php endif ?>
         </div>
         <?php endif; ?>
     </div>
+
+    <?= feature_disabled_notice('pieces') ?>
 
     <nav class="admin-tabs" aria-label="Pieces tabs">
         <a href="/admin/pieces?tab=art-pieces" class="admin-tab <?= $tab === 'art-pieces' ? 'active' : '' ?>">Art Pieces</a>
@@ -89,7 +95,7 @@ ob_start();
     </form>
 
     <?php if (empty($pieces)): ?>
-        <p><?= ($q !== '' || $engine !== '') ? 'No pieces matched your filters.' : 'No art pieces yet. <a href="/admin/pieces/create">Create the first one</a>.' ?></p>
+        <p><?= ($q !== '' || $engine !== '') ? 'No pieces matched your filters.' : ('No art pieces yet.' . (feature_enabled('pieces') ? ' <a href="/admin/pieces/create">Create the first one</a>.' : '')) ?></p>
     <?php else: ?>
         <div class="admin-table-wrap">
         <table class="admin-table">

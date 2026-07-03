@@ -87,9 +87,9 @@ the Contact Form on the Contact page, cannot be deleted from that page.
 - `GET /user/login` — login form (OAuth buttons: GitHub, Google)
 - `GET /user/logout` — ends the current user session and redirects to `/`
 - `GET /user/auth/github/start` — begins GitHub OAuth flow
-- `GET /user/auth/github/callback` — GitHub OAuth callback
 - `GET /user/auth/google/start` — begins Google OAuth flow
-- `GET /user/auth/google/callback` — Google OAuth callback
+- `GET /auth/github/callback` — shared GitHub OAuth callback for admin and public user login
+- `GET /auth/google/callback` — shared Google OAuth callback for admin and public user login
 - `GET /user/settings` — profile settings page (requires login; redirects to `/user/login?redirect=...` otherwise)
 - `POST /user/settings/profile` — updates the signed-in user's display name, bio, and website
 - `POST /user/settings/photo` — uploads a profile photo for the signed-in user. Accepts a `profile_photo` multipart file (JPEG, PNG, GIF, WebP, or AVIF). Stores the binary in `profile_photo_assets` and sets `users.image` to `/api/profile-photos/{filename}`. Redirects to `/user/settings?success=photo` on success or `?error=...` on failure.
@@ -438,9 +438,15 @@ no multi-attempt server-side loop left to interrupt.
 
 ## Platform Compatibility API Routes
 
-The following JSON/API routes are provided so old platform clients can continue
-to read migrated content without the Node platform app:
+The following JSON/API routes provide public read access for portable site
+consumption and legacy platform compatibility. They are not a complete
+API-first CMS contract: there is no machine-auth write API, no full remote
+admin API, and no cross-origin browser CORS guarantee unless that is added
+later.
 
+- `GET /api/site`
+- `GET /api/navigation`
+- `GET /api/pages`
 - `GET /api/feeds`
 - `GET /api/feeds/atom`
 - `GET /api/feeds/json`
@@ -470,6 +476,22 @@ to read migrated content without the Node platform app:
 
 These routes are read-only in the PHP app. Owner/admin mutations use the
 existing `/admin/*` surfaces.
+
+### Portable Read API
+
+`GET /api/site` returns safe public site identity and display metadata:
+site title, description, canonical origin, theme/palette names, default theme
+mode, logo URLs, CTA label/href, public color tokens, and feed links. It does
+not expose custom JavaScript, custom body HTML, encrypted values, OAuth
+credentials, API keys, SMTP settings, or admin-only configuration.
+
+`GET /api/navigation` returns the same public navigation items used by the
+rendered site header. Each item includes label, URL, target, source type, and
+active key when available.
+
+`GET /api/pages` returns a published page index: id, system key, title, slug,
+URL, navigation label, description fields, public SEO metadata, sort order,
+and timestamps. Page body sections remain on `GET /api/p/{slug}`.
 
 ## Comments API
 
@@ -542,6 +564,42 @@ logo URLs) that embeds `/api/media/{uuid}.ext` links keeps working. Returns
 
 All `/admin/*` routes require an authenticated admin session. Unauthenticated
 requests redirect to `/admin/login`.
+
+### Feature Flags (content-safe module toggles)
+
+- `GET /admin/features` — Features panel with Art Pieces / Exhibits / Blog / AI subtabs.
+- `POST /admin/features/save` — saves one subtab's toggles; redirects `303` back to the panel.
+
+Flags live in `site_settings.settings_json` under `features_json` and default to
+enabled (a missing or unreadable store fails open). Toggling a feature off is
+content-safe: **no public route changes behavior** — existing published content
+keeps its URLs, feeds, and listings. Only admin creation routes (`*/create`,
+feed ingest/approve) and AI endpoints are gated; a gated form route redirects
+`303` to its section index with `?error=`, and a gated JSON endpoint (piece
+generate/refine, theme generate/refine, `/admin/ai/process`,
+`/admin/ai/describe-image`) returns `403` with `{"ok": false, "error": ...}`.
+Primary admin modules stay visible as manage-only while non-deleted content
+exists, and related management surfaces also consider their own records:
+categories, comments/reactions, external feed sources/pending imports, and art
+media terms remain reachable for management even when their parent feature is
+off. New related creation/import actions remain hidden/blocked while the parent
+feature is off. AI Settings is configuration and remains accessible regardless
+of the AI runtime master switch.
+The AI subtab is grouped into Master Switch, Piece Code Generation, Theme
+Generation, Image Description Generation, and Editor AI. The Editor AI section
+contains both the parent editor switch and the per-editor function toggles.
+Piece generation/refine requires `ai_pieces_code` plus the matching engine flag
+(`p5`, `c2`, `c2_interactive`, `three`, `svg`, or `aframe`); `c2_interactive`
+applies to new generation only, while saved C2 pieces use the C2 flag for AI
+Refine. Runtime AI buttons are hidden independently by use-case flag, with the
+server endpoint still enforcing each flag. `POST /admin/ai/process`
+additionally requires `ai_editor` and a `context` field
+(`pages|blog|exhibits|platform_collections|media`) matching an enabled per-area
+editor-AI flag. There is no `pieces` editor-AI context.
+Theme-generation default profile selection is managed from
+`/admin/ai-settings?tab=vendor`, not from the Features panel.
+`POST /api/cron/refresh-feeds` responds `200 {"ok": true, "skipped": "blog disabled"}`
+instead of ingesting while the blog feature is off.
 
 ### Categories, Art Media, and Exhibits
 
@@ -725,7 +783,9 @@ Supported trash types are artworks, categories, exhibits, posts, comments, piece
 The site identity admin is a four-tab surface: Settings, Design, Assets, and
 Media Library. `site_settings` now also carries `canonical_public_url` (used
 for canonical links, social cards, and syndication when set) and
-`admin_nav_order_json` (owner-configured admin navigation order).
+`admin_nav_order_json` (owner-configured admin navigation order, managed from
+`/admin/navigation?tab=admin`; the existing post endpoint remains for
+compatibility).
 
 ### User Profiles
 
@@ -733,6 +793,14 @@ for canonical links, social cards, and syndication when set) and
 - `GET /admin/user-profiles/[id]/edit`
 - `POST /admin/user-profiles/[id]/edit`
 - `POST /admin/user-profiles/[id]/photo` — upload a profile photo (owner uses `media_files`, member uses `profile_photo_assets`)
+
+The user profiles admin is user-only: profile editing, membership state, and
+profile photos. AI profiles, keys, personas, and preferred workflow defaults
+live under AI Settings.
+
+### AI Settings
+
+- `GET /admin/ai-settings`
 - `GET /admin/user-profiles/settings/create`
 - `POST /admin/user-profiles/settings/create`
 - `GET /admin/user-profiles/settings/[id]/edit`
@@ -743,23 +811,6 @@ for canonical links, social cards, and syndication when set) and
 - `GET /admin/user-profiles/keys/[id]/edit`
 - `POST /admin/user-profiles/keys/[id]/edit`
 - `POST /admin/user-profiles/keys/[id]/delete`
-
-The user profiles admin is now user-only: profile editing, photos, and
-per-user preferred AI profile selections remain here.
-
-### AI Settings
-
-- `GET /admin/ai-settings`
-- `GET /admin/ai-settings/profiles/create`
-- `POST /admin/ai-settings/profiles/create`
-- `GET /admin/ai-settings/profiles/[id]/edit`
-- `POST /admin/ai-settings/profiles/[id]/edit`
-- `POST /admin/ai-settings/profiles/[id]/delete`
-- `GET /admin/ai-settings/keys/create`
-- `POST /admin/ai-settings/keys/create`
-- `GET /admin/ai-settings/keys/[id]/edit`
-- `POST /admin/ai-settings/keys/[id]/edit`
-- `POST /admin/ai-settings/keys/[id]/delete`
 - `POST /admin/ai-settings/vendor`
 - `GET /admin/ai-settings/personas/create`
 - `POST /admin/ai-settings/personas/create`
@@ -767,7 +818,7 @@ per-user preferred AI profile selections remain here.
 - `POST /admin/ai-settings/personas/[id]/edit`
 - `POST /admin/ai-settings/personas/[id]/delete`
 
-The AI settings admin has four tabs: **AI Profiles**, **API Keys**, **AI Vendor**, and **AI Personas**. The vendor tab controls owner-facing preferred AI profiles for art generation, text improvement, and alt-text generation.
+The AI settings admin has four tabs: **AI Profiles**, **API Keys**, **AI Vendor**, and **AI Personas**. The vendor tab controls owner-facing preferred AI profiles for art generation, theme generation, text improvement, and alt-text generation. AI Settings is treated as configuration and remains accessible even when the AI runtime master switch is off.
 
 Each **AI Profile** row now carries a `capabilities` field (comma-separated tokens: `text`, `code`, `vision`; default `text,code`). Only profiles with the `code` capability should be used for piece generation; only profiles with the `vision` capability can call `POST /admin/ai/describe-image`. The generate form shows an inline warning when a profile without `code` capability is selected, and the describe-image endpoint returns HTTP 400 if the selected profile lacks `vision` capability.
 
@@ -1018,7 +1069,9 @@ with links to each exhibit's public `/exhibits/[slug]` and
 
 ### Navigation
 
-- `GET /admin/navigation`
+- `GET /admin/navigation` — defaults to the Site subtab.
+- `GET /admin/navigation?tab=site`
+- `GET /admin/navigation?tab=admin`
 - `POST /admin/navigation/external`
 - `POST /admin/navigation/reorder`
 - `POST /admin/navigation/[id]/toggle`
@@ -1026,7 +1079,11 @@ with links to each exhibit's public `/exhibits/[slug]` and
 - `POST /admin/navigation/[id]/label`
 - `POST /admin/navigation/[id]/target`
 
-The public header uses `navigation_items` when available. It falls back to the
-system navigation if the database or table is unavailable. Signed-in account
-actions now live behind a person-menu in the public header; admin users also
-see the ordered admin navigation inside that account surface.
+The Navigation admin is split into Site and Admin subtabs. The Site subtab
+manages public header navigation through `navigation_items` when available and
+falls back to system navigation if the database or table is unavailable. The
+Admin subtab manages the owner-configured admin navigation order stored in
+`site_settings.admin_nav_order_json`, using the compatibility endpoint
+`POST /admin/site-identity/navigation-order`. Signed-in account actions now
+live behind a person-menu in the public header; admin users also see the
+ordered admin navigation inside that account surface.

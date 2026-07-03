@@ -1,6 +1,11 @@
 <?php
 $pageTitle = 'Navigation — ' . app_site_name() . ' Admin';
 $bodyClass = 'admin-body';
+$tab = $_GET['tab'] ?? 'site';
+if (!in_array($tab, ['site', 'admin'], true)) {
+    $tab = 'site';
+}
+$adminNavItems = $adminNavItems ?? [];
 ob_start();
 ?>
 <div class="admin-section nav-admin">
@@ -8,13 +13,21 @@ ob_start();
         <div>
             <h1 class="admin-heading">Navigation</h1>
             <p class="admin-copy">
-                <?= $navigationReady
-                    ? 'Manage the public navigation order, visibility, and external links from one place.'
-                    : 'This screen is currently reflecting the live public navigation from legacy sources until the navigation migration is applied.' ?>
+                <?= $tab === 'admin'
+                    ? 'Manage the admin section order used by the admin menu, dashboard cards, and account-menu shortcuts.'
+                    : ($navigationReady
+                        ? 'Manage the public navigation order, visibility, and external links from one place.'
+                        : 'This screen is currently reflecting the live public navigation from legacy sources until the navigation migration is applied.') ?>
             </p>
         </div>
     </div>
 
+    <nav class="admin-tabs" aria-label="Navigation tabs">
+        <a href="/admin/navigation?tab=site" class="admin-tab <?= $tab === 'site' ? 'active' : '' ?>"<?= $tab === 'site' ? ' aria-current="page"' : '' ?>>Site</a>
+        <a href="/admin/navigation?tab=admin" class="admin-tab <?= $tab === 'admin' ? 'active' : '' ?>"<?= $tab === 'admin' ? ' aria-current="page"' : '' ?>>Admin</a>
+    </nav>
+
+    <?php if ($tab === 'site'): ?>
     <?php if ($navigationError === 'missing'): ?>
         <p class="admin-error">External links need both a label and a URL.</p>
     <?php elseif ($navigationError === 'label'): ?>
@@ -264,6 +277,35 @@ ob_start();
             </table>
         <?php endif ?>
     </section>
+    <?php else: ?>
+    <section class="nav-admin-board" aria-labelledby="admin-nav-order-heading">
+        <div class="admin-section-head">
+            <div>
+                <h2 class="admin-subheading" id="admin-nav-order-heading">Admin Navigation Order</h2>
+                <p class="admin-copy">Drag items into your preferred top-to-bottom order. The desktop sidebar, mobile hamburger menu, dashboard cards, and admin links in the public account menu will stay in sync.</p>
+            </div>
+            <span id="admin-nav-order-status" class="reorder-status" aria-live="polite"></span>
+        </div>
+        <table class="admin-table nav-admin-table">
+            <thead>
+                <tr><th></th><th>Section</th><th>Purpose</th><th>Move</th></tr>
+            </thead>
+            <tbody data-reorder-url="/admin/site-identity/navigation-order" data-reorder-status="admin-nav-order-status" data-reorder-narrow="true">
+                <?php foreach ($adminNavItems as $item): ?>
+                    <tr data-id="<?= e($item['key']) ?>">
+                        <td class="drag-handle" title="Drag to reorder">&#8597;</td>
+                        <td><strong><?= e($item['label']) ?></strong></td>
+                        <td><?= e($item['description']) ?></td>
+                        <td class="reorder-move-actions">
+                            <button type="button" class="admin-btn admin-btn-sm admin-btn-ghost" data-reorder-move="up" aria-label="Move <?= e($item['label']) ?> up" title="Move up">&#8593;</button>
+                            <button type="button" class="admin-btn admin-btn-sm admin-btn-ghost" data-reorder-move="down" aria-label="Move <?= e($item['label']) ?> down" title="Move down">&#8595;</button>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+    </section>
+    <?php endif ?>
 </div>
 <?php
 $content = ob_get_clean();

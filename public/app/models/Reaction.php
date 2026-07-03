@@ -23,6 +23,19 @@ class Reaction
         return $stmt->fetchAll();
     }
 
+    public static function countExisting(): int
+    {
+        if (!self::tableExists()) {
+            return 0;
+        }
+
+        try {
+            return (int) db()->query('SELECT COUNT(*) FROM reactions')->fetchColumn();
+        } catch (Throwable) {
+            return 0;
+        }
+    }
+
     public static function delete(int $id): void
     {
         $stmt = db()->prepare('DELETE FROM reactions WHERE id = ?');

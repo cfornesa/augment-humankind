@@ -259,6 +259,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const draftNote = document.getElementById('media-asset-draft-note');
     const aiStatus = document.getElementById('media-asset-ai-status');
     const aiBtn = document.getElementById('media-asset-ai-btn');
+    const aiAltEnabled = document.body.dataset.aiAlt !== '0';
+    const aiTextMediaEnabled = document.body.dataset.aiTextMedia !== '0';
     const subtitle = document.getElementById('media-asset-modal-subtitle');
     const directUrlInput = document.getElementById('media-asset-url');
     const metaId = document.getElementById('media-asset-meta-id');
@@ -419,14 +421,17 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function updateAiBtnState() {
-        if (!activeCard) { aiBtn.disabled = true; return; }
+        if (!activeCard) { aiBtn.hidden = true; aiBtn.disabled = true; return; }
         const mime = activeCard.dataset.mime || '';
         if (mime.startsWith('image/')) {
-            aiBtn.disabled = false;
+            aiBtn.hidden = !aiAltEnabled;
+            aiBtn.disabled = !aiAltEnabled;
         } else if (mime.startsWith('video/')) {
             // Refine-only: AI cannot watch the video, so it needs existing text to improve.
-            aiBtn.disabled = descriptionInput.value.trim() === '';
+            aiBtn.hidden = !aiTextMediaEnabled;
+            aiBtn.disabled = !aiTextMediaEnabled || descriptionInput.value.trim() === '';
         } else {
+            aiBtn.hidden = true;
             aiBtn.disabled = true;
         }
     }
@@ -595,6 +600,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (isVideo) {
                         fd.append('content', descriptionInput.value.trim());
                         fd.append('mode', 'text');
+                        fd.append('context', 'media');
                         res = await fetch('/admin/ai/process', { method: 'POST', body: fd });
                     } else {
                         fd.append('image_url', activeCard.dataset.directUrl || '');

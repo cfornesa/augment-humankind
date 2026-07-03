@@ -250,7 +250,9 @@ if (!in_array($tab, ['settings', 'design', 'assets', 'media'], true)) {
                     <button type="button" class="admin-tab active" data-theme-tab="css">CSS</button>
                     <button type="button" class="admin-tab" data-theme-tab="js">JS</button>
                     <button type="button" class="admin-tab" data-theme-tab="html">HTML</button>
-                    <button type="button" class="admin-tab" data-theme-tab="ai">AI Assist ✨</button>
+                    <?php if (feature_enabled('ai_theme')): ?>
+                        <button type="button" class="admin-tab" data-theme-tab="ai">AI Assist ✨</button>
+                    <?php endif ?>
                 </nav>
 
                 <div data-theme-panel="css">
@@ -277,15 +279,17 @@ if (!in_array($tab, ['settings', 'design', 'assets', 'media'], true)) {
                     <p class="admin-hint">Injected after &lt;body&gt; opens. Use for fixed background overlays and containers.</p>
                 </div>
 
+                <?php if (feature_enabled('ai_theme')): ?>
                 <div data-theme-panel="ai" hidden>
                     <div class="admin-form" style="background:var(--paper-deep);border:1px solid var(--border);border-radius:0.5rem;padding:1.25rem;margin-bottom:1rem;">
                         <div class="field-grid" style="margin-bottom:0.75rem;">
                             <div class="field">
                                 <label for="theme_ai_profile">AI Profile</label>
+                                <?php $themeDefaultProfileId = (int) ($settings['ai_theme_default_profile_id'] ?? 0); ?>
                                 <select id="theme_ai_profile" class="theme-ai-select">
                                     <option value="">— Select profile —</option>
                                     <?php foreach ($profiles ?? [] as $p): ?>
-                                    <option value="<?= (int) $p['id'] ?>"><?= e($p['profile_name']) ?> (<?= e($p['vendor']) ?>)</option>
+                                    <option value="<?= (int) $p['id'] ?>" <?= (int) $p['id'] === $themeDefaultProfileId ? 'selected' : '' ?>><?= e($p['profile_name']) ?> (<?= e($p['vendor']) ?>)</option>
                                     <?php endforeach ?>
                                 </select>
                             </div>
@@ -325,6 +329,7 @@ if (!in_array($tab, ['settings', 'design', 'assets', 'media'], true)) {
 
                     <div id="theme-ai-error" hidden style="margin-bottom:1rem;padding:0.75rem;background:hsl(0 60% 95%);border-radius:0.25rem;color:hsl(0 70% 35%);font-size:0.875rem;"></div>
                 </div>
+                <?php endif ?>
             </div>
 
             <!-- ─── Snapshot History ─────────────────────────────────────────── -->
@@ -470,6 +475,9 @@ if (!in_array($tab, ['settings', 'design', 'assets', 'media'], true)) {
                     });
                 }
 
+                // AI Assist panel is server-gated by the ai_theme feature flag.
+                if (document.getElementById('theme-ai-generate-btn')) {
+
                 document.getElementById('theme-ai-generate-btn').addEventListener('click', function(){
                     var prompt = getPrompt();
                     var profile = getProfile();
@@ -579,6 +587,8 @@ if (!in_array($tab, ['settings', 'design', 'assets', 'media'], true)) {
                     _aiState.draftSnapshotId = null;
                     clearError();
                 });
+
+                }
 
                 window.themeRevert = function(snapshotId){
                     fetch('/admin/site-identity/theme-revert/' + snapshotId, {
@@ -798,29 +808,6 @@ if (!in_array($tab, ['settings', 'design', 'assets', 'media'], true)) {
                 <button type="button" id="reset-palette-btn" class="admin-btn admin-btn-ghost">Reset to palette defaults</button>
             </div>
         </form>
-        <section class="nav-admin-board" aria-labelledby="admin-nav-order-heading" style="margin-top:2rem;">
-            <div class="admin-section-head">
-                <div>
-                    <h2 class="admin-subheading" id="admin-nav-order-heading">Admin Navigation Order</h2>
-                    <p class="admin-copy">Drag items into your preferred top-to-bottom order. The desktop sidebar, mobile hamburger menu, dashboard cards, and admin links in the public account menu will stay in sync.</p>
-                </div>
-                <span id="admin-nav-order-status" class="reorder-status" aria-live="polite"></span>
-            </div>
-            <table class="admin-table nav-admin-table">
-                <thead>
-                    <tr><th></th><th>Section</th><th>Purpose</th></tr>
-                </thead>
-                <tbody data-reorder-url="/admin/site-identity/navigation-order" data-reorder-status="admin-nav-order-status">
-                    <?php foreach ($adminNavItems as $item): ?>
-                        <tr data-id="<?= e($item['key']) ?>">
-                            <td class="drag-handle" title="Drag to reorder">&#8597;</td>
-                            <td><strong><?= e($item['label']) ?></strong></td>
-                            <td><?= e($item['description']) ?></td>
-                        </tr>
-                    <?php endforeach; ?>
-                </tbody>
-            </table>
-        </section>
     <?php elseif ($tab === 'assets'): ?>
         <h2>Site Assets</h2>
         <form method="post" action="/admin/site-identity/assets" enctype="multipart/form-data" class="admin-form">

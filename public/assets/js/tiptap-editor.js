@@ -8,6 +8,18 @@ import FontFamily from '@tiptap/extension-font-family'
 import Link from '@tiptap/extension-link'
 import Image from '@tiptap/extension-image'
 
+// ─── Feature flags (set as body data attributes by the admin layout) ─────────
+
+const aiFlags = document.body?.dataset || {}
+const AI_CONTEXT = aiFlags.aiContext || 'pages'
+const AI_TEXT_ENABLED = aiFlags.aiText !== '0'
+const AI_ALT_ENABLED = aiFlags.aiAlt !== '0'
+const AI_TEXT_MEDIA_ENABLED = aiFlags.aiTextMedia !== '0'
+
+function mediaAiEnabledForKind(kind) {
+  return kind === 'image' ? AI_ALT_ENABLED : kind === 'video' ? AI_TEXT_MEDIA_ENABLED : false
+}
+
 // ─── Custom: Font Size via TextStyle ─────────────────────────────────────────
 
 const FontSize = Extension.create({
@@ -413,7 +425,7 @@ function makeImageWithEditButton() {
 
         row1.appendChild(altLabel)
         row1.appendChild(altInput)
-        row1.appendChild(aiAltBtn)
+        if (AI_ALT_ENABLED) row1.appendChild(aiAltBtn)
         row1.appendChild(updateBtn)
         row1.appendChild(closePopoverBtn)
 
@@ -891,6 +903,7 @@ function initTiptap(textarea) {
         if (selection.personaId) fd.append('persona_id', selection.personaId)
         fd.append('content', contentHtml)
         fd.append('mode', 'html')
+        fd.append('context', AI_CONTEXT)
         const res = await fetch('/admin/ai/process', { method: 'POST', body: fd })
         const data = await res.json()
         if (data.result) {
@@ -910,8 +923,10 @@ function initTiptap(textarea) {
       }
     }, { capability: 'text', title: 'Improve Text with AI', taskKey: 'text-improve' })
   })
-  bar.appendChild(improveBtn)
-  bar.appendChild(sep())
+  if (AI_TEXT_ENABLED) {
+    bar.appendChild(improveBtn)
+    bar.appendChild(sep())
+  }
 
   // Text color + Highlight
   const colorWrap = document.createElement('label'); colorWrap.className = 'tt-color-wrap'; colorWrap.title = 'Text color'; colorWrap.innerHTML = '<span>A</span>'
@@ -1130,6 +1145,7 @@ function initMediaPicker() {
   const confirmAltLabel = document.getElementById('mp-confirm-alt-label')
   const confirmAltHint = document.getElementById('mp-confirm-alt-hint')
   const confirmAiBtn = document.getElementById('mp-confirm-ai-btn')
+  if (confirmAiBtn) confirmAiBtn.hidden = true
   const confirmStatus = document.getElementById('mp-confirm-status')
   const confirmMetaId = document.getElementById('mp-confirm-meta-id')
   const confirmMetaMime = document.getElementById('mp-confirm-meta-mime')
@@ -1150,6 +1166,7 @@ function initMediaPicker() {
       altLabel.innerHTML = 'Alt text <em>(describe the image for screen readers — leave blank if purely decorative)</em>'
       if (altInput) altInput.placeholder = 'e.g. A cityscape at night with red lanterns'
     }
+    if (altAiBtn) altAiBtn.hidden = !mediaAiEnabledForKind(kind)
   }
 
   function updateConfirmAltCopy(kind) {
@@ -1161,6 +1178,7 @@ function initMediaPicker() {
       if (confirmAiBtn) {
         confirmAiBtn.title = 'Refine description with AI'
         confirmAiBtn.setAttribute('aria-label', 'Refine description with AI')
+        confirmAiBtn.hidden = !mediaAiEnabledForKind(kind)
       }
     } else {
       confirmAltLabel.textContent = 'Description / Alt Text'
@@ -1169,6 +1187,7 @@ function initMediaPicker() {
       if (confirmAiBtn) {
         confirmAiBtn.title = 'Generate description with AI'
         confirmAiBtn.setAttribute('aria-label', 'Generate description with AI')
+        confirmAiBtn.hidden = !mediaAiEnabledForKind(kind)
       }
     }
   }
@@ -1189,11 +1208,13 @@ function initMediaPicker() {
   const importSt  = document.getElementById('mp-import-status')
   const altAiBtn  = document.getElementById('mp-alt-ai-btn')
 
+  if (altAiBtn) altAiBtn.hidden = true
   if (altAiBtn) {
     altAiBtn.addEventListener('click', () => {
       const imgSrc = selectedUrl
       if (!imgSrc) return
       const isVideo = selectedAsset?.kind === 'video'
+      if (!mediaAiEnabledForKind(isVideo ? 'video' : 'image')) return
       if (isVideo && !altInput?.value.trim()) {
         alert('Write a description first — AI can only refine existing text for video, not invent one.')
         return
@@ -1210,6 +1231,7 @@ function initMediaPicker() {
           if (isVideo) {
             fd.append('content', altInput.value.trim())
             fd.append('mode', 'text')
+            fd.append('context', 'media')
             res = await fetch('/admin/ai/process', { method: 'POST', body: fd })
           } else {
             fd.append('image_url', imgSrc)
@@ -1790,6 +1812,7 @@ function initMediaPicker() {
   confirmAiBtn?.addEventListener('click', () => {
     if (!draftAsset || !confirmAltInput) return
     const isVideo = draftAsset.kind === 'video' || (draftAsset.mime_type || '').startsWith('video/')
+    if (!mediaAiEnabledForKind(isVideo ? 'video' : 'image')) return
     if (isVideo && !confirmAltInput.value.trim()) {
       if (confirmStatus) confirmStatus.textContent = 'Write a description first — AI can only refine existing text for video.'
       return
@@ -1805,6 +1828,7 @@ function initMediaPicker() {
         if (isVideo) {
           fd.append('content', confirmAltInput.value.trim())
           fd.append('mode', 'text')
+          fd.append('context', 'media')
           res = await fetch('/admin/ai/process', { method: 'POST', body: fd })
         } else {
           fd.append('image_url', draftAsset.url || `/media/${draftAsset.id}`)

@@ -54,6 +54,17 @@ class PlatformArtPiece
         )->fetchColumn();
     }
 
+    public static function countExisting(): int
+    {
+        if (!self::tableExists()) {
+            return 0;
+        }
+
+        return (int) db()->query(
+            'SELECT COUNT(*) FROM art_pieces WHERE deleted_at IS NULL'
+        )->fetchColumn();
+    }
+
     public static function findBySlug(string $id): array|false
     {
         if (!self::tableExists()) {

@@ -64,6 +64,14 @@
     display: block;
 }
 
+.admin-nav-badge {
+    display: block;
+    font-size: 0.62rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    opacity: 0.7;
+}
+
 .admin-nav a:hover,
 .admin-nav a.active {
     background: var(--yellow);
@@ -387,6 +395,12 @@ tr.drag-over td {
     border-top: 2px solid var(--orange);
 }
 
+.reorder-move-actions {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+}
+
 .reorder-status {
     display: block;
     font-weight: 800;
@@ -445,6 +459,108 @@ tr.drag-over td {
     height: 1.1rem;
     accent-color: var(--orange);
     flex-shrink: 0;
+}
+
+.feature-section-list {
+    display: grid;
+    gap: 1rem;
+}
+
+.feature-section {
+    border: 2px solid var(--line);
+    background: var(--paper);
+    box-shadow: 3px 3px 0 var(--line);
+    padding: 1rem;
+}
+
+.feature-section-title {
+    margin: 0 0 0.85rem;
+    color: var(--ink-soft);
+    font-size: 0.86rem;
+    font-weight: 950;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.feature-section .feature-toggle-row + .feature-toggle-row,
+.feature-section .feature-toggle-row + .feature-section-title {
+    margin-top: 0.85rem;
+}
+
+.feature-switch-label {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.75rem;
+    align-items: start;
+    cursor: pointer;
+}
+
+.feature-switch-input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+}
+
+.feature-switch-track {
+    display: inline-flex;
+    align-items: center;
+    width: 3rem;
+    height: 1.55rem;
+    margin-top: 0.15rem;
+    padding: 0.15rem;
+    border: 2px solid var(--line);
+    background: var(--paper-deep);
+    box-shadow: 2px 2px 0 var(--line);
+    transition: background 0.15s ease, opacity 0.15s ease, filter 0.15s ease;
+}
+
+.feature-switch-thumb {
+    width: 1rem;
+    height: 1rem;
+    border: 2px solid var(--line);
+    background: var(--ink-soft);
+    transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.feature-switch-input:checked + .feature-switch-track {
+    background: var(--orange);
+}
+
+.feature-switch-input:checked + .feature-switch-track .feature-switch-thumb {
+    transform: translateX(1.35rem);
+    background: var(--paper);
+}
+
+.feature-switch-input:focus-visible + .feature-switch-track {
+    outline: 3px solid var(--cyan);
+    outline-offset: 3px;
+}
+
+.feature-switch-input:disabled + .feature-switch-track {
+    opacity: 0.48;
+    filter: grayscale(0.45);
+}
+
+.feature-switch-input:disabled ~ .feature-switch-copy {
+    opacity: 0.62;
+}
+
+.feature-switch-copy {
+    display: grid;
+    gap: 0.25rem;
+    min-width: 0;
+}
+
+.feature-switch-title {
+    font-weight: 950;
+}
+
+.feature-switch-description {
+    color: var(--ink-soft);
+    font-weight: 700;
+    line-height: 1.35;
+    text-transform: none;
 }
 
 .admin-form input[type="text"],

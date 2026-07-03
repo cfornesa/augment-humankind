@@ -1,6 +1,28 @@
 <?php
 $currentUri = $_SERVER['REQUEST_URI'] ?? '/admin';
 $adminIdentity = admin_identity();
+
+// Editor AI context for the shared TipTap bundle: which per-area flag
+// applies here, exposed as body data attributes the JS reads.
+$aiEditorContext = 'pages';
+$currentPathOnly = parse_url($currentUri, PHP_URL_PATH) ?: $currentUri;
+foreach ([
+    '/admin/posts' => 'blog',
+    '/admin/pages' => 'pages',
+    '/admin/exhibits' => 'exhibits',
+    '/admin/platform-collections' => 'platform_collections',
+    '/admin/media' => 'media',
+] as $aiCtxPrefix => $aiCtx) {
+    if (str_starts_with($currentPathOnly, $aiCtxPrefix)) {
+        $aiEditorContext = $aiCtx;
+        break;
+    }
+}
+$aiFlagsAvailable = function_exists('feature_enabled');
+$aiTextFlag = function_exists('feature_ai_text_flag_for_context') ? feature_ai_text_flag_for_context($aiEditorContext) : 'ai_text_' . $aiEditorContext;
+$aiTextEnabled = !$aiFlagsAvailable || ($aiTextFlag !== null && feature_enabled($aiTextFlag));
+$aiAltEnabled = !$aiFlagsAvailable || feature_enabled('ai_alt_text');
+$aiTextMediaEnabled = !$aiFlagsAvailable || feature_enabled('ai_text_media');
 $adminNavItems = function_exists('admin_navigation_ordered_items') ? admin_navigation_ordered_items() : [];
 $tiptapCssVersion = ($needsEditor ?? false) ? @filemtime(dirname(__DIR__, 3) . '/assets/css/tiptap.css') : null;
 $tiptapJsVersion = ($needsEditor ?? false) ? @filemtime(dirname(__DIR__, 3) . '/assets/js/tiptap-editor.js') : null;
@@ -102,7 +124,11 @@ if (function_exists('ah_table_exists') && ah_table_exists('ai_personas')) {
     </style>
     <?php endif ?>
 </head>
-<body class="admin-body">
+<body class="admin-body"
+      data-ai-context="<?= htmlspecialchars($aiEditorContext, ENT_QUOTES, 'UTF-8') ?>"
+      data-ai-text="<?= $aiTextEnabled ? '1' : '0' ?>"
+      data-ai-alt="<?= $aiAltEnabled ? '1' : '0' ?>"
+      data-ai-text-media="<?= $aiTextMediaEnabled ? '1' : '0' ?>">
     <div class="admin-chrome">
         <header class="admin-header">
             <div class="admin-brand">
@@ -123,6 +149,9 @@ if (function_exists('ah_table_exists') && ah_table_exists('ai_personas')) {
                     <?php $isActive = admin_navigation_is_active($currentUri, (string) $item['href']); ?>
                     <a href="<?= htmlspecialchars((string) $item['href'], ENT_QUOTES, 'UTF-8') ?>" class="<?= $isActive ? 'active' : '' ?>"<?= $isActive ? ' aria-current="page"' : '' ?>>
                         <span class="admin-nav-label"><?= htmlspecialchars((string) $item['label'], ENT_QUOTES, 'UTF-8') ?></span>
+                        <?php if (!empty($item['manage_only'])): ?>
+                            <span class="admin-nav-badge" aria-label="Feature disabled — existing items only">existing only</span>
+                        <?php endif ?>
                     </a>
                 <?php endforeach ?>
                 <a href="/admin/logout" class="admin-logout">Logout</a>
