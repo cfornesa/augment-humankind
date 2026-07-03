@@ -62,6 +62,24 @@
      Do not fill this section yourself before discussing it with the agent —
      the value is in the derivation process, not the output alone. -->
 
+**What the system holds constant (confirmed 2026-07-02):**
+This is no longer one site's aesthetic — it is a design system for a
+multi-site CMS. What stays constant across every theme: accessibility as a
+floor (semantic HTML, contrast, keyboard nav); the person's authored art and
+words as the only content that matters — no AI-slop registers, no stock
+filler; structure carrying credibility (a theme may be hard-edged like Pareto
+or atmospheric like Celestial, but it must feel considered and durable, never
+like a template with decoration bolted on); and a refusal of
+attention-economy patterns regardless of register. Themes are instances:
+Pareto (hard borders, offset shadows, geometric confidence) and Celestial
+(parchment, script-and-serif, cosmic ambient motion) are both valid
+expressions of the same system. "What you dislike in contrast" and "The
+feeling on first load" below are system-level; "What your references share"
+and "The tension you are navigating" describe the Pareto instance as
+originally derived.
+
+### Theme instance: Pareto (derived 2026-06-19)
+
 - **What your references share:**
   A structural confidence that doesn't rely on decoration: thick, consistent borders
   and hard, offset shadows (no blur, no gradients) on every interactive surface,
@@ -104,6 +122,18 @@
   structural rigor underneath — borders, shadows, scale — should register, even
   subconsciously, as "a real person built something real here," giving the warmth
   credibility instead of undercutting it.
+
+### Theme instance: Celestial (adopted 2026-07-01)
+
+An atmospheric register built on the same system constants: warm parchment
+and black-void surfaces, Pinyon Script headings over Lora body text, amber
+accents, and ambient cosmic motion (nebula washes, twinkling stars, shooting
+comets) that respects `prefers-reduced-motion`. All Celestial code lives in
+the database (`site_settings` theme code / `custom_js`), seeded only via
+`--with-example-content` — it is a selectable theme, never a hardcoded
+default. Where Pareto carries credibility through rigid structure, Celestial
+carries it through considered atmosphere; both refuse the AI-slop and
+attention-economy registers listed above.
 
 ---
 
@@ -180,6 +210,9 @@
 2026-06-16 · DIRECTION · Preferred inline reader states that behave like condensed single-post views: content replaces previews, primary toggles remain visible in both states, and editing interfaces stay hidden until explicitly invoked.
 2026-06-19 · DIRECTION · Rejected the oversized "stacked-word" narrow heading treatment (h1 capped at 10ch, with 14ch/16ch variants on page-hero and gallery/collection titles) sitewide in favor of full-width wrapping — bold/oversized type should still read at scale, but natural line breaks now take priority over dramatic narrow stacking.
 2026-06-19 · TENSION · Explicitly redirected a Derived Identity draft away from specific color names toward structure and feel — taste here should be described by borders, shadows, scale, and tone, not by which hues are in play.
+2026-07-01 · DIRECTION · Adopted the Celestial theme (script fonts, parchment, cosmic ambient motion) as the live site's register — a deliberate departure from Pareto's hard-edged geometry, executed entirely through DB-stored theme code rather than code changes.
+2026-07-02 · DIRECTION · When asked whether Celestial superseded the Pareto identity, chose "both are themes, not identity" — DESIGN.md now describes the multi-site CMS design system, with Pareto and Celestial as two valid instances of shared constants.
+    [Context: portable-CMS readiness session; chose the design-system framing over "Celestial is the new direction" and "Pareto stands".]
 
 ---
 

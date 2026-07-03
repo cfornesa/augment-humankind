@@ -2,13 +2,12 @@
 
 @AGENTS.md
 
-<!-- Any Claude Code-specific additions below.
-     AGENTS.md is the authoritative rule set.
-     Only add here what Claude Code needs that
-     other tools do not. -->
-When Claude Code is in Plan Mode and the user's prompt names a specific route, file, or output format — triggering gallery suppression — explicitly note the suppression at the top of the plan and offer one alternative framing before building. This surfaces the trade-off even when the prompt signals execution intent.
+<!-- AGENTS.md is the authoritative rule set for every agentic tool,
+     including Claude Code. Modes (incl. the Plan/Propose gallery-
+     suppression note) and the coupled-CMS Project Specific Rules
+     live there. Only add here what Claude Code needs that other
+     tools do not. -->
 
-Rule 7 in AGENTS.md (never knowingly harm existing, working functionality) applies with extra
-weight in Claude Code: a previously approved plan only covers the plan as written. If executing
-it surfaces a risk to something that currently works — even something not called out in the
-plan — stop and get explicit approval for that specific risk before proceeding.
+Claude Code maps its states onto AGENTS.md → Mode as: interactive chat =
+Interactive; plan mode = Plan/Propose; background/autonomous execution =
+Auto Build.

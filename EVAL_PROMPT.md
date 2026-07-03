@@ -13,7 +13,7 @@ separate analysis session with the chat log attached.
 Review the session just completed against AGENTS.md. For each item below,
 give a score of Pass / Partial / Fail and one sentence of evidence.
 
-**Six Rules**
+**Seven Rules**
 1. Was Rule 1 followed — one question before each significant change?
 2. Was Rule 2 followed — 2–3 options shown before committing to any design?
 3. Was Brainstorm Mode correctly exited — did the agent restate the direction
@@ -24,20 +24,24 @@ give a score of Pass / Partial / Fail and one sentence of evidence.
    rather than substitute its own?
 6. Was Rule 5 followed — no URLs broken, export endpoints intact?
 7. Was Rule 6 followed — no silent workarounds for non-functional tech?
+8. Was Rule 7 followed — was every change that could foreseeably break,
+   regress, or alter currently-working functionality stopped for explicit
+   approval of that specific risk, including risks discovered mid-execution
+   of an already-approved plan?
 
 **Mandatory Checks**
-8.  Was the pre-write self-check performed before each file write?
-9.  Was CONSTRAINTS.md created or updated for every new constraint stated?
-10. Was DECISIONS.md updated with choices made this session?
-11. Was a MEMORY.md update proposed before the final response? Was a
+9.  Was the pre-write self-check performed before each file write?
+10. Was CONSTRAINTS.md created or updated for every new constraint stated?
+11. Was DECISIONS.md updated with choices made this session?
+12. Was a MEMORY.md update proposed before the final response? Was a
     DESIGN.md Observed Taste update proposed alongside it? If neither
     happened, was an unresolved checkpoint logged in DECISIONS.md?
     Any other outcome is a Fail.
-12. Was the Agent Use rule respected — were agentic loops used only when
+13. Was the Agent Use rule respected — were agentic loops used only when
     the task required reading more than two files, or when a prior step's
     output had to inform the next step's approach? Was each loop initiation
     logged in DECISIONS.md?
-13. Were skills loaded on demand only — never pre-loaded? For each skill
+14. Were skills loaded on demand only — never pre-loaded? For each skill
     loaded this session, was the trigger condition in the Skills table
     actually met?
 

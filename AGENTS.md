@@ -38,12 +38,21 @@
 
 ## Mode
 
-| Mode | Tools | Behavior |
+Modes are behavioral, not tool-specific. Any agentic tool (Claude Code,
+Antigravity, Codex, Opencode Go, Gemini CLI, or others) maps its own
+operating state onto the mode whose description fits:
+
+| Mode | Recognized by | Behavior |
 |---|---|---|
-| Interactive | Kilo Code, Opencode | Full question + gallery protocols |
-| Plan/Propose | Kilo Code Plan slot | Gallery as the plan; no code until approved |
-| Auto Build | Opencode Orchestrator slot | Conservative defaults; log choices to DECISIONS.md |
-| Inline Edit | Kilo Code autocomplete (Codestral) | Mechanical only; no architectural decisions |
+| Interactive | Human present and responding conversationally | Full question + gallery protocols |
+| Plan/Propose | Tool's plan/propose state — output is a plan, not code | Gallery as the plan; no code until approved |
+| Auto Build | Autonomous/background execution, human not watching | Conservative defaults; log choices to DECISIONS.md |
+| Inline Edit | Autocomplete or single-expression completion | Mechanical only; no architectural decisions |
+
+Plan/Propose note (all tools): when the prompt names a specific route,
+file, or output format — triggering gallery suppression — explicitly note
+the suppression at the top of the plan and offer one alternative framing
+before building.
 
 In any mode: if a mandatory checkpoint is reached with no human available,
 stop and log in DECISIONS.md.
@@ -70,7 +79,7 @@ the next step's approach. Log every agent loop initiation in DECISIONS.md.
 ## Session Constraints
 
 When an opening prompt contains SESSION CONSTRAINTS or PHASE CONSTRAINTS,
-treat every item as an extension of the Six Rules for that session. If a
+treat every item as an extension of the Seven Rules for that session. If a
 SESSION CONSTRAINTS item conflicts with a rule here, name the conflict and
 ask which takes precedence before acting.
 At session start, before any build work:
@@ -142,3 +151,24 @@ set.
 ---
 
 ## Project Specific Rules
+
+This codebase is a **coupled multi-site CMS**: it is duplicated as-is to new
+deployments, where only the MySQL database and `.env` (and OAuth apps) differ.
+SETUP.md is the canonical setup procedure. Three conventions keep duplication
+safe — violating any of them is a Rule 7 event:
+
+1. **Schema dual-ship**: every schema change ships as BOTH a dated
+   `docs/migrations/YYYY-MM-DD-*.sql` file (the record) AND a probe-guarded
+   manifest step in `scripts/setup-database.php` (the mechanism).
+   `schema.sql` is frozen. `git pull && php scripts/setup-database.php --yes`
+   must remain sufficient to align any deployment.
+2. **No site-specific content in code**: copy, branding, URLs, and
+   credentials live in the database (`site_settings`, pages, navigation) or
+   env vars — never hardcoded. New surfaces need a generic fallback or
+   runtime placeholder that renders sensibly on an empty database.
+3. **Feature-flag registration**: user-facing feature groups and AI use
+   cases register in `public/app/helpers/features.php` so each deployment
+   can toggle them; gate routes via the router's feature keys.
+
+`platform/` and the `PLATFORM_*` env vars (env.example Section 3) are
+this-instance-only legacy migration tooling; duplicates ignore them.
