@@ -277,6 +277,11 @@ does not remove AI profiles, keys, personas, or preferred profile settings.
 
 ### Setting up a fresh database
 
+> **Full walkthrough:** [SETUP.md](SETUP.md) is the step-by-step setup
+> procedure (prerequisites → env → installer → readiness check → first
+> admin login → configuration), written to be followed by a human or an
+> agent. The section below is the installer reference.
+
 One command handles everything — a completely empty database or an existing
 one that needs to catch up:
 
@@ -297,6 +302,12 @@ destroys data. Flags:
   target content already exists, so it can never overwrite a customized
   site. Without this flag those routes fall back to generic placeholder
   copy until you create real pages from the admin Pages screen.
+- `--yes` — skip the existing-data confirmation prompt. Before applying
+  anything, the installer scans the target database and, if it finds
+  existing entries (admins, pages, posts, media, …), prints a summary and —
+  when run interactively — asks for confirmation. Non-interactive runs
+  (CI/cron) proceed automatically after printing the summary, so
+  `git pull && php scripts/setup-database.php` stays unattended-safe.
 
 Process environment variables always win over `.env`, so a different
 database can be targeted without editing config:

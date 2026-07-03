@@ -15,6 +15,15 @@ declare(strict_types=1);
  *   php scripts/setup-database.php                          # apply anything missing
  *   php scripts/setup-database.php --dry-run                # report only, zero writes
  *   php scripts/setup-database.php --with-example-content   # also seed demo pages + theme
+ *   php scripts/setup-database.php --yes                    # skip the existing-data confirmation
+ *
+ * Failsafe: before applying anything, the script scans the target database for
+ * existing entries (admins, pages, posts, media, …). If any are found it prints
+ * a summary and — when run interactively — asks for confirmation before
+ * proceeding. Non-interactive runs (CI/cron) and --yes proceed after printing
+ * the summary, keeping the documented `git pull && php scripts/setup-database.php`
+ * upgrade path unattended-safe. The script itself is additive and never deletes
+ * data either way.
  *
  * Process environment variables always win over .env, so a scratch database
  * can be targeted without touching the configured one:
@@ -29,49 +38,16 @@ declare(strict_types=1);
 
 // ─── Environment (process env always wins over .env) ─────────────────────────
 
+require_once __DIR__ . '/../public/app/helpers/env.php';
+
 function loadEnvFile(string $path): void
 {
-    if (!is_readable($path)) {
-        return;
-    }
-
-    $lines = file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
-    if ($lines === false) {
-        return;
-    }
-
-    foreach ($lines as $line) {
-        $line = trim($line);
-        if ($line === '' || str_starts_with($line, '#') || !str_contains($line, '=')) {
-            continue;
-        }
-
-        [$name, $value] = explode('=', $line, 2);
-        $name = trim($name);
-        $value = trim($value);
-        if ($name === '') {
-            continue;
-        }
-
-        if ((str_starts_with($value, '"') && str_ends_with($value, '"')) || (str_starts_with($value, "'") && str_ends_with($value, "'"))) {
-            $value = substr($value, 1, -1);
-        }
-
-        $current = $_ENV[$name] ?? getenv($name);
-        if (is_string($current) && $current !== '') {
-            $_ENV[$name] = $current; // normalize process env into $_ENV for db()-style readers
-            continue;
-        }
-
-        $_ENV[$name] = $value;
-        putenv($name . '=' . $value);
-    }
+    ah_load_env_file($path);
 }
 
 function envValue(string $key, string $default = ''): string
 {
-    $value = $_ENV[$key] ?? getenv($key);
-    return is_string($value) && $value !== '' ? $value : $default;
+    return ah_env($key, $default);
 }
 
 function targetPdo(): PDO
@@ -912,6 +888,8 @@ function ensureContactPageAndFormSection(Ctx $ctx, int $contactFormId): void
 
 function encryptedSeedSecret(string $secret): ?string
 {
+    static $warned = false;
+
     $secret = trim($secret);
     if ($secret === '') {
         return null;
@@ -920,6 +898,10 @@ function encryptedSeedSecret(string $secret): ?string
     try {
         return encrypt_string($secret, ai_encryption_key());
     } catch (Throwable) {
+        if (!$warned) {
+            $warned = true;
+            fwrite(STDERR, "⚠ RECAPTCHA_SECRET_KEY is set but could not be encrypted (AI_SETTINGS_ENCRYPTION_KEY missing or invalid). Form secrets are seeded as NULL — set the key and re-run, or configure the secret in /admin/forms.\n");
+        }
         return null;
     }
 }
@@ -987,12 +969,59 @@ function runSeedScript(Ctx $ctx, string $relativePath): void
     }
 }
 
+// ─── Existing-data pre-flight ────────────────────────────────────────────────
+
+/**
+ * Scan the target database for pre-existing entries so an operator pointing
+ * this installer at the wrong (non-empty) database finds out before anything
+ * is applied. Read-only; every probe is guarded by a table-existence check so
+ * it works on a completely empty database.
+ */
+function preflightExistingData(PDO $pdo): array
+{
+    $found = [];
+
+    $probes = [
+        'admin_identities' => 'admin identities',
+        'users' => 'users',
+        'pages' => 'pages',
+        'posts' => 'posts',
+        'art_pieces' => 'art pieces',
+        'exhibits' => 'exhibits',
+        'media_files' => 'media files',
+        'comments' => 'comments',
+    ];
+
+    foreach ($probes as $table => $label) {
+        if (!tableExists($pdo, $table)) {
+            continue;
+        }
+        $count = (int) $pdo->query("SELECT COUNT(*) FROM `{$table}`")->fetchColumn();
+        if ($count > 0) {
+            $found[$label] = $count;
+        }
+    }
+
+    return $found;
+}
+
+function confirmProceedOnTty(): bool
+{
+    if (!function_exists('stream_isatty') || !stream_isatty(STDIN)) {
+        return true; // non-interactive (CI/cron): summary already printed, proceed
+    }
+    echo "Continue against this database? [y/N] ";
+    $answer = strtolower(trim((string) fgets(STDIN)));
+    return in_array($answer, ['y', 'yes'], true);
+}
+
 // ─── Runner ──────────────────────────────────────────────────────────────────
 
 loadEnvFile(dirname(__DIR__) . '/.env');
 
 $dryRun = in_array('--dry-run', $argv, true);
 $withContent = in_array('--with-example-content', $argv, true);
+$assumeYes = in_array('--yes', $argv, true);
 
 try {
     $pdo = targetPdo();
@@ -1000,6 +1029,25 @@ try {
 
     $dbName = $pdo->query('SELECT DATABASE()')->fetchColumn();
     echo ($dryRun ? 'DRY RUN — no changes will be made. ' : '') . "Target database: {$dbName}\n\n";
+
+    $existing = preflightExistingData($pdo);
+    if ($existing !== []) {
+        $parts = [];
+        foreach ($existing as $label => $count) {
+            $parts[] = "{$count} {$label}";
+        }
+        echo "┌─────────────────────────────────────────────────────────────────┐\n";
+        echo "│ WARNING: this database is NOT empty.                            │\n";
+        echo "└─────────────────────────────────────────────────────────────────┘\n";
+        echo 'Existing entries found: ' . implode(', ', $parts) . ".\n";
+        echo "This installer is additive and idempotent — it never deletes data.\n";
+        echo "Missing schema steps and seeds will be applied on top of the existing data.\n\n";
+
+        if (!$dryRun && !$assumeYes && !confirmProceedOnTty()) {
+            echo "Aborted. No changes were made. Re-run with --yes to skip this confirmation.\n";
+            exit(0);
+        }
+    }
 
     $steps = manifest();
     $total = count($steps);

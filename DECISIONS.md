@@ -5463,3 +5463,72 @@ All work from this session is live on the local dev server (`php -S 127.0.0.1:80
 
 ### Migration applied
 `docs/migrations/2026-07-01-custom-css-column.sql` was applied to the live database. `custom_css MEDIUMTEXT NULL` is now a proper column in `site_settings`.
+
+---
+
+## 2026-07-02 — Portable-CMS Setup Readiness Remediation
+
+### Context
+Audit of readiness for the coupled-CMS goal: clone the codebase, point it at
+an empty MySQL database + `.env` + OAuth apps, and get a working site with
+proper placeholders until configured. Audit verdict: installer, readiness
+checker, feature flags, setup gate, and inline placeholder pages were already
+in place (commit 870ad66); the gaps were installer failsafes, a canonical
+setup document, duplicated env-loading code, and one site-specific fallback
+label.
+
+### Implemented
+- **Installer existing-data failsafe** (`scripts/setup-database.php`):
+  read-only `preflightExistingData()` scan runs before any step. If the
+  target DB has entries (admins, users, pages, posts, art pieces, exhibits,
+  media, comments), a boxed warning + counts summary prints; interactive
+  (TTY) runs must confirm, non-TTY runs and `--yes` proceed after the
+  summary, keeping `git pull && php scripts/setup-database.php` unattended-
+  safe. Chosen via AskUserQuestion: TTY-confirm + `--yes` over warn-only.
+- **Seed-secret warning**: `encryptedSeedSecret()` now emits one STDERR
+  warning when `RECAPTCHA_SECRET_KEY` is set but cannot be encrypted
+  (missing/invalid `AI_SETTINGS_ENCRYPTION_KEY`) instead of silently seeding
+  NULL form secrets.
+- **Shared env loader** (`public/app/helpers/env.php`, new):
+  `ah_load_env_file()` / `ah_env()` extracted from `public/index.php`;
+  `public/index.php` (`loadEnvFile`/`configValue`), `scripts/setup-database.php`
+  (`loadEnvFile`/`envValue`), and `scripts/check-portable-launch-readiness.php`
+  (`load_env_file`/`env_value`) are now thin wrappers. Identical semantics
+  (process env wins, quote stripping, silent missing files); no behavior change.
+- **SETUP.md** (new, repo root): numbered, verifiable setup procedure for a
+  human or agent — prerequisites, env table, DB creation, installer flags,
+  readiness check, OAuth app creation, first admin login, post-login
+  configuration, and duplication steps. README links to it and documents `--yes`.
+- **Nav fallback label**: `Field Notes` → `Notes` in
+  `ah_fallback_navigation_items()` (renders only when `navigation_items` is
+  empty/unreachable; live site unaffected).
+
+### Decisions (via AskUserQuestion)
+- Empty-DB homepage: runtime placeholder (already implemented in
+  `public/index.php` — starter home/services/notes/contact views render when
+  no page row exists; only unpublished/trashed rows 404). No installer
+  seeding of a home page.
+- Verification scope: readiness only — no scratch database, no test clone.
+  The codebase must be *ready* to duplicate; the duplication itself happens
+  later.
+
+### Verified (readiness-only, existing local env)
+- `php tests/feature-flags.php` — 20 passed, 0 failed.
+- `php -l` clean on all changed files.
+- Dry-run installer: pre-flight summary prints (incl. 88 art pieces after
+  fixing the probe from `platform_art_pieces` to the real `art_pieces`
+  table); no prompt in dry-run; all 23 steps already applied.
+- Piped (non-TTY) real run proceeds without prompting; `--yes` run proceeds;
+  both no-op idempotently.
+- `DB_NAME=nonexistent…` override reaches MySQL as that DB (process-env-wins
+  intact through the shared loader).
+- Secret warning fires with an invalid encryption key, silent with the real one.
+- Readiness checker exits 0 (1 warning). Local web smoke test after the env
+  refactor: `/`, `/contact`, `/blog` all 200.
+- cosmos.js confirmed reachable only via DB `custom_js` (seeded by
+  `--with-example-content`); fresh sites get no star animations. Do not
+  re-audit this.
+
+### Not done / open
+- The "REVIEW REQUIRED Before Platform Deletion" block (2026-06-14) remains
+  open — unrelated to this pass.
