@@ -7,6 +7,9 @@ function piece_render_document(array $piece, array $version, array $options = []
     $title = htmlspecialchars((string) ($piece['title'] ?? 'Art piece'), ENT_QUOTES | ENT_HTML5, 'UTF-8');
     $engine = strtolower((string) ($version['engine'] ?? $piece['engine'] ?? 'p5'));
     $html = (string) ($version['html_code'] ?? '');
+    if ($engine === 'aframe') {
+        $html = piece_aframe_add_crossorigin_to_asset_images($html);
+    }
     $css = (string) ($version['css_code'] ?? '');
     $code = (string) ($version['generated_code'] ?? '');
     $jsonCode = json_encode($code, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
@@ -22,19 +25,18 @@ function piece_render_document(array $piece, array $version, array $options = []
         ? "a-scene{display:block;width:100%;height:100%;}\n.a-canvas{display:block;width:100%!important;height:100%!important;}\n"
         : '';
 
-    $origin = function_exists('seo_origin') ? seo_origin() : '';
-    $baseTag = $origin ? '<base href="' . htmlspecialchars(rtrim($origin, '/') . '/', ENT_QUOTES | ENT_HTML5, 'UTF-8') . '">' : '';
-    // Our own runtime script must load from wherever THIS request is
-    // actually being served — never from $origin/seo_origin() above (the
-    // site's configured canonical URL, which can differ from the actual
-    // host in local/dev), and never from window.location.origin at runtime
-    // either: this document is frequently embedded via <iframe srcdoc>
+    $requestOrigin = piece_request_origin();
+    $baseTag = '<base href="' . htmlspecialchars(rtrim($requestOrigin, '/') . '/', ENT_QUOTES | ENT_HTML5, 'UTF-8') . '">';
+    // The base tag and our own runtime script must load from wherever THIS
+    // request is actually being served — never from seo_origin() (the site's
+    // configured canonical URL, which can differ from the actual host in
+    // local/dev), and never from window.location.origin at runtime either:
+    // this document is frequently embedded via <iframe srcdoc>
     // (piece_render_iframe() below), and srcdoc documents get an opaque
     // origin — window.location.origin literally evaluates to the string
     // "null" in that context, even with sandbox="allow-same-origin".
-    // Computing it server-side from the actual request avoids both traps.
-    $requestScheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
-    $requestHost = $_SERVER['HTTP_HOST'] ?? 'localhost';
+    // Computing it server-side from the actual request avoids both traps and
+    // keeps root-relative CMS media paths on the preview host.
     // Cache-busted by file mtime, matching the ?v= pattern already used for
     // admin-piece-capture.js's own <script> tags. Without this, browsers
     // (WebKit/Safari especially) can keep serving a stale cached copy of
@@ -43,7 +45,7 @@ function piece_render_document(array $piece, array $version, array $options = []
     // runtime since whenever a device first cached it would silently never
     // take effect on that device.
     $runtimeVersion = (int) @filemtime(dirname(__DIR__, 2) . '/assets/js/piece-runtime.js');
-    $runtimeScriptUrl = htmlspecialchars($requestScheme . '://' . $requestHost . '/assets/js/piece-runtime.js?v=' . $runtimeVersion, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    $runtimeScriptUrl = htmlspecialchars($requestOrigin . '/assets/js/piece-runtime.js?v=' . $runtimeVersion, ENT_QUOTES | ENT_HTML5, 'UTF-8');
 
     return <<<HTML
 <!DOCTYPE html>
@@ -118,6 +120,9 @@ function piece_export_document(array $piece, array $version): string
     $title = htmlspecialchars((string) ($piece['title'] ?? 'Art piece'), ENT_QUOTES | ENT_HTML5, 'UTF-8');
     $engine = strtolower((string) ($version['engine'] ?? $piece['engine'] ?? 'p5'));
     $html = piece_export_rewrite_media_urls((string) ($version['html_code'] ?? ''));
+    if ($engine === 'aframe') {
+        $html = piece_aframe_add_crossorigin_to_asset_images($html);
+    }
     $css = piece_escape_inline_css(piece_export_rewrite_media_urls((string) ($version['css_code'] ?? '')));
     $code = piece_escape_inline_script(piece_export_rewrite_media_urls((string) ($version['generated_code'] ?? '')));
     $imports = piece_export_imports($engine);
@@ -169,21 +174,38 @@ function piece_escape_inline_css(string $css): string
 
 function piece_export_rewrite_media_urls(string $content): string
 {
-    $origin = function_exists('seo_origin') ? rtrim((string) seo_origin(), '/') : '';
-    if ($origin === '') {
-        $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
-        $host = $_SERVER['HTTP_HOST'] ?? '';
-        $origin = $host !== '' ? $scheme . '://' . $host : '';
-    }
+    $origin = piece_request_origin();
     if ($origin === '') {
         return $content;
     }
 
     return preg_replace_callback(
-        '#(?<![A-Za-z0-9._~-])/(?:image/[0-9]+|api/media-assets/[0-9]+|media/[A-Za-z0-9._~/%+-]+)(?:\?[A-Za-z0-9._~%=&+-]*)?#',
-        static fn(array $match): string => $origin . $match[0],
+        '#(?<![A-Za-z0-9._~/-])/?(?:image/[0-9]+|api/media-assets/[0-9]+|media/[A-Za-z0-9._~/%+-]+)(?:\?[A-Za-z0-9._~%=&+-]*)?#',
+        static fn(array $match): string => $origin . '/' . ltrim($match[0], '/'),
         $content
     ) ?? $content;
+}
+
+function piece_request_origin(): string
+{
+    $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+    $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+    return $scheme . '://' . $host;
+}
+
+function piece_aframe_add_crossorigin_to_asset_images(string $html): string
+{
+    if ($html === '' || stripos($html, '<img') === false) {
+        return $html;
+    }
+
+    return preg_replace_callback('/<img\b[^>]*>/i', static function (array $match): string {
+        $tag = $match[0];
+        if (preg_match('/\bcrossorigin\s*=/i', $tag)) {
+            return $tag;
+        }
+        return preg_replace('/\s*\/?>$/', ' crossorigin="anonymous"$0', $tag, 1) ?? $tag;
+    }, $html) ?? $html;
 }
 
 function piece_export_imports(string $engine): string

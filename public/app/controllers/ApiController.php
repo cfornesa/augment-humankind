@@ -4,6 +4,13 @@ declare(strict_types=1);
 
 class ApiController
 {
+    private static function publicMediaCorsHeaders(): void
+    {
+        header('Access-Control-Allow-Origin: *');
+        header('Access-Control-Allow-Methods: GET, HEAD, OPTIONS');
+        header('Access-Control-Allow-Headers: Range, If-None-Match, If-Modified-Since');
+    }
+
     public static function site(): void
     {
         $settings = SiteSettings::current() ?: [];
@@ -189,7 +196,9 @@ class ApiController
         if (!$asset || empty($asset['file_data'])) {
             self::json(['error' => 'Not found'], 404);
         }
+        self::publicMediaCorsHeaders();
         header('Content-Type: ' . ($asset['mime_type'] ?: 'application/octet-stream'));
+        header('Cache-Control: public, max-age=31536000, immutable');
         header('Content-Disposition: inline; filename="' . str_replace('"', '', (string) ($asset['filename'] ?? 'asset')) . '"');
         echo $asset['file_data'];
         exit;
@@ -201,6 +210,7 @@ class ApiController
         if (!$asset || empty($asset['file_data'])) {
             self::json(['error' => 'Not found'], 404);
         }
+        self::publicMediaCorsHeaders();
         header('Content-Type: ' . ($asset['mime_type'] ?: 'application/octet-stream'));
         header('Cache-Control: public, max-age=31536000, immutable');
         echo $asset['file_data'];

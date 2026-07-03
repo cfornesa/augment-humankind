@@ -4,6 +4,13 @@ declare(strict_types=1);
 
 class MediaServeController
 {
+    private static function publicMediaCorsHeaders(): void
+    {
+        header('Access-Control-Allow-Origin: *');
+        header('Access-Control-Allow-Methods: GET, HEAD, OPTIONS');
+        header('Access-Control-Allow-Headers: Range, If-None-Match, If-Modified-Since');
+    }
+
     public static function media(string $id): void
     {
         $id = (int) $id;
@@ -22,6 +29,7 @@ class MediaServeController
         $data = $row['data'];
         $size = (int) ($row['byte_size'] ?? mb_strlen($data, '8bit'));
         $etag = '"' . sha1((string) $row['id'] . '|' . $mime . '|' . $size) . '"';
+        self::publicMediaCorsHeaders();
 
         if (isset($_SERVER['HTTP_IF_NONE_MATCH']) && trim($_SERVER['HTTP_IF_NONE_MATCH']) === $etag) {
             http_response_code(304);

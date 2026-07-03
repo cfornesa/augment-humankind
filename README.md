@@ -49,7 +49,7 @@ this instance's content.
 - `/search` — public blog post search
 - `/pieces` — public gallery listing of generative art pieces
 - `/pieces/[id]` — public render page of a generative art piece
-- `/pieces/[id]/download` — downloadable single-file HTML export for the piece's current version, using CDN engine imports and absolute CMS media URLs
+- `/pieces/[id]/download` — downloadable single-file HTML export for the piece's current version, using CDN engine imports and absolute CMS media URLs for the host serving the download
 - `/collections` and `/collections/[slug]` — public archive/detail for migrated platform art collections
 - `/embed/pieces/[id]` — public embeddable HTML of a generative art piece
 - `/embed/pieces/[id]/data` — public JSON feed of art piece parameters and source code
@@ -141,10 +141,13 @@ document with the current version's code, engine imports, a small bootstrap,
 and no admin, embed, or immersive presentation controls.
 
 Downloaded files reference CDN runtimes for p5.js, C2.js, Three.js, and
-A-Frame, and rewrite CMS media references such as `/image/2`, `/media/...`, and
-`/api/media-assets/...` to absolute site URLs. The files therefore work in
-another browser context with internet access to the CDN and live CMS media
-routes, but they are not offline bundles.
+A-Frame, and rewrite CMS media references such as `/image/2`, `image/2`,
+`/media/...`, `media/...`, `/api/media-assets/...`, and `api/media-assets/...`
+to absolute URLs on the host serving the download. The files therefore work in another browser context
+with internet access to the CDN and live CMS media routes, but they are not
+offline bundles. Public CMS media responses include CORS headers, and A-Frame
+exports add `crossorigin="anonymous"` to asset images so WebGL texture loading
+can use those absolute media URLs.
 
 The export bootstrap preserves interaction semantics for the engines that need
 runtime help:

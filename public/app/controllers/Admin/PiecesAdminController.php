@@ -893,13 +893,14 @@ class PiecesAdminController
             $basePrompt = $persona
                 ? trim($persona['system_prompt']) . "\n\nApply this to the following prompt:\n\n" . $prompt
                 : $prompt;
+            $allowedMediaRefs = art_piece_extract_prompt_media_refs($prompt);
 
             $aiClient = new \App\Lib\Ai\AiProviderClient($profile['vendor'], $profile['model'], $profile['endpoint_kind'], $apiKey);
 
             $systemPrompt = art_piece_generation_system_prompt($generationMode);
             $userPromptForApi = $attemptNumber === 1
-                ? $basePrompt
-                : art_piece_repair_prompt($engine, $basePrompt, $previousRawResponse, $lastError !== '' ? $lastError : 'Unknown failure');
+                ? $basePrompt . "\n\n" . art_piece_media_policy_prompt($allowedMediaRefs)
+                : art_piece_repair_prompt($engine, $basePrompt, $previousRawResponse, $lastError !== '' ? $lastError : 'Unknown failure', $allowedMediaRefs);
 
             $res = $aiClient->generate($systemPrompt, $userPromptForApi);
             if (!$res['ok']) {
@@ -915,6 +916,7 @@ class PiecesAdminController
             $js = $blocks['generatedCode'] ?? '';
 
             art_piece_preflight_document($engine, $html, $css, $js);
+            validate_art_piece_prompted_media_refs($allowedMediaRefs, $html, $css, $js, [], true);
 
             // Success!
             audit_log_event('ai_request', 'ai_generate_piece', 'success', [
@@ -1451,6 +1453,8 @@ class PiecesAdminController
             $css = (string) ($input['css_code'] ?? '');
             $js = (string) ($input['generated_code'] ?? '');
             $originalPrompt = trim((string) ($input['original_prompt'] ?? ''));
+            $allowedMediaRefs = art_piece_extract_prompt_media_refs($prompt);
+            $existingMediaRefs = art_piece_collect_cms_media_refs($html, $css, $js);
             $pieceId = (int) ($input['piece_id'] ?? 0);
             $attemptNumber = max(1, (int) ($input['attempt_number'] ?? 1));
             $clientPreviousRawResponse = $input['previous_raw_response'] !== null && $input['previous_raw_response'] !== ''
@@ -1498,9 +1502,9 @@ class PiecesAdminController
             }
 
             if ($attemptNumber === 1) {
-                $userPromptForApi = art_piece_refine_user_prompt($engine, $prompt, $html, $css, $js, $originalPrompt ?: null);
+                $userPromptForApi = art_piece_refine_user_prompt($engine, $prompt, $html, $css, $js, $originalPrompt ?: null, $allowedMediaRefs);
             } else {
-                $userPromptForApi = art_piece_refine_repair_prompt($engine, $prompt, $clientPreviousRawResponse, $clientLastError !== '' ? $clientLastError : 'Unknown failure', $html, $css, $js);
+                $userPromptForApi = art_piece_refine_repair_prompt($engine, $prompt, $clientPreviousRawResponse, $clientLastError !== '' ? $clientLastError : 'Unknown failure', $html, $css, $js, $allowedMediaRefs);
             }
 
             // suppressPlanningPreamble=false: the PLAN+PATCH protocol
@@ -1569,6 +1573,7 @@ class PiecesAdminController
             );
 
             art_piece_preflight_document($engine, $extractedHtml, $extractedCss, $extractedJs);
+            validate_art_piece_prompted_media_refs($allowedMediaRefs, $extractedHtml, $extractedCss, $extractedJs, $existingMediaRefs, false);
 
             // Canvas Preservation Constraints
             if (in_array($engine, art_piece_canvas_managed_engines(), true)) {

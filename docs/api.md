@@ -206,7 +206,9 @@ Compatibility redirects are permanent:
 
 `/media/[id]` streams any active stored media blob. `/image/[id]` is an
 image-only public route for image assets. Missing, deleted, or mismatched media
-returns the shared 404 view.
+returns the shared 404 view. Public media blob responses include permissive
+CORS headers so downloaded piece HTML and WebGL/A-Frame texture loaders can use
+absolute live CMS media URLs outside the site's own origin.
 
 ## Public Platform Art Routes
 
@@ -225,14 +227,18 @@ because the migrated platform `art_pieces` records do not include slugs.
 HTML file, with engine imports, body HTML, CSS, JavaScript, and a small
 standalone bootstrap. It accepts `?version=[version-id]` to export a specific
 version. The export intentionally omits immersive/admin/embed controls and
-rewrites CMS image/media references such as `/image/2` to absolute site URLs.
+rewrites CMS image/media references such as `/image/2`, `image/2`,
+`/media/...`, `media/...`, `/api/media-assets/2`, and `api/media-assets/2`
+to absolute URLs on the host serving the download.
 Downloaded files use CDN library imports for p5.js, C2.js, Three.js, and
 A-Frame, so they are portable to another browser context with internet access
 but are not offline bundles. The exported bootstrap preserves engine-native
 interactivity: A-Frame receives its live `<a-scene>`, C2 receives the real
 canvas plus safe media helpers, and Three.js downloads attach OrbitControls to
 the exported scene/camera/renderer so drag/touch orbiting works even when the
-piece code itself only animates.
+piece code itself only animates. A-Frame asset images are emitted with
+`crossorigin="anonymous"` so browser WebGL texture loading can use the public
+media CORS headers.
 
 `/exhibits` lists migrated `platform_exhibits` rows (name, description, item
 count, and a thumbnail drawn from the first item). `/exhibits/[slug]` renders

@@ -99,6 +99,8 @@ Source: DECISIONS.md 2026-07-02 Portable-CMS Setup Readiness Remediation (commit
 
 2026-07-02 DECISION Public piece downloads (`/pieces/{id}/download`) are single-file HTML exports with CDN engine imports and absolute live CMS media URLs. Stored code remains CMS-runtime-compatible via `window.sketch`; Three.js exports must attach OrbitControls in the bootstrap.
 
+2026-07-03 DECISION AI piece generation may only introduce CMS media when the prompt explicitly names the exact image/media ID or path; downloaded HTML exports rewrite root-relative and relative CMS media refs to absolute URLs on the host serving the download.
+
 # UI & Editor Patterns
 
 2026-06-15 NOTE The `<dialog>`-based `.media-picker-*` pattern is the standard for all TipTap insertion UIs (media, pieces/exhibits, iframe, AI profile) — never `window.prompt()`.

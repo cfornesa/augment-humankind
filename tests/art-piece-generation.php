@@ -10,6 +10,21 @@ require_once __DIR__ . '/../public/app/helpers/art-piece-generation.php';
 require_once __DIR__ . '/../public/app/helpers/slugify.php';
 require_once __DIR__ . '/../public/app/helpers/piece-render.php';
 
+if (!function_exists('seo_origin')) {
+    function seo_origin(): string
+    {
+        $envPublic = trim((string) ($_ENV['PUBLIC_SITE_URL'] ?? getenv('PUBLIC_SITE_URL') ?: ''));
+        if ($envPublic !== '') {
+            return rtrim($envPublic, '/');
+        }
+
+        $https = !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off';
+        $scheme = $https ? 'https' : 'http';
+        $host = $_SERVER['HTTP_HOST'] ?? 'localhost:8000';
+        return $scheme . '://' . $host;
+    }
+}
+
 $passed = 0;
 $failed = 0;
 
@@ -595,19 +610,60 @@ test('A-Frame system prompt exists', function () {
     assert_contains($prompt, '<a-scene id="scene" embedded>');
     assert_contains($prompt, 'window.sketch');
     assert_contains($prompt, 'Do NOT include <script>');
-    assert_contains($prompt, '/image/123');
+    assert_contains($prompt, 'ONLY when the user prompt explicitly names');
 });
 
 test('generation prompts document same-origin CMS media for each engine', function () {
-    assert_contains(art_piece_generation_system_prompt('p5'), "p.loadImage('/image/2')");
+    assert_contains(art_piece_generation_system_prompt('p5'), "p.loadImage('/image/{id}')");
     assert_contains(art_piece_generation_system_prompt('p5'), 'drawImageCover');
-    assert_contains(art_piece_generation_system_prompt('three'), "new THREE.TextureLoader().load('/image/2')");
+    assert_contains(art_piece_generation_system_prompt('three'), "new THREE.TextureLoader().load('/image/{id}')");
     assert_contains(art_piece_generation_system_prompt('three'), 'coverTexture');
-    assert_contains(art_piece_generation_system_prompt('c2'), "runtime.loadImage('/image/2')");
+    assert_contains(art_piece_generation_system_prompt('c2'), "runtime.loadImage('/image/{id}')");
     assert_contains(art_piece_generation_system_prompt('c2'), 'runtime.drawImageCover');
-    assert_contains(art_piece_generation_system_prompt('c2_interactive'), "runtime.loadImage('/image/2')");
+    assert_contains(art_piece_generation_system_prompt('c2_interactive'), "runtime.loadImage('/image/{id}')");
     assert_contains(art_piece_generation_system_prompt('c2_interactive'), 'runtime.drawImageCover');
-    assert_contains(art_piece_generation_system_prompt('svg'), '<image href="/image/2"');
+    assert_contains(art_piece_generation_system_prompt('svg'), '<image href="/image/{id}"');
+});
+
+test('prompt media intent parser accepts loose image ID phrasing', function () {
+    assert_eq(art_piece_extract_prompt_media_refs('integrate image ID 94 as the background'), ['/image/94']);
+    assert_eq(art_piece_extract_prompt_media_refs('integrate image with an ID of 94 as the background'), ['/image/94']);
+    assert_eq(art_piece_extract_prompt_media_refs('integrate image 94 as the background'), ['/image/94']);
+    assert_eq(art_piece_extract_prompt_media_refs('use /image/94 and /media/12'), ['/image/94', '/media/12']);
+    assert_eq(art_piece_extract_prompt_media_refs('use media asset ID 77'), ['/api/media-assets/77']);
+});
+
+test('prompt media policy rejects unprompted CMS media', function () {
+    assert_throws(
+        fn() => validate_art_piece_prompted_media_refs([], '<div id="canvas-container"></div>', '', "window.sketch = (p) => { p.preload = () => { p.loadImage('/image/3'); }; };"),
+        'explicitly names'
+    );
+});
+
+test('prompt media policy accepts explicitly requested CMS media', function () {
+    $allowed = art_piece_extract_prompt_media_refs('make image ID 94 the background');
+    validate_art_piece_prompted_media_refs($allowed, '<div id="canvas-container"></div>', '', "window.sketch = (p) => { p.preload = () => { p.loadImage('/image/94'); }; };", [], true);
+});
+
+test('prompt media policy accepts image with an ID phrasing', function () {
+    $allowed = art_piece_extract_prompt_media_refs('make the image with an ID of 94 the background');
+    validate_art_piece_prompted_media_refs($allowed, '<div id="canvas-container"></div>', '', "window.sketch = (p) => { p.preload = () => { p.loadImage('/image/94'); }; };", [], true);
+});
+
+test('prompt media policy rejects a different image than the one requested', function () {
+    $allowed = art_piece_extract_prompt_media_refs('make image ID 94 the background');
+    assert_throws(
+        fn() => validate_art_piece_prompted_media_refs($allowed, '<div id="canvas-container"></div>', '', "window.sketch = (p) => { p.preload = () => { p.loadImage('/image/3'); }; };", [], true),
+        'Unexpected reference'
+    );
+});
+
+test('prompt media policy allows existing refine media but rejects newly introduced unprompted media', function () {
+    validate_art_piece_prompted_media_refs([], '<div id="canvas-container"></div>', '', "window.sketch = (p) => { p.preload = () => { p.loadImage('/image/2'); }; };", ['/image/2'], false);
+    assert_throws(
+        fn() => validate_art_piece_prompted_media_refs([], '<div id="canvas-container"></div>', '', "window.sketch = (p) => { p.preload = () => { p.loadImage('/image/2'); p.loadImage('/image/3'); }; };", ['/image/2'], false),
+        'Unexpected reference'
+    );
 });
 
 test('p5 preflight accepts same-origin CMS image loading', function () {
@@ -819,14 +875,16 @@ test('starter templates use cover helpers for full-frame raster backgrounds', fu
 });
 
 test('piece export document creates standalone download HTML without presentation controls', function () {
+    $_ENV['PUBLIC_SITE_URL'] = '';
+    putenv('PUBLIC_SITE_URL');
     $_SERVER['HTTP_HOST'] = 'example.test';
     $_SERVER['HTTPS'] = 'on';
     $piece = ['id' => 42, 'title' => 'Portable Test Piece', 'engine' => 'p5'];
     $version = [
         'engine' => 'p5',
         'html_code' => '<div id="canvas-container"></div>',
-        'css_code' => '#canvas-container{width:100%;height:100%;background:url("/media/example.png");}',
-        'generated_code' => "let img; window.sketch = (p) => { p.preload = () => { img = p.loadImage('/image/2'); }; p.setup = () => { p.createCanvas(100, 100); }; p.draw = () => { p.background(0); }; };",
+        'css_code' => '#canvas-container{width:100%;height:100%;background:url("media/example.png");}',
+        'generated_code' => "let img; window.sketch = (p) => { p.preload = () => { img = p.loadImage('image/83'); }; p.setup = () => { p.createCanvas(100, 100); }; p.draw = () => { p.background(0); }; }; const asset = 'api/media-assets/83';",
     ];
 
     $document = piece_export_document($piece, $version);
@@ -834,8 +892,9 @@ test('piece export document creates standalone download HTML without presentatio
     assert_contains($document, '<body>');
     assert_contains($document, '<div id="runtime-root"><div id="canvas-container"></div></div>');
     assert_contains($document, 'https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js');
-    assert_contains($document, 'https://example.test/image/2');
+    assert_contains($document, 'https://example.test/image/83');
     assert_contains($document, 'https://example.test/media/example.png');
+    assert_contains($document, 'https://example.test/api/media-assets/83');
     assert_contains($document, 'window.sketch = (p)');
     assert_not_contains($document, 'Immersive View');
     assert_not_contains($document, 'copyEmbed');
@@ -843,6 +902,8 @@ test('piece export document creates standalone download HTML without presentatio
 });
 
 test('piece export document uses CDN imports for every engine', function () {
+    $_ENV['PUBLIC_SITE_URL'] = '';
+    putenv('PUBLIC_SITE_URL');
     $cases = [
         'p5' => 'https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js',
         'c2' => 'https://cdn.jsdelivr.net/npm/c2.js@1.0.9/dist/c2.min.js',
@@ -880,6 +941,59 @@ test('piece export document uses CDN imports for every engine', function () {
     assert_contains($aframeDocument, '<a-scene id="scene" embedded>');
     assert_contains($aframeDocument, 'window.sketch = ({ AFRAME, scene, startFrame })');
     assert_contains($aframeDocument, 'window.sketch({ AFRAME: window.AFRAME, scene, startFrame })');
+});
+
+test('piece render and export documents base media on request host, not public URL', function () {
+    $_ENV['PUBLIC_SITE_URL'] = 'https://example.test';
+    putenv('PUBLIC_SITE_URL=https://example.test');
+    $_SERVER['HTTP_HOST'] = '127.0.0.1:8080';
+    $_SERVER['HTTPS'] = 'off';
+
+    $document = piece_render_document(
+        ['id' => 94, 'title' => 'Local Preview Piece', 'engine' => 'aframe'],
+        [
+            'engine' => 'aframe',
+            'html_code' => '<a-scene id="scene" embedded><a-assets><img id="texture" src="/api/media-assets/1"></a-assets></a-scene>',
+            'css_code' => '',
+            'generated_code' => 'window.sketch = ({ scene }) => {};',
+        ]
+    );
+
+    assert_contains($document, '<base href="http://127.0.0.1:8080/">');
+    assert_not_contains($document, '<base href="https://example.test/">');
+
+    $exported = piece_export_document(
+        ['id' => 94, 'title' => 'Local Download Piece', 'engine' => 'aframe'],
+        [
+            'engine' => 'aframe',
+            'html_code' => '<a-scene id="scene" embedded><a-assets><img id="texture" src="/api/media-assets/1"></a-assets></a-scene>',
+            'css_code' => '.frame{background:url("media/example.png");}',
+            'generated_code' => "window.sketch = ({ scene }) => {}; const asset = 'image/83';",
+        ]
+    );
+
+    assert_contains($exported, 'http://127.0.0.1:8080/api/media-assets/1');
+    assert_contains($exported, 'http://127.0.0.1:8080/media/example.png');
+    assert_contains($exported, 'http://127.0.0.1:8080/image/83');
+    assert_not_contains($exported, 'https://example.test/api/media-assets/1');
+});
+
+test('A-Frame render and export documents add crossorigin to asset images', function () {
+    $_SERVER['HTTP_HOST'] = 'example.test';
+    $_SERVER['HTTPS'] = 'on';
+    $piece = ['id' => 94, 'title' => 'A-Frame Texture Piece', 'engine' => 'aframe'];
+    $version = [
+        'engine' => 'aframe',
+        'html_code' => '<a-scene id="scene" embedded><a-assets><img id="texture" src="/api/media-assets/1"></a-assets><a-plane material="src: #texture"></a-plane></a-scene>',
+        'css_code' => '#scene{width:100%;height:100%;}',
+        'generated_code' => 'window.sketch = ({ scene }) => {};',
+    ];
+
+    $rendered = piece_render_document($piece, $version);
+    assert_contains($rendered, '<img id="texture" src="/api/media-assets/1" crossorigin="anonymous">');
+
+    $exported = piece_export_document($piece, $version);
+    assert_contains($exported, '<img id="texture" src="https://example.test/api/media-assets/1" crossorigin="anonymous">');
 });
 
 test('piece export document keeps Three, A-Frame, and C2 interactive in downloaded HTML', function () {

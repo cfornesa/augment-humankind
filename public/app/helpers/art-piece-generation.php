@@ -20,6 +20,119 @@ function art_piece_generation_mode_to_engine(string $mode): string
     return $mode === 'c2_interactive' ? 'c2' : $mode;
 }
 
+function art_piece_normalize_cms_media_ref(string $src): ?string
+{
+    $src = trim($src);
+    if ($src === '') {
+        return null;
+    }
+    $path = preg_split('/[?#]/', $src, 2)[0] ?? $src;
+    $path = '/' . ltrim($path, '/');
+    return preg_match('#^/(?:image/[0-9]+|api/media-assets/[0-9]+|media/[A-Za-z0-9._~/%+-]+)$#', $path)
+        ? $path
+        : null;
+}
+
+function art_piece_extract_prompt_media_refs(string $prompt): array
+{
+    $refs = [];
+    $add = static function (string $ref) use (&$refs): void {
+        $normalized = art_piece_normalize_cms_media_ref($ref);
+        if ($normalized !== null) {
+            $refs[$normalized] = true;
+        }
+    };
+
+    if (preg_match_all('#(?<![A-Za-z0-9._~/-])/?(?:image/[0-9]+|api/media-assets/[0-9]+|media/[A-Za-z0-9._~/%+-]+)(?:\?[A-Za-z0-9._~%=&+-]*)?#i', $prompt, $matches)) {
+        foreach ($matches[0] as $match) {
+            $add($match);
+        }
+    }
+
+    if (preg_match_all('/\b(?:image|img|photo|picture)\s+(?:(?:with\s+an?\s+)?id\s*(?:of\s*)?[:#]?\s*|#)?([0-9]+)\b/i', $prompt, $matches)) {
+        foreach ($matches[1] as $id) {
+            $add('/image/' . $id);
+        }
+    }
+
+    if (preg_match_all('/\bmedia(?!\s+asset\b)\s+(?:(?:with\s+an?\s+)?id\s*(?:of\s*)?[:#]?\s*|#)?([0-9]+)\b/i', $prompt, $matches)) {
+        foreach ($matches[1] as $id) {
+            $add('/media/' . $id);
+        }
+    }
+
+    if (preg_match_all('/\bmedia\s+asset\s+(?:(?:with\s+an?\s+)?id\s*(?:of\s*)?[:#]?\s*|#)?([0-9]+)\b/i', $prompt, $matches)) {
+        foreach ($matches[1] as $id) {
+            $add('/api/media-assets/' . $id);
+        }
+    }
+
+    return array_keys($refs);
+}
+
+function art_piece_media_policy_prompt(array $allowedMediaRefs, bool $allowExisting = false): string
+{
+    $allowedMediaRefs = array_values(array_unique(array_filter($allowedMediaRefs, 'is_string')));
+    if ($allowedMediaRefs === []) {
+        return $allowExisting
+            ? 'CMS MEDIA POLICY: Preserve existing CMS media only if it is already present in the current code. Do NOT add any new /image/{id}, /media/..., or /api/media-assets/{id} references unless the refinement instruction explicitly names that exact image or media ID/path.'
+            : 'CMS MEDIA POLICY: The user did not explicitly request a CMS image or media asset. Do NOT include any /image/{id}, /media/..., or /api/media-assets/{id} references. Use procedural drawing, colors, gradients, geometry, particles, or generated shapes instead.';
+    }
+    return 'CMS MEDIA POLICY: The only CMS media references explicitly requested by the user are: ' . implode(', ', $allowedMediaRefs) . '. Do not use any other /image/{id}, /media/..., or /api/media-assets/{id} reference.';
+}
+
+function art_piece_collect_cms_media_refs(?string ...$contents): array
+{
+    $refs = [];
+    foreach ($contents as $content) {
+        $content = (string) $content;
+        if ($content === '') {
+            continue;
+        }
+        if (!preg_match_all('#(?<![A-Za-z0-9._~/-])/?(?:image/[0-9]+|api/media-assets/[0-9]+|media/[A-Za-z0-9._~/%+-]+)(?:\?[A-Za-z0-9._~%=&+-]*)?#i', $content, $matches)) {
+            continue;
+        }
+        foreach ($matches[0] as $match) {
+            $normalized = art_piece_normalize_cms_media_ref($match);
+            if ($normalized !== null) {
+                $refs[$normalized] = true;
+            }
+        }
+    }
+    return array_keys($refs);
+}
+
+function validate_art_piece_prompted_media_refs(array $allowedMediaRefs, ?string $html, ?string $css, ?string $js, array $existingMediaRefs = [], bool $requirePromptedRefs = false): void
+{
+    $allowed = [];
+    foreach (array_merge($allowedMediaRefs, $existingMediaRefs) as $ref) {
+        $normalized = art_piece_normalize_cms_media_ref((string) $ref);
+        if ($normalized !== null) {
+            $allowed[$normalized] = true;
+        }
+    }
+
+    $found = art_piece_collect_cms_media_refs($html, $css, $js);
+    $unexpected = array_values(array_filter($found, static fn(string $ref): bool => !isset($allowed[$ref])));
+    if ($unexpected !== []) {
+        throw new RuntimeException('CMS media references are only allowed when the prompt explicitly names the exact image or media ID/path. Unexpected reference(s): ' . implode(', ', $unexpected) . '.');
+    }
+
+    if ($requirePromptedRefs) {
+        $foundSet = array_fill_keys($found, true);
+        $missing = [];
+        foreach ($allowedMediaRefs as $ref) {
+            $normalized = art_piece_normalize_cms_media_ref((string) $ref);
+            if ($normalized !== null && !isset($foundSet[$normalized])) {
+                $missing[] = $normalized;
+            }
+        }
+        if ($missing !== []) {
+            throw new RuntimeException('The prompt explicitly requested CMS media reference(s) that were not integrated into the piece: ' . implode(', ', array_values(array_unique($missing))) . '.');
+        }
+    }
+}
+
 /**
  * Returns the engine-specific system prompt for generation.
  * Joined with a single space to match the Node.js .join(" ") behavior.
@@ -36,7 +149,7 @@ function art_piece_generation_system_prompt(string $engine): string
             "Do NOT use import statements for p5; the runtime provides it globally.",
             "Use p5 instance mode. The JS must assign its sketch function to `window.sketch = (p) => { ... }` and follow this shape: `window.sketch = (p) => { p.setup = () => {}; p.draw = () => {}; };`.",
             "The JS block must contain all functions needed by the sketch, including local helpers like `drawImageCover(img, x, y, width, height)` when it needs a full-frame image. Standalone exports wrap this same JS; do not rely on presentation-only controls.",
-            "You MAY use existing same-origin CMS images with p5's preload pattern: `let img; window.sketch = (p) => { p.preload = () => { img = p.loadImage('/image/2'); }; p.setup = () => {}; p.draw = () => { const backgroundWidth = p.width; const backgroundHeight = p.height; if (img) drawImageCover(img, 0, 0, backgroundWidth, backgroundHeight); }; function drawImageCover(img, x, y, width, height) { /* crop source to cover target, then call p.image(...) */ } };`. Allowed media paths are `/image/{id}`, `/media/...`, and `/api/media-assets/{id}` only. Image assets define the source; `p.image(..., width, height, sx, sy, sw, sh)` defines rendered size and cover cropping.",
+            "Use CMS images ONLY when the user prompt explicitly names a specific image/media ID or path. When explicitly requested, use p5's preload pattern with that exact path, such as `img = p.loadImage('/image/{id}')`, and draw it with `p.image(...)` or a local `drawImageCover(...)` helper. Allowed media paths are `/image/{id}`, `/media/...`, and `/api/media-assets/{id}` only. Image assets define the source; `p.image(..., width, height, sx, sy, sw, sh)` defines rendered size and cover cropping.",
             "Always call `p.createCanvas(p.windowWidth, p.windowHeight)` inside `setup()` so the sketch fills the iframe. Do NOT hardcode small fixed dimensions like `createCanvas(400, 400)`.",
             "CRITICAL: Animations MUST be infinite and engaging. Use periodic functions like Math.sin() or Math.cos() combined with p.frameCount to ensure movement loops or pulsates indefinitely.",
             "Avoid logic that permanently removes all elements from the screen. If elements are destroyed, they must be periodically respawned.",
@@ -53,7 +166,7 @@ function art_piece_generation_system_prompt(string $engine): string
             "Do NOT use import statements for c2; the runtime provides it globally.",
             "The JS must assign its setup function to `window.sketch` like this: `window.sketch = (runtime) => { const { c2, canvas, startFrame } = runtime; const renderer = new c2.Renderer(canvas); startFrame((frameCount) => { renderer.clear(); /* draw */ }); };`. CALL `startFrame(handler)` inside the sketch to register the animation loop — do NOT return it or return an object containing it.",
             "The JS block must contain all functions needed by the sketch and must use only the supplied runtime helpers for image drawing.",
-            "You MAY use existing same-origin CMS images through the runtime helpers only: `const img = runtime.loadImage('/image/2');` during setup, then `runtime.drawImage(img, x, y, width, height);` inside the frame loop. To fill the frame with cover cropping, use editable sizing such as `const backgroundWidth = canvas.width; const backgroundHeight = canvas.height; runtime.drawImageCover(img, 0, 0, backgroundWidth, backgroundHeight);`. Allowed media paths are `/image/{id}`, `/media/...`, and `/api/media-assets/{id}` only. Image assets define the source; `runtime.drawImage(...)` and `runtime.drawImageCover(...)` define rendered size. Do NOT call canvas.getContext(), drawImage(), new Image(), fetch(), or external URLs yourself.",
+            "Use CMS images ONLY when the user prompt explicitly names a specific image/media ID or path. When explicitly requested, load that exact path through the runtime helpers only, such as `const img = runtime.loadImage('/image/{id}');`, then draw it with `runtime.drawImage(...)` or `runtime.drawImageCover(...)`. Allowed media paths are `/image/{id}`, `/media/...`, and `/api/media-assets/{id}` only. Image assets define the source; `runtime.drawImage(...)` and `runtime.drawImageCover(...)` define rendered size. Do NOT call canvas.getContext(), drawImage(), new Image(), fetch(), or external URLs yourself.",
             "Do NOT include any <script src> tags — the runtime is already loaded, and any <script src> referencing an external file will cause a fatal error.",
             "Use `new c2.Renderer(canvas)` to create the renderer. Do NOT call any canvas-sizing or canvas-context methods directly.",
             "RENDERER API (call on the renderer object): renderer.clear(), renderer.clear(cssColor) [fills canvas with that color — use this for background fills], renderer.fill(cssColor), renderer.stroke(cssColor), renderer.fill(false), renderer.stroke(false), renderer.lineWidth(n), renderer.alpha(a), renderer.fontSize(n), renderer.fontFamily(f), renderer.textAlign(a), renderer.text(str,x,y). IMPORTANT: renderer.background(c) only sets a CSS style and does NOT paint the canvas — NEVER use renderer.background() for background fills; use renderer.clear('#color') instead.",
@@ -75,7 +188,7 @@ function art_piece_generation_system_prompt(string $engine): string
             "Do NOT use import statements for c2; the runtime provides it through the runtime object.",
             "The JS must assign its setup function to `window.sketch` like this: `window.sketch = (runtime) => { const { c2, canvas, startFrame } = runtime; const renderer = new c2.Renderer(canvas); startFrame((frameCount) => { renderer.clear('#101014'); /* draw */ }); };`. CALL `startFrame(handler)` inside the sketch to register the animation loop.",
             "The JS block must contain all functions needed by the sketch and must use only the supplied runtime helpers for image drawing.",
-            "You MAY use existing same-origin CMS images through the runtime helpers only: `const img = runtime.loadImage('/image/2');` during setup, then `runtime.drawImage(img, x, y, width, height);` inside the frame loop. To fill the frame with cover cropping, use editable sizing such as `const backgroundWidth = canvas.width; const backgroundHeight = canvas.height; runtime.drawImageCover(img, 0, 0, backgroundWidth, backgroundHeight);`. Allowed media paths are `/image/{id}`, `/media/...`, and `/api/media-assets/{id}` only. Image assets define the source; `runtime.drawImage(...)` and `runtime.drawImageCover(...)` define rendered size. Do NOT call canvas.getContext(), drawImage(), new Image(), fetch(), or external URLs yourself.",
+            "Use CMS images ONLY when the user prompt explicitly names a specific image/media ID or path. When explicitly requested, load that exact path through the runtime helpers only, such as `const img = runtime.loadImage('/image/{id}');`, then draw it with `runtime.drawImage(...)` or `runtime.drawImageCover(...)`. Allowed media paths are `/image/{id}`, `/media/...`, and `/api/media-assets/{id}` only. Image assets define the source; `runtime.drawImage(...)` and `runtime.drawImageCover(...)` define rendered size. Do NOT call canvas.getContext(), drawImage(), new Image(), fetch(), or external URLs yourself.",
             "This mode MUST include direct user interaction. Use native `canvas.addEventListener()` handlers for `pointerdown`, `pointermove`, `pointerup`, `click`, or `touchstart` to update local state, hit-test shapes, spawn elements, drag anchors, toggle colors, or otherwise visibly change the artwork.",
             "For pointer coordinates, use `const rect = canvas.getBoundingClientRect(); const x = (event.clientX - rect.left) * (canvas.width / rect.width); const y = (event.clientY - rect.top) * (canvas.height / rect.height);` so interaction works after responsive scaling.",
             "Keep every interaction state variable inside the `window.sketch` closure. Do NOT use localStorage, cookies, fetch, parent/top window access, or navigation.",
@@ -97,7 +210,7 @@ function art_piece_generation_system_prompt(string $engine): string
             "The JS must assign its setup function to `window.sketch` like this:",
             "`window.sketch = (runtime) => { const { THREE, canvas, startFrame, width, height } = runtime; /* setup scene, return cleanup function */ return () => {}; };`.",
             "The JS block must contain all functions needed by the scene, including local helpers like `coverTexture(texture, planeWidth, planeHeight)` when it needs full-frame image cover behavior.",
-            "You MAY use existing same-origin CMS images as textures with `const texture = new THREE.TextureLoader().load('/image/2'); texture.colorSpace = THREE.SRGBColorSpace; const material = new THREE.MeshBasicMaterial({ map: texture });`. Allowed media paths are `/image/{id}`, `/media/...`, and `/api/media-assets/{id}` only. Image assets define the source; geometry dimensions define rendered size. For full-frame backgrounds, compute `backgroundHeight` and `backgroundWidth` from camera FOV, aspect, and distance, apply the texture to `new THREE.PlaneGeometry(backgroundWidth, backgroundHeight)`, and configure texture repeat/offset cover behavior.",
+            "Use CMS images ONLY when the user prompt explicitly names a specific image/media ID or path. When explicitly requested, load that exact path as a texture, such as `const texture = new THREE.TextureLoader().load('/image/{id}');`, then size the geometry to control how it appears. Allowed media paths are `/image/{id}`, `/media/...`, and `/api/media-assets/{id}` only. For full-frame requested image backgrounds, compute `backgroundHeight` and `backgroundWidth` from camera FOV, aspect, and distance, apply the texture to `new THREE.PlaneGeometry(backgroundWidth, backgroundHeight)`, and configure texture repeat/offset cover behavior.",
             "CRITICAL: Always create the WebGLRenderer with the provided canvas: `new THREE.WebGLRenderer({ canvas, antialias: true })`. If you omit `{ canvas }`, Three.js creates a second canvas element that is not positioned in the DOM — the scene will be invisible. NEVER call `document.body.appendChild(renderer.domElement)` — the canvas is already in the correct position.",
             'CRITICAL: The HTML container div MUST use id="container" — do NOT use custom ids such as \'book-container\', \'scene-container\', \'app\', or \'root\'. The runtime only mounts the WebGL canvas inside elements with known ids (container, canvas-container, sketch-container). Any other id causes the canvas to be placed outside the styled container, making the scene invisible in the normal preview.',
             "CRITICAL: Use `width` and `height` from the runtime for ALL sizing — never use `window.innerWidth` or `window.innerHeight`. Pass `false` as the third argument to `renderer.setSize(width, height, false)` to prevent CSS override. Do NOT add `window.addEventListener('resize', ...)` — the runtime handles resize. Incorrect sizing makes the scene invisible in the default post view.",
@@ -114,7 +227,7 @@ function art_piece_generation_system_prompt(string $engine): string
             "You MUST return your response as three separate Markdown code blocks (```html, ```css, and ```javascript).",
             "Return ONLY those three fenced code blocks. Do NOT include prose, explanations, titles, bullets, or notes before, between, or after the code blocks.",
             "The HTML block MUST contain exactly one `<a-scene id=\"scene\" embedded>` as the scene root. Include all generated A-Frame entities inside that scene.",
-            "You MAY use existing same-origin CMS images by placing `<img id=\"asset-id\" src=\"/image/123\">` inside one `<a-assets>` block, then referencing it with `src=\"#asset-id\"` or `material=\"src: #asset-id\"`. Allowed image paths are `/image/{id}`, `/media/...`, and `/api/media-assets/{id}` only. Image assets define the source; rendered A-Frame entities define size. Do NOT put width/height on the `<img>` asset expecting it to resize the scene. Set width/height on the `<a-plane>` or entity that references it; for full-frame backgrounds, compute and set the plane's `backgroundWidth` and `backgroundHeight` from camera FOV, aspect, and distance in `window.sketch`.",
+            "Use CMS images ONLY when the user prompt explicitly names a specific image/media ID or path. When explicitly requested, place that exact path in an `<img id=\"asset-id\" src=\"/image/{id}\">` inside one `<a-assets>` block, then reference it with `src=\"#asset-id\"` or `material=\"src: #asset-id\"`. Allowed image paths are `/image/{id}`, `/media/...`, and `/api/media-assets/{id}` only. Image assets define the source; rendered A-Frame entities define size. Do NOT put width/height on the `<img>` asset expecting it to resize the scene. Set width/height on the `<a-plane>` or entity that references it; for full-frame requested image backgrounds, compute and set the plane's `backgroundWidth` and `backgroundHeight` from camera FOV, aspect, and distance in `window.sketch`.",
             "Do NOT include <script>, <link>, <base>, <html>, <head>, <body>, <iframe>, <audio>, <video>, or <a-asset-item>. Do NOT use external URLs or remote textures.",
             "The CSS block may style only `#scene`, `.a-canvas`, or classes/ids used by generated entities. Do NOT target global page chrome, and do NOT use `display: none`, `visibility: hidden`, or `opacity: 0` on the scene or canvas.",
             "The runtime provides AFRAME globally. Do NOT use import statements.",
@@ -128,7 +241,7 @@ function art_piece_generation_system_prompt(string $engine): string
             "You generate animated SVG art pieces for display as a self-contained iframe.",
             "Return ONLY three Markdown code blocks: ```html, ```css, ```javascript. No prose, titles, or notes.",
             'HTML block: one `<svg viewBox="0 0 800 600" xmlns="http://www.w3.org/2000/svg" width="100%" height="100%">` as root. All shapes, paths, groups, and `<defs>` go inside it. No <style>, <script>, <html>, <head>, or <body> tags.',
-            'You MAY use existing same-origin CMS images with SVG `<image href="/image/3" x="0" y="0" width="800" height="600" preserveAspectRatio="xMidYMid slice" />` for a full-frame background and `<image href="/image/2" x="312" y="212" width="176" height="176" preserveAspectRatio="xMidYMid slice" />` for a foreground image. Allowed media paths are `/image/{id}`, `/media/...`, and `/api/media-assets/{id}` only. Image assets define the source; SVG `<image>` x/y/width/height attributes define rendered size.',
+            'Use CMS images ONLY when the user prompt explicitly names a specific image/media ID or path. When explicitly requested, use that exact path in an SVG `<image href="/image/{id}" ... preserveAspectRatio="xMidYMid slice" />` element and set x/y/width/height for the requested placement. Allowed media paths are `/image/{id}`, `/media/...`, and `/api/media-assets/{id}` only. Image assets define the source; SVG `<image>` x/y/width/height attributes define rendered size.',
             'CRITICAL: Never leave SVG groups empty. If you create a group to hold dynamic content (e.g. `<g id="particles"></g>`), you MUST populate it — either with inline children in the HTML block (for static elements) or by appending children in `window.sketch` (for dynamic/spawning elements). An empty placeholder group is a generation failure.',
             "CSS block: MUST start with `svg { display: block; width: 100%; height: 100%; } body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: transparent; }`. MUST add `@keyframes` animations on actual SVG elements (shapes, paths, groups by ID or class) using `animation: name duration easing infinite`. Targeting only `body` and `html` in CSS with no SVG element animations is not acceptable.",
             "CRITICAL: CSS `@keyframes` must be `animation-iteration-count: infinite`. Use staggered `animation-delay` across elements for organic motion.",
@@ -581,7 +694,7 @@ function is_allowed_art_piece_media_src(string $src): bool
 /**
  * Builds the repair prompt to guide the AI to correct validation failures.
  */
-function art_piece_repair_prompt(string $engine, string $originalPrompt, ?string $previousRawResponse, string $failureMessage): string
+function art_piece_repair_prompt(string $engine, string $originalPrompt, ?string $previousRawResponse, string $failureMessage, array $allowedMediaRefs = []): string
 {
     $segments = [
         "Target engine: {$engine}",
@@ -589,7 +702,8 @@ function art_piece_repair_prompt(string $engine, string $originalPrompt, ?string
         "The previous art-piece attempt failed validation: {$failureMessage}",
         "Return a corrected response that fixes the error while staying visually faithful to the original prompt. Provide the HTML, CSS, and JS in Markdown code blocks.",
         "CRITICAL: Animations MUST be infinite. They must loop, reset their state, or pulsate continuously. Never allow the piece to end on a blank screen or permanently destroy all elements.",
-        "If the failure involves media, use only same-origin CMS paths like `/image/2` or `/image/3`; never use remote URLs, fetch, imports, script tags, iframe tags, storage, or parent/top window access.",
+        art_piece_media_policy_prompt($allowedMediaRefs),
+        "If the failure involves media, use only the CMS media path(s) explicitly allowed above; never use remote URLs, fetch, imports, script tags, iframe tags, storage, or parent/top window access.",
         "If the failure involves C2 images, use `runtime.loadImage()`, `runtime.drawImage()`, or `runtime.drawImageCover()` only; never call `canvas.getContext()`, `new Image()`, or raw `drawImage()`.",
         "If the failure involves portability, keep the CMS `window.sketch` contract. Standalone HTML export is generated by the system wrapper, not by adding document/import tags to the generated blocks.",
     ];
@@ -686,7 +800,7 @@ function art_piece_refine_patch_format_example(): string
  * now) — without it, the AI only sees the code and the new instruction, with
  * no sense of the original intent it's supposed to stay true to.
  */
-function art_piece_refine_user_prompt(string $engine, string $refinementPrompt, ?string $html, ?string $css, ?string $js, ?string $originalPrompt = null): string
+function art_piece_refine_user_prompt(string $engine, string $refinementPrompt, ?string $html, ?string $css, ?string $js, ?string $originalPrompt = null, array $allowedMediaRefs = []): string
 {
     $sections = [];
     if ($originalPrompt !== null && trim($originalPrompt) !== '') {
@@ -701,6 +815,7 @@ function art_piece_refine_user_prompt(string $engine, string $refinementPrompt, 
     } else {
         $sections[] = "Apply ONLY the change named above, as PATCH blocks against the exact current code below — never as a rewritten file. Every color, shape, decoration, and detail not mentioned in the instruction must not appear in any SEARCH/REPLACE pair at all. You are STRICTLY FORBIDDEN from editing or adding HTML patches. Focus your edits solely on JS or CSS.";
     }
+    $sections[] = art_piece_media_policy_prompt($allowedMediaRefs, true);
     if ($engine === 'svg' || $engine === 'aframe') {
         $sections[] = "### CURRENT HTML CODE";
         $sections[] = "```html\n" . ($html ?? '') . "\n```";
@@ -869,12 +984,13 @@ function art_piece_find_patch_match(string $code, string $search): array|string|
  * blind from memory of its own previous (wrong) response, with no way to
  * actually re-derive a correct verbatim SEARCH block from the real source.
  */
-function art_piece_refine_repair_prompt(string $engine, string $refinementPrompt, ?string $previousRawResponse, string $failureMessage, ?string $html = null, ?string $css = null, ?string $js = null): string
+function art_piece_refine_repair_prompt(string $engine, string $refinementPrompt, ?string $previousRawResponse, string $failureMessage, ?string $html = null, ?string $css = null, ?string $js = null, array $allowedMediaRefs = []): string
 {
     $segments = [
         "Target engine: {$engine}",
         "Refinement instruction: {$refinementPrompt}",
         "CRITICAL — your previous attempt failed: \"{$failureMessage}\" You MUST directly address this specific problem in your PLAN section before writing any PATCH — state the new approach you will use to avoid it, not just adjusted numbers or a smaller version of the same approach.",
+        art_piece_media_policy_prompt($allowedMediaRefs, true),
     ];
     if ($engine === 'svg' || $engine === 'aframe') {
         $segments[] = "Respond again in the exact PLAN: / PATCH <file>: / <<<<<<< SEARCH / ======= / >>>>>>> REPLACE format. Every SEARCH block must be copied character-for-character from the CURRENT code below, including whitespace and indentation — do not paraphrase, reformat, or reproduce it from memory of your previous attempt. Re-read the current code below and copy directly from it.";
