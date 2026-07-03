@@ -39,3 +39,8 @@ CONSTRAINT: Admin and member OAuth login (GitHub and Google) must share a single
 SCOPE: public/app/helpers/oauth.php (shared_oauth_redirect_uri()), SharedAuthController.php, AuthController::handleCallback()/oauthStart(), UserAuthController::handleCallback()/oauthStart(), router.php auth routes.
 SET: 2026-06-19
 STATUS: Implemented the same day it was set (DECISIONS.md 2026-06-19, "OAuth Callback Unification + Site-Wide Session Symmetry") — both login surfaces now build the same shared_oauth_redirect_uri() and dispatch through SharedAuthController based on pending session state, not URL path.
+
+CONSTRAINT: Feed-imported and other external HTML is intentionally rendered unsanitized so external HTML can execute. HTML authoring and approval paths are admin-only; the accepted risk includes third-party feed HTML executing site-wide and in the admin moderation view, including invisible-vector moderation risk.
+SCOPE: Feed ingest, feed approval, stored post rendering, and admin moderation views that display external HTML.
+SET: 2026-07-03
+STATUS: Owner accepted the risk during the platform-harvest search upgrade; no sanitizer should be added unless this constraint is explicitly revisited.

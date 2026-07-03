@@ -611,6 +611,25 @@ function manifest(): array
             seedFormsAndStarterTemplates($ctx);
         }],
 
+        ['search fulltext indexes (2026-07-03)', function (Ctx $ctx): void {
+            $indexes = [
+                ['art_pieces', 'art_pieces_search_fulltext', 'title, description, prompt'],
+                ['platform_collections', 'platform_collections_search_fulltext', 'name, description, artist_statement'],
+                ['collections', 'collections_search_fulltext', 'name, description'],
+                ['exhibits', 'exhibits_search_fulltext', 'title, description'],
+                ['pages', 'pages_search_fulltext', 'title, meta_description'],
+            ];
+            foreach ($indexes as [$table, $index, $columns]) {
+                if (!tableExists($ctx->pdo, $table) || indexExists($ctx->pdo, $table, $index)) {
+                    continue;
+                }
+                $ctx->apply(
+                    "ALTER TABLE `{$table}` ADD FULLTEXT INDEX {$index} ({$columns})",
+                    "fulltext {$table}"
+                );
+            }
+        }],
+
         ['site_settings baseline row (id=1)', function (Ctx $ctx): void {
             $stmt = $ctx->pdo->query('SELECT 1 FROM site_settings WHERE id = 1 LIMIT 1');
             if ($stmt->fetchColumn()) {

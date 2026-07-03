@@ -35,15 +35,19 @@ class PortfolioController
         // collections list uses, so this page's order matches the admin by
         // default. Only diverges when the visitor explicitly picks a sort.
         $sort = (string) ($_GET['sort'] ?? 'curated');
-        if (!in_array($sort, ['curated', 'newest', 'oldest', 'az', 'za'], true)) {
+        if (!in_array($sort, ['curated', 'newest', 'oldest', 'az', 'za', 'relevance'], true)) {
+            $sort = 'curated';
+        }
+        if ($sort === 'relevance' && $q === '') {
             $sort = 'curated';
         }
         [$modelSort, $dir] = match ($sort) {
-            'newest' => ['newest',     'desc'],
-            'oldest' => ['created',    'asc'],
-            'az'     => ['az',         'asc'],
-            'za'     => ['za',         'desc'],
-            default  => ['sort_order', 'asc'],
+            'newest'    => ['newest',     'desc'],
+            'oldest'    => ['created',    'asc'],
+            'az'        => ['az',         'asc'],
+            'za'        => ['za',         'desc'],
+            'relevance' => ['relevance',  'desc'],
+            default     => ['sort_order', 'asc'],
         };
         $filterQs = http_build_query(array_filter(['q' => $q, 'sort' => $sort !== 'curated' ? $sort : '']));
         $fetchUrl = '/portfolio/exhibit-collections' . ($filterQs !== '' ? '?' . $filterQs : '');
@@ -73,15 +77,19 @@ class PortfolioController
         // uses, so this page's order matches the admin by default. Only
         // diverges when the visitor explicitly picks a sort.
         $sort = (string) ($_GET['sort'] ?? 'curated');
-        if (!in_array($sort, ['curated', 'newest', 'oldest', 'az', 'za'], true)) {
+        if (!in_array($sort, ['curated', 'newest', 'oldest', 'az', 'za', 'relevance'], true)) {
+            $sort = 'curated';
+        }
+        if ($sort === 'relevance' && $q === '') {
             $sort = 'curated';
         }
         [$modelSort, $dir] = match ($sort) {
-            'newest' => ['newest',     'desc'],
-            'oldest' => ['created',    'asc'],
-            'az'     => ['az',         'asc'],
-            'za'     => ['za',         'desc'],
-            default  => ['sort_order', 'asc'],
+            'newest'    => ['newest',     'desc'],
+            'oldest'    => ['created',    'asc'],
+            'az'        => ['az',         'asc'],
+            'za'        => ['za',         'desc'],
+            'relevance' => ['relevance',  'desc'],
+            default     => ['sort_order', 'asc'],
         };
         $filterQs = http_build_query(array_filter(['q' => $q, 'sort' => $sort !== 'curated' ? $sort : '']));
         $fetchUrl = '/portfolio/exhibits' . ($filterQs !== '' ? '?' . $filterQs : '');
@@ -111,15 +119,19 @@ class PortfolioController
         // collections list uses, so this page's order matches the admin by
         // default. Only diverges when the visitor explicitly picks a sort.
         $sort = (string) ($_GET['sort'] ?? 'curated');
-        if (!in_array($sort, ['curated', 'newest', 'oldest', 'az', 'za'], true)) {
+        if (!in_array($sort, ['curated', 'newest', 'oldest', 'az', 'za', 'relevance'], true)) {
+            $sort = 'curated';
+        }
+        if ($sort === 'relevance' && $q === '') {
             $sort = 'curated';
         }
         [$modelSort, $dir] = match ($sort) {
-            'newest' => ['newest',     'desc'],
-            'oldest' => ['newest',     'asc'],
-            'az'     => ['name',       'asc'],
-            'za'     => ['name',       'desc'],
-            default  => ['sort_order', 'asc'],
+            'newest'    => ['newest',     'desc'],
+            'oldest'    => ['newest',     'asc'],
+            'az'        => ['name',       'asc'],
+            'za'        => ['name',       'desc'],
+            'relevance' => ['relevance',  'desc'],
+            default     => ['sort_order', 'asc'],
         };
         $filterQs = http_build_query(array_filter(['q' => $q, 'sort' => $sort !== 'curated' ? $sort : '']));
         $fetchUrl = '/portfolio/platform-collections' . ($filterQs !== '' ? '?' . $filterQs : '');
@@ -150,18 +162,22 @@ class PortfolioController
         // uses, so this page's order matches the admin by default. Only
         // diverges when the visitor explicitly picks a sort.
         $sort   = (string) ($_GET['sort'] ?? 'curated');
-        if (!in_array($sort, ['curated', 'newest', 'oldest', 'az', 'za'], true)) {
+        if (!in_array($sort, ['curated', 'newest', 'oldest', 'az', 'za', 'relevance'], true)) {
+            $sort = 'curated';
+        }
+        if ($sort === 'relevance' && $q === '') {
             $sort = 'curated';
         }
         if (!in_array($engine, art_piece_supported_engines(), true)) {
             $engine = '';
         }
         [$modelSort, $dir] = match ($sort) {
-            'newest' => ['newest',     'desc'],
-            'oldest' => ['newest',     'asc'],
-            'az'     => ['title',      'asc'],
-            'za'     => ['title',      'desc'],
-            default  => ['sort_order', 'asc'],
+            'newest'    => ['newest',     'desc'],
+            'oldest'    => ['newest',     'asc'],
+            'az'        => ['title',      'asc'],
+            'za'        => ['title',      'desc'],
+            'relevance' => ['relevance',  'desc'],
+            default     => ['sort_order', 'asc'],
         };
         $filterQs = http_build_query(array_filter(['q' => $q, 'engine' => $engine, 'sort' => $sort !== 'curated' ? $sort : '']));
         $fetchUrl = '/portfolio/pieces' . ($filterQs !== '' ? '?' . $filterQs : '');

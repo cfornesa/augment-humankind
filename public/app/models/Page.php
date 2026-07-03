@@ -186,15 +186,58 @@ class Page
         }
     }
 
-    public static function searchPublished(string $q, int $limit = 5): array
+    public static function searchPublished(string $q, int $limit = 5, string $sort = 'default'): array
     {
         $q = trim($q);
         if ($q === '') {
             return [];
         }
 
+        $parsedSearch = null;
+        $booleanExpr = null;
+        if ($sort === 'relevance') {
+            require_once __DIR__ . '/../helpers/search.php';
+            $parsedSearch = search_parse_query($q);
+            $booleanExpr = ($parsedSearch !== null && $parsedSearch['boolean'] !== '') ? $parsedSearch['boolean'] : null;
+        }
+
         try {
             $like = '%' . str_replace(['%', '_'], ['\\%', '\\_'], $q) . '%';
+
+            if ($booleanExpr !== null) {
+                $recallParams = [$booleanExpr, $like, $like];
+                $orParts = [
+                    'MATCH(title, meta_description) AGAINST(? IN BOOLEAN MODE)',
+                    'title LIKE ?',
+                    'meta_description LIKE ?',
+                ];
+                $shortRecall = search_like_recall_clause(
+                    ['title', 'meta_description'],
+                    $parsedSearch['like_terms'] ?? [],
+                    $recallParams
+                );
+                if ($shortRecall !== '') {
+                    $orParts[] = $shortRecall;
+                }
+                $stmt = db()->prepare(
+                    'SELECT id, title, slug, meta_description,
+                            MATCH(title, meta_description) AGAINST(? IN BOOLEAN MODE) AS relevance
+                     FROM pages
+                     WHERE status = ? AND deleted_at IS NULL
+                       AND (' . implode(' OR ', $orParts) . ')
+                     ORDER BY relevance DESC, id DESC
+                     LIMIT ?'
+                );
+                $stmt->bindValue(1, $booleanExpr);
+                $stmt->bindValue(2, 'published');
+                foreach ($recallParams as $i => $value) {
+                    $stmt->bindValue($i + 3, $value);
+                }
+                $stmt->bindValue(count($recallParams) + 3, max(1, $limit), PDO::PARAM_INT);
+                $stmt->execute();
+                return $stmt->fetchAll();
+            }
+
             $stmt = db()->prepare(
                 'SELECT id, title, slug, meta_description
                  FROM pages

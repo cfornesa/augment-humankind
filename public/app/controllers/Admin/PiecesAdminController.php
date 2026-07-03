@@ -18,8 +18,8 @@ class PiecesAdminController
         $sort   = (string) ($_GET['sort'] ?? 'sort_order');
         $dir    = strtolower((string) ($_GET['dir'] ?? 'asc'));
 
-        $allowedSorts = ['sort_order', 'newest', 'title', 'engine', 'status', 'created', 'updated'];
-        if (!in_array($sort, $allowedSorts, true)) {
+        $allowedSorts = ['sort_order', 'newest', 'title', 'engine', 'status', 'created', 'updated', 'relevance'];
+        if (!in_array($sort, $allowedSorts, true) || ($sort === 'relevance' && $q === '')) {
             $sort = 'sort_order';
         }
         if (!in_array($dir, ['asc', 'desc'], true)) {

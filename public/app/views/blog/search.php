@@ -68,7 +68,7 @@ $hasAnyResults = !empty($posts)
             <?php foreach ($posts as $post): ?>
                 <article class="search-result-item">
                     <a href="/blog/posts/<?= (int) $post['id'] ?>" class="search-result-title"><?= e($post['title'] ?? 'Untitled') ?></a>
-                    <p class="search-result-excerpt"><?= e(seo_excerpt($post['content_text'] ?? $post['content'] ?? '', 140) ?? '') ?></p>
+                    <p class="search-result-excerpt"><?= search_snippet($post['content_text'] ?? $post['content'] ?? '', $searchTerms) ?></p>
                     <span class="search-result-meta">Post &middot; <?= e(substr((string)($post['created_at'] ?? ''), 0, 10)) ?></span>
                 </article>
             <?php endforeach; ?>
@@ -81,7 +81,7 @@ $hasAnyResults = !empty($posts)
             <?php foreach ($pieces as $piece): ?>
                 <article class="search-result-item">
                     <a href="/pieces/<?= (int) $piece['id'] ?>" class="search-result-title"><?= e($piece['title'] ?? 'Untitled') ?></a>
-                    <p class="search-result-excerpt"><?= e(seo_excerpt($piece['description'] ?? '', 140) ?? '') ?></p>
+                    <p class="search-result-excerpt"><?= search_snippet((string) (($piece['description'] ?? '') ?: ($piece['prompt'] ?? '')), $searchTerms) ?></p>
                     <span class="search-result-meta">Piece &middot; <?= e(strtoupper((string)($piece['engine'] ?? ''))) ?></span>
                 </article>
             <?php endforeach; ?>
@@ -94,7 +94,7 @@ $hasAnyResults = !empty($posts)
             <?php foreach ($platformCollections as $col): ?>
                 <article class="search-result-item">
                     <a href="/collections/<?= e($col['slug']) ?>" class="search-result-title"><?= e($col['name'] ?? 'Untitled') ?></a>
-                    <p class="search-result-excerpt"><?= e(seo_excerpt($col['description'] ?? '', 140) ?? '') ?></p>
+                    <p class="search-result-excerpt"><?= search_snippet((string) ($col['description'] ?? ''), $searchTerms) ?></p>
                     <span class="search-result-meta">Platform Collection</span>
                 </article>
             <?php endforeach; ?>
@@ -107,7 +107,7 @@ $hasAnyResults = !empty($posts)
             <?php foreach ($exhibitCollections as $col): ?>
                 <article class="search-result-item">
                     <a href="/portfolio/collection/<?= e($col['slug']) ?>" class="search-result-title"><?= e($col['name'] ?? 'Untitled') ?></a>
-                    <p class="search-result-excerpt"><?= e(seo_excerpt($col['description'] ?? '', 140) ?? '') ?></p>
+                    <p class="search-result-excerpt"><?= search_snippet((string) ($col['description'] ?? ''), $searchTerms) ?></p>
                     <span class="search-result-meta">Exhibit Collection</span>
                 </article>
             <?php endforeach; ?>
@@ -120,7 +120,7 @@ $hasAnyResults = !empty($posts)
             <?php foreach ($exhibits as $exhibit): ?>
                 <article class="search-result-item">
                     <a href="/portfolio/exhibit/<?= e($exhibit['slug']) ?>" class="search-result-title"><?= e($exhibit['title'] ?? 'Untitled') ?></a>
-                    <p class="search-result-excerpt"><?= e(seo_excerpt($exhibit['description'] ?? '', 140) ?? '') ?></p>
+                    <p class="search-result-excerpt"><?= search_snippet((string) ($exhibit['description'] ?? ''), $searchTerms) ?></p>
                     <span class="search-result-meta">Exhibit &middot; <?= e($exhibit['medium'] ?? '') ?></span>
                 </article>
             <?php endforeach; ?>
@@ -133,7 +133,7 @@ $hasAnyResults = !empty($posts)
             <?php foreach ($pages as $page): ?>
                 <article class="search-result-item">
                     <a href="/<?= e($page['slug']) ?>" class="search-result-title"><?= e($page['title'] ?? 'Untitled') ?></a>
-                    <p class="search-result-excerpt"><?= e($page['meta_description'] ?? '') ?></p>
+                    <p class="search-result-excerpt"><?= search_snippet((string) ($page['meta_description'] ?? ''), $searchTerms) ?></p>
                     <span class="search-result-meta">Page</span>
                 </article>
             <?php endforeach; ?>

@@ -89,6 +89,7 @@ loadEnvFile(dirname(__DIR__) . '/.env');
 require_once __DIR__ . '/app/bootstrap.php';
 require_once __DIR__ . '/app/helpers/schema.php';
 require_once __DIR__ . '/app/helpers/seo.php';
+require_once __DIR__ . '/app/helpers/search.php';
 require_once __DIR__ . '/app/helpers/audit-log.php';
 require_once __DIR__ . '/app/helpers/rate-limit.php';
 require_once __DIR__ . '/app/helpers/auth.php';

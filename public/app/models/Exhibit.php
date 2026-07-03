@@ -107,17 +107,50 @@ class Exhibit
             $dir = 'DESC';
         }
 
+        $parsedSearch = null;
+        $booleanExpr = null;
+        if ($sort === 'relevance' && $q !== '') {
+            require_once __DIR__ . '/../helpers/search.php';
+            $parsedSearch = search_parse_query($q);
+            $booleanExpr = ($parsedSearch !== null && $parsedSearch['boolean'] !== '') ? $parsedSearch['boolean'] : null;
+        }
+
+        $relevanceSelect = '';
+        $orParts = ['e.title LIKE ?', 'e.description LIKE ?'];
+        $orderClause = "{$sortCol} {$dir}, e.id {$dir}";
+        $params = [];
+        if ($booleanExpr !== null) {
+            $relevanceSelect = ', MATCH(e.title, e.description) AGAINST(? IN BOOLEAN MODE) AS relevance';
+            array_unshift($orParts, 'MATCH(e.title, e.description) AGAINST(? IN BOOLEAN MODE)');
+            $orderClause = 'relevance DESC, e.id DESC';
+            $params[] = $booleanExpr;
+            $params[] = $booleanExpr;
+        }
+        $params[] = $like;
+        $params[] = $like;
+        if ($booleanExpr !== null) {
+            $shortRecall = search_like_recall_clause(
+                ['e.title', 'e.description'],
+                $parsedSearch['like_terms'] ?? [],
+                $params
+            );
+            if ($shortRecall !== '') {
+                $orParts[] = $shortRecall;
+            }
+        }
+
         $statusClause = $adminMode ? '' : "AND e.status = 'active'";
         $stmt = db()->prepare(
-            "SELECT e.*
+            "SELECT e.*{$relevanceSelect}
              FROM exhibits e
              WHERE e.deleted_at IS NULL
                {$statusClause}
-               AND (e.title LIKE ? OR e.description LIKE ?)
-             ORDER BY {$sortCol} {$dir}, e.id {$dir}
+               AND (" . implode(' OR ', $orParts) . ")
+             ORDER BY {$orderClause}
              LIMIT ? OFFSET ?"
         );
-        $stmt->execute([$like, $like, $limit, $offset]);
+        array_push($params, $limit, $offset);
+        $stmt->execute($params);
         return self::attachCollections(self::attachCategories($stmt->fetchAll()));
     }
 

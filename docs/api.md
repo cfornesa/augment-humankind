@@ -158,39 +158,13 @@ Legacy category/page feed redirects (301):
 The Atom and JSON Feed endpoints serialize published blog posts from the PHP
 target database. `publishDuePosts()` flips `status='scheduled'` to `published` when `scheduled_at` has passed, and overwrites `created_at` to the publish moment.
 
-## Platform Data Migration Contract
-
-The current PHP database is the only write target. It is configured through
-`DB_HOST`, `DB_NAME`, `DB_USER`, and `DB_PASS`.
-
-The live platform database is source-only. It is configured through
-`PLATFORM_DB_HOST`, `PLATFORM_DB_NAME`, `PLATFORM_DB_USER`,
-`PLATFORM_DB_PASS`, optional `PLATFORM_DB_PORT`, and optional
-`PLATFORM_DB_SSL`. Migration tooling may read/export platform rows but must
-not add, edit, delete, migrate in place, or alter schema in the platform
-database.
-
-Migrated platform row identities are remapped in the PHP target database. The
-original platform ids are retained in `platform_source_id` columns or migration
-mapping metadata so relationships can be rebuilt without forcing target ids.
-
-## Local Development And Deletion Readiness
+## Local Development
 
 The canonical development server command for full local testing is:
 
 ```sh
 php -S 127.0.0.1:8080 -t public public/index.php
 ```
-
-Before manually deleting the legacy `platform/` application, run the deletion
-readiness verifier against the local server:
-
-```sh
-php scripts/check-platform-deletion-readiness.php --base-url=http://127.0.0.1:8080
-```
-
-The verifier may write only to the PHP target database inside transactions that
-rollback. It must never write to the live `PLATFORM_*` source database.
 
 ## Public Portfolio Routes
 

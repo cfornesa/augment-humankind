@@ -19,6 +19,8 @@ Source: DECISIONS.md 2026-07-02 Portable-CMS Setup Readiness Remediation (commit
 
 2026-07-02 DECISION AGENTS.md was reconfigured (user-approved diff): tool-agnostic Mode table (any agentic tool maps its state onto behavioral modes), Seven Rules consistency fix, plan-mode gallery-suppression note absorbed from CLAUDE.md/GEMINI.md (now thin shims), and coupled-CMS Project Specific Rules added (schema dual-ship, no hardcoded site content, feature-flag registration). DECISIONS.md sessions before 2026-07 are archived in docs/decisions-archive.md with open items carried forward.
 
+2026-07-03 DECISION Updated DESIGN.md to document the CMS codebase's dynamic theme-switching and color customization architecture (10 built-in presets, custom CSS/JS injection, HSL-mapped custom properties in the admin panel).
+
 # Standing Decisions — Auth, Admin & CMS
 
 2026-06-12 DECISION The `/contact` page uses a reCAPTCHA v3-protected PHP form with PHPMailer over Hostinger SMTP; submissions are not stored.
@@ -50,6 +52,10 @@ Source: DECISIONS.md 2026-07-02 Portable-CMS Setup Readiness Remediation (commit
 2026-06-14 DECISION Phase 4B: `publishDuePosts()` flips `scheduled` → `published`. Feed routes `/feeds/mf2`, `/blog/category/{slug}/feed.*`, `/{slug}/feed.*` plus legacy 301 redirects; `/export.json` remains JSON Feed 1.1 per Rule 5.
 
 2026-06-17 DECISION Blog post admin is section-based (`post_sections`), with inline category creation, per-platform "Publish to" draft text (Bluesky/LinkedIn), a post calendar at `/admin/posts/calendar`, and automatic scheduled publishing on index visits. `posts.content` is always `''`; content lives in `post_sections`.
+
+2026-07-03 DECISION Site-wide search now uses MySQL FULLTEXT relevance ranking with short-token LIKE recall and highlighted snippets across posts, pieces, collections, exhibits, and pages.
+
+2026-07-03 DECISION Portable launch readiness now gates FULLTEXT search index presence and MATCH smoke queries; platform deletion readiness accepts an untracked --env-file for legacy source DB credentials.
 
 2026-06-17 NOTE `SyndicationPayload::fromPost()` reads `$post['content']` which is always `''` in the section system — callers must populate `$payload->contentHtml` from `PostSection::allForPost()`, and relative image paths (`/image/123`) must be prefixed with `seo_origin()` before passing to external APIs.
 

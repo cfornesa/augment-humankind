@@ -19,17 +19,21 @@ class PiecesController
         if (!in_array($engine, art_piece_supported_engines(), true)) {
             $engine = '';
         }
-        if (!in_array($sort, ['curated', 'newest', 'oldest', 'az', 'za', 'unsorted'], true)) {
+        if (!in_array($sort, ['curated', 'newest', 'oldest', 'az', 'za', 'unsorted', 'relevance'], true)) {
+            $sort = 'curated';
+        }
+        if ($sort === 'relevance' && $q === '') {
             $sort = 'curated';
         }
 
         [$modelSort, $dir] = match ($sort) {
-            'newest'   => ['newest', 'desc'],
-            'oldest'   => ['newest', 'asc'],
-            'az'       => ['title',  'asc'],
-            'za'       => ['title',  'desc'],
-            'unsorted' => ['id',     'asc'],
-            default    => ['sort_order', 'asc'],
+            'newest'    => ['newest', 'desc'],
+            'oldest'    => ['newest', 'asc'],
+            'az'        => ['title',  'asc'],
+            'za'        => ['title',  'desc'],
+            'unsorted'  => ['id',     'asc'],
+            'relevance' => ['relevance', 'desc'],
+            default     => ['sort_order', 'asc'],
         };
 
         $batch = PlatformArtPiece::searchFiltered(

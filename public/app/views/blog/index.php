@@ -49,7 +49,13 @@ require dirname(__DIR__) . '/partials/header.php';
             <fieldset class="filter-fieldset">
                 <legend>Sort</legend>
                 <div class="filter-chip-group" role="group">
-                    <?php foreach (['newest' => 'Newest first', 'oldest' => 'Oldest first'] as $v => $l): ?>
+                    <?php
+                        $_blogSortOptions = ['newest' => 'Newest first', 'oldest' => 'Oldest first'];
+                        if ($_blogQ !== '') {
+                            $_blogSortOptions = ['relevance' => 'Relevance'] + $_blogSortOptions;
+                        }
+                    ?>
+                    <?php foreach ($_blogSortOptions as $v => $l): ?>
                         <label class="filter-chip <?= $_blogSort === $v ? 'filter-chip-active' : '' ?>">
                             <input type="radio" name="sort" value="<?= $v ?>"
                                    <?= $_blogSort === $v ? 'checked' : '' ?> class="sr-only"

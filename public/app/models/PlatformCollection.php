@@ -116,6 +116,14 @@ class PlatformCollection
 
         $like = $q !== '' ? '%' . str_replace(['%', '_'], ['\\%', '\\_'], $q) . '%' : '%';
 
+        $parsedSearch = null;
+        $booleanExpr = null;
+        if ($sort === 'relevance' && $q !== '') {
+            require_once __DIR__ . '/../helpers/search.php';
+            $parsedSearch = search_parse_query($q);
+            $booleanExpr = ($parsedSearch !== null && $parsedSearch['boolean'] !== '') ? $parsedSearch['boolean'] : null;
+        }
+
         $dir = strtoupper($dir) === 'ASC' ? 'ASC' : 'DESC';
         $sortCol = match ($sort) {
             'name'       => 'pc.name',
@@ -129,9 +137,43 @@ class PlatformCollection
             $dir = 'ASC';
         }
 
+        // MATCH covers the collection's own indexed columns; joined piece
+        // titles/descriptions stay on the LIKE recall net (join columns
+        // can't participate in this table's FULLTEXT index).
+        $relevanceSelect = '';
+        $orParts = [
+            'pc.name LIKE ?',
+            'pc.description LIKE ?',
+            'pc.artist_statement LIKE ?',
+            'ap.title LIKE ?',
+            'ap.description LIKE ?',
+        ];
+        $orderClause = "{$sortCol} {$dir}, pc.id {$dir}";
+        $params = [];
+        if ($booleanExpr !== null) {
+            $relevanceSelect = ', MATCH(pc.name, pc.description, pc.artist_statement) AGAINST(? IN BOOLEAN MODE) AS relevance';
+            array_unshift($orParts, 'MATCH(pc.name, pc.description, pc.artist_statement) AGAINST(? IN BOOLEAN MODE)');
+            $orderClause = 'relevance DESC, pc.id DESC';
+            $params[] = $booleanExpr;
+        }
+        if ($booleanExpr !== null) {
+            $params[] = $booleanExpr;
+        }
+        array_push($params, $like, $like, $like, $like, $like);
+        if ($booleanExpr !== null) {
+            $shortRecall = search_like_recall_clause(
+                ['pc.name', 'pc.description', 'pc.artist_statement', 'ap.title', 'ap.description'],
+                $parsedSearch['like_terms'] ?? [],
+                $params
+            );
+            if ($shortRecall !== '') {
+                $orParts[] = $shortRecall;
+            }
+        }
+
         $statusClause = $adminMode ? '' : "AND pc.status = 'active'";
         $stmt = db()->prepare(
-            "SELECT pc.*, COUNT(DISTINCT pcii.item_id) AS item_count
+            "SELECT pc.*, COUNT(DISTINCT pcii.item_id) AS item_count{$relevanceSelect}
              FROM platform_collections pc
              LEFT JOIN platform_collection_items pcii ON pcii.collection_id = pc.id
              LEFT JOIN art_pieces ap
@@ -140,18 +182,13 @@ class PlatformCollection
                AND ap.deleted_at IS NULL
              WHERE pc.deleted_at IS NULL
                {$statusClause}
-               AND (
-                   pc.name LIKE ?
-                   OR pc.description LIKE ?
-                   OR pc.artist_statement LIKE ?
-                   OR ap.title LIKE ?
-                   OR ap.description LIKE ?
-               )
+               AND (" . implode(' OR ', $orParts) . ")
              GROUP BY pc.id
-             ORDER BY {$sortCol} {$dir}, pc.id {$dir}
+             ORDER BY {$orderClause}
              LIMIT ? OFFSET ?"
         );
-        $stmt->execute([$like, $like, $like, $like, $like, $limit, $offset]);
+        array_push($params, $limit, $offset);
+        $stmt->execute($params);
         return $stmt->fetchAll();
     }
 

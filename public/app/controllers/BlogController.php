@@ -8,10 +8,13 @@ class BlogController
     {
         BlogPost::publishDuePosts();
         $sort = (string) ($_GET['sort'] ?? 'newest');
-        if (!in_array($sort, ['newest', 'oldest'], true)) {
+        if (!in_array($sort, ['newest', 'oldest', 'relevance'], true)) {
             $sort = 'newest';
         }
         $q = trim((string) ($_GET['q'] ?? ''));
+        if ($sort === 'relevance' && $q === '') {
+            $sort = 'newest';
+        }
         $cat = trim((string) ($_GET['cat'] ?? ''));
         $categories = BlogCategory::all();
         $validCatSlugs = array_column($categories, 'slug');
@@ -97,30 +100,34 @@ class BlogController
         $exhibits          = [];
         $pages             = [];
 
+        $searchTerms = [];
         if ($query !== '') {
-            $pieceSort = $sort === 'relevance' ? 'title' : 'newest';
+            $parsed = search_parse_query($query);
+            $searchTerms = $parsed !== null ? $parsed['terms'] : [];
+
+            $typeSort = $sort === 'relevance' ? 'relevance' : 'newest';
 
             if ($type === '' || $type === 'posts') {
-                $posts = BlogPost::search($query, 10);
+                $posts = BlogPost::search($query, 10, $sort);
             }
             if ($type === '' || $type === 'pieces') {
-                $pieces = PlatformArtPiece::searchFiltered($query, null, $pieceSort, 'asc');
+                $pieces = PlatformArtPiece::searchFiltered($query, null, $typeSort, 'desc');
                 $pieces = array_slice($pieces, 0, 10);
             }
             if ($type === '' || $type === 'platform-collections') {
-                $platformCollections = PlatformCollection::searchFiltered($query, 'newest', 'desc');
+                $platformCollections = PlatformCollection::searchFiltered($query, $typeSort, 'desc');
                 $platformCollections = array_slice($platformCollections, 0, 10);
             }
             if ($type === '' || $type === 'collections') {
-                $exhibitCollections = Collection::searchFiltered($query, 'newest', 'desc');
+                $exhibitCollections = Collection::searchFiltered($query, $typeSort, 'desc');
                 $exhibitCollections = array_slice($exhibitCollections, 0, 10);
             }
             if ($type === '' || $type === 'exhibits') {
-                $exhibits = Exhibit::searchFiltered($query, 'newest', 'desc');
+                $exhibits = Exhibit::searchFiltered($query, $typeSort, 'desc');
                 $exhibits = array_slice($exhibits, 0, 10);
             }
             if ($type === '' || $type === 'pages') {
-                $pages = Page::searchPublished($query, 10);
+                $pages = Page::searchPublished($query, 10, $sort === 'relevance' ? 'relevance' : 'default');
             }
         }
 

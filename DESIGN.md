@@ -145,9 +145,7 @@ attention-economy registers listed above.
      CONSTRAINTS.md unless they become technical requirements. -->
 
 - **Color direction:**
-  <!-- A palette, a mood, specific hex values, or a reference.
-       Example: "Dark background. Warm off-white text. One accent
-       color, used sparingly — leaning toward ochre or rust." -->
+  Fluid, customizable light and dark mode colors configured dynamically through the admin dashboard (Site Identity → Design). All background, foreground, primary, secondary, muted, accent, and destructive color variables are mapped to database settings using CSS custom properties (`--sp-*`), allowing full palette overrides on a per-deployment basis.
 
 - **Type direction:**
   <!-- Specific typefaces, or a descriptive direction if typefaces
@@ -156,9 +154,7 @@ attention-economy registers listed above.
        Nothing geometric or neutral — something with visible history." -->
 
 - **Layout disposition:**
-  <!-- How you want space and content to relate.
-       Example: "Generous margins. Text width constrained. No sidebars.
-       Let the content breathe." -->
+  Selectable site layouts leveraging 10 built-in theme presets (including Bauhaus/Pareto, Celestial, traditional, academic, minimalist, and comfort) which can be customized or extended with inject-ready custom CSS, JS, and HTML body wrappers stored in the database.
 
 - **Motion and interaction:**
   <!-- Your position on animation, transitions, and interactive behavior.

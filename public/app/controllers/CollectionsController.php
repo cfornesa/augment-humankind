@@ -15,16 +15,20 @@ class CollectionsController
         $sort   = (string) ($_GET['sort'] ?? 'curated');
         $offset = max(0, (int) ($_GET['offset'] ?? 0));
 
-        if (!in_array($sort, ['curated', 'newest', 'oldest', 'az', 'za'], true)) {
+        if (!in_array($sort, ['curated', 'newest', 'oldest', 'az', 'za', 'relevance'], true)) {
+            $sort = 'curated';
+        }
+        if ($sort === 'relevance' && $q === '') {
             $sort = 'curated';
         }
 
         [$modelSort, $dir] = match ($sort) {
-            'newest' => ['newest', 'desc'],
-            'oldest' => ['newest', 'asc'],
-            'az'     => ['name',   'asc'],
-            'za'     => ['name',   'desc'],
-            default  => ['sort_order', 'asc'],
+            'newest'    => ['newest', 'desc'],
+            'oldest'    => ['newest', 'asc'],
+            'az'        => ['name',   'asc'],
+            'za'        => ['name',   'desc'],
+            'relevance' => ['relevance', 'desc'],
+            default     => ['sort_order', 'asc'],
         };
 
         $batch = PlatformCollection::searchFiltered($q, $modelSort, $dir, $offset, self::PAGE_SIZE + 1);

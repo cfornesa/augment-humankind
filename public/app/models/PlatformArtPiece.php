@@ -142,10 +142,17 @@ class PlatformArtPiece
             return [];
         }
 
-        [$whereClause, $params] = self::buildSearchWhere($q, $engine, adminMode: false);
-        $orderBy = self::buildSortClause($sort, $dir);
+        $parsedSearch = self::relevanceSearch($sort, $q);
+        $booleanExpr = ($parsedSearch !== null && $parsedSearch['boolean'] !== '') ? $parsedSearch['boolean'] : null;
+        [$whereClause, $params] = self::buildSearchWhere($q, $engine, adminMode: false, parsedSearch: $parsedSearch);
+        $orderBy = $booleanExpr !== null ? 'relevance DESC, ap.id DESC' : self::buildSortClause($sort, $dir);
+        $relevanceSelect = '';
+        if ($booleanExpr !== null) {
+            $relevanceSelect = ', MATCH(ap.title, ap.description, ap.prompt) AGAINST(? IN BOOLEAN MODE) AS relevance';
+            array_unshift($params, $booleanExpr);
+        }
 
-        $sql = "SELECT ap.*, u.name AS owner_name
+        $sql = "SELECT ap.*, u.name AS owner_name{$relevanceSelect}
                 FROM art_pieces ap
                 LEFT JOIN users u ON u.id = ap.owner_user_id
                 {$whereClause}
@@ -166,10 +173,17 @@ class PlatformArtPiece
             return [];
         }
 
-        [$whereClause, $params] = self::buildSearchWhere($q, $engine, adminMode: true);
-        $orderBy = self::buildSortClause($sort, $dir);
+        $parsedSearch = self::relevanceSearch($sort, $q);
+        $booleanExpr = ($parsedSearch !== null && $parsedSearch['boolean'] !== '') ? $parsedSearch['boolean'] : null;
+        [$whereClause, $params] = self::buildSearchWhere($q, $engine, adminMode: true, parsedSearch: $parsedSearch);
+        $orderBy = $booleanExpr !== null ? 'relevance DESC, ap.id DESC' : self::buildSortClause($sort, $dir);
+        $relevanceSelect = '';
+        if ($booleanExpr !== null) {
+            $relevanceSelect = ', MATCH(ap.title, ap.description, ap.prompt) AGAINST(? IN BOOLEAN MODE) AS relevance';
+            array_unshift($params, $booleanExpr);
+        }
 
-        $sql = "SELECT ap.*, u.name AS owner_name
+        $sql = "SELECT ap.*, u.name AS owner_name{$relevanceSelect}
                 FROM art_pieces ap
                 LEFT JOIN users u ON u.id = ap.owner_user_id
                 {$whereClause}
@@ -180,10 +194,21 @@ class PlatformArtPiece
         return self::attachCategories(self::attachCurrentVersion($stmt->fetchAll()));
     }
 
-    private static function buildSearchWhere(?string $q, ?string $engine, bool $adminMode): array
+    /** Parsed search query when relevance ranking applies, else null. */
+    private static function relevanceSearch(string $sort, ?string $q): ?array
+    {
+        if ($sort !== 'relevance' || $q === null || $q === '') {
+            return null;
+        }
+        require_once __DIR__ . '/../helpers/search.php';
+        return search_parse_query($q);
+    }
+
+    private static function buildSearchWhere(?string $q, ?string $engine, bool $adminMode, ?array $parsedSearch = null): array
     {
         $where = ['ap.deleted_at IS NULL'];
         $params = [];
+        $booleanExpr = ($parsedSearch !== null && $parsedSearch['boolean'] !== '') ? $parsedSearch['boolean'] : null;
 
         if (!$adminMode) {
             $where[] = "ap.status = 'active'";
@@ -196,10 +221,33 @@ class PlatformArtPiece
 
         if ($q !== null && $q !== '') {
             $like = '%' . str_replace(['%', '_'], ['\\%', '\\_'], $q) . '%';
-            $where[] = '(ap.title LIKE ? OR ap.description LIKE ? OR ap.prompt LIKE ?)';
-            $params[] = $like;
-            $params[] = $like;
-            $params[] = $like;
+            if ($booleanExpr !== null) {
+                $orParts = [
+                    'MATCH(ap.title, ap.description, ap.prompt) AGAINST(? IN BOOLEAN MODE)',
+                    'ap.title LIKE ?',
+                    'ap.description LIKE ?',
+                    'ap.prompt LIKE ?',
+                ];
+                $params[] = $booleanExpr;
+                $params[] = $like;
+                $params[] = $like;
+                $params[] = $like;
+
+                $shortRecall = search_like_recall_clause(
+                    ['ap.title', 'ap.description', 'ap.prompt'],
+                    $parsedSearch['like_terms'] ?? [],
+                    $params
+                );
+                if ($shortRecall !== '') {
+                    $orParts[] = $shortRecall;
+                }
+                $where[] = '(' . implode(' OR ', $orParts) . ')';
+            } else {
+                $where[] = '(ap.title LIKE ? OR ap.description LIKE ? OR ap.prompt LIKE ?)';
+                $params[] = $like;
+                $params[] = $like;
+                $params[] = $like;
+            }
         }
 
         return ['WHERE ' . implode(' AND ', $where), $params];

@@ -74,26 +74,6 @@
   If your host rejects `php_value` directives, configure those values in the
   host's PHP settings panel instead.
 
-## Platform Source MySQL Database (Read-Only Migration Source)
-
-- **Purpose:** Source database for one-way assimilation of the existing
-  platform data into the current PHP site's MySQL database.
-- **Data sent off-domain:** The migration script connects to the configured
-  platform database and reads rows for export/import into the PHP target
-  database.
-- **Write policy:** The platform database is live. Migration tooling must not
-  issue DDL or DML against it. Only `SELECT` reads are permitted.
-- **What breaks if unavailable or changed:** New platform data cannot be
-  migrated until the source connection is restored. The already-migrated PHP
-  site remains functional.
-- **Self-hosting alternative:** A SQL dump exported manually from the platform
-  database, imported through the same target-only migration path.
-- **Required source config:** `PLATFORM_DB_HOST`, `PLATFORM_DB_NAME`,
-  `PLATFORM_DB_USER`, `PLATFORM_DB_PASS`
-- **Optional source config:** `PLATFORM_DB_PORT`, `PLATFORM_DB_SSL`
-- **Target config:** The existing PHP database remains configured with
-  `DB_HOST`, `DB_NAME`, `DB_USER`, and `DB_PASS`.
-
 ## AI Settings Encryption Key (Live Runtime, Required For AI Features)
 
 - **Purpose:** Encrypts/decrypts AI vendor API keys stored in this app's own
@@ -116,26 +96,6 @@
   after keys have already been encrypted makes those existing keys
   undecryptable — treat it like any other secret key, not a value to
   rotate casually.
-
-## Platform Migration-Only Runtime Configuration
-
-- **Purpose:** Carries platform-derived runtime settings used **only** by
-  the one-time legacy-platform migration tooling
-  (`scripts/migrate-platform-to-php.php` and related scripts). Confirmed via
-  full-tree search: none of these are referenced anywhere in `public/app` —
-  a new site with no legacy platform to migrate from does not need any of
-  them and can omit them entirely from `.env`.
-- **Vars:** `PLATFORM_AUTH_SECRET`, `PLATFORM_ALLOWED_ORIGINS`,
-  `PLATFORM_PUBLIC_SITE_URL`, `PLATFORM_CRON_SECRET`,
-  `PLATFORM_GITHUB_ID`, `PLATFORM_GITHUB_SECRET`,
-  `PLATFORM_GOOGLE_CLIENT_ID`, `PLATFORM_GOOGLE_CLIENT_SECRET`,
-  `PLATFORM_GH_TOKEN`, `PLATFORM_PORT`, and the `PLATFORM_DB_*` source
-  database connection vars (see "Platform Source MySQL Database" above).
-- **What breaks if unavailable or changed:** Nothing for normal site
-  operation. Only the migration scripts themselves stop working, and those
-  are only relevant before `platform/` is deleted.
-- **Self-hosting alternative:** N/A — these are migration-tooling
-  configuration, not a hosted service.
 
 ## GitHub OAuth (Admin Login)
 

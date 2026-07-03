@@ -10,10 +10,23 @@ class BlogPost
             return [];
         }
 
+        require_once __DIR__ . '/../helpers/search.php';
+        $parsedSearch = ($sort === 'relevance' && $q !== '') ? search_parse_query($q) : null;
+        $booleanExpr = ($parsedSearch !== null && $parsedSearch['boolean'] !== '') ? $parsedSearch['boolean'] : null;
+
         $order = $sort === 'oldest' ? 'p.created_at ASC, p.id ASC' : 'p.created_at DESC, p.id DESC';
+        if ($booleanExpr !== null) {
+            $order = 'relevance DESC, p.created_at DESC, p.id DESC';
+        }
         $params = [];
 
-        $sql = "SELECT p.*, fs.name AS source_name, fs.site_url AS source_site_url
+        $relevanceSelect = '';
+        if ($booleanExpr !== null) {
+            $relevanceSelect = ', MATCH(p.content_text) AGAINST(? IN BOOLEAN MODE) AS relevance';
+            $params[] = $booleanExpr;
+        }
+
+        $sql = "SELECT p.*, fs.name AS source_name, fs.site_url AS source_site_url{$relevanceSelect}
                 FROM posts p
                 LEFT JOIN feed_sources fs ON fs.id = p.source_feed_id";
 
@@ -29,10 +42,33 @@ class BlogPost
 
         if ($q !== '') {
             $like = '%' . str_replace(['%', '_'], ['\\%', '\\_'], $q) . '%';
-            $sql .= " AND (p.title LIKE ? OR p.content_text LIKE ? OR p.content LIKE ?)";
-            $params[] = $like;
-            $params[] = $like;
-            $params[] = $like;
+            if ($booleanExpr !== null) {
+                $orParts = [
+                    'MATCH(p.content_text) AGAINST(? IN BOOLEAN MODE)',
+                    'p.title LIKE ?',
+                    'p.content_text LIKE ?',
+                    'p.content LIKE ?',
+                ];
+                $params[] = $booleanExpr;
+                $params[] = $like;
+                $params[] = $like;
+                $params[] = $like;
+
+                $shortRecall = search_like_recall_clause(
+                    ['p.title', 'p.content_text', 'p.content'],
+                    $parsedSearch['like_terms'] ?? [],
+                    $params
+                );
+                if ($shortRecall !== '') {
+                    $orParts[] = $shortRecall;
+                }
+                $sql .= ' AND (' . implode(' OR ', $orParts) . ')';
+            } else {
+                $sql .= " AND (p.title LIKE ? OR p.content_text LIKE ? OR p.content LIKE ?)";
+                $params[] = $like;
+                $params[] = $like;
+                $params[] = $like;
+            }
         }
 
         if ($cat !== '') {
@@ -73,14 +109,55 @@ class BlogPost
         )->fetchColumn();
     }
 
-    public static function search(string $query, int $limit = 25): array
+    public static function search(string $query, int $limit = 25, string $sort = 'newest'): array
     {
         $query = trim($query);
         if ($query === '' || !self::tableExists('posts')) {
             return [];
         }
 
+        require_once __DIR__ . '/../helpers/search.php';
+        $parsedSearch = $sort === 'relevance' ? search_parse_query($query) : null;
+        $booleanExpr = ($parsedSearch !== null && $parsedSearch['boolean'] !== '') ? $parsedSearch['boolean'] : null;
+
         $like = '%' . str_replace(['%', '_'], ['\\%', '\\_'], $query) . '%';
+
+        if ($booleanExpr !== null) {
+            $recallParams = [$booleanExpr, $like, $like, $like];
+            $orParts = [
+                'MATCH(p.content_text) AGAINST(? IN BOOLEAN MODE)',
+                'p.title LIKE ?',
+                'p.content_text LIKE ?',
+                'p.content LIKE ?',
+            ];
+            $shortRecall = search_like_recall_clause(
+                ['p.title', 'p.content_text', 'p.content'],
+                $parsedSearch['like_terms'] ?? [],
+                $recallParams
+            );
+            if ($shortRecall !== '') {
+                $orParts[] = $shortRecall;
+            }
+            $stmt = db()->prepare(
+                'SELECT p.*, fs.name AS source_name, fs.site_url AS source_site_url,
+                        MATCH(p.content_text) AGAINST(? IN BOOLEAN MODE) AS relevance
+                 FROM posts p
+                 LEFT JOIN feed_sources fs ON fs.id = p.source_feed_id
+                 WHERE p.status = ? AND p.deleted_at IS NULL
+                   AND (' . implode(' OR ', $orParts) . ')
+                 ORDER BY relevance DESC, p.created_at DESC, p.id DESC
+                 LIMIT ?'
+            );
+            $stmt->bindValue(1, $booleanExpr);
+            $stmt->bindValue(2, 'published');
+            foreach ($recallParams as $i => $value) {
+                $stmt->bindValue($i + 3, $value);
+            }
+            $stmt->bindValue(count($recallParams) + 3, $limit, PDO::PARAM_INT);
+            $stmt->execute();
+            return self::attachMeta($stmt->fetchAll());
+        }
+
         $stmt = db()->prepare(
             'SELECT p.*, fs.name AS source_name, fs.site_url AS source_site_url
              FROM posts p

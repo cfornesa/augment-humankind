@@ -132,10 +132,10 @@ php scripts/check-portable-launch-readiness.php
 ```
 
 **Expected outcome:** exits 0 with "Portable launch readiness passed".
-`FAIL` lines are blocking (missing env/DB/schema); `WARN` lines are
-feature-gated gaps (e.g. no `AI_SETTINGS_ENCRYPTION_KEY`) that can be
-resolved later. Fix any `FAIL`, re-run the installer if schema-related,
-and re-check.
+`FAIL` lines are blocking (missing env/DB/schema, including required
+FULLTEXT search indexes and smoke checks); `WARN` lines are feature-gated
+gaps (e.g. no `AI_SETTINGS_ENCRYPTION_KEY`) that can be resolved later. Fix
+any `FAIL`, re-run the installer if schema-related, and re-check.
 
 ## 7. Run the site
 
@@ -191,6 +191,10 @@ Nothing in the codebase is site-specific. To stand up another site:
 3. Write a new `.env` (step 3) and new OAuth apps with that domain's
    callback URLs (step 4).
 4. Repeat steps 5–9.
+
+Do not skip step 6 on duplicates. It is the gate that proves the copied
+deployment has the required schema, seed data, and FULLTEXT search support
+for the ranked site-wide search feature.
 
 To keep any deployment aligned after pulling code updates:
 

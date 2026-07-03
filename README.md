@@ -423,21 +423,15 @@ Then open:
 - `http://127.0.0.1:8080/portfolio`
 - `http://127.0.0.1:8080/admin`
 
-Before manually deleting the legacy `platform/` application, keep this server
-running and run:
-
-```sh
-php scripts/check-platform-deletion-readiness.php --base-url=http://127.0.0.1:8080
-```
-
-The readiness command must pass, and manual route/admin testing should still be
-completed before deleting `platform/`.
+The legacy `platform/` application has been removed. New deployments should
+configure only this PHP app's `.env`, then run `php scripts/setup-database.php`
+and `php scripts/check-portable-launch-readiness.php`.
 
 ## Scheduled Tasks (GitHub Actions)
 
 The repository includes `.github/workflows/scheduled-tasks.yml`, which runs every 30 minutes and handles two background tasks:
 
-- **Feed refresh** — calls `platform/scripts/scheduled-feed-refresh.sh`, which posts to `$PUBLIC_SITE_URL/api/feed-sources/refresh` on the Node.js platform server.
+- **Feed refresh** — calls `POST $PUBLIC_SITE_URL/api/cron/refresh-feeds` on the PHP app to refresh due external feed sources.
 - **Post publishing** — calls `POST $PUBLIC_SITE_URL/api/cron/publish-posts` on the PHP app to transition any scheduled posts whose `scheduled_at` time has passed.
 
 Both jobs can also be triggered manually from the Actions tab via `workflow_dispatch`.
@@ -470,10 +464,10 @@ Each enabled feed source is checked against its `next_fetch_at` cadence; only ov
 
 ## One-Time Migration (legacy platform data only)
 
-Only relevant if you migrated data from the legacy platform per
-`docs/platform-assimilation-plan.md` — a brand-new site with no migrated
-art pieces/collections has nothing for this script to do. After the first
-deploy following a migration, SSH into your host and run:
+Only relevant for deployments that already contain imported legacy art-piece
+or collection thumbnail URLs. A brand-new site has nothing for this script to
+do. After the first deploy following such an import, SSH into your host and
+run:
 
 ```sh
 php scripts/migrate-thumbnails-to-db.php --execute

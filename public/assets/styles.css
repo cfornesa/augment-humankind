@@ -2440,6 +2440,15 @@ h3 {
     margin: 0 0 0.3rem;
 }
 
+/* Highlighted match terms inside search snippets. Theme-aware: uses the
+   accent variable instead of the browser's default yellow. */
+.search-result-excerpt mark {
+    background: color-mix(in srgb, var(--accent, #b8860b) 25%, transparent);
+    color: inherit;
+    border-radius: 2px;
+    padding: 0 0.1em;
+}
+
 .search-result-meta {
     font-size: 0.8rem;
     color: var(--ink-soft);

@@ -50,7 +50,13 @@ require __DIR__ . '/../partials/header.php';
                     <fieldset class="filter-fieldset">
                         <legend>Sort</legend>
                         <div class="filter-chip-group" role="group">
-                            <?php foreach (['curated' => 'Default order', 'newest' => 'Newest first', 'oldest' => 'Oldest first', 'az' => 'A–Z', 'za' => 'Z–A'] as $v => $l): ?>
+                            <?php
+                                $sortOptions = ['curated' => 'Default order', 'newest' => 'Newest first', 'oldest' => 'Oldest first', 'az' => 'A–Z', 'za' => 'Z–A'];
+                                if ($activeQ !== '') {
+                                    $sortOptions = ['relevance' => 'Relevance'] + $sortOptions;
+                                }
+                            ?>
+                            <?php foreach ($sortOptions as $v => $l): ?>
                                 <label class="filter-chip <?= $activeSort === $v ? 'filter-chip-active' : '' ?>">
                                     <input type="radio" name="sort" value="<?= $v ?>"
                                            <?= $activeSort === $v ? 'checked' : '' ?> class="sr-only"

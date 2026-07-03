@@ -8,15 +8,7 @@
 
 ## OPEN ITEMS (carried forward from archived sessions)
 
-From "2026-06-14 — Platform Rectification Pass" (full session in docs/decisions-archive.md):
-
-### Remaining REVIEW REQUIRED Before Platform Deletion
-- Adapter dry-run/mock tests still need to be run for all outbound syndication
-  services before any real publish verification.
-- Feed approval should be exercised with a mocked pending item and verified to
-  create a draft post containing real title/content/source metadata.
-- A final search and route matrix check must show no required route, data, or
-  runtime asset still depends on `platform/`.
+None.
 
 ## Project Profile
 
@@ -37,6 +29,60 @@ From "2026-06-14 — Platform Rectification Pass" (full session in docs/decision
 - **Profile switch rule:** Stop before touching existing files. Record
   current state and reason here. Confirm new profile explicitly. Flag
   every file needing migration before starting.
+
+---
+
+## 2026-07-03 — Legacy Platform Tooling Removed After Deletion
+
+### Decision
+After the platform deletion readiness gate passed and the untracked
+`platform/` app folder was manually removed, the repository was slimmed by
+removing legacy platform migration/checker scripts and plan-only markdown that
+no longer participates in runtime behavior or duplicated-site setup.
+
+### Scope
+Kept the portable setup path intact: `scripts/setup-database.php`,
+`scripts/check-portable-launch-readiness.php`, `schema.sql`, `migrations/`,
+and `docs/migrations/` remain. Removed only the old platform-deletion gate,
+one-way platform import/repair scripts, obsolete platform planning docs, and
+the old AI media schema helper now superseded by the setup manifest.
+
+## 2026-07-03 — Site-Wide Ranked Search Harvest Before Platform Deletion
+
+### Decision
+The retired `platform/` app's better search behavior was harvested into the
+PHP CMS before `platform/` deletion: site-wide search now has a real
+`sort=relevance` path using MySQL boolean FULLTEXT ranking, prefix clauses,
+short-token LIKE recall, and HTML-safe highlighted snippets. Scope is all
+searchable content types: posts plus art pieces, platform collections, exhibit
+collections, exhibits, and pages.
+
+### Schema (Rule 3 sign-off)
+The owner approved adding FULLTEXT indexes on `art_pieces`,
+`platform_collections`, `collections`, `exhibits`, and `pages`. Per the
+schema dual-ship convention, the record is
+`docs/migrations/2026-07-03-search-fulltext-indexes.sql` and the mechanism is
+the probe-guarded `search fulltext indexes (2026-07-03)` manifest step in
+`scripts/setup-database.php`. `posts` already had
+`posts_content_text_fulltext`, so no posts index was added. Dry-run against the
+configured DB reported the search indexes already applied and the schema fully
+up to date.
+
+### Related Decisions
+- Stored/feed HTML sanitization was deliberately declined. External HTML must
+  be able to run; admin-only authoring/approval is the accepted boundary. Risk
+  recorded in `CONSTRAINTS.md`.
+- The Medium syndication adapter is officially dropped because the Medium
+  write API is moribund; this does not block `platform/` deletion.
+- `/search` URL contract is unchanged: `q`, `type`, and
+  `sort=newest|relevance`; `docs/api.md` did not need a contract update.
+
+### Verification
+- `php tests/search.php`
+- `php tests/feature-flags.php`
+- `php -l` on touched PHP files
+- `git diff --check`
+- `php scripts/setup-database.php --dry-run`
 
 ---
 
@@ -688,8 +734,8 @@ Replit config (platform/ is the retired app's reference export).
 - No shims created for Codex, Opencode Go, or Antigravity — they read
   AGENTS.md natively; speculative per-tool files would add maintenance
   burden without benefit.
-- `platform/`'s own legacy memory markdown left untouched by design:
-  reference-only, slated for deletion behind the OPEN ITEMS block.
+- `platform/`'s own legacy memory markdown was reference-only and is now gone
+  with the removed legacy app folder.
 
 ## 2026-07-02 — Platform Folder Redundancy Audit (findings only, no changes)
 
@@ -701,9 +747,9 @@ PHP code.
 
 ### Verdict
 `platform/` is functionally redundant — every user-facing feature is
-implemented in PHP, most improved. Cron blocker from
-docs/platform-route-matrix.md is stale: scheduled-tasks.yml now hits PHP
-endpoints (/api/cron/refresh-feeds, /api/cron/publish-posts).
+implemented in PHP, most improved. The former cron blocker is stale:
+scheduled-tasks.yml now hits PHP endpoints
+(`/api/cron/refresh-feeds`, `/api/cron/publish-posts`).
 
 ### Gaps where the platform version was better (reference value before deletion)
 1. Search depth: platform had FULLTEXT boolean MATCH/AGAINST with relevance
@@ -734,3 +780,13 @@ unified media library; piece downloads/templates; cron via GitHub Actions
 Remaining: confirm two operational items (2026-06-18 AI Personas SQL
 migration + thumbnail-migration re-run on production), decide whether to
 port gaps 1–3 first, then owner sign-off per OPEN ITEMS.
+
+## 2026-07-03 — DESIGN.md Theme Customization Documentation
+
+### Context
+Following the user-approved implementation plan, updated the creative identity document (`DESIGN.md`) to reflect the CMS codebase's dynamic theme-switching and color customization architecture.
+
+### Decision
+Added details to `DESIGN.md` under the `Declared Preferences` section for `Color direction` and `Layout disposition`:
+- **Color direction:** Documented that light and dark mode colors are customizable via the admin panel (Site Identity → Design) using HSL variables mapped via CSS custom properties (`--sp-*`), enabling per-deployment palette overrides.
+- **Layout disposition:** Documented the availability of 10 built-in theme presets (e.g. Bauhaus/Pareto, Celestial, traditional, academic, minimalist, and comfort) which can be customized or extended with inject-ready custom CSS, JS, and HTML body wrappers stored in the database.

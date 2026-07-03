@@ -112,6 +112,20 @@ function column_exists(PDO $pdo, string $table, string $column): bool
     return (bool) $stmt->fetchColumn();
 }
 
+function index_exists(PDO $pdo, string $table, string $index, string $type = ''): bool
+{
+    $sql = 'SELECT 1 FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND INDEX_NAME = ?';
+    $params = [$table, $index];
+    if ($type !== '') {
+        $sql .= ' AND INDEX_TYPE = ?';
+        $params[] = $type;
+    }
+    $sql .= ' LIMIT 1';
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    return (bool) $stmt->fetchColumn();
+}
+
 function row_exists(PDO $pdo, string $sql, array $params = []): bool
 {
     $stmt = $pdo->prepare($sql);
@@ -213,6 +227,39 @@ function check_database(ReadinessReport $report, PDO $pdo): void
     }
 }
 
+function check_search_fulltext(ReadinessReport $report, PDO $pdo): void
+{
+    $indexes = [
+        'posts' => ['posts_content_text_fulltext', ['content_text']],
+        'art_pieces' => ['art_pieces_search_fulltext', ['title', 'description', 'prompt']],
+        'platform_collections' => ['platform_collections_search_fulltext', ['name', 'description', 'artist_statement']],
+        'collections' => ['collections_search_fulltext', ['name', 'description']],
+        'exhibits' => ['exhibits_search_fulltext', ['title', 'description']],
+        'pages' => ['pages_search_fulltext', ['title', 'meta_description']],
+    ];
+
+    foreach ($indexes as $table => [$index, $columns]) {
+        if (!table_exists($pdo, $table)) {
+            $report->fail("fulltext table {$table}", 'missing; run php scripts/setup-database.php');
+            continue;
+        }
+        if (!index_exists($pdo, $table, $index, 'FULLTEXT')) {
+            $report->fail("fulltext index {$index}", 'missing; run php scripts/setup-database.php');
+            continue;
+        }
+        $report->pass("fulltext index {$index}", 'present');
+
+        $columnList = implode(', ', array_map(static fn (string $column): string => "`{$column}`", $columns));
+        try {
+            $stmt = $pdo->prepare("SELECT 1 FROM `{$table}` WHERE MATCH({$columnList}) AGAINST(? IN BOOLEAN MODE) LIMIT 1");
+            $stmt->execute(['+readiness*']);
+            $report->pass("fulltext smoke {$table}", 'MATCH ... AGAINST accepted');
+        } catch (Throwable $e) {
+            $report->fail("fulltext smoke {$table}", $e->getMessage());
+        }
+    }
+}
+
 function check_oauth_docs(ReadinessReport $report): void
 {
     $root = dirname(__DIR__);
@@ -273,6 +320,7 @@ try {
     $dbName = (string) $pdo->query('SELECT DATABASE()')->fetchColumn();
     $report->pass('database connection', "connected to {$dbName}");
     check_database($report, $pdo);
+    check_search_fulltext($report, $pdo);
 } catch (Throwable $e) {
     $report->fail('database connection', $e->getMessage());
 }

@@ -148,17 +148,50 @@ class Collection
             $dir = 'DESC';
         }
 
+        $parsedSearch = null;
+        $booleanExpr = null;
+        if ($sort === 'relevance' && $q !== '') {
+            require_once __DIR__ . '/../helpers/search.php';
+            $parsedSearch = search_parse_query($q);
+            $booleanExpr = ($parsedSearch !== null && $parsedSearch['boolean'] !== '') ? $parsedSearch['boolean'] : null;
+        }
+
+        $relevanceSelect = '';
+        $orParts = ['c.name LIKE ?', 'c.description LIKE ?'];
+        $orderClause = "{$sortCol} {$dir}, c.id {$dir}";
+        $params = [];
+        if ($booleanExpr !== null) {
+            $relevanceSelect = ', MATCH(c.name, c.description) AGAINST(? IN BOOLEAN MODE) AS relevance';
+            array_unshift($orParts, 'MATCH(c.name, c.description) AGAINST(? IN BOOLEAN MODE)');
+            $orderClause = 'relevance DESC, c.id DESC';
+            $params[] = $booleanExpr;
+            $params[] = $booleanExpr;
+        }
+        $params[] = $like;
+        $params[] = $like;
+        if ($booleanExpr !== null) {
+            $shortRecall = search_like_recall_clause(
+                ['c.name', 'c.description'],
+                $parsedSearch['like_terms'] ?? [],
+                $params
+            );
+            if ($shortRecall !== '') {
+                $orParts[] = $shortRecall;
+            }
+        }
+
         $statusClause = $adminMode ? '' : "AND c.status = 'active'";
         $stmt = db()->prepare(
-            "SELECT c.*
+            "SELECT c.*{$relevanceSelect}
              FROM collections c
              WHERE c.deleted_at IS NULL
                {$statusClause}
-               AND (c.name LIKE ? OR c.description LIKE ?)
-             ORDER BY {$sortCol} {$dir}, c.id {$dir}
+               AND (" . implode(' OR ', $orParts) . ")
+             ORDER BY {$orderClause}
              LIMIT ? OFFSET ?"
         );
-        $stmt->execute([$like, $like, $limit, $offset]);
+        array_push($params, $limit, $offset);
+        $stmt->execute($params);
         return $stmt->fetchAll();
     }
 
