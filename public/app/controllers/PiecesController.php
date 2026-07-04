@@ -100,10 +100,15 @@ class PiecesController
             self::notFound();
         }
 
-        $filename = piece_export_filename($data['piece']);
-        header('Content-Type: text/html; charset=utf-8');
+        $bundle = piece_export_bundle($data['piece'], $data['version']);
+        $filename = $bundle['filename'];
+        $path = $bundle['path'];
+
+        header('Content-Type: application/zip');
         header('Content-Disposition: attachment; filename="' . addcslashes($filename, "\"\\") . '"');
-        echo piece_export_document($data['piece'], $data['version']);
+        header('Content-Length: ' . (string) filesize($path));
+        readfile($path);
+        @unlink($path);
         exit;
     }
 

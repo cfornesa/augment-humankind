@@ -97,7 +97,7 @@ Source: DECISIONS.md 2026-07-02 Portable-CMS Setup Readiness Remediation (commit
 
 2026-07-02 DECISION Art piece starter templates are DB-owned install data edited under `/admin/pieces?tab=templates` (`/admin/pieces/templates` is a permanent redirect). Defaults demonstrate optional CMS media, sized where rendering happens.
 
-2026-07-02 DECISION Public piece downloads (`/pieces/{id}/download`) are single-file HTML exports with CDN engine imports and absolute live CMS media URLs. Stored code remains CMS-runtime-compatible via `window.sketch`; Three.js exports must attach OrbitControls in the bootstrap.
+2026-07-04 DECISION Public piece downloads (`/pieces/{id}/download`) are ZIP bundles with `index.html` as the single manual entry point. The bundle remains editable/rehostable (`styles/piece.css`, `scripts/piece.js`, `runtime/`, `media/`), but the direct-open `index.html` path embeds vendored runtime/media-safe equivalents so supported interactive pieces can still render and take screenshots when opened locally. Stored code remains CMS-runtime-compatible via `window.sketch`; standalone Three.js exports still attach OrbitControls in the bootstrap.
 
 2026-07-03 DECISION AI piece generation may only introduce CMS media when the prompt explicitly names the exact image/media ID or path; downloaded HTML exports rewrite root-relative and relative CMS media refs to absolute URLs on the host serving the download.
 

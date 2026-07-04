@@ -228,29 +228,37 @@
 - **Required config:** Provider app credentials are stored in the PHP site's own `platform_oauth_apps` table through `/admin/platform-connections`, not in environment variables.
 - **Callback URLs to register:** `https://yourdomain.com/admin/platform-connections/auth/{platform}/callback` where `{platform}` is one of `wordpress-com`, `blogger`, `linkedin`, `facebook`, `instagram`.
 
-## Piece Renderer CDN Runtimes
+## Piece Renderer Runtimes
 
 - **Purpose:** PHP piece pages, standard embed routes, immersive gallery/exhibit
-  viewer views, and downloadable HTML exports render generative sketches. P5,
+  viewer views, and downloadable piece exports render generative sketches. P5,
   C2, and Three.js use client-side dynamic libraries loaded from CDNs in the
-  CMS runtime. A-Frame is self-hosted in the CMS runtime but uses the upstream
-  CDN in downloadable HTML exports.
+  CMS runtime. Downloadable piece ZIP exports vendor pinned local runtime files
+  so they can be rehosted without the live site or CDN access. A-Frame is
+  already self-hosted in the CMS runtime and is also bundled into exports.
 - **External endpoints:**
   - P5.js: `https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js`
   - C2.js: `https://cdn.jsdelivr.net/npm/c2.js@1.0.9/dist/c2.min.js`
   - Three.js Core: `https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js`
   - Three.js OrbitControls: `https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js`
-  - A-Frame export runtime: `https://aframe.io/releases/1.6.0/aframe.min.js`
-- **Data sent off-domain:** The browser requests the runtime script from the CDN. Piece content and database data are not sent by the PHP server.
+  - A-Frame export runtime source: `https://aframe.io/releases/1.6.0/aframe.min.js`
+- **Data sent off-domain:** The browser requests the runtime script from the CDN for CMS-hosted piece pages and embeds. Piece content and database data are not sent by the PHP server. Downloaded ZIP exports send nothing off-domain when rehosted or opened directly from their bundled local files.
+- **Direct-open export note:** The exported bundle still ships ordinary runtime
+  files for editing/rehosting, but the single-entry-point `index.html` path
+  also embeds vendored runtime/media-safe equivalents where needed so supported
+  interactive pieces can render and take screenshots when opened directly from
+  a local file.
 - **What breaks if unavailable or changed:** P5, C2, and Three.js-based piece
-  pages, embeds, immersive views, and exports fail to render until local runtime
-  copies are served. A-Frame CMS pages remain covered by the self-hosted runtime
-  entry above, but downloaded A-Frame HTML exports fail if the upstream A-Frame
-  CDN is unavailable.
+  pages, embeds, and immersive views fail to render until local runtime copies
+  are served. Downloaded piece ZIP exports depend on the vendored runtime files
+  checked into this repo; if those pinned files are missing or replaced
+  incompatibly, the exported bundle may stop working until the owner updates
+  the packaged runtime set.
 - **Self-hosting alternative:** Store p5.js, c2.min.js, three.module.js,
-  OrbitControls.js, and aframe.min.js under `public/assets/vendor/` and load
-  them from the PHP site or provide ZIP/offline exports that bundle the runtime
-  files.
+  OrbitControls.js, and aframe.min.js under a repo-owned runtime/vendor path
+  and bundle them into offline piece ZIP exports. This is the chosen export
+  strategy. Maintenance of pinned runtime files is an owner responsibility.
+
 
 ## Three.js DeviceOrientationControls (Self-Hosted)
 

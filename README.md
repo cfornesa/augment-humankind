@@ -49,7 +49,7 @@ this instance's content.
 - `/search` — public blog post search
 - `/pieces` — public gallery listing of generative art pieces
 - `/pieces/[id]` — public render page of a generative art piece
-- `/pieces/[id]/download` — downloadable single-file HTML export for the piece's current version, using CDN engine imports and absolute CMS media URLs for the host serving the download
+- `/pieces/[id]/download` — downloadable ZIP export for the piece's current version, with `index.html` as the single manual entry point plus bundled runtime/media/source files
 - `/collections` and `/collections/[slug]` — public archive/detail for migrated platform art collections
 - `/embed/pieces/[id]` — public embeddable HTML of a generative art piece
 - `/embed/pieces/[id]/data` — public JSON feed of art piece parameters and source code
@@ -136,30 +136,33 @@ page" language instead of promising true browser fullscreen.
 ## Art Piece Downloads And Templates
 
 Art pieces store CMS-runtime-compatible HTML/CSS/JS, but public piece pages
-also expose `Download HTML`. The downloaded file is a complete standalone HTML
-document with the current version's code, engine imports, a small bootstrap,
-and no admin, embed, or immersive presentation controls.
+also expose `Download Piece`. The download is a ZIP bundle with `index.html`
+as the single manual entry point: recipients should only need to open that
+file to run the piece locally. Supporting files such as `styles/piece.css`,
+`scripts/piece.js`, `runtime/`, and `media/` are still included so the bundle
+remains editable and rehostable as ordinary static web files.
 
-Downloaded files reference CDN runtimes for p5.js, C2.js, Three.js, and
-A-Frame, and rewrite CMS media references such as `/image/2`, `image/2`,
+Downloaded bundles vendor the runtime files they need, and `index.html`
+rewrites supported CMS media references such as `/image/2`, `image/2`,
 `/media/...`, `media/...`, `/api/media-assets/...`, and `api/media-assets/...`
-to absolute URLs on the host serving the download. The files therefore work in another browser context
-with internet access to the CDN and live CMS media routes, but they are not
-offline bundles. Public CMS media responses include CORS headers, and A-Frame
-exports add `crossorigin="anonymous"` to asset images so WebGL texture loading
-can use those absolute media URLs.
+into export-safe local or embedded forms. For the direct `index.html` path,
+supported CMS-owned images/media are embedded in a file-open-safe way so
+interactive pieces can still export screenshots when opened from a local file.
 
 The export bootstrap preserves interaction semantics for the engines that need
 runtime help:
 
 - Three.js downloads attach OrbitControls to the exported scene, camera, and
   renderer so drag/touch orbiting works even when the authored piece only
-  animates.
+  animates. The standalone export bootstraps Three.js from vendored local
+  sources in a way that can still run from `index.html`.
 - A-Frame downloads receive the live `<a-scene>` and can use authored scene
   events.
 - C2.js interactive downloads receive the real canvas, `startFrame`, and safe
   image helpers, so authored pointer/click/touch/drag handlers continue to
   work.
+- Interactive `c2_interactive`, `three`, and `aframe` downloads include the
+  lower-left screenshot control directly inside `index.html`.
 
 Starter templates are database-owned and seeded by `scripts/setup-database.php`.
 In `/admin/pieces`, the `Art Pieces` subtab holds the current piece list and

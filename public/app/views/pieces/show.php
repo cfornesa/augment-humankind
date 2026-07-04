@@ -7,6 +7,9 @@ require dirname(__DIR__) . '/partials/header.php';
 $version = $version ?? null;
 $hasCode = $version && (!empty($version['html_code']) || !empty($version['css_code']) || !empty($version['generated_code']));
 $engineLabel = art_piece_effective_generation_mode_label($piece, is_array($version) ? $version : null);
+$pngFilenameBase = pathinfo(piece_export_filename($piece), PATHINFO_FILENAME);
+$pngFilename = ($pngFilenameBase !== '' ? $pngFilenameBase : 'piece-' . (int) ($piece['id'] ?? 0)) . '.png';
+$publicPieceScriptVersion = (int) @filemtime(dirname(__DIR__, 3) . '/assets/js/public-piece-download.js');
 ?>
 <section class="page-hero" aria-labelledby="piece-title">
     <p class="eyebrow">Art Piece</p>
@@ -28,12 +31,16 @@ $engineLabel = art_piece_effective_generation_mode_label($piece, is_array($versi
 
 <section class="piece-stage" aria-label="Generative art piece">
     <?php if ($hasCode): ?>
-        <div class="piece-canvas-container">
-            <?= piece_render_iframe($piece, $version, 560) ?>
-        </div>
-        <div class="piece-action-row">
-            <a href="/immersive/pieces/<?= (int) $piece['id'] ?>?returnTo=<?= rawurlencode($_SERVER['REQUEST_URI'] ?? '') ?>" target="_blank" rel="noopener" class="piece-immersive-link">View in Immersive / VR Mode</a>
-            <a href="/pieces/<?= (int) $piece['id'] ?>/download" class="piece-immersive-link">Download HTML</a>
+        <div data-piece-download-root>
+            <div class="piece-canvas-container">
+                <?= piece_render_iframe($piece, $version, 560, ['data-piece-download-frame' => 'true']) ?>
+            </div>
+            <div class="piece-action-row">
+                <a href="/immersive/pieces/<?= (int) $piece['id'] ?>?returnTo=<?= rawurlencode($_SERVER['REQUEST_URI'] ?? '') ?>" target="_blank" rel="noopener" class="piece-immersive-link">View in Immersive / VR Mode</a>
+                <a href="/pieces/<?= (int) $piece['id'] ?>/download" class="piece-immersive-link">Download Piece</a>
+                <button type="button" class="piece-immersive-link piece-download-button" data-piece-download-trigger data-download-filename="<?= e($pngFilename) ?>">Download PNG</button>
+            </div>
+            <p class="piece-download-status" data-piece-download-status role="status" aria-live="polite" hidden></p>
         </div>
     <?php else: ?>
         <div class="piece-placeholder">
@@ -92,5 +99,6 @@ $engineLabel = art_piece_effective_generation_mode_label($piece, is_array($versi
     ?>
 </section>
 <?php endif; ?>
+<script src="/assets/js/public-piece-download.js?v=<?= $publicPieceScriptVersion ?>"></script>
 <?php
 require dirname(__DIR__) . '/partials/footer.php';

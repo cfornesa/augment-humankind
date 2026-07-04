@@ -1687,6 +1687,25 @@ h3 {
     align-items: center;
 }
 
+.piece-download-button {
+    border: 0;
+    padding: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+}
+
+.piece-download-button[disabled] {
+    opacity: 0.6;
+    cursor: progress;
+}
+
+.piece-download-status {
+    margin-top: 0.75rem;
+    color: var(--ink-soft);
+}
+
 @media (max-width: 860px) {
     .artwork-card.size-large  { grid-column: span 8; }
     .artwork-card.size-medium { grid-column: span 6; }

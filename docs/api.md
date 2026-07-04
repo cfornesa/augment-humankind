@@ -207,8 +207,8 @@ Compatibility redirects are permanent:
 `/media/[id]` streams any active stored media blob. `/image/[id]` is an
 image-only public route for image assets. Missing, deleted, or mismatched media
 returns the shared 404 view. Public media blob responses include permissive
-CORS headers so downloaded piece HTML and WebGL/A-Frame texture loaders can use
-absolute live CMS media URLs outside the site's own origin.
+CORS headers so CMS-hosted piece previews, embeds, and immersive WebGL/A-Frame
+surfaces can load site media outside the page's own origin when needed.
 
 ## Public Platform Art Routes
 
@@ -223,22 +223,24 @@ Migrated platform generative art pieces live under their own namespace:
 `/pieces` lists all active art pieces. `/pieces/[id]` renders an individual
 piece with its current version's generated code. Numeric IDs are canonical
 because the migrated platform `art_pieces` records do not include slugs.
-`/pieces/[id]/download` returns the current version as a single downloadable
-HTML file, with engine imports, body HTML, CSS, JavaScript, and a small
-standalone bootstrap. It accepts `?version=[version-id]` to export a specific
-version. The export intentionally omits immersive/admin/embed controls and
-rewrites CMS image/media references such as `/image/2`, `image/2`,
-`/media/...`, `media/...`, `/api/media-assets/2`, and `api/media-assets/2`
-to absolute URLs on the host serving the download.
-Downloaded files use CDN library imports for p5.js, C2.js, Three.js, and
-A-Frame, so they are portable to another browser context with internet access
-but are not offline bundles. The exported bootstrap preserves engine-native
-interactivity: A-Frame receives its live `<a-scene>`, C2 receives the real
-canvas plus safe media helpers, and Three.js downloads attach OrbitControls to
-the exported scene/camera/renderer so drag/touch orbiting works even when the
-piece code itself only animates. A-Frame asset images are emitted with
-`crossorigin="anonymous"` so browser WebGL texture loading can use the public
-media CORS headers.
+`/pieces/[id]/download` returns the current version as a downloadable ZIP
+bundle. It accepts `?version=[version-id]` to export a specific version. The
+ZIP is a portable web bundle with `index.html` as the single entry point:
+opening that file should load the piece without requiring the recipient to
+manually open any helper file. The bundle still includes local `runtime/`,
+`media/`, and editable source files so the piece can be uploaded to another
+static host without the live site or CDN access. The export intentionally
+omits immersive/admin/embed controls and rewrites supported CMS image/media
+references such as `/image/2`, `image/2`, `/media/...`, `media/...`,
+`/api/media-assets/2`, and `api/media-assets/2` inside the bundle.
+Bundled exports preserve engine-native interactivity: A-Frame receives its
+live `<a-scene>`, C2 receives the real canvas plus safe media helpers, and
+Three.js exports attach OrbitControls to the exported scene/camera/renderer so
+drag/touch orbiting works even when the piece code itself only animates.
+Interactive standalone exports for `c2_interactive`, `three`, and `aframe`
+also include the lower-left screenshot icon overlay inside `index.html`.
+Supported CMS media used by the piece are embedded in a file-open-safe way so
+canvas screenshots can work when the recipient opens `index.html` directly.
 
 `/exhibits` lists migrated `platform_exhibits` rows (name, description, item
 count, and a thumbnail drawn from the first item). `/exhibits/[slug]` renders

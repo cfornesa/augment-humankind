@@ -99,34 +99,95 @@ window.PIECE_PRESERVE_DRAWING_BUFFER = true;
 HTML;
 }
 
-function piece_render_iframe(array $piece, array $version, int $height = 520): string
+function piece_render_iframe(array $piece, array $version, int $height = 520, array $attributes = []): string
 {
     $srcdoc = htmlspecialchars(piece_render_document($piece, $version), ENT_QUOTES | ENT_HTML5, 'UTF-8');
     $title = htmlspecialchars((string) ($piece['title'] ?? 'Art piece'), ENT_QUOTES, 'UTF-8');
-    return '<iframe srcdoc="' . $srcdoc . '" style="width:100%;height:' . $height . 'px;border:0;display:block;" sandbox="allow-scripts allow-same-origin" title="' . $title . '"></iframe>';
+    $attributeString = '';
+    foreach ($attributes as $name => $value) {
+        if (!is_string($name) || $name === '') {
+            continue;
+        }
+
+        if ($value === null || $value === false) {
+            continue;
+        }
+
+        if ($value === true) {
+            $attributeString .= ' ' . htmlspecialchars($name, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+            continue;
+        }
+
+        $attributeString .= ' ' . htmlspecialchars($name, ENT_QUOTES | ENT_HTML5, 'UTF-8')
+            . '="' . htmlspecialchars((string) $value, ENT_QUOTES | ENT_HTML5, 'UTF-8') . '"';
+    }
+
+    return '<iframe srcdoc="' . $srcdoc . '" style="width:100%;height:' . $height . 'px;border:0;display:block;" sandbox="allow-scripts allow-same-origin" title="' . $title . '"' . $attributeString . '></iframe>';
 }
 
 function piece_export_filename(array $piece): string
+{
+    return piece_export_basename($piece) . '.zip';
+}
+
+function piece_export_basename(array $piece): string
 {
     $base = function_exists('slugify') ? slugify((string) ($piece['title'] ?? '')) : '';
     if ($base === '') {
         $base = 'piece-' . (int) ($piece['id'] ?? 0);
     }
-    return $base . '.html';
+
+    return $base;
 }
 
-function piece_export_document(array $piece, array $version): string
+function piece_export_document(array $piece, array $version, array $options = []): string
 {
     $title = htmlspecialchars((string) ($piece['title'] ?? 'Art piece'), ENT_QUOTES | ENT_HTML5, 'UTF-8');
     $engine = strtolower((string) ($version['engine'] ?? $piece['engine'] ?? 'p5'));
-    $html = piece_export_rewrite_media_urls((string) ($version['html_code'] ?? ''));
-    if ($engine === 'aframe') {
+    $generationMode = art_piece_version_generation_mode($version, $piece);
+    $runtimeMode = ($options['runtime_mode'] ?? 'cdn') === 'bundle' ? 'bundle' : 'cdn';
+    $mediaMap = is_array($options['media_map'] ?? null) ? $options['media_map'] : [];
+    $embedMedia = !empty($options['embed_media']);
+    $rewriteMedia = static function (string $content) use ($runtimeMode, $mediaMap, $embedMedia): string {
+        if ($runtimeMode === 'bundle') {
+            return piece_export_rewrite_media_refs($content, static function (string $normalizedRef) use ($mediaMap, $embedMedia): ?string {
+                $asset = $mediaMap[$normalizedRef] ?? null;
+                if (!is_array($asset)) {
+                    return null;
+                }
+
+                return $embedMedia
+                    ? (string) ($asset['data_url'] ?? '')
+                    : (string) ($asset['path'] ?? '');
+            });
+        }
+
+        return piece_export_rewrite_media_refs($content, static fn(string $normalizedRef): ?string => piece_request_origin() . $normalizedRef);
+    };
+
+    $html = $rewriteMedia((string) ($version['html_code'] ?? ''));
+    if ($engine === 'aframe' && $runtimeMode !== 'bundle') {
         $html = piece_aframe_add_crossorigin_to_asset_images($html);
     }
-    $css = piece_escape_inline_css(piece_export_rewrite_media_urls((string) ($version['css_code'] ?? '')));
-    $code = piece_escape_inline_script(piece_export_rewrite_media_urls((string) ($version['generated_code'] ?? '')));
-    $imports = piece_export_imports($engine);
-    $bootstrap = piece_export_bootstrap($engine);
+    $css = piece_escape_inline_css($rewriteMedia((string) ($version['css_code'] ?? '')));
+    $code = piece_escape_inline_script($rewriteMedia((string) ($version['generated_code'] ?? '')));
+    $imports = piece_export_imports($engine, $runtimeMode);
+    $inlineRuntime = $runtimeMode === 'bundle' ? piece_export_inline_runtime_markup($engine) : '';
+    $bootstrap = piece_export_bootstrap($engine, $generationMode, $runtimeMode);
+    $exportOverlayCss = piece_export_screenshot_overlay_css($generationMode);
+    $exportOverlayMarkup = piece_export_screenshot_overlay_markup($generationMode);
+    $exportOverlayScript = piece_export_screenshot_overlay_script($piece, $generationMode);
+    $cssHref = is_string($options['css_href'] ?? null) ? trim((string) $options['css_href']) : '';
+    $scriptSrc = is_string($options['script_src'] ?? null) ? trim((string) $options['script_src']) : '';
+    $cssTag = $cssHref !== ''
+        ? '<link rel="stylesheet" href="' . htmlspecialchars($cssHref, ENT_QUOTES | ENT_HTML5, 'UTF-8') . '">'
+        : "<style>\nhtml,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#0d0d0f;color:#fff;}\nbody{font-family:system-ui,-apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif;}\n#runtime-root{width:100vw;height:100vh;overflow:hidden;}\n#piece-error{position:fixed;inset:auto 1rem 1rem 1rem;z-index:9999;padding:1rem;border:1px solid #fca5a5;background:#450a0a;color:#fee2e2;font:14px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;display:none;}\ncanvas{display:block;width:100%;height:100%;}\n{$exportOverlayCss}\n{$css}\n</style>";
+    $pieceScriptTag = $scriptSrc !== ''
+        ? '<script src="' . htmlspecialchars($scriptSrc, ENT_QUOTES | ENT_HTML5, 'UTF-8') . '"></script>'
+        : "<script>\n{$code}\n</script>";
+    $bundleMeta = $runtimeMode === 'bundle'
+        ? '<meta name="creatr-piece-export" content="portable-bundle">'
+        : '';
 
     return <<<HTML
 <!DOCTYPE html>
@@ -135,28 +196,23 @@ function piece_export_document(array $piece, array $version): string
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{$title}</title>
+{$bundleMeta}
 {$imports}
-<style>
-html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#0d0d0f;color:#fff;}
-body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}
-#runtime-root{width:100vw;height:100vh;overflow:hidden;}
-#piece-error{position:fixed;inset:auto 1rem 1rem 1rem;z-index:9999;padding:1rem;border:1px solid #fca5a5;background:#450a0a;color:#fee2e2;font:14px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;display:none;}
-canvas{display:block;width:100%;height:100%;}
-{$css}
-</style>
+{$cssTag}
+{$inlineRuntime}
 </head>
 <body>
 <div id="runtime-root">{$html}</div>
 <div id="piece-error" role="alert"></div>
+{$exportOverlayMarkup}
 <script>
 function showPieceError(error){const el=document.getElementById('piece-error');if(!el)return;el.textContent=(error&&(error.stack||error.message))?(error.stack||error.message):String(error);el.style.display='block';}
 window.addEventListener('error',event=>showPieceError(event.error||event.message));
 window.addEventListener('unhandledrejection',event=>showPieceError(event.reason||'Unhandled promise rejection'));
 </script>
-<script>
-{$code}
-</script>
+{$pieceScriptTag}
 {$bootstrap}
+{$exportOverlayScript}
 </body>
 </html>
 HTML;
@@ -172,16 +228,19 @@ function piece_escape_inline_css(string $css): string
     return str_replace('</style', '<\/style', $css);
 }
 
-function piece_export_rewrite_media_urls(string $content): string
+function piece_export_rewrite_media_refs(string $content, callable $resolver): string
 {
-    $origin = piece_request_origin();
-    if ($origin === '') {
+    if ($content === '') {
         return $content;
     }
 
     return preg_replace_callback(
         '#(?<![A-Za-z0-9._~/-])/?(?:image/[0-9]+|api/media-assets/[0-9]+|media/[A-Za-z0-9._~/%+-]+)(?:\?[A-Za-z0-9._~%=&+-]*)?#',
-        static fn(array $match): string => $origin . '/' . ltrim($match[0], '/'),
+        static function (array $match) use ($resolver): string {
+            $normalizedRef = '/' . ltrim((string) ($match[0] ?? ''), '/');
+            $replacement = $resolver($normalizedRef);
+            return is_string($replacement) && $replacement !== '' ? $replacement : (string) ($match[0] ?? '');
+        },
         $content
     ) ?? $content;
 }
@@ -208,8 +267,12 @@ function piece_aframe_add_crossorigin_to_asset_images(string $html): string
     }, $html) ?? $html;
 }
 
-function piece_export_imports(string $engine): string
+function piece_export_imports(string $engine, string $runtimeMode = 'cdn'): string
 {
+    if ($runtimeMode === 'bundle') {
+        return '';
+    }
+
     return match ($engine) {
         'p5' => '<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>',
         'c2' => '<script src="https://cdn.jsdelivr.net/npm/c2.js@1.0.9/dist/c2.min.js"></script>',
@@ -219,8 +282,198 @@ function piece_export_imports(string $engine): string
     };
 }
 
-function piece_export_bootstrap(string $engine): string
+function piece_export_inline_runtime_markup(string $engine): string
 {
+    $engine = strtolower($engine);
+    if ($engine === 'three' || $engine === 'svg') {
+        return '';
+    }
+
+    $source = piece_export_runtime_inline_source($engine);
+    if ($source === '') {
+        return '';
+    }
+
+    return "<script>\n" . piece_escape_inline_script($source) . "\n</script>";
+}
+
+function piece_export_runtime_inline_source(string $engine): string
+{
+    $publicRoot = dirname(__DIR__, 2);
+    $vendorRoot = $publicRoot . '/assets/vendor/piece-runtime';
+
+    $path = match (strtolower($engine)) {
+        'p5' => $vendorRoot . '/p5/p5.min.js',
+        'c2' => $vendorRoot . '/c2/c2.min.js',
+        'aframe' => $publicRoot . '/assets/js/aframe.min.js',
+        default => '',
+    };
+
+    if ($path === '') {
+        return '';
+    }
+
+    $source = @file_get_contents($path);
+    if ($source === false) {
+        throw new RuntimeException('Missing vendored runtime source for piece export: ' . $path);
+    }
+
+    return $source;
+}
+
+function piece_export_runtime_source_file(string $relativePath): string
+{
+    $publicRoot = dirname(__DIR__, 2);
+    $path = $publicRoot . '/' . ltrim($relativePath, '/');
+    $source = @file_get_contents($path);
+    if ($source === false) {
+        throw new RuntimeException('Missing vendored runtime source for piece export: ' . $path);
+    }
+
+    return $source;
+}
+
+function piece_export_three_orbitcontrols_inline_source(): string
+{
+    $source = piece_export_runtime_source_file('assets/vendor/piece-runtime/three/OrbitControls.js');
+    $source = preg_replace(
+        '/from\s+[\'"]three[\'"]\s*;/',
+        "from '__CREATR_THREE_BLOB__';",
+        $source
+    ) ?? $source;
+    $source = preg_replace('/^\s*export\s*\{\s*OrbitControls\s*\};?\s*$/m', '', $source) ?? $source;
+    return $source;
+}
+
+function piece_export_bootstrap(string $engine, string $generationMode = '', string $runtimeMode = 'cdn'): string
+{
+    if ($engine === 'three' && $runtimeMode === 'bundle') {
+        $threeSource = json_encode(
+            piece_export_runtime_source_file('assets/vendor/piece-runtime/three/three.module.js'),
+            JSON_UNESCAPED_UNICODE
+        );
+        $orbitSource = json_encode(
+            piece_export_three_orbitcontrols_inline_source(),
+            JSON_UNESCAPED_UNICODE
+        );
+
+        return <<<HTML
+<script type="module">
+const creatrThreeSource = {$threeSource};
+const creatrOrbitSource = {$orbitSource};
+const creatrThreeUrl = URL.createObjectURL(new Blob([creatrThreeSource], { type: 'text/javascript' }));
+const creatrOrbitPatched = creatrOrbitSource.replace(/__CREATR_THREE_BLOB__/g, creatrThreeUrl);
+const creatrOrbitUrl = URL.createObjectURL(new Blob([creatrOrbitPatched], { type: 'text/javascript' }));
+try {
+  const THREE = await import(creatrThreeUrl);
+  const { OrbitControls } = await import(creatrOrbitUrl);
+  const canvas = document.getElementById('scene') || document.querySelector('canvas') || (() => {
+    const created = document.createElement('canvas');
+    created.id = 'scene';
+    (document.getElementById('container') || document.getElementById('runtime-root')).appendChild(created);
+    return created;
+  })();
+  canvas.style.display = 'block';
+  canvas.style.width = '100%';
+  canvas.style.height = '100%';
+  canvas.style.touchAction = 'none';
+  canvas.addEventListener('webglcontextlost', (event) => {
+    event.preventDefault();
+    showPieceError('WebGL context was lost. The scene may be too complex for this browser.');
+  });
+  function sizeCanvas() {
+    const parent = canvas.parentElement || document.getElementById('runtime-root');
+    canvas.width = Math.max(1, parent.clientWidth || window.innerWidth || 1280);
+    canvas.height = Math.max(1, parent.clientHeight || window.innerHeight || 720);
+  }
+  const state = { scene: null, camera: null, renderer: null };
+  const instrumentedThree = { ...THREE };
+  instrumentedThree.Scene = class extends THREE.Scene {
+    constructor(...args) { super(...args); state.scene = this; }
+  };
+  instrumentedThree.PerspectiveCamera = class extends THREE.PerspectiveCamera {
+    constructor(...args) { super(...args); state.camera = this; }
+  };
+  instrumentedThree.WebGLRenderer = class extends THREE.WebGLRenderer {
+    constructor(params) {
+      super({ ...(params || {}), canvas, preserveDrawingBuffer: true });
+      state.renderer = this;
+      const originalSetSize = this.setSize.bind(this);
+      this.setSize = (width, height) => originalSetSize(width, height, false);
+      const originalRender = this.render.bind(this);
+      this.render = (scene, camera) => {
+        if (scene) state.scene = scene;
+        if (camera) state.camera = camera;
+        return originalRender(scene, camera);
+      };
+    }
+  };
+  let pieceDrivesOwnRender = false;
+  let rafIds = [];
+  function startFrame(callback) {
+    pieceDrivesOwnRender = true;
+    let count = 0;
+    function tick() {
+      count++;
+      try {
+        callback(count);
+      } catch (error) {
+        pieceDrivesOwnRender = false;
+        showPieceError(error);
+        return;
+      }
+      const id = requestAnimationFrame(tick);
+      rafIds.push(id);
+    }
+    const id = requestAnimationFrame(tick);
+    rafIds.push(id);
+    return () => { rafIds.forEach((rafId) => cancelAnimationFrame(rafId)); rafIds = []; };
+  }
+  sizeCanvas();
+  window.THREE = instrumentedThree;
+  if (typeof window.sketch === 'function') window.sketch({ THREE: instrumentedThree, canvas, startFrame, width: canvas.width, height: canvas.height, size: { width: canvas.width, height: canvas.height }, OrbitControls });
+  if (state.camera && state.renderer && state.scene) {
+    const controls = new OrbitControls(state.camera, canvas);
+    controls.enableDamping = true;
+    controls.enablePan = true;
+    let isOrbitActive = false;
+    let userHasInteracted = false;
+    controls.addEventListener('start', () => { isOrbitActive = true; userHasInteracted = true; });
+    controls.addEventListener('end', () => { isOrbitActive = false; });
+    function animateControls() {
+      const id = requestAnimationFrame(animateControls);
+      rafIds.push(id);
+      try {
+        controls.update();
+        if (isOrbitActive) userHasInteracted = true;
+        if (!pieceDrivesOwnRender || userHasInteracted) {
+          state.renderer.render(state.scene, state.camera);
+        }
+      } catch (error) {
+        showPieceError(error);
+      }
+    }
+    animateControls();
+  }
+  window.addEventListener('resize', () => {
+    sizeCanvas();
+    if (state.camera && state.renderer) {
+      state.camera.aspect = canvas.width / canvas.height;
+      state.camera.updateProjectionMatrix();
+      state.renderer.setSize(canvas.width, canvas.height, false);
+    }
+  });
+} catch (error) { showPieceError(error); }
+finally {
+  window.addEventListener('unload', () => {
+    URL.revokeObjectURL(creatrThreeUrl);
+    URL.revokeObjectURL(creatrOrbitUrl);
+  }, { once: true });
+}
+</script>
+HTML;
+    }
+
     return match ($engine) {
         'p5' => <<<'HTML'
 <script>
@@ -408,6 +661,13 @@ HTML,
 <script>
 try {
   const scene = document.querySelector('a-scene#scene') || document.querySelector('a-scene');
+  if (scene) {
+    const currentRenderer = scene.getAttribute('renderer');
+    const rendererValue = typeof currentRenderer === 'string' && currentRenderer.trim() !== ''
+      ? currentRenderer.replace(/\s*;?\s*$/, '; ') + 'preserveDrawingBuffer: true'
+      : 'preserveDrawingBuffer: true';
+    scene.setAttribute('renderer', rendererValue);
+  }
   function startFrame(callback) {
     let count = 0;
     function tick() {
@@ -427,4 +687,546 @@ try { if (typeof window.sketch === 'function') window.sketch(); } catch (error) 
 </script>
 HTML,
     };
+}
+
+function piece_export_bundle(array $piece, array $version): array
+{
+    $manifest = piece_export_build_manifest($piece, $version);
+    $tempPath = tempnam(sys_get_temp_dir(), 'piece-export-');
+    if ($tempPath === false) {
+        throw new RuntimeException('Could not create a temporary file for the piece export.');
+    }
+
+    $zip = new ZipArchive();
+    if ($zip->open($tempPath, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
+        @unlink($tempPath);
+        throw new RuntimeException('Could not create the piece ZIP export.');
+    }
+
+    $zip->addFromString('index.html', $manifest['document']);
+
+    foreach ($manifest['bundle_files'] as $bundleFile) {
+        if (!$zip->addFromString($bundleFile['zip_path'], $bundleFile['data'])) {
+            $zip->close();
+            @unlink($tempPath);
+            throw new RuntimeException('Could not package bundle file: ' . $bundleFile['zip_path']);
+        }
+
+        if (isset($bundleFile['mode']) && is_int($bundleFile['mode']) && method_exists($zip, 'setExternalAttributesName')) {
+            $zip->setExternalAttributesName(
+                $bundleFile['zip_path'],
+                ZipArchive::OPSYS_UNIX,
+                (($bundleFile['mode'] & 0xFFFF) << 16)
+            );
+        }
+    }
+
+    foreach ($manifest['runtime_files'] as $runtimeFile) {
+        if (!$zip->addFile($runtimeFile['source_path'], $runtimeFile['zip_path'])) {
+            $zip->close();
+            @unlink($tempPath);
+            throw new RuntimeException('Could not package runtime file: ' . $runtimeFile['zip_path']);
+        }
+    }
+
+    foreach ($manifest['media_files'] as $mediaFile) {
+        if (!$zip->addFromString($mediaFile['zip_path'], $mediaFile['data'])) {
+            $zip->close();
+            @unlink($tempPath);
+            throw new RuntimeException('Could not package media file: ' . $mediaFile['zip_path']);
+        }
+    }
+
+    $zip->close();
+
+    return [
+        'filename' => piece_export_filename($piece),
+        'path' => $tempPath,
+    ];
+}
+
+function piece_export_build_manifest(array $piece, array $version): array
+{
+    $htmlCode = (string) ($version['html_code'] ?? '');
+    $cssCode = (string) ($version['css_code'] ?? '');
+    $jsCode = (string) ($version['generated_code'] ?? '');
+
+    $mediaRefs = piece_export_collect_media_refs([$htmlCode, $cssCode, $jsCode]);
+    $mediaFiles = [];
+    $mediaMap = [];
+    foreach ($mediaRefs as $ref) {
+        $asset = piece_export_resolve_media_ref($ref);
+        $zipPath = piece_export_media_zip_path($ref, $asset, array_column($mediaMap, 'path'));
+        $mediaMap[$ref] = [
+            'path' => $zipPath,
+            'data_url' => piece_export_data_url((string) ($asset['mime_type'] ?? 'application/octet-stream'), (string) ($asset['data'] ?? '')),
+        ];
+        $mediaFiles[] = [
+            'zip_path' => $zipPath,
+            'data' => $asset['data'],
+        ];
+    }
+
+    $bundleFiles = piece_export_bundle_files($piece, $version, $mediaMap);
+
+    return [
+        'document' => piece_export_document($piece, $version, [
+            'runtime_mode' => 'bundle',
+            'media_map' => $mediaMap,
+            'embed_media' => true,
+            'css_href' => 'styles/piece.css',
+            'script_src' => 'scripts/piece.js',
+        ]),
+        'bundle_files' => $bundleFiles,
+        'runtime_files' => piece_export_runtime_files((string) ($version['engine'] ?? $piece['engine'] ?? 'p5')),
+        'media_files' => $mediaFiles,
+    ];
+}
+
+function piece_export_bundle_files(array $piece, array $version, array $mediaMap): array
+{
+    $generationMode = art_piece_version_generation_mode($version, $piece);
+
+    return [
+        [
+            'zip_path' => 'styles/piece.css',
+            'data' => piece_export_stylesheet_content($piece, $version, $mediaMap),
+        ],
+        [
+            'zip_path' => 'scripts/piece.js',
+            'data' => piece_export_script_content($piece, $version, $mediaMap),
+        ],
+        [
+            'zip_path' => 'README.txt',
+            'data' => piece_export_readme($piece, $generationMode),
+        ],
+    ];
+}
+
+function piece_export_stylesheet_content(array $piece, array $version, array $mediaMap): string
+{
+    $engine = strtolower((string) ($version['engine'] ?? $piece['engine'] ?? 'p5'));
+    $css = piece_export_rewrite_media_refs(
+        (string) ($version['css_code'] ?? ''),
+        static function (string $normalizedRef) use ($mediaMap): string {
+            $target = $mediaMap[$normalizedRef] ?? null;
+            if (!is_array($target)) {
+                return $normalizedRef;
+            }
+
+            return (string) ($target['data_url'] ?? $normalizedRef);
+        }
+    );
+    $baseCss = <<<'CSS'
+html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#0d0d0f;color:#fff;}
+body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}
+#runtime-root{width:100vw;height:100vh;overflow:hidden;}
+#piece-error{position:fixed;inset:auto 1rem 1rem 1rem;z-index:9999;padding:1rem;border:1px solid #fca5a5;background:#450a0a;color:#fee2e2;font:14px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;display:none;}
+canvas{display:block;width:100%;height:100%;}
+CSS;
+    if ($engine === 'aframe') {
+        $baseCss .= "\na-scene{display:block;width:100%;height:100%;}\n.a-canvas{display:block;width:100%!important;height:100%!important;}\n";
+    }
+
+    $baseCss .= "\n" . piece_export_screenshot_overlay_css(art_piece_version_generation_mode($version, $piece));
+
+    return rtrim($baseCss . "\n\n" . $css) . "\n";
+}
+
+function piece_export_script_content(array $piece, array $version, array $mediaMap): string
+{
+    $code = piece_export_rewrite_media_refs(
+        (string) ($version['generated_code'] ?? ''),
+        static function (string $normalizedRef) use ($mediaMap): string {
+            $target = $mediaMap[$normalizedRef] ?? null;
+            if (!is_array($target)) {
+                return $normalizedRef;
+            }
+
+            return (string) ($target['data_url'] ?? $normalizedRef);
+        }
+    );
+
+    if (trim($code) === '') {
+        return "// This exported piece does not include custom JavaScript yet.\n";
+    }
+
+    return rtrim($code) . "\n";
+}
+
+function piece_export_readme(array $piece, string $generationMode): string
+{
+    $title = trim((string) ($piece['title'] ?? 'Art piece'));
+    if ($title === '') {
+        $title = 'Art piece';
+    }
+
+    $interactiveNote = piece_export_supports_screenshot_overlay($generationMode)
+        ? "This export includes the lower-left screenshot control directly inside index.html.\n"
+        : "This export does not include the screenshot control because this piece is not one of the interactive export modes.\n";
+
+    return "EXPORT: {$title}\n"
+        . "\n"
+        . "Open index.html to run this piece.\n"
+        . "\n"
+        . "Other files are supporting files only. You should not need to manually open any file besides index.html.\n"
+        . "\n"
+        . "This bundle still includes:\n"
+        . "- styles/piece.css for editable styling\n"
+        . "- scripts/piece.js for editable piece logic\n"
+        . "- runtime/ and media/ as portable supporting assets for rehosting\n"
+        . "\n"
+        . $interactiveNote
+        . "\n"
+        . "Open index.html after editing those files if you want to create a revised version of the piece.\n";
+}
+
+function piece_export_collect_media_refs(array $contents): array
+{
+    $refs = [];
+    foreach ($contents as $content) {
+        if (!is_string($content) || $content === '') {
+            continue;
+        }
+
+        if (!preg_match_all(
+            '#(?<![A-Za-z0-9._~/-])/?(?:image/[0-9]+|api/media-assets/[0-9]+|media/[A-Za-z0-9._~/%+-]+)(?:\?[A-Za-z0-9._~%=&+-]*)?#',
+            $content,
+            $matches
+        )) {
+            continue;
+        }
+
+        foreach ($matches[0] as $match) {
+            $refs['/' . ltrim((string) $match, '/')] = true;
+        }
+    }
+
+    return array_keys($refs);
+}
+
+function piece_export_resolve_media_ref(string $ref): array
+{
+    $path = (string) parse_url($ref, PHP_URL_PATH);
+    if ($path === '') {
+        throw new RuntimeException('Unsupported media reference in piece export: ' . $ref);
+    }
+
+    if (preg_match('#^/image/([0-9]+)$#', $path, $matches)) {
+        $file = MediaFile::getData((int) $matches[1]);
+        if (!$file || !str_starts_with((string) ($file['mime_type'] ?? ''), 'image/')) {
+            throw new RuntimeException('Referenced image asset could not be exported: ' . $ref);
+        }
+
+        return [
+            'kind' => 'image',
+            'id' => (int) $matches[1],
+            'mime_type' => (string) ($file['mime_type'] ?? 'application/octet-stream'),
+            'filename' => (string) (($file['original_name'] ?? '') ?: ('image-' . $matches[1])),
+            'data' => (string) ($file['data'] ?? ''),
+        ];
+    }
+
+    if (preg_match('#^/media/([0-9]+)$#', $path, $matches)) {
+        $file = MediaFile::getData((int) $matches[1]);
+        if (!$file) {
+            throw new RuntimeException('Referenced media file could not be exported: ' . $ref);
+        }
+
+        return [
+            'kind' => 'media',
+            'id' => (int) $matches[1],
+            'mime_type' => (string) ($file['mime_type'] ?? 'application/octet-stream'),
+            'filename' => (string) (($file['original_name'] ?? '') ?: ('media-' . $matches[1])),
+            'data' => (string) ($file['data'] ?? ''),
+        ];
+    }
+
+    if (preg_match('#^/media/([^/]+)$#', $path, $matches)) {
+        $asset = MediaAsset::findByFilename($matches[1]);
+        if (!$asset || empty($asset['file_data'])) {
+            throw new RuntimeException('Referenced media asset filename could not be exported: ' . $ref);
+        }
+
+        return [
+            'kind' => 'media-asset',
+            'id' => (int) ($asset['id'] ?? 0),
+            'mime_type' => (string) ($asset['mime_type'] ?? 'application/octet-stream'),
+            'filename' => (string) (($asset['filename'] ?? '') ?: ('media-asset-' . ($asset['id'] ?? '0'))),
+            'data' => (string) ($asset['file_data'] ?? ''),
+        ];
+    }
+
+    if (preg_match('#^/api/media-assets/([0-9]+)$#', $path, $matches)) {
+        $asset = MediaAsset::find((int) $matches[1]);
+        if (!$asset || empty($asset['file_data'])) {
+            throw new RuntimeException('Referenced media asset could not be exported: ' . $ref);
+        }
+
+        return [
+            'kind' => 'media-asset',
+            'id' => (int) $matches[1],
+            'mime_type' => (string) ($asset['mime_type'] ?? 'application/octet-stream'),
+            'filename' => (string) (($asset['filename'] ?? '') ?: ('media-asset-' . $matches[1])),
+            'data' => (string) ($asset['file_data'] ?? ''),
+        ];
+    }
+
+    throw new RuntimeException('Unsupported media reference in piece export: ' . $ref);
+}
+
+function piece_export_media_zip_path(string $ref, array $asset, array $existingMap): string
+{
+    $extension = piece_export_filename_extension((string) ($asset['mime_type'] ?? ''), (string) ($asset['filename'] ?? ''));
+    $kind = (string) ($asset['kind'] ?? 'media');
+    $id = (int) ($asset['id'] ?? 0);
+    $base = match ($kind) {
+        'image' => 'image-' . $id,
+        'media-asset' => 'media-asset-' . $id,
+        default => 'media-' . $id,
+    };
+
+    $candidate = 'media/' . $base . ($extension !== '' ? '.' . $extension : '');
+    $used = array_values($existingMap);
+    $suffix = 2;
+    while (in_array($candidate, $used, true)) {
+        $candidate = 'media/' . $base . '-' . $suffix . ($extension !== '' ? '.' . $extension : '');
+        $suffix += 1;
+    }
+
+    return $candidate;
+}
+
+function piece_export_filename_extension(string $mimeType, string $filename = ''): string
+{
+    $extension = strtolower((string) pathinfo($filename, PATHINFO_EXTENSION));
+    if ($extension !== '') {
+        return preg_replace('/[^a-z0-9]+/', '', $extension) ?? $extension;
+    }
+
+    return match (strtolower($mimeType)) {
+        'image/jpeg', 'image/jpg' => 'jpg',
+        'image/png' => 'png',
+        'image/gif' => 'gif',
+        'image/webp' => 'webp',
+        'image/svg+xml' => 'svg',
+        'video/mp4' => 'mp4',
+        'video/webm' => 'webm',
+        'audio/mpeg' => 'mp3',
+        'audio/ogg' => 'ogg',
+        'application/json' => 'json',
+        'text/plain' => 'txt',
+        default => 'bin',
+    };
+}
+
+function piece_export_data_url(string $mimeType, string $data): string
+{
+    $mimeType = trim($mimeType) !== '' ? $mimeType : 'application/octet-stream';
+    return 'data:' . $mimeType . ';base64,' . base64_encode($data);
+}
+
+function piece_export_runtime_files(string $engine): array
+{
+    $publicRoot = dirname(__DIR__, 2);
+    $vendorRoot = $publicRoot . '/assets/vendor/piece-runtime';
+    $runtimeFiles = match (strtolower($engine)) {
+        'p5' => [
+            ['source_path' => $vendorRoot . '/p5/p5.min.js', 'zip_path' => 'runtime/p5/p5.min.js'],
+        ],
+        'c2' => [
+            ['source_path' => $vendorRoot . '/c2/c2.min.js', 'zip_path' => 'runtime/c2/c2.min.js'],
+        ],
+        'three' => [
+            ['source_path' => $vendorRoot . '/three/three.module.js', 'zip_path' => 'runtime/three/three.module.js'],
+            ['source_path' => $vendorRoot . '/three/OrbitControls.js', 'zip_path' => 'runtime/three/addons/controls/OrbitControls.js'],
+        ],
+        'aframe' => [
+            ['source_path' => $publicRoot . '/assets/js/aframe.min.js', 'zip_path' => 'runtime/aframe/aframe.min.js'],
+        ],
+        default => [],
+    };
+
+    foreach ($runtimeFiles as $runtimeFile) {
+        if (!is_file($runtimeFile['source_path'])) {
+            throw new RuntimeException('Missing vendored runtime file for piece export: ' . $runtimeFile['source_path']);
+        }
+    }
+
+    return $runtimeFiles;
+}
+
+function piece_export_png_filename(array $piece): string
+{
+    return piece_export_basename($piece) . '.png';
+}
+
+function piece_export_supports_screenshot_overlay(string $generationMode): bool
+{
+    return in_array($generationMode, ['c2_interactive', 'three', 'aframe'], true);
+}
+
+function piece_export_screenshot_overlay_css(string $generationMode): string
+{
+    if (!piece_export_supports_screenshot_overlay($generationMode)) {
+        return '';
+    }
+
+    return <<<'CSS'
+#piece-export-screenshot-shell{position:fixed;left:1rem;bottom:1rem;z-index:10000;display:flex;flex-direction:column;align-items:flex-start;gap:0.5rem;pointer-events:none;}
+#piece-export-screenshot-btn{display:inline-flex;align-items:center;justify-content:center;width:3rem;height:3rem;border:1px solid rgba(255,255,255,0.22);border-radius:999px;background:rgba(10,12,20,0.72);color:#f6f2dd;box-shadow:0 12px 30px rgba(0,0,0,0.28);backdrop-filter:blur(10px);cursor:pointer;pointer-events:auto;}
+#piece-export-screenshot-btn:hover{background:rgba(21,26,40,0.88);}
+#piece-export-screenshot-btn:focus-visible{outline:2px solid #f6f2dd;outline-offset:2px;}
+#piece-export-screenshot-btn[disabled]{opacity:0.72;cursor:progress;}
+#piece-export-screenshot-btn svg{width:1.35rem;height:1.35rem;display:block;fill:currentColor;}
+#piece-export-screenshot-status{max-width:min(20rem,calc(100vw - 2rem));padding:0.45rem 0.7rem;border-radius:0.8rem;background:rgba(10,12,20,0.72);color:#f6f2dd;font:13px/1.35 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;pointer-events:auto;}
+#piece-export-screenshot-status[hidden]{display:none;}
+.piece-export-sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;}
+CSS;
+}
+
+function piece_export_screenshot_overlay_markup(string $generationMode): string
+{
+    if (!piece_export_supports_screenshot_overlay($generationMode)) {
+        return '';
+    }
+
+    return <<<'HTML'
+<div id="piece-export-screenshot-shell" aria-live="polite">
+  <button id="piece-export-screenshot-btn" type="button" aria-label="Take screenshot">
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M9 4.5 7.8 6H5.5A2.5 2.5 0 0 0 3 8.5v9A2.5 2.5 0 0 0 5.5 20h13a2.5 2.5 0 0 0 2.5-2.5v-9A2.5 2.5 0 0 0 18.5 6h-2.3L15 4.5H9Zm3 4a4.75 4.75 0 1 1 0 9.5 4.75 4.75 0 0 1 0-9.5Zm0 1.75a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"/>
+    </svg>
+    <span class="piece-export-sr-only">Take screenshot</span>
+  </button>
+  <div id="piece-export-screenshot-status" role="status" hidden></div>
+</div>
+HTML;
+}
+
+function piece_export_screenshot_overlay_script(array $piece, string $generationMode): string
+{
+    if (!piece_export_supports_screenshot_overlay($generationMode)) {
+        return '';
+    }
+
+    $jsonFilename = json_encode(piece_export_png_filename($piece), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    $jsonMode = json_encode($generationMode, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+    return <<<HTML
+<script>
+(function () {
+  const generationMode = {$jsonMode};
+  const filename = {$jsonFilename};
+  const button = document.getElementById('piece-export-screenshot-btn');
+  const status = document.getElementById('piece-export-screenshot-status');
+  if (!button || !status) return;
+
+  function setStatus(message) {
+    status.textContent = message || '';
+    status.hidden = !message;
+  }
+
+  function isVisibleSurface(node) {
+    if (!node || node.nodeType !== 1 || typeof node.getBoundingClientRect !== 'function') return false;
+    const style = window.getComputedStyle(node);
+    if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false;
+    const rect = node.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  }
+
+  function findCaptureSurface() {
+    const selectors = generationMode === 'aframe'
+      ? ['a-scene canvas', '.a-canvas', 'canvas']
+      : ['canvas'];
+    for (const selector of selectors) {
+      const matches = Array.from(document.querySelectorAll(selector)).filter(isVisibleSurface);
+      if (matches.length > 0) return matches[matches.length - 1];
+    }
+    return null;
+  }
+
+  function canvasToBlob(canvas) {
+    return new Promise((resolve, reject) => {
+      if (typeof canvas.toBlob === 'function') {
+        canvas.toBlob((blob) => {
+          if (blob) {
+            resolve(blob);
+            return;
+          }
+          reject(new Error('Could not create the screenshot file.'));
+        }, 'image/png');
+        return;
+      }
+
+      try {
+        const dataUrl = canvas.toDataURL('image/png');
+        const base64 = dataUrl.split(',')[1] || '';
+        const bytes = atob(base64);
+        const array = new Uint8Array(bytes.length);
+        for (let index = 0; index < bytes.length; index += 1) {
+          array[index] = bytes.charCodeAt(index);
+        }
+        resolve(new Blob([array], { type: 'image/png' }));
+      } catch (error) {
+        reject(error);
+      }
+    });
+  }
+
+  function exportSurface(surface) {
+    const rect = surface.getBoundingClientRect();
+    const width = Math.max(1, surface.width || Math.round(rect.width) || 1);
+    const height = Math.max(1, surface.height || Math.round(rect.height) || 1);
+    const exportCanvas = document.createElement('canvas');
+    exportCanvas.width = width;
+    exportCanvas.height = height;
+    const context = exportCanvas.getContext('2d');
+    if (!context) {
+      throw new Error('Screenshot export is unavailable in this browser.');
+    }
+    context.drawImage(surface, 0, 0, width, height);
+    return exportCanvas;
+  }
+
+  function downloadBlob(blob) {
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.download = filename;
+    link.rel = 'noopener';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+  }
+
+  button.addEventListener('click', async function () {
+    if (button.disabled) return;
+    const originalLabel = button.getAttribute('aria-label') || 'Take screenshot';
+    button.disabled = true;
+    button.setAttribute('aria-busy', 'true');
+    setStatus('');
+
+    try {
+      const surface = findCaptureSurface();
+      if (!surface) {
+        throw new Error('No live screenshot surface is available yet.');
+      }
+      const blob = await canvasToBlob(exportSurface(surface));
+      downloadBlob(blob);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not take a screenshot right now.';
+      setStatus(/tainted canvases/i.test(message)
+        ? 'This piece still contains an image or texture the browser will not export safely. Regenerate the bundle after that asset is localized into the piece export.'
+        : message);
+    } finally {
+      button.disabled = false;
+      button.removeAttribute('aria-busy');
+      button.setAttribute('aria-label', originalLabel);
+    }
+  });
+})();
+</script>
+HTML;
 }

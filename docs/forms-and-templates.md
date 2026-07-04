@@ -40,7 +40,9 @@ or camera-frame planes, and A-Frame rendered entity dimensions. Full-frame
 background examples use cover-style sizing so the image spans the visible
 canvas/frame.
 
-Public piece pages expose `Download HTML`, which exports a complete single HTML
-file for the current or selected version. Exports keep live CMS media URLs as
-absolute site URLs, use CDN runtime imports, omit CMS presentation controls,
-and preserve interaction for Three.js, A-Frame, and C2 interactive pieces.
+Public piece pages expose `Download Piece`, which exports a portable ZIP bundle
+for the current or selected version. `index.html` is the single manual entry
+point; supporting runtime/media/source files load automatically from there. The
+export omits CMS presentation controls, preserves interaction for Three.js,
+A-Frame, and C2 interactive pieces, and is designed to be rehosted as ordinary
+static web files.

@@ -10,6 +10,51 @@
 
 None.
 
+## 2026-07-04 — Portable Piece ZIP Export With Single-Entry `index.html`
+
+### Decision
+Public piece downloads at `/pieces/{id}/download` now return ZIP bundles
+instead of raw HTML files, and `Download HTML` is renamed to `Download Piece`.
+The durable contract is that `index.html` is the only manual entry point a
+recipient should need to open. Supporting files may still exist in the bundle
+for editing and rehosting, but `index.html` must load the exported piece and
+its screenshot affordance without requiring the recipient to manually open a
+helper file first.
+
+### Scope
+- `public/app/controllers/PiecesController.php` now streams a ZIP export from
+  the existing route.
+- `public/app/helpers/piece-render.php` now assembles bundle exports with
+  `index.html`, editable source files, vendored runtimes, packaged media, and
+  direct-open-safe runtime/media embedding for the `index.html` path.
+- `public/app/views/pieces/show.php` exposes `Download Piece` on public piece
+  pages while keeping the public `Download PNG` action in place.
+- Project markdown now documents the ZIP bundle, the single-entry-point
+  contract, and the owner-maintained vendored runtime set.
+
+### Root Cause
+The earlier HTML-only export and then the first ZIP iteration both optimized
+for portability before accounting for browser `file://` restrictions. That left
+the direct-open path unable to guarantee screenshot/export behavior for some
+interactive pieces, even though the piece itself was packaged locally. The fix
+was to separate the editable/rehostable bundle shape from the runtime path used
+when the recipient opens `index.html` directly: the bundle can still include
+ordinary files, but the primary entry document must embed the specific runtime
+and supported CMS-owned media forms needed for direct local execution.
+
+### Verification
+- `php -l public/app/helpers/piece-render.php`
+- `php -l public/app/controllers/PiecesController.php`
+- `php -l public/app/views/pieces/show.php`
+- `git diff --check`
+- Bundle smoke tests confirmed:
+  - ZIP output contains `index.html`, editable source files, and vendored
+    runtime files
+  - generated `index.html` no longer references preview-helper files
+  - supported CMS media refs are embedded as data URLs for the direct-open path
+  - standalone Three.js exports bootstrap from vendored local sources without
+    CDN imports
+
 ## Project Profile
 
 <!-- Operational details for this project. Kept here, not in AGENTS.md,
@@ -276,13 +321,15 @@ remote URLs, scripts, iframes, arbitrary fetch/storage/navigation, and raw C2
 canvas context access remain blocked.
 
 Public piece pages now expose `GET /pieces/{id}/download`, returning a
-single-file HTML export for the current or selected version. Exports include
-engine CDN imports and rewrite CMS media paths to absolute site URLs. They are
-portable to another browser context with internet access, not offline bundles.
-Exports intentionally omit immersive/admin/embed controls. Three.js exports
-mirror the CMS viewer's interaction layer by instrumenting scene/camera/renderer
-creation and attaching OrbitControls; A-Frame and C2 interactive exports pass
-the live scene/canvas through so authored events remain interactive.
+ZIP bundle for the current or selected version. `index.html` is the single
+manual entry point, while supporting source/runtime/media files remain in the
+bundle for editing and rehosting. Exports intentionally omit
+immersive/admin/embed controls. Three.js exports mirror the CMS viewer's
+interaction layer by instrumenting scene/camera/renderer creation and
+attaching OrbitControls; A-Frame and C2 interactive exports pass the live
+scene/canvas through so authored events remain interactive; supported CMS
+media used by the direct-open path are embedded in a file-open-safe way so
+interactive exports can still take screenshots locally.
 
 ### Verification
 - `php -l public/app/helpers/piece-render.php`
