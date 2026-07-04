@@ -169,6 +169,21 @@ HTML/CSS/JS. The seeded templates demonstrate optional CMS media usage with
 background example, using engine-appropriate sizing rather than asset-tag
 dimensions.
 
+AI piece prompts can also name existing CMS media explicitly. Prompt language
+now treats image-style IDs and media-asset IDs as parallel inputs rather than
+implicitly interchangeable aliases:
+
+- `image ID 3`, `photo ID 3`, and `picture ID 3` authorize `/image/3`
+- `media asset ID 4` authorizes `/api/media-assets/4`
+- Mixed prompts such as `use image ID 3 and media asset ID 4` authorize both
+  route families in the same generated piece
+
+This is intentionally explicit. The system does not auto-convert an
+`/image/[id]` reference into `/api/media-assets/[id]`, or vice versa, just
+because the underlying image might correspond to both records. The prompt form
+chosen by the author determines which same-origin CMS path family the model may
+introduce.
+
 ## Deployed File Layout
 
 The production document root should include:

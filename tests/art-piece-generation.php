@@ -695,22 +695,37 @@ test('A-Frame system prompt exists', function () {
 
 test('generation prompts document same-origin CMS media for each engine', function () {
     assert_contains(art_piece_generation_system_prompt('p5'), "p.loadImage('/image/{id}')");
+    assert_contains(art_piece_generation_system_prompt('p5'), "p.loadImage('/api/media-assets/{id}')");
     assert_contains(art_piece_generation_system_prompt('p5'), 'drawImageCover');
     assert_contains(art_piece_generation_system_prompt('three'), "new THREE.TextureLoader().load('/image/{id}')");
+    assert_contains(art_piece_generation_system_prompt('three'), "new THREE.TextureLoader().load('/api/media-assets/{id}')");
     assert_contains(art_piece_generation_system_prompt('three'), 'coverTexture');
     assert_contains(art_piece_generation_system_prompt('c2'), "runtime.loadImage('/image/{id}')");
+    assert_contains(art_piece_generation_system_prompt('c2'), "runtime.loadImage('/api/media-assets/{id}')");
     assert_contains(art_piece_generation_system_prompt('c2'), 'runtime.drawImageCover');
     assert_contains(art_piece_generation_system_prompt('c2_interactive'), "runtime.loadImage('/image/{id}')");
+    assert_contains(art_piece_generation_system_prompt('c2_interactive'), "runtime.loadImage('/api/media-assets/{id}')");
     assert_contains(art_piece_generation_system_prompt('c2_interactive'), 'runtime.drawImageCover');
     assert_contains(art_piece_generation_system_prompt('svg'), '<image href="/image/{id}"');
+    assert_contains(art_piece_generation_system_prompt('svg'), '<image href="/api/media-assets/{id}"');
+    assert_contains(art_piece_generation_system_prompt('aframe'), '<img id="asset-id" src="/image/{id}">');
+    assert_contains(art_piece_generation_system_prompt('aframe'), '<img id="asset-id" src="/api/media-assets/{id}">');
 });
 
-test('prompt media intent parser accepts loose image ID phrasing', function () {
+test('prompt media intent parser accepts loose image and photo ID phrasing', function () {
     assert_eq(art_piece_extract_prompt_media_refs('integrate image ID 94 as the background'), ['/image/94']);
     assert_eq(art_piece_extract_prompt_media_refs('integrate image with an ID of 94 as the background'), ['/image/94']);
     assert_eq(art_piece_extract_prompt_media_refs('integrate image 94 as the background'), ['/image/94']);
+    assert_eq(art_piece_extract_prompt_media_refs('integrate photo ID 94 as the background'), ['/image/94']);
+    assert_eq(art_piece_extract_prompt_media_refs('apply picture ID 94 as the texture'), ['/image/94']);
     assert_eq(art_piece_extract_prompt_media_refs('use /image/94 and /media/12'), ['/image/94', '/media/12']);
+});
+
+test('prompt media intent parser accepts media asset ID phrasing', function () {
     assert_eq(art_piece_extract_prompt_media_refs('use media asset ID 77'), ['/api/media-assets/77']);
+    assert_eq(art_piece_extract_prompt_media_refs('use media asset with an ID of 77 as the background'), ['/api/media-assets/77']);
+    assert_eq(art_piece_extract_prompt_media_refs('apply media asset 77 as the texture'), ['/api/media-assets/77']);
+    assert_eq(art_piece_extract_prompt_media_refs('use image ID 3 and media asset ID 4'), ['/image/3', '/api/media-assets/4']);
 });
 
 test('prompt media policy rejects unprompted CMS media', function () {
@@ -730,11 +745,44 @@ test('prompt media policy accepts image with an ID phrasing', function () {
     validate_art_piece_prompted_media_refs($allowed, '<div id="canvas-container"></div>', '', "window.sketch = (p) => { p.preload = () => { p.loadImage('/image/94'); }; };", [], true);
 });
 
+test('prompt media policy accepts media asset with an ID phrasing', function () {
+    $allowed = art_piece_extract_prompt_media_refs('apply media asset ID 94 as the texture');
+    validate_art_piece_prompted_media_refs($allowed, '<div id="canvas-container"></div>', '', "window.sketch = (p) => { p.preload = () => { p.loadImage('/api/media-assets/94'); }; };", [], true);
+});
+
 test('prompt media policy rejects a different image than the one requested', function () {
     $allowed = art_piece_extract_prompt_media_refs('make image ID 94 the background');
     assert_throws(
         fn() => validate_art_piece_prompted_media_refs($allowed, '<div id="canvas-container"></div>', '', "window.sketch = (p) => { p.preload = () => { p.loadImage('/image/3'); }; };", [], true),
         'Unexpected reference'
+    );
+});
+
+test('prompt media policy rejects media asset path when only image/photo prompt was given', function () {
+    $allowed = art_piece_extract_prompt_media_refs('make photo ID 94 the background');
+    assert_throws(
+        fn() => validate_art_piece_prompted_media_refs($allowed, '<div id="canvas-container"></div>', '', "window.sketch = (p) => { p.preload = () => { p.loadImage('/api/media-assets/94'); }; };", [], true),
+        'Unexpected reference'
+    );
+});
+
+test('prompt media policy rejects image path when only media asset prompt was given', function () {
+    $allowed = art_piece_extract_prompt_media_refs('apply media asset ID 94 as the texture');
+    assert_throws(
+        fn() => validate_art_piece_prompted_media_refs($allowed, '<div id="canvas-container"></div>', '', "window.sketch = (p) => { p.preload = () => { p.loadImage('/image/94'); }; };", [], true),
+        'Unexpected reference'
+    );
+});
+
+test('prompt media policy accepts both route families when both are explicitly requested', function () {
+    $allowed = art_piece_extract_prompt_media_refs('use image ID 94 and media asset ID 77 in the piece');
+    validate_art_piece_prompted_media_refs(
+        $allowed,
+        '<div id="canvas-container"></div>',
+        '',
+        "window.sketch = (p) => { p.preload = () => { p.loadImage('/image/94'); p.loadImage('/api/media-assets/77'); }; };",
+        [],
+        true
     );
 });
 

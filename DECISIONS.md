@@ -90,6 +90,36 @@ site kept working.
   (`DeviceOrientationControls` test parser failure and missing
   `requestGyroCalibration()` expectation)
 
+## 2026-07-04 — Parallel Prompt Support For Image/Photo IDs And Media Asset IDs
+
+### Decision
+AI art-piece prompting now treats `image/photo/picture ID` and `media asset ID`
+as parallel first-class prompt language across generation, regeneration, and
+refine validation. The durable rule is explicit-route authorization, not hidden
+identity inference: image-style wording authorizes `/image/{id}`, media-asset
+wording authorizes `/api/media-assets/{id}`, and prompts that name both forms
+authorize both path families.
+
+### Scope
+- `public/app/helpers/art-piece-generation.php` keeps the shared media-policy
+  contract and now documents both route families directly in every engine's
+  system prompt where CMS media examples are shown.
+- `tests/art-piece-generation.php` locks in prompt parsing for `image ID`,
+  `photo ID`, `picture ID`, and `media asset ID`, plus the rule that one path
+  family does not automatically authorize the other unless both were named.
+- Project markdown now mirrors the same rule in `README.md`,
+  `docs/api.md`, and `docs/forms-and-templates.md`.
+
+### Non-Decision
+This is not a new aliasing layer between `media_files` and `media_assets`.
+Even if one visual asset may be reachable through both record families, the
+prompt must still name the exact family it wants to authorize. Any future
+cross-family identity mapping would be a separate design decision.
+
+### Verification
+- `php tests/art-piece-generation.php` — 115 passed
+- `git diff --check`
+
 ## 2026-07-03 — Immersive Gallery Runtime Contract Parity For C2.js
 
 ### Decision

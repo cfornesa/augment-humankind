@@ -322,6 +322,24 @@ through same-origin paths:
 - `/media/[id-or-path]`
 - `/api/media-assets/[id]`
 
+Prompt parsing and validation treat the two CMS image families explicitly:
+
+- `image ID [n]`, `photo ID [n]`, and `picture ID [n]` authorize only
+  `/image/[n]`
+- `media asset ID [n]` authorizes only `/api/media-assets/[n]`
+- A prompt that explicitly names both forms authorizes both path families
+- The validator does not infer that `/image/[n]` and `/api/media-assets/[n]`
+  are interchangeable, even if they may correspond to the same underlying
+  media visually
+
+Examples:
+
+- `use image ID 3 as the background` permits `/image/3`
+- `apply photo ID 4 as the texture` permits `/image/4`
+- `use media asset ID 5 as the background` permits `/api/media-assets/5`
+- `use image ID 3 and media asset ID 5` permits both `/image/3` and
+  `/api/media-assets/5`
+
 Engine-specific safe media examples:
 
 - p5.js: `p.preload = () => { img = p.loadImage('/image/2'); };`
@@ -335,6 +353,12 @@ Engine-specific safe media examples:
 - SVG: `<image href="/image/2" x="0" y="0" width="800" height="600" />`
 - C2.js: `runtime.loadImage('/image/2')`, `runtime.drawImage(...)`, and
   `runtime.drawImageCover(...)`
+
+Every engine's system prompt now documents both families where relevant, for
+example `/image/{id}` for image/photo prompts and `/api/media-assets/{id}` for
+media-asset prompts. This keeps generation, regeneration, and refine guidance
+aligned with the shared validator rather than treating media-asset IDs as an
+undocumented special case.
 
 Media asset declarations only define the source image. Rendered size belongs
 to the engine's drawing surface: p5/C2 draw calls use their width/height

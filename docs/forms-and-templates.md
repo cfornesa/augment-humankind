@@ -23,6 +23,17 @@ setup. Templates may optionally demonstrate existing CMS media:
 - `/image/2` is used as a resizable foreground/shape texture example.
 - `/image/3` is used as a full-frame background example.
 
+When generating or refining a piece from the admin UI, prompt language may
+explicitly request existing CMS media in parallel forms:
+
+- `image ID`, `photo ID`, and `picture ID` refer to `/image/[id]`
+- `media asset ID` refers to `/api/media-assets/[id]`
+
+These are parallel prompt affordances, not hidden aliases. If a prompt names
+only an image/photo ID, generation may not silently switch to the media-asset
+route. If a prompt names only a media asset ID, generation may not silently
+switch to `/image/[id]`. Naming both forms explicitly allows both.
+
 Image assets define source media only. Rendered size belongs to the engine's
 drawing surface: p5/C2 draw calls, SVG `<image>` attributes, Three.js geometry
 or camera-frame planes, and A-Frame rendered entity dimensions. Full-frame

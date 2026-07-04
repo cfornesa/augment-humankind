@@ -101,6 +101,8 @@ Source: DECISIONS.md 2026-07-02 Portable-CMS Setup Readiness Remediation (commit
 
 2026-07-03 DECISION AI piece generation may only introduce CMS media when the prompt explicitly names the exact image/media ID or path; downloaded HTML exports rewrite root-relative and relative CMS media refs to absolute URLs on the host serving the download.
 
+2026-07-04 DECISION AI piece prompting treats `image/photo/picture ID` and `media asset ID` as parallel but distinct media-authoring language: image/photo/picture wording authorizes `/image/{id}`, media-asset wording authorizes `/api/media-assets/{id}`, and prompts must name both explicitly to authorize both families. No hidden ID aliasing layer exists between those route families.
+
 2026-07-03 DECISION Persisted `generation_mode` is the primary art-piece runtime contract whenever the column exists; shared art-piece/version SQL must stay schema-compatible during rollout and fall back to engine-based behavior when `generation_mode` is absent.
 
 2026-07-03 DECISION Legacy interactive C2 versions are systematically upgraded by setup-database: every saved `art_piece_versions` row with `engine='c2'`, empty/plain `generation_mode`, and code matching the existing `art_piece_c2_interactive_pattern()` is backfilled to `generation_mode='c2_interactive'`. Ambiguous non-matches stay on compatibility fallback.
