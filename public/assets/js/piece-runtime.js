@@ -62,6 +62,25 @@ function sizeCanvas(canvas) {
   canvas.width = w;
   canvas.height = h;
 }
+// Sizes the canvas *element box* to the largest bitmap-aspect rectangle that
+// fits its container (same geometry object-fit:contain produced), so
+// getBoundingClientRect() matches the visible bitmap exactly. Generated
+// c2_interactive sketches map pointer coordinates with
+// (clientX - rect.left) * (canvas.width / rect.width) — the formula the
+// generation prompt prescribes — which is only correct when the element box
+// IS the bitmap box. With the previous width/height:100% + object-fit:contain
+// styling, non-16:9 containers letterboxed the bitmap inside the element and
+// every hit-test was skewed by the bar size (confirmed on piece 103: ±36
+// canvas px in a 896×560 box — larger than its drag targets).
+function fitCanvasBox(canvas) {
+  const host = canvas.parentElement;
+  if (!host) return;
+  const hw = Math.max(1, host.clientWidth || window.innerWidth || 1280);
+  const hh = Math.max(1, host.clientHeight || window.innerHeight || 720);
+  const scale = Math.min(hw / canvas.width, hh / canvas.height);
+  canvas.style.width = (canvas.width * scale) + 'px';
+  canvas.style.height = (canvas.height * scale) + 'px';
+}
 function isCmsMediaPath(src) {
   return typeof src === 'string' && /^\/(?:image\/[0-9]+|api\/media-assets\/[0-9]+|media\/[A-Za-z0-9._~/%+-]+)(?:\?[A-Za-z0-9._~%=&+-]*)?$/.test(src);
 }
@@ -369,13 +388,29 @@ function bootCanvasRuntime(extra) {
   // width:height ratio in canvas-pixel-space looked square in one surface,
   // oval in another, and severely vertically elongated in a third — same
   // underlying drawing, different non-uniform CSS stretch per box.
-  // object-fit:contain preserves the canvas's native aspect ratio when
-  // scaling to fit any container, eliminating that distortion.
-  canvas.style.cssText = PIECE_ENGINE === 'c2'
-    ? 'display:block;width:100%;height:100%;object-fit:contain;object-position:center;'
-    : 'display:block;width:100%;height:100%;';
+  // fitCanvasBox() preserves the canvas's native aspect ratio when scaling to
+  // fit any container (same contain geometry as before), while also keeping
+  // the element box identical to the visible bitmap so the pointer-coordinate
+  // formula generated c2_interactive sketches use stays accurate — see the
+  // fitCanvasBox() comment. touch-action:none keeps pointermove drags working
+  // on touchscreens instead of being swallowed by scroll gestures.
+  if (PIECE_ENGINE === 'c2') {
+    canvas.style.cssText = 'display:block;touch-action:none;';
+    const host = canvas.parentElement;
+    if (host) {
+      host.style.display = 'flex';
+      host.style.alignItems = 'center';
+      host.style.justifyContent = 'center';
+    }
+  } else {
+    canvas.style.cssText = 'display:block;width:100%;height:100%;';
+  }
   sizeCanvas(canvas);
-  window.addEventListener('resize', () => sizeCanvas(canvas));
+  if (PIECE_ENGINE === 'c2') fitCanvasBox(canvas);
+  window.addEventListener('resize', () => {
+    sizeCanvas(canvas);
+    if (PIECE_ENGINE === 'c2') fitCanvasBox(canvas);
+  });
   // Only the piece's own first real draw means there's something worth
   // capturing — wrap the startFrame handed to the sketch so the readiness
   // signal fires after its first tick actually runs, not merely once
@@ -393,13 +428,30 @@ function bootCanvasRuntime(extra) {
     image.decoding = 'async';
     image.loading = 'eager';
     image.dataset.creatrLoaded = '0';
-    image.onload = () => { image.dataset.creatrLoaded = '1'; };
-    image.onerror = () => showPieceError('Could not load CMS media asset: ' + src);
+    // Generated sketches call this every way models guess at: `await
+    // runtime.loadImage(...)`, `runtime.loadImage(...).then(...)`, and plain
+    // `const img = runtime.loadImage(...)` handed straight to the draw
+    // helpers. Return a Promise (so await/.then work natively) with the
+    // element attached so the draw helpers can unwrap it synchronously.
+    const loaded = new Promise((resolve, reject) => {
+      image.onload = () => { image.dataset.creatrLoaded = '1'; resolve(image); };
+      image.onerror = () => {
+        const message = 'Could not load CMS media asset: ' + src;
+        showPieceError(message);
+        reject(new Error(message));
+      };
+    });
+    loaded.catch(() => {}); // already surfaced via showPieceError; avoid a duplicate unhandledrejection overlay
+    loaded.__creatrImage = image;
     image.src = src;
-    imageCache.set(src, image);
-    return image;
+    imageCache.set(src, loaded);
+    return loaded;
+  }
+  function resolveImageRef(image) {
+    return image && image.__creatrImage ? image.__creatrImage : image;
   }
   function drawImage(image, x, y, width, height) {
+    image = resolveImageRef(image);
     if (!mediaContext || !image || image.dataset?.creatrLoaded !== '1') return false;
     try {
       mediaContext.drawImage(image, x, y, width, height);
@@ -410,6 +462,7 @@ function bootCanvasRuntime(extra) {
     }
   }
   function drawImageCover(image, x, y, width, height) {
+    image = resolveImageRef(image);
     if (!mediaContext || !image || image.dataset?.creatrLoaded !== '1') return false;
     const sourceWidth = image.naturalWidth || image.width;
     const sourceHeight = image.naturalHeight || image.height;

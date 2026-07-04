@@ -107,7 +107,8 @@ Source: DECISIONS.md 2026-07-02 Portable-CMS Setup Readiness Remediation (commit
 
 2026-07-03 CORRECTION The “This site isn’t configured yet / database connection failed” screen in `public/index.php` must be reserved for real connection-class PDO failures only; piece-route schema/query regressions can otherwise masquerade as whole-site DB outages and mislead debugging.
 
-# UI & Editor Patterns
+2026-07-03 DECISION C2 runtime pointer contract: the c2 canvas element box must stay aspect-locked to its bitmap (`fitCanvasBox()` in piece-runtime.js, guarded by tests/three-runtime-consistency.php) — reintroducing `object-fit`/stretch styling silently breaks `c2_interactive` hit-testing, because generated sketches map pointer coordinates with `(clientX - rect.left) * (canvas.width / rect.width)` per the generation prompt, which assumes the element rect IS the visible bitmap. Perceived interactivity differences between models (e.g. Minimax M3 piece 95 vs Mistral Vibe piece 103) are interaction-style choices — global pointer tracking with a cursor affordance vs precision hit-test dragging — not generation failures; the `c2_interactive` preflight already guarantees interaction hooks exist.
+Source: DECISIONS.md 2026-07-03 C2.js Interactive pointer-coordinate fix.
 
 2026-06-15 NOTE The `<dialog>`-based `.media-picker-*` pattern is the standard for all TipTap insertion UIs (media, pieces/exhibits, iframe, AI profile) — never `window.prompt()`.
 

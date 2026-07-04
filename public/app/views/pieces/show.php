@@ -6,14 +6,7 @@ require dirname(__DIR__) . '/partials/header.php';
 
 $version = $version ?? null;
 $hasCode = $version && (!empty($version['html_code']) || !empty($version['css_code']) || !empty($version['generated_code']));
-$engineLabel = match (strtolower((string) ($version['engine'] ?? $piece['engine'] ?? 'p5'))) {
-    'p5' => 'P5.js',
-    'c2' => 'C2.js',
-    'three' => 'Three.js',
-    'svg' => 'SVG',
-    'aframe' => 'A-Frame',
-    default => strtoupper((string) ($version['engine'] ?? $piece['engine'] ?? '')),
-};
+$engineLabel = art_piece_effective_generation_mode_label($piece, is_array($version) ? $version : null);
 ?>
 <section class="page-hero" aria-labelledby="piece-title">
     <p class="eyebrow">Art Piece</p>

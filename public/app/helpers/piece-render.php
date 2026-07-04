@@ -256,18 +256,31 @@ try {
     image.decoding = 'async';
     image.loading = 'eager';
     image.dataset.creatrLoaded = '0';
-    image.onload = () => { image.dataset.creatrLoaded = '1'; };
-    image.onerror = () => showPieceError('Could not load image asset: ' + src);
+    const loaded = new Promise((resolve, reject) => {
+      image.onload = () => { image.dataset.creatrLoaded = '1'; resolve(image); };
+      image.onerror = () => {
+        const message = 'Could not load image asset: ' + src;
+        showPieceError(message);
+        reject(new Error(message));
+      };
+    });
+    loaded.catch(() => {});
+    loaded.__creatrImage = image;
     image.src = src;
-    imageCache.set(src, image);
-    return image;
+    imageCache.set(src, loaded);
+    return loaded;
+  }
+  function resolveImageRef(image) {
+    return image && image.__creatrImage ? image.__creatrImage : image;
   }
   function drawImage(image, x, y, width, height) {
+    image = resolveImageRef(image);
     if (!image || image.dataset?.creatrLoaded !== '1') return false;
     context.drawImage(image, x, y, width, height);
     return true;
   }
   function drawImageCover(image, x, y, width, height) {
+    image = resolveImageRef(image);
     if (!image || image.dataset?.creatrLoaded !== '1') return false;
     const sourceWidth = image.naturalWidth || image.width;
     const sourceHeight = image.naturalHeight || image.height;
@@ -280,6 +293,7 @@ try {
     context.drawImage(image, sx, sy, sw, sh, x, y, width, height);
     return true;
   }
+  canvas.style.touchAction = 'none';
   sizeCanvas();
   window.addEventListener('resize', sizeCanvas);
   if (typeof window.sketch === 'function') window.sketch({ c2: window.c2, canvas, startFrame, loadImage, drawImage, drawImageCover });

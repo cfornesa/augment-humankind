@@ -59,6 +59,12 @@ function assert_not_contains(string $haystack, string $needle, string $msg = '')
     }
 }
 
+function assert_true(bool $actual, string $msg = ''): void {
+    if ($actual !== true) {
+        throw new RuntimeException($msg !== '' ? $msg : 'Expected condition to be true.');
+    }
+}
+
 function assert_throws(callable $fn, string $expectedMsg = ''): void {
     try {
         $fn();
@@ -662,6 +668,7 @@ test('c2 interactive mode persists as c2 engine', function () {
 test('generation mode helpers preserve explicit c2 interactive mode and legacy fallback', function () {
     assert_eq(art_piece_normalize_generation_mode('c2_interactive', 'c2'), 'c2_interactive');
     assert_eq(art_piece_version_generation_mode(['generation_mode' => 'c2_interactive', 'engine' => 'c2']), 'c2_interactive');
+    assert_true(art_piece_is_c2_interactive_code("canvas.addEventListener('pointerdown', () => {});"), 'Expected direct pointer listener to count as interactive C2 code.');
     assert_eq(
         art_piece_version_generation_mode([
             'engine' => 'c2',
@@ -807,6 +814,31 @@ test('C2 preflight rejects remote runtime media loading', function () {
         fn() => art_piece_preflight_document('c2', '<canvas id="piece-canvas"></canvas>', '', "window.sketch = (runtime) => { runtime.loadImage('https://example.com/x.png'); };"),
         'same-origin CMS media'
     );
+});
+
+test('C2 interactive preflight rejects code with no direct interaction hooks', function () {
+    assert_throws(
+        fn() => art_piece_preflight_document(
+            'c2',
+            '<canvas id="piece-canvas"></canvas>',
+            '',
+            "window.sketch = (runtime) => { const { c2, canvas, startFrame } = runtime; const renderer = new c2.Renderer(canvas); startFrame(() => { renderer.clear('#000'); renderer.circle(canvas.width / 2, canvas.height / 2, 40); }); };",
+            'c2_interactive'
+        ),
+        'requires explicit pointer, mouse, touch, or click interaction hooks'
+    );
+});
+
+test('C2 interactive preflight accepts code with direct interaction hooks', function () {
+    $js = "window.sketch = (runtime) => { const { c2, canvas, startFrame } = runtime; const renderer = new c2.Renderer(canvas); let burst = 0; canvas.addEventListener('pointerdown', () => { burst = 1; }); startFrame(() => { renderer.clear('#000'); renderer.circle(canvas.width / 2, canvas.height / 2, 40 + burst * 20); burst *= 0.96; }); };";
+    $result = art_piece_preflight_document(
+        'c2',
+        '<canvas id="piece-canvas"></canvas>',
+        '',
+        $js,
+        'c2_interactive'
+    );
+    assert_contains($result['js'], "canvas.addEventListener('pointerdown'");
 });
 
 test('SVG preflight accepts same-origin CMS image elements', function () {

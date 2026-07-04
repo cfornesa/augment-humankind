@@ -471,6 +471,14 @@ test('shared capture module combines stricter readiness with stable-frame accept
     assert_contains($captureModule, 'function captureStableFrame');
     assert_contains($captureModule, 'async function analyzeFrame(dataUrl)');
     assert_contains($captureModule, 'analysis.blankLike');
+    assert_contains($captureModule, 'var totalLumaSquared = 0;');
+    assert_contains($captureModule, 'var lumaStdDev = Math.sqrt(lumaVariance);');
+    assert_contains($captureModule, 'var flatLowInfo = averageAlpha >= 0.98');
+    assert_contains($captureModule, '&& lumaRange <= 6');
+    assert_contains($captureModule, '&& lumaStdDev <= 1.5');
+    assert_contains($captureModule, '&& nonDarkPixelRatio <= 0.01;');
+    assert_contains($captureModule, '|| flatLowInfo;');
+    assert_contains($captureModule, 'flatLowInfo: flatLowInfo,');
     assert_contains($captureModule, 'Piece kept producing blank or near-blank frames instead of a usable thumbnail.');
     assert_contains($captureModule, "acceptedBy: 'stable-rendered-frame'");
     assert_contains($captureModule, 'Piece kept rendering, but its thumbnail never converged to a stable frame.');
@@ -538,9 +546,12 @@ test('saved versions and immersive surfaces treat persisted generation mode as p
     assert_contains($versionModel, "return ah_column_exists('art_piece_versions', 'generation_mode');");
     assert_contains($pieceModel, 'art_piece_version_select_columns(self::versionHasGenerationMode())');
     assert_contains($pieceModel, "return ah_column_exists('art_piece_versions', 'generation_mode');");
+    assert_contains($pieceModel, 'public static function searchFilteredByGenerationMode(');
     assert_contains($immersivePiece, '$generationMode = art_piece_version_generation_mode($version, $piece);');
+    assert_contains($immersivePiece, '$engineLabel = art_piece_generation_mode_label($generationMode);');
     assert_contains($immersivePiece, '$c2Interactive = $generationMode === \'c2_interactive\';');
     assert_contains($immersiveCollection, '$generationMode = art_piece_version_generation_mode($version, $piece);');
+    assert_contains($immersiveCollection, '$itemEngineLabel = art_piece_generation_mode_label($generationMode);');
     assert_contains($immersiveCollection, "in_array(\$generationMode, ['three', 'aframe', 'c2_interactive'], true)");
 });
 
@@ -552,6 +563,39 @@ test('admin Pieces UI exposes C2.js Interactive as a first-class label and filte
     assert_contains($piecesIndex, 'art_piece_generation_mode_label($effectiveGenerationMode)');
     assert_contains($piecesController, "array_merge(art_piece_supported_engines(), ['c2_interactive'])");
     assert_contains($piecesController, "if (\$engine === 'c2_interactive')");
+});
+
+test('public piece surfaces use effective generation mode labels and filters', function () {
+    $piecesController = file_get_contents(__DIR__ . '/../public/app/controllers/PiecesController.php');
+    $portfolioController = file_get_contents(__DIR__ . '/../public/app/controllers/PortfolioController.php');
+    $piecesIndex = file_get_contents(__DIR__ . '/../public/app/views/pieces/index.php');
+    $pieceCard = file_get_contents(__DIR__ . '/../public/app/views/pieces/_piece-card.php');
+    $pieceShow = file_get_contents(__DIR__ . '/../public/app/views/pieces/show.php');
+    $archiveCards = file_get_contents(__DIR__ . '/../public/app/views/portfolio/archive-cards.php');
+    $portfolioCategory = file_get_contents(__DIR__ . '/../public/app/views/portfolio/category.php');
+    assert_contains($piecesController, "array_merge(art_piece_supported_engines(), ['c2_interactive'])");
+    assert_contains($piecesController, 'PlatformArtPiece::searchFilteredByGenerationMode(');
+    assert_contains($portfolioController, "array_merge(art_piece_supported_engines(), ['c2_interactive'])");
+    assert_contains($portfolioController, 'PlatformArtPiece::searchFilteredByGenerationMode(');
+    assert_contains($piecesIndex, "'c2_interactive' => 'C2.js Interactive'");
+    assert_contains($pieceCard, 'art_piece_effective_generation_mode_label($piece)');
+    assert_contains($pieceShow, 'art_piece_effective_generation_mode_label($piece, is_array($version) ? $version : null)');
+    assert_contains($archiveCards, 'art_piece_effective_generation_mode_label($item)');
+    assert_contains($portfolioCategory, 'art_piece_effective_generation_mode_label($piece)');
+});
+
+test('AI generation and regenerate enforce selected generation mode during validation', function () {
+    $controller = file_get_contents(__DIR__ . '/../public/app/controllers/Admin/PiecesAdminController.php');
+    $helper = file_get_contents(__DIR__ . '/../public/app/helpers/art-piece-generation.php');
+    $preview = file_get_contents(__DIR__ . '/../public/app/views/admin/pieces/generate-preview.php');
+    assert_contains($helper, 'function art_piece_is_c2_interactive_code(string $code, ?string $html = null): bool');
+    assert_contains($helper, "Selected C2.js Interactive mode requires explicit pointer, mouse, touch, or click interaction hooks in the generated code.");
+    assert_contains($controller, 'art_piece_preflight_document($engine, $html, $css, $js, $generationMode);');
+    assert_contains($controller, 'art_piece_preflight_document($engine, $extractedHtml, $extractedCss, $extractedJs, $generationMode);');
+    assert_contains($controller, 'art_piece_preflight_document($engine, $extractedHtml, $extractedCss, $extractedJs, $persistedGenerationMode);');
+    assert_contains($controller, '$systemPrompt = art_piece_refine_system_prompt($generationMode);');
+    assert_contains($controller, '$systemPrompt = art_piece_refine_system_prompt($persistedGenerationMode);');
+    assert_contains($preview, 'generation_mode: generationModeField ? generationModeField.value');
 });
 
 echo "\n=== CreatrImmersiveImage embedded Expand button (iOS Safari) ===\n";
@@ -585,17 +629,70 @@ test('sizeCanvas gives c2 a fixed canonical intrinsic resolution, not container-
     assert_contains($sizeCanvasBody, 'canvas.height = 720');
 });
 
-test('c2 canvas CSS preserves aspect ratio via object-fit instead of stretching', function () use ($runtime) {
+test('c2 canvas element box is aspect-locked to the bitmap (fitCanvasBox), not object-fit letterboxed', function () use ($runtime) {
     // Regression guard: a fixed intrinsic resolution alone isn't enough —
-    // plain width:100%;height:100% still non-uniformly stretches the
-    // canvas's 16:9 bitmap to fill whatever shape box each surface's
-    // container happens to be (a phone's narrow/tall public-view iframe vs.
-    // an already-16:9 thumbnail vs. a squarer admin preview pane).
-    // Confirmed live: the same piece looked square, oval, and severely
-    // vertically elongated across three surfaces from this exact cause.
+    // plain width:100%;height:100% non-uniformly stretches the canvas's
+    // 16:9 bitmap to fill whatever shape box each surface's container
+    // happens to be (a phone's narrow/tall public-view iframe vs. an
+    // already-16:9 thumbnail vs. a squarer admin preview pane). Confirmed
+    // live: the same piece looked square, oval, and severely vertically
+    // elongated across three surfaces from this exact cause.
+    // object-fit:contain fixed the distortion but broke c2_interactive
+    // pointer hit-testing: generated sketches map pointer coordinates with
+    // (clientX - rect.left) * (canvas.width / rect.width) — the formula the
+    // generation prompt prescribes — which assumes the element box IS the
+    // bitmap box, while object-fit letterboxes the bitmap inside it
+    // (confirmed on piece 103: ±36 canvas px of hit-test skew in a 896×560
+    // box, larger than its drag targets, i.e. "no interactivity").
+    // fitCanvasBox() sizes the element itself to the contained rectangle so
+    // both properties hold at once.
     $bootCanvasRuntimeBody = substr($runtime, strpos($runtime, 'function bootCanvasRuntime('));
     $bootCanvasRuntimeBody = substr($bootCanvasRuntimeBody, 0, strpos($bootCanvasRuntimeBody, "\n}\n"));
-    assert_contains($bootCanvasRuntimeBody, "object-fit:contain");
+    assert_not_contains($bootCanvasRuntimeBody, 'object-fit');
+    assert_not_contains($bootCanvasRuntimeBody, "'c2'\n    ? 'display:block;width:100%;height:100%");
+    assert_contains($bootCanvasRuntimeBody, 'fitCanvasBox(canvas)');
+    $fitBody = substr($runtime, strpos($runtime, 'function fitCanvasBox('));
+    $fitBody = substr($fitBody, 0, strpos($fitBody, "\n}\n"));
+    assert_contains($fitBody, 'Math.min(hw / canvas.width, hh / canvas.height)');
+    assert_contains($fitBody, "canvas.style.width");
+    assert_contains($fitBody, "canvas.style.height");
+});
+
+test('c2 canvas allows pointer drags on touchscreens (touch-action:none) in runtime and export', function () use ($runtime) {
+    // Without touch-action:none the browser claims pointermove sequences on
+    // the canvas for scroll/zoom gestures, so c2_interactive drag
+    // interactions silently do nothing on touch devices.
+    $bootCanvasRuntimeBody = substr($runtime, strpos($runtime, 'function bootCanvasRuntime('));
+    $bootCanvasRuntimeBody = substr($bootCanvasRuntimeBody, 0, strpos($bootCanvasRuntimeBody, "\n}\n"));
+    assert_contains($bootCanvasRuntimeBody, 'touch-action:none');
+    $render = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
+    assert_contains($render, "canvas.style.touchAction = 'none'");
+});
+
+test('c2 loadImage returns an awaitable/thenable Promise carrying the image element in all three runtimes', function () use ($runtime, $immersive) {
+    // Regression guard: generated sketches call loadImage every way models
+    // guess at — `await runtime.loadImage(...)`, `runtime.loadImage(...)
+    // .then(...)`, and plain `const img = runtime.loadImage(...)` handed
+    // straight to the draw helpers. The old contract returned a bare
+    // HTMLImageElement, so `.then(...)` crashed the sketch at boot
+    // (TypeError: runtime.loadImage(...).then is not a function — hit by a
+    // real Mistral Vibe generation). loadImage must return a Promise that
+    // resolves to the image on load, expose the element as __creatrImage,
+    // and the draw helpers must unwrap it via resolveImageRef() so the
+    // synchronous pass-through style keeps working.
+    $render = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
+    foreach (['piece-runtime.js' => $runtime, 'immersive-gallery.js' => $immersive, 'piece-render.php export bootstrap' => $render] as $label => $src) {
+        assert_contains($src, 'loaded.__creatrImage = image', "{$label}:");
+        assert_contains($src, 'imageCache.set(src, loaded)', "{$label}:");
+        assert_contains($src, 'return loaded', "{$label}:");
+        assert_contains($src, 'function resolveImageRef(image)', "{$label}:");
+        assert_contains($src, 'image = resolveImageRef(image)', "{$label}:");
+    }
+});
+
+test('c2 generation prompts document the loadImage Promise contract', function () {
+    $generation = file_get_contents(__DIR__ . '/../public/app/helpers/art-piece-generation.php');
+    assert_contains($generation, 'returns a Promise that resolves to the image once loaded');
 });
 
 test('immersive-gallery.js has no static top-level import beyond the two unconditionally-required Three.js dependencies', function () use ($immersive) {

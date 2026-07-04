@@ -41,7 +41,7 @@ ob_start();
                     ?>
                     <tr<?= $isDraftAttempt ? ' class="version-row-draft-attempt"' : '' ?>>
                         <td><?= (int) $version['version_number'] ?></td>
-                        <td><?= e(strtoupper($version['engine'] ?? 'p5')) ?></td>
+                        <td><?= e(art_piece_effective_generation_mode_label($piece, $version)) ?></td>
                         <td><?= e($version['generation_vendor'] ?? '—') ?></td>
                         <td><?= e($version['generation_model'] ?? '—') ?></td>
                         <td><?= e($version['ai_profile_name'] ?? '(Blank)') ?></td>

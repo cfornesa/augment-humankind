@@ -168,7 +168,7 @@ class PortfolioController
         if ($sort === 'relevance' && $q === '') {
             $sort = 'curated';
         }
-        if (!in_array($engine, art_piece_supported_engines(), true)) {
+        if (!in_array($engine, array_merge(art_piece_supported_engines(), ['c2_interactive']), true)) {
             $engine = '';
         }
         [$modelSort, $dir] = match ($sort) {
@@ -191,7 +191,7 @@ class PortfolioController
             heading: 'Art Pieces',
             intro: 'Generative art pieces and creative experiments from the migrated platform archive.',
             fetchItems: static fn (int $offset, int $limit): array => self::decoratePieces(
-                PlatformArtPiece::searchFiltered($q ?: null, $engine ?: null, $modelSort, $dir, $offset, $limit)
+                PlatformArtPiece::searchFilteredByGenerationMode($q ?: null, $engine ?: null, $modelSort, $dir, $offset, $limit)
             ),
             fetchUrl: $fetchUrl,
             showFilterBar: true,

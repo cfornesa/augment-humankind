@@ -4,22 +4,6 @@ declare(strict_types=1);
 
 // Hydrate fields for display
 $engine = strtolower((string) ($version['engine'] ?? $piece['engine'] ?? 'p5'));
-$engineLabel = match ($engine) {
-    'p5' => 'P5.js',
-    'c2' => 'C2.js',
-    'three' => 'Three.js',
-    'svg' => 'SVG',
-    'aframe' => 'A-Frame',
-    default => strtoupper($engine),
-};
-
-$isThree = ($engine === 'three');
-$versionNum = $version['version_number'] ?? 1;
-$prompt = $version['prompt'] ?? $piece['prompt'] ?? '';
-$description = $piece['description'] ?? '';
-$aiProfileName = $version['ai_profile_name'] ?? '(Blank)';
-$aiPersonaName = $version['ai_persona_name'] ?? '(Blank)';
-
 // Cache-busted by file mtime, matching the ?v= pattern already used for
 // piece-runtime.js (piece-render.php) — without this, browsers (WebKit/
 // Safari especially) can keep serving a stale cached copy of
@@ -34,7 +18,14 @@ $versionParam = $versionId ? '?version=' . $versionId : '';
 
 $embedUrl = $origin . '/embed/pieces/' . $pieceId . $versionParam;
 $generationMode = art_piece_version_generation_mode($version, $piece);
+$engineLabel = art_piece_generation_mode_label($generationMode);
 $c2Interactive = $generationMode === 'c2_interactive';
+$isThree = ($engine === 'three');
+$versionNum = $version['version_number'] ?? 1;
+$prompt = $version['prompt'] ?? $piece['prompt'] ?? '';
+$description = $piece['description'] ?? '';
+$aiProfileName = $version['ai_profile_name'] ?? '(Blank)';
+$aiPersonaName = $version['ai_persona_name'] ?? '(Blank)';
 
 // Build the three different iterations of embed codes mirroring legacy Node.js
 $titleSafe = htmlspecialchars($piece['title'] ?? 'Art piece', ENT_QUOTES | ENT_HTML5, 'UTF-8');

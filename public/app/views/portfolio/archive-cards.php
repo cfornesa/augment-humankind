@@ -77,7 +77,7 @@ foreach ($items as $item):
                 <?php if (!empty($item['summary'])): ?>
                     <span class="collection-card-desc"><?= e($item['summary']) ?></span>
                 <?php endif ?>
-                <span class="artwork-type"><?= e(strtoupper($item['current_version']['engine'] ?? $item['engine'] ?? 'p5')) ?></span>
+                <span class="artwork-type"><?= e(art_piece_effective_generation_mode_label($item)) ?></span>
             </div>
         </a>
 <?php

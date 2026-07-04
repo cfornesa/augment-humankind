@@ -8,6 +8,6 @@
     <?php endif; ?>
     <p class="piece-meta">
         <?= (int) ($piece['version_count'] ?? 0) ?> version<?= ((int) ($piece['version_count'] ?? 0) === 1) ? '' : 's' ?>
-        &middot; <?= e(strtoupper((string) ($piece['engine'] ?? 'p5'))) ?>
+        &middot; <?= e(art_piece_effective_generation_mode_label($piece)) ?>
     </p>
 </article>

@@ -170,6 +170,45 @@ class PlatformArtPiece
         return self::attachCategories(self::attachCurrentVersion($stmt->fetchAll()));
     }
 
+    public static function searchFilteredByGenerationMode(
+        ?string $q,
+        ?string $generationMode,
+        string $sort = 'newest',
+        string $dir = 'desc',
+        int $offset = 0,
+        int $limit = 500
+    ): array {
+        if ($generationMode !== 'c2_interactive') {
+            return self::searchFiltered($q, $generationMode, $sort, $dir, $offset, $limit);
+        }
+
+        $matches = [];
+        $rawOffset = 0;
+        $targetCount = $offset + $limit;
+        $chunkSize = max($limit * 3, 50);
+
+        while (count($matches) < $targetCount) {
+            $batch = self::searchFiltered($q, 'c2', $sort, $dir, $rawOffset, $chunkSize);
+            if ($batch === []) {
+                break;
+            }
+
+            foreach ($batch as $piece) {
+                if (art_piece_version_generation_mode((array) ($piece['current_version'] ?? []), $piece) === 'c2_interactive') {
+                    $matches[] = $piece;
+                }
+            }
+
+            $fetchedCount = count($batch);
+            $rawOffset += $fetchedCount;
+            if ($fetchedCount < $chunkSize) {
+                break;
+            }
+        }
+
+        return array_slice($matches, $offset, $limit);
+    }
+
     public static function allForAdmin(?string $q = null, ?string $engine = null, string $sort = 'sort_order', string $dir = 'asc'): array
     {
         if (!self::tableExists()) {

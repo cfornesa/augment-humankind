@@ -66,7 +66,7 @@ require __DIR__ . '/../partials/header.php';
                         </div>
                         <div class="artwork-meta">
                             <span class="artwork-title"><?= e($piece['title'] ?? 'Untitled') ?></span>
-                            <span class="artwork-type"><?= e(strtoupper($piece['current_version']['engine'] ?? $piece['engine'] ?? 'p5')) ?></span>
+                            <span class="artwork-type"><?= e(art_piece_effective_generation_mode_label($piece)) ?></span>
                         </div>
                     </a>
                 <?php endforeach ?>

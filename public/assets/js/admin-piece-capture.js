@@ -824,6 +824,7 @@
         var totalPixels = width * height;
         var totalLuma = 0;
         var totalAlpha = 0;
+        var totalLumaSquared = 0;
         var darkPixels = 0;
         var nonDarkPixels = 0;
         var minLuma = 255;
@@ -834,6 +835,7 @@
             var luma = ((pixels[i] * 0.2126) + (pixels[i + 1] * 0.7152) + (pixels[i + 2] * 0.0722)) * alpha;
             totalLuma += luma;
             totalAlpha += alpha;
+            totalLumaSquared += luma * luma;
             if (luma <= 8) {
                 darkPixels++;
             } else if (luma >= 24) {
@@ -848,9 +850,16 @@
         var darkPixelRatio = darkPixels / totalPixels;
         var nonDarkPixelRatio = nonDarkPixels / totalPixels;
         var lumaRange = maxLuma - minLuma;
+        var lumaVariance = Math.max(0, (totalLumaSquared / totalPixels) - (averageLuma * averageLuma));
+        var lumaStdDev = Math.sqrt(lumaVariance);
+        var flatLowInfo = averageAlpha >= 0.98
+            && lumaRange <= 6
+            && lumaStdDev <= 1.5
+            && nonDarkPixelRatio <= 0.01;
         var blankLike = averageAlpha < 0.05
             || (darkPixelRatio >= 0.985 && nonDarkPixelRatio <= 0.002 && lumaRange <= 10)
-            || (averageLuma <= 4 && nonDarkPixelRatio <= 0.0015 && lumaRange <= 8);
+            || (averageLuma <= 4 && nonDarkPixelRatio <= 0.0015 && lumaRange <= 8)
+            || flatLowInfo;
 
         return {
             averageLuma: averageLuma,
@@ -858,6 +867,8 @@
             darkPixelRatio: darkPixelRatio,
             nonDarkPixelRatio: nonDarkPixelRatio,
             lumaRange: lumaRange,
+            lumaStdDev: lumaStdDev,
+            flatLowInfo: flatLowInfo,
             blankLike: blankLike
         };
     }

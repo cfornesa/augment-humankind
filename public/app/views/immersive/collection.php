@@ -30,17 +30,10 @@ foreach ($items as $index => $item) {
         if ($engine === 'c2') {
             $hasC2 = true;
         }
-        $itemEngineLabel = match ($engine) {
-            'p5' => 'P5.js',
-            'c2' => 'C2.js',
-            'three' => 'Three.js',
-            'svg' => 'SVG',
-            'aframe' => 'A-Frame',
-            default => strtoupper($engine),
-        };
         $pieceDescription = $piece['description'] ?? '';
         $piecePrompt = (string) ($version['prompt'] ?? $piece['prompt'] ?? '');
         $generationMode = art_piece_version_generation_mode($version, $piece);
+        $itemEngineLabel = art_piece_generation_mode_label($generationMode);
         $immersiveHref = '/immersive/pieces/' . (int) ($piece['id'] ?? 0)
             . '?returnTo=' . rawurlencode($immersiveCollectionReturnTo);
         $pieceFullViewDescription = (string) ($pieceDescription !== '' ? $pieceDescription : $piecePrompt);

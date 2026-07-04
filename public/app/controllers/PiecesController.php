@@ -16,7 +16,7 @@ class PiecesController
         $sort   = (string) ($_GET['sort'] ?? 'curated');
         $offset = max(0, (int) ($_GET['offset'] ?? 0));
 
-        if (!in_array($engine, art_piece_supported_engines(), true)) {
+        if (!in_array($engine, array_merge(art_piece_supported_engines(), ['c2_interactive']), true)) {
             $engine = '';
         }
         if (!in_array($sort, ['curated', 'newest', 'oldest', 'az', 'za', 'unsorted', 'relevance'], true)) {
@@ -36,7 +36,7 @@ class PiecesController
             default     => ['sort_order', 'asc'],
         };
 
-        $batch = PlatformArtPiece::searchFiltered(
+        $batch = PlatformArtPiece::searchFilteredByGenerationMode(
             $q !== '' ? $q : null,
             $engine !== '' ? $engine : null,
             $modelSort,

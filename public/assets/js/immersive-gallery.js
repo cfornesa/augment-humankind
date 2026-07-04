@@ -1299,14 +1299,29 @@ function createC2MediaHelpers(canvas, onError = console.error) {
     image.decoding = "async";
     image.loading = "eager";
     image.dataset.creatrLoaded = "0";
-    image.onload = () => { image.dataset.creatrLoaded = "1"; };
-    image.onerror = () => reportError("Could not load CMS media asset: " + src);
+    // Same contract as piece-runtime.js loadImage: a Promise (await/.then
+    // both work) carrying the element for the draw helpers to unwrap.
+    const loaded = new Promise((resolve, reject) => {
+      image.onload = () => { image.dataset.creatrLoaded = "1"; resolve(image); };
+      image.onerror = () => {
+        const message = "Could not load CMS media asset: " + src;
+        reportError(message);
+        reject(new Error(message));
+      };
+    });
+    loaded.catch(() => {});
+    loaded.__creatrImage = image;
     image.src = src;
-    imageCache.set(src, image);
-    return image;
+    imageCache.set(src, loaded);
+    return loaded;
+  }
+
+  function resolveImageRef(image) {
+    return image && image.__creatrImage ? image.__creatrImage : image;
   }
 
   function drawImage(image, x, y, width, height) {
+    image = resolveImageRef(image);
     if (!mediaContext || !image || image.dataset?.creatrLoaded !== "1") return false;
     try {
       mediaContext.drawImage(image, x, y, width, height);
@@ -1318,6 +1333,7 @@ function createC2MediaHelpers(canvas, onError = console.error) {
   }
 
   function drawImageCover(image, x, y, width, height) {
+    image = resolveImageRef(image);
     if (!mediaContext || !image || image.dataset?.creatrLoaded !== "1") return false;
     const sourceWidth = image.naturalWidth || image.width;
     const sourceHeight = image.naturalHeight || image.height;

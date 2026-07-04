@@ -25,7 +25,7 @@ require dirname(__DIR__) . '/partials/header.php';
                     <fieldset class="filter-fieldset">
                         <legend>Type</legend>
                         <div class="filter-chip-group" role="group">
-                            <?php foreach (['' => 'All', 'p5' => 'P5.js', 'c2' => 'C2.js', 'three' => 'Three.js', 'svg' => 'SVG', 'aframe' => 'A-Frame'] as $val => $label): ?>
+                            <?php foreach (['' => 'All', 'p5' => 'P5.js', 'c2' => 'C2.js', 'c2_interactive' => 'C2.js Interactive', 'three' => 'Three.js', 'svg' => 'SVG', 'aframe' => 'A-Frame'] as $val => $label): ?>
                                 <label class="filter-chip <?= $engine === $val ? 'filter-chip-active' : '' ?>">
                                     <input type="radio" name="engine" value="<?= e($val) ?>"
                                         <?= $engine === $val ? 'checked' : '' ?>

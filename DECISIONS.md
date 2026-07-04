@@ -888,3 +888,52 @@ Following the user-approved implementation plan, updated the creative identity d
 Added details to `DESIGN.md` under the `Declared Preferences` section for `Color direction` and `Layout disposition`:
 - **Color direction:** Documented that light and dark mode colors are customizable via the admin panel (Site Identity → Design) using HSL variables mapped via CSS custom properties (`--sp-*`), enabling per-deployment palette overrides.
 - **Layout disposition:** Documented the availability of 10 built-in theme presets (e.g. Bauhaus/Pareto, Celestial, traditional, academic, minimalist, and comfort) which can be customized or extended with inject-ready custom CSS, JS, and HTML body wrappers stored in the database.
+
+## 2026-07-03 — C2.js Interactive pointer-coordinate fix (piece 103 "no interactivity")
+
+### Context
+User reported Mistral Vibe C2.js Interactive pieces (piece 103) showed no
+interactivity, suspecting weak-model generation. Investigation (one Explore
+agent loop over the generation pipeline, plus DB inspection of version 222
+and browser measurement) showed generation was CORRECT: the stored code has
+full pointerdown/move/up drag handlers and passed the c2_interactive
+preflight. The defect was a runtime/prompt contract mismatch: the generation
+prompt mandates `(clientX - rect.left) * (canvas.width / rect.width)` for
+pointer mapping, but piece-runtime.js letterboxed the fixed 1280×720 bitmap
+inside the element with object-fit:contain, skewing every hit-test by up to
+±36 canvas px in non-16:9 containers — larger than piece 103's drag targets.
+
+### Decision (user-approved plan)
+Aspect-lock the c2 canvas ELEMENT box to the bitmap instead of letterboxing
+inside it: new fitCanvasBox() in public/assets/js/piece-runtime.js sizes the
+element to the contained rectangle (host flex-centered), preserving the
+distortion fix that object-fit provided while making the prompt's formula
+exact on every surface. Also added touch-action:none (runtime + export
+bootstrap in piece-render.php) so touch drags aren't eaten by scrolling.
+Existing stored pieces become interactive with no regeneration and no prompt
+changes. Regression tests updated/added in tests/three-runtime-consistency.php.
+Verified: element rect 896×504 vs bitmap 1280×720 (exact 16:9 match), no
+piece-error, suites pass (110/0 generation; 79 pass consistency with only the
+2 pre-existing gyro failures also present on HEAD).
+
+## 2026-07-04 — C2 loadImage Promise contract (new-generation "then is not a function" crash)
+
+### Context
+A fresh Mistral Vibe C2 interactive generation crashed at boot with
+"TypeError: runtime.loadImage(...).then is not a function": the runtime's
+loadImage returned a bare HTMLImageElement, but models guess all three call
+styles (.then(), await, plain sync pass-through). Only the sync and await
+styles happened to work; .then crashed the sketch after passing preflight.
+
+### Decision
+loadImage in all three C2 runtimes (public/assets/js/piece-runtime.js,
+public/assets/js/immersive-gallery.js, piece_export_document bootstrap in
+public/app/helpers/piece-render.php) now returns a Promise that resolves to
+the image on load, carries the element as __creatrImage, and the draw
+helpers unwrap it via resolveImageRef() — making await, .then(), and sync
+pass-through all valid. DB survey of every stored C2 version confirmed only
+await/sync styles exist, so no stored piece regresses. Both C2 generation
+prompts now document the Promise contract. Regression tests added to
+tests/three-runtime-consistency.php; all three patterns verified end-to-end
+in-browser against the live runtime and /image/82 (marker + image pixels
+drawn, no piece-error).

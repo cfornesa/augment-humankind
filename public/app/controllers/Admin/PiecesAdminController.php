@@ -151,11 +151,12 @@ class PiecesAdminController
 
         try {
             $engine = (string) ($template['engine'] ?? 'p5');
+            $generationMode = art_piece_normalize_generation_mode((string) ($template['generation_mode'] ?? $engine), $engine);
             $html = (string) ($_POST['html_code'] ?? '');
             $css = (string) ($_POST['css_code'] ?? '');
             $js = (string) ($_POST['js_code'] ?? '');
             if (function_exists('art_piece_preflight_document')) {
-                art_piece_preflight_document($engine, $html, $css, $js);
+                art_piece_preflight_document($engine, $html, $css, $js, $generationMode);
             }
             ArtPieceStarterTemplate::update((int) $id, $_POST);
             header('Location: /admin/pieces?tab=templates');
@@ -181,6 +182,8 @@ class PiecesAdminController
 
             $code = self::resolveVersionCodeFromPost();
             if (self::hasAnyVersionCode($code)) {
+                $generationMode = self::requestedGenerationModeFromPost($data['engine']);
+                art_piece_preflight_document($data['engine'], $code['html_code'], $code['css_code'], $code['generated_code'], $generationMode);
                 $versionId = PlatformArtPieceVersion::create([
                     'art_piece_id' => $pieceId,
                     'version_number' => 1,
@@ -194,7 +197,7 @@ class PiecesAdminController
                     'engine' => $data['engine'],
                     'generation_vendor' => null,
                     'generation_model' => null,
-                    'generation_mode' => self::requestedGenerationModeFromPost($data['engine']),
+                    'generation_mode' => $generationMode,
                     'validation_status' => null,
                     'generation_attempt_count' => 0,
                     'notes' => null,
@@ -274,6 +277,8 @@ class PiecesAdminController
                     // Code is unchanged (a metadata-only save) — leave the
                     // current version's row and its AI attribution alone.
                 } else {
+                    $generationMode = self::resolveVersionGenerationModeForUpdate($data['engine'], $currentVersion);
+                    art_piece_preflight_document($data['engine'], $code['html_code'], $code['css_code'], $code['generated_code'], $generationMode);
                     // Every code-changing save creates a new version rather
                     // than overwriting the current one in place, so version
                     // history is meaningful and "Revert" has something to
@@ -292,7 +297,7 @@ class PiecesAdminController
                         'engine' => $data['engine'],
                         'generation_vendor' => $currentVersion['generation_vendor'] ?? null,
                         'generation_model' => $currentVersion['generation_model'] ?? null,
-                        'generation_mode' => self::resolveVersionGenerationModeForUpdate($data['engine'], $currentVersion),
+                        'generation_mode' => $generationMode,
                         'validation_status' => $currentVersion['validation_status'] ?? null,
                         'generation_attempt_count' => $currentVersion['generation_attempt_count'] ?? 0,
                         'notes' => null,
@@ -963,7 +968,7 @@ class PiecesAdminController
             $css = $blocks['cssCode'] ?? '';
             $js = $blocks['generatedCode'] ?? '';
 
-            art_piece_preflight_document($engine, $html, $css, $js);
+            art_piece_preflight_document($engine, $html, $css, $js, $generationMode);
             validate_art_piece_prompted_media_refs($allowedMediaRefs, $html, $css, $js, [], true);
 
             // Success!
@@ -1088,6 +1093,7 @@ class PiecesAdminController
             }
             $cssCode = trim($_POST['css_code'] ?? '') ?: null;
             $generatedCode = trim($_POST['generated_code'] ?? '') ?: null;
+            art_piece_preflight_document($engine, $htmlCode, $cssCode, $generatedCode, $generationMode);
 
             $owner = PlatformUser::owner();
             $ownerId = $owner ? $owner['id'] : null;
@@ -1214,7 +1220,8 @@ class PiecesAdminController
             $aiClient = new \App\Lib\Ai\AiProviderClient($profile['vendor'], $profile['model'], $profile['endpoint_kind'], $apiKey, timeoutOverride: 180.0);
             $persona = self::findPersonaById($personaId);
 
-            $systemPrompt = art_piece_refine_system_prompt($engine);
+            $generationMode = trim((string) ($input['generation_mode'] ?? $input['engine'] ?? $engine));
+            $systemPrompt = art_piece_refine_system_prompt($generationMode);
             if ($persona) {
                 $systemPrompt .= "\n\nPersona guidance:\n" . trim((string) $persona['system_prompt']) . "\n\nUse the persona to influence style and creative direction, but still obey all engine, safety, and output-format requirements.";
             }
@@ -1252,7 +1259,7 @@ class PiecesAdminController
             $extractedCss = art_piece_apply_refine_patches($css, $patches['css']);
             $extractedJs = art_piece_apply_refine_patches($js, $patches['js']);
 
-            art_piece_preflight_document($engine, $extractedHtml, $extractedCss, $extractedJs);
+            art_piece_preflight_document($engine, $extractedHtml, $extractedCss, $extractedJs, $generationMode);
             validate_art_piece_prompted_media_refs($allowedMediaRefs, $extractedHtml, $extractedCss, $extractedJs, $existingMediaRefs, false);
 
             if (in_array($engine, art_piece_canvas_managed_engines(), true) && !empty($patches['html'])) {
@@ -1677,7 +1684,7 @@ class PiecesAdminController
             $aiClient = new \App\Lib\Ai\AiProviderClient($profile['vendor'], $profile['model'], $profile['endpoint_kind'], $apiKey, timeoutOverride: 180.0);
             $persona = self::findPersonaById($personaId);
 
-            $systemPrompt = art_piece_refine_system_prompt($engine);
+            $systemPrompt = art_piece_refine_system_prompt($persistedGenerationMode);
             if ($persona) {
                 $systemPrompt .= "\n\nPersona guidance:\n" . trim((string) $persona['system_prompt']) . "\n\nUse the persona to influence style and creative direction, but still obey all engine, safety, and output-format requirements.";
             }
@@ -1753,7 +1760,7 @@ class PiecesAdminController
                 $profileId, $personaId, $sequenceToken, $attemptNumber, 'pending'
             );
 
-            art_piece_preflight_document($engine, $extractedHtml, $extractedCss, $extractedJs);
+            art_piece_preflight_document($engine, $extractedHtml, $extractedCss, $extractedJs, $persistedGenerationMode);
             validate_art_piece_prompted_media_refs($allowedMediaRefs, $extractedHtml, $extractedCss, $extractedJs, $existingMediaRefs, false);
 
             // Canvas Preservation Constraints

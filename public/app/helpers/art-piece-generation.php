@@ -85,6 +85,21 @@ function art_piece_version_generation_mode(array $version, array $piece = []): s
     return art_piece_normalize_generation_mode($engine, 'p5');
 }
 
+function art_piece_effective_generation_mode_label(array $piece, ?array $version = null): string
+{
+    return art_piece_generation_mode_label(
+        art_piece_version_generation_mode($version ?? (array) ($piece['current_version'] ?? []), $piece)
+    );
+}
+
+function art_piece_is_c2_interactive_code(string $code, ?string $html = null): bool
+{
+    return preg_match(
+        art_piece_c2_interactive_pattern(),
+        $code . "\n" . (string) $html
+    ) === 1;
+}
+
 function art_piece_version_base_columns(bool $includeGenerationMode = true): array
 {
     $columns = [
@@ -310,7 +325,7 @@ function art_piece_generation_system_prompt(string $engine): string
             "Do NOT use import statements for c2; the runtime provides it globally.",
             "The JS must assign its setup function to `window.sketch` like this: `window.sketch = (runtime) => { const { c2, canvas, startFrame } = runtime; const renderer = new c2.Renderer(canvas); startFrame((frameCount) => { renderer.clear(); /* draw */ }); };`. CALL `startFrame(handler)` inside the sketch to register the animation loop — do NOT return it or return an object containing it.",
             "The JS block must contain all functions needed by the sketch and must use only the supplied runtime helpers for image drawing.",
-            "Use CMS images ONLY when the user prompt explicitly names a specific image/media ID or path. When explicitly requested, load that exact path through the runtime helpers only, such as `const img = runtime.loadImage('/image/{id}');`, then draw it with `runtime.drawImage(...)` or `runtime.drawImageCover(...)`. Allowed media paths are `/image/{id}`, `/media/...`, and `/api/media-assets/{id}` only. Image assets define the source; `runtime.drawImage(...)` and `runtime.drawImageCover(...)` define rendered size. Do NOT call canvas.getContext(), drawImage(), new Image(), fetch(), or external URLs yourself.",
+            "Use CMS images ONLY when the user prompt explicitly names a specific image/media ID or path. When explicitly requested, load that exact path through the runtime helpers only, such as `const img = runtime.loadImage('/image/{id}');`, then draw it with `runtime.drawImage(...)` or `runtime.drawImageCover(...)`. `runtime.loadImage()` returns a Promise that resolves to the image once loaded — you may `await` it, chain `.then()`, or pass its return value directly to the draw helpers, which safely skip drawing until the image is loaded. Allowed media paths are `/image/{id}`, `/media/...`, and `/api/media-assets/{id}` only. Image assets define the source; `runtime.drawImage(...)` and `runtime.drawImageCover(...)` define rendered size. Do NOT call canvas.getContext(), drawImage(), new Image(), fetch(), or external URLs yourself.",
             "Do NOT include any <script src> tags — the runtime is already loaded, and any <script src> referencing an external file will cause a fatal error.",
             "Use `new c2.Renderer(canvas)` to create the renderer. Do NOT call any canvas-sizing or canvas-context methods directly.",
             "RENDERER API (call on the renderer object): renderer.clear(), renderer.clear(cssColor) [fills canvas with that color — use this for background fills], renderer.fill(cssColor), renderer.stroke(cssColor), renderer.fill(false), renderer.stroke(false), renderer.lineWidth(n), renderer.alpha(a), renderer.fontSize(n), renderer.fontFamily(f), renderer.textAlign(a), renderer.text(str,x,y). IMPORTANT: renderer.background(c) only sets a CSS style and does NOT paint the canvas — NEVER use renderer.background() for background fills; use renderer.clear('#color') instead.",
@@ -332,7 +347,7 @@ function art_piece_generation_system_prompt(string $engine): string
             "Do NOT use import statements for c2; the runtime provides it through the runtime object.",
             "The JS must assign its setup function to `window.sketch` like this: `window.sketch = (runtime) => { const { c2, canvas, startFrame } = runtime; const renderer = new c2.Renderer(canvas); startFrame((frameCount) => { renderer.clear('#101014'); /* draw */ }); };`. CALL `startFrame(handler)` inside the sketch to register the animation loop.",
             "The JS block must contain all functions needed by the sketch and must use only the supplied runtime helpers for image drawing.",
-            "Use CMS images ONLY when the user prompt explicitly names a specific image/media ID or path. When explicitly requested, load that exact path through the runtime helpers only, such as `const img = runtime.loadImage('/image/{id}');`, then draw it with `runtime.drawImage(...)` or `runtime.drawImageCover(...)`. Allowed media paths are `/image/{id}`, `/media/...`, and `/api/media-assets/{id}` only. Image assets define the source; `runtime.drawImage(...)` and `runtime.drawImageCover(...)` define rendered size. Do NOT call canvas.getContext(), drawImage(), new Image(), fetch(), or external URLs yourself.",
+            "Use CMS images ONLY when the user prompt explicitly names a specific image/media ID or path. When explicitly requested, load that exact path through the runtime helpers only, such as `const img = runtime.loadImage('/image/{id}');`, then draw it with `runtime.drawImage(...)` or `runtime.drawImageCover(...)`. `runtime.loadImage()` returns a Promise that resolves to the image once loaded — you may `await` it, chain `.then()`, or pass its return value directly to the draw helpers, which safely skip drawing until the image is loaded. Allowed media paths are `/image/{id}`, `/media/...`, and `/api/media-assets/{id}` only. Image assets define the source; `runtime.drawImage(...)` and `runtime.drawImageCover(...)` define rendered size. Do NOT call canvas.getContext(), drawImage(), new Image(), fetch(), or external URLs yourself.",
             "This mode MUST include direct user interaction. Use native `canvas.addEventListener()` handlers for `pointerdown`, `pointermove`, `pointerup`, `click`, or `touchstart` to update local state, hit-test shapes, spawn elements, drag anchors, toggle colors, or otherwise visibly change the artwork.",
             "For pointer coordinates, use `const rect = canvas.getBoundingClientRect(); const x = (event.clientX - rect.left) * (canvas.width / rect.width); const y = (event.clientY - rect.top) * (canvas.height / rect.height);` so interaction works after responsive scaling.",
             "Keep every interaction state variable inside the `window.sketch` closure. Do NOT use localStorage, cookies, fetch, parent/top window access, or navigation.",
@@ -559,11 +574,13 @@ function art_piece_count_three_object_calls(string $code): int
 /**
  * Validates art piece code based on its engine type.
  */
-function art_piece_preflight_code(string $engine, string $code, ?string $html = null, ?string $css = null): string
+function art_piece_preflight_code(string $engine, string $code, ?string $html = null, ?string $css = null, ?string $generationMode = null): string
 {
+    $effectiveMode = art_piece_normalize_generation_mode($generationMode ?? $engine, $engine);
+    $runtimeEngine = art_piece_generation_mode_to_engine($effectiveMode);
     $validatedCode = validate_art_piece_code($code);
 
-    if ($engine === 'c2') {
+    if ($runtimeEngine === 'c2') {
         $c2Rules = [
             [
                 'pattern' => '/\bc2\s*\.\s*Ease\b|\bEase\s*\.\s*linear\b|\.linear\s*\(/',
@@ -585,7 +602,11 @@ function art_piece_preflight_code(string $engine, string $code, ?string $html = 
         }
     }
 
-    if ($engine === 'three') {
+    if ($effectiveMode === 'c2_interactive' && !art_piece_is_c2_interactive_code($validatedCode, $html)) {
+        throw new RuntimeException('Selected C2.js Interactive mode requires explicit pointer, mouse, touch, or click interaction hooks in the generated code.');
+    }
+
+    if ($runtimeEngine === 'three') {
         $threeRules = [
             [
                 'pattern' => '/startFrame\s*\(\s*(?:\([^)]*,[^)]*\)|function\s*\([^)]*,[^)]*\))/',
@@ -611,7 +632,7 @@ function art_piece_preflight_code(string $engine, string $code, ?string $html = 
         // gate or warn here.
     }
 
-    if ($engine === 'aframe') {
+    if ($runtimeEngine === 'aframe') {
         $aframeJsRules = [
             [
                 'pattern' => '/\bnavigator\s*\.\s*mediaDevices\b|\bgetUserMedia\s*\(/i',
@@ -629,7 +650,7 @@ function art_piece_preflight_code(string $engine, string $code, ?string $html = 
         }
     }
 
-    validate_art_piece_media_references($engine, null, null, $validatedCode);
+    validate_art_piece_media_references($runtimeEngine, null, null, $validatedCode);
 
     // Static check for window.sketch definition. Requires an actual
     // assignment (a single `=` not followed by another `=`) rather than
@@ -637,7 +658,7 @@ function art_piece_preflight_code(string $engine, string $code, ?string $html = 
     // `typeof window.sketch === 'function'` guard with no real assignment
     // elsewhere must still fail, since the runtime silently no-ops (no
     // canvas, no error) when window.sketch isn't actually a function.
-    if ($engine !== 'svg' || $validatedCode !== 'window.sketch = () => {};') {
+    if ($runtimeEngine !== 'svg' || $validatedCode !== 'window.sketch = () => {};') {
         if (!preg_match('/window\s*\.\s*sketch\s*=(?!=)/i', $validatedCode)) {
             throw new RuntimeException('Generated code did not define window.sketch');
         }
@@ -646,22 +667,24 @@ function art_piece_preflight_code(string $engine, string $code, ?string $html = 
     return $validatedCode;
 }
 
-function art_piece_preflight_document(string $engine, ?string $html, ?string $css, ?string $js): array
+function art_piece_preflight_document(string $engine, ?string $html, ?string $css, ?string $js, ?string $generationMode = null): array
 {
+    $effectiveMode = art_piece_normalize_generation_mode($generationMode ?? $engine, $engine);
+    $runtimeEngine = art_piece_generation_mode_to_engine($effectiveMode);
     $html = trim((string) $html);
     $css = trim((string) $css);
     $js = trim((string) $js);
 
-    if ($html === '' && $engine !== 'svg') {
+    if ($html === '' && $runtimeEngine !== 'svg') {
         throw new RuntimeException('HTML block is empty');
     }
     if ($js !== '') {
-        art_piece_preflight_code($engine, $js, $html, $css);
-    } elseif ($engine !== 'svg') {
+        art_piece_preflight_code($runtimeEngine, $js, $html, $css, $effectiveMode);
+    } elseif ($runtimeEngine !== 'svg') {
         throw new RuntimeException('JavaScript block is empty');
     }
 
-    if (in_array($engine, art_piece_canvas_managed_engines(), true)) {
+    if (in_array($runtimeEngine, art_piece_canvas_managed_engines(), true)) {
         if (!preg_match('/id\s*=\s*["\'](?:container|canvas-container|sketch-container|runtime-root)["\']/i', $html) && !preg_match('/<canvas/i', $html)) {
             throw new RuntimeException('HTML block must contain a container element (e.g. <div id="container"></div> or a <canvas> element) to mount the canvas.');
         }
@@ -673,7 +696,7 @@ function art_piece_preflight_document(string $engine, ?string $html, ?string $cs
         }
     }
 
-    if ($engine === 'aframe') {
+    if ($runtimeEngine === 'aframe') {
         if (!preg_match('/<a-scene\b[^>]*\bid\s*=\s*["\']scene["\']/i', $html)) {
             throw new RuntimeException('A-Frame HTML must contain one <a-scene id="scene" embedded> root.');
         }
@@ -698,7 +721,7 @@ function art_piece_preflight_document(string $engine, ?string $html, ?string $cs
         }
     }
 
-    if ($engine === 'svg') {
+    if ($runtimeEngine === 'svg') {
         if (!preg_match('/<svg/i', $html)) {
             throw new RuntimeException('HTML code must contain an <svg> element for SVG pieces.');
         }
@@ -710,7 +733,7 @@ function art_piece_preflight_document(string $engine, ?string $html, ?string $cs
         }
     }
 
-    validate_art_piece_media_references($engine, $html, $css, $js);
+    validate_art_piece_media_references($runtimeEngine, $html, $css, $js);
 
     return ['html' => $html, 'css' => $css, 'js' => $js];
 }
@@ -872,9 +895,14 @@ function art_piece_repair_prompt(string $engine, string $originalPrompt, ?string
  */
 function art_piece_refine_system_prompt(string $engine): string
 {
-    $baseRules = art_piece_generation_system_prompt($engine);
-    $isSvg = ($engine === 'svg');
-    $isAframe = ($engine === 'aframe');
+    if (!in_array($engine, art_piece_supported_generation_modes(), true)) {
+        throw new RuntimeException('Unknown engine');
+    }
+    $effectiveMode = art_piece_normalize_generation_mode($engine, $engine);
+    $runtimeEngine = art_piece_generation_mode_to_engine($effectiveMode);
+    $baseRules = art_piece_generation_system_prompt($effectiveMode);
+    $isSvg = ($runtimeEngine === 'svg');
+    $isAframe = ($runtimeEngine === 'aframe');
     $htmlContextDesc = $isSvg 
         ? "the current HTML, CSS, and JS code blocks" 
         : ($isAframe
@@ -885,7 +913,7 @@ function art_piece_refine_system_prompt(string $engine): string
         ? "CRITICAL: For svg engine pieces, the HTML code MUST retain the <svg> element. The CSS must never hide the SVG or container (display: none and visibility: hidden on svg or container elements are strictly forbidden)."
         : ($isAframe
             ? "CRITICAL: For aframe engine pieces, the HTML code MUST retain exactly one <a-scene id=\"scene\" embedded> root. Do not add external assets, scripts, iframes, or remote URLs. Same-origin CMS image assets are allowed only through `<a-assets><img src=\"/image/2\"></a-assets>` and `#asset` references. The CSS must never hide the scene or canvas."
-            : "CRITICAL: For {$engine} engine pieces, HTML changes are STRICTLY FORBIDDEN. The HTML container is managed automatically. Do not write a 'PATCH html:' block. Focus your edits solely on CSS or JS. The CSS must never hide the canvas or container (display: none and visibility: hidden on canvas or container elements are strictly forbidden).");
+            : "CRITICAL: For {$effectiveMode} engine pieces, HTML changes are STRICTLY FORBIDDEN. The HTML container is managed automatically. Do not write a 'PATCH html:' block. Focus your edits solely on CSS or JS. The CSS must never hide the canvas or container (display: none and visibility: hidden on canvas or container elements are strictly forbidden).");
 
     return implode(' ', [
         "You are an AI assistant making a SINGLE, NARROWLY SCOPED edit to an existing interactive generative art piece, following a strict two-step process.",
@@ -897,9 +925,9 @@ function art_piece_refine_system_prompt(string $engine): string
         "You MUST respond in exactly this format and nothing else — no prose, explanations, or notes before, between, or after these sections:",
         art_piece_refine_patch_format_example(),
         "Everything outside a matched SEARCH region is preserved exactly as it is today — you are never regenerating the whole file, only patching the specific elements named in your own plan.",
-        "Ensure all constraints of the {$engine} engine are strictly maintained in anything you write inside a REPLACE section.",
+        "Ensure all constraints of the {$effectiveMode} engine are strictly maintained in anything you write inside a REPLACE section.",
         $engineConstraint,
-        "Here are the engine-specific rules for {$engine} that you MUST follow: ",
+        "Here are the engine-specific rules for {$effectiveMode} that you MUST follow: ",
         $baseRules
     ]);
 }

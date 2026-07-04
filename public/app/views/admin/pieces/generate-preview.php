@@ -5,7 +5,9 @@ declare(strict_types=1);
 $pageTitle = 'AI Generation Preview';
 ob_start();
 
-$previewPiece = ['title' => 'AI Generated ' . strtoupper($engine)];
+$generationMode = (string) ($generationMode ?? $engine);
+$generationModeLabel = art_piece_generation_mode_label($generationMode);
+$previewPiece = ['title' => 'AI Generated ' . $generationModeLabel];
 $previewVersion = [
     'html_code' => $htmlCode,
     'css_code' => $cssCode,
@@ -13,7 +15,7 @@ $previewVersion = [
     'engine' => $engine
 ];
 
-$defaultTitle = 'AI ' . strtoupper($engine) . ' Piece - ' . date('M d, Y H:i');
+$defaultTitle = 'AI ' . $generationModeLabel . ' Piece - ' . date('M d, Y H:i');
 ?>
 <div class="admin-container">
     <div class="admin-header-row">
@@ -25,7 +27,7 @@ $defaultTitle = 'AI ' . strtoupper($engine) . ' Piece - ' . date('M d, Y H:i');
 
     <div style="background: var(--ink); border: 1px solid var(--line); border-radius: 4px; padding: 0.5rem; margin-bottom: 2rem; box-shadow: var(--shadow);">
         <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem; border-bottom: 1px solid var(--line); margin-bottom: 0.5rem; font-size: 0.85rem; color: #a1a1aa;">
-            <span>Live Sandbox Preview (Engine: <strong><?= e(strtoupper($engine)) ?></strong>)</span>
+            <span>Live Sandbox Preview (Engine: <strong><?= e($generationModeLabel) ?></strong>)</span>
             <button type="button" class="admin-btn admin-btn-ghost" style="padding: 2px 8px; font-size: 0.75rem;" onclick="reloadPreviewIframe()">Reload Sandbox</button>
         </div>
         <div id="preview-iframe-wrapper">
@@ -36,7 +38,7 @@ $defaultTitle = 'AI ' . strtoupper($engine) . ' Piece - ' . date('M d, Y H:i');
     <form class="admin-form" data-save-url="/admin/pieces/generate/save">
         <!-- Hidden inputs for AI generation details -->
         <input type="hidden" id="engine" name="engine" value="<?= e($engine) ?>">
-        <input type="hidden" id="generation_mode" name="generation_mode" value="<?= e($generationMode ?? $engine) ?>">
+        <input type="hidden" id="generation_mode" name="generation_mode" value="<?= e($generationMode) ?>">
         <input type="hidden" id="generation_vendor" name="generation_vendor" value="<?= e($profile['vendor'] ?? '') ?>">
         <input type="hidden" id="generation_model" name="generation_model" value="<?= e($profile['model'] ?? '') ?>">
         <input type="hidden" id="generation_attempt_count" name="generation_attempt_count" value="<?= (int) $attemptCount ?>">
@@ -291,6 +293,7 @@ $defaultTitle = 'AI ' . strtoupper($engine) . ' Piece - ' . date('M d, Y H:i');
         var profileField = document.getElementById('profile_id');
         var personaField = document.getElementById('persona_id');
         var engineField = document.querySelector('input[name="engine"]');
+        var generationModeField = document.getElementById('generation_mode');
         var thumbField = document.getElementById('thumbnail_data');
         var failedDialog = document.getElementById('preview-regenerate-failed-dialog');
         var failedTitle = document.getElementById('preview-regenerate-failed-title');
@@ -318,6 +321,7 @@ $defaultTitle = 'AI ' . strtoupper($engine) . ' Piece - ' . date('M d, Y H:i');
             return {
                 prompt: promptField ? promptField.value.trim() : '',
                 engine: engineField ? engineField.value : 'p5',
+                generation_mode: generationModeField ? generationModeField.value : (engineField ? engineField.value : 'p5'),
                 profile_id: profileField ? profileField.value : '',
                 persona_id: personaField ? personaField.value : '',
                 html_code: htmlField ? htmlField.value : '',
