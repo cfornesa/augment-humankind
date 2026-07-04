@@ -84,6 +84,7 @@ ob_start();
             <option value="" <?= $engine === '' ? 'selected' : '' ?>>All engines</option>
             <option value="p5"    <?= $engine === 'p5'    ? 'selected' : '' ?>>P5.js</option>
             <option value="c2"    <?= $engine === 'c2'    ? 'selected' : '' ?>>C2.js</option>
+            <option value="c2_interactive" <?= $engine === 'c2_interactive' ? 'selected' : '' ?>>C2.js Interactive</option>
             <option value="three" <?= $engine === 'three' ? 'selected' : '' ?>>Three.js</option>
             <option value="svg"   <?= $engine === 'svg'   ? 'selected' : '' ?>>SVG</option>
             <option value="aframe" <?= $engine === 'aframe' ? 'selected' : '' ?>>A-Frame</option>
@@ -116,6 +117,7 @@ ob_start();
             </thead>
             <tbody data-reorder-url="/admin/pieces/reorder" class="<?= !$isDefaultSort ? 'drag-handles-hidden' : '' ?>">
                 <?php foreach ($pieces as $piece): ?>
+                    <?php $effectiveGenerationMode = art_piece_version_generation_mode((array) ($piece['current_version'] ?? []), $piece); ?>
                     <tr data-id="<?= (int) $piece['id'] ?>">
                         <td class="drag-handle" title="Drag to reorder">&#8597;</td>
                         <td class="cell-thumb" style="width: 70px;">
@@ -127,7 +129,7 @@ ob_start();
                         </td>
                         <td class="cell-title" data-label="Title"><?= e($piece['title'] ?? 'Untitled') ?></td>
                         <td data-label="ID"><code><?= (int) $piece['id'] ?></code></td>
-                        <td data-label="Engine"><?= e(strtoupper($piece['engine'] ?? 'p5')) ?></td>
+                        <td data-label="Engine"><?= e(art_piece_generation_mode_label($effectiveGenerationMode)) ?></td>
                         <td data-label="Art Media">
                             <?php if (empty($piece['categories'])): ?>
                                 <span class="admin-hint">None</span>
@@ -182,36 +184,6 @@ ob_start();
 <script src="/assets/js/admin-piece-capture.js?v=<?= (int) @filemtime(dirname(__DIR__, 4) . '/assets/js/admin-piece-capture.js') ?>"></script>
 <script>
 (function () {
-    // A real, genuinely visible iframe — WebKit was found to silently skip
-    // the actual GPU paint for a canvas clipped into a near-zero-area
-    // container (the old background-capture approach), even while running
-    // that iframe's script normally. Capturing from a real visible iframe
-    // is the one mechanism already proven reliable (generate-preview.php,
-    // the editor's live preview) — this gives this page the same thing,
-    // sized small enough to stay out of the way on mobile.
-    function createCaptureOverlay() {
-        var overlay = document.createElement('div');
-        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:99999;display:flex;align-items:center;justify-content:center;';
-        var box = document.createElement('div');
-        box.style.cssText = 'background:var(--ink,#0d0d0f);border:1px solid var(--line,#333);border-radius:4px;padding:0.75rem;box-shadow:0 8px 24px rgba(0,0,0,0.4);';
-        var label = document.createElement('div');
-        label.textContent = 'Capturing thumbnail…';
-        label.style.cssText = 'color:var(--ink-soft,#a1a1aa);font-size:0.8rem;margin-bottom:0.5rem;text-align:center;';
-        var iframe = document.createElement('iframe');
-        iframe.style.cssText = 'width:320px;height:180px;border:0;display:block;';
-        iframe.sandbox = 'allow-scripts allow-same-origin';
-        box.appendChild(label);
-        box.appendChild(iframe);
-        overlay.appendChild(box);
-        document.body.appendChild(overlay);
-        return {
-            iframe: iframe,
-            remove: function () {
-                if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
-            }
-        };
-    }
-
     // Reusable core capture and upload routine
     async function runCaptureForId(id, cellThumb, btnIndividual) {
         var originalText = btnIndividual ? btnIndividual.textContent : '';
@@ -228,7 +200,6 @@ ob_start();
             }
         }
 
-        var overlay = null;
         try {
             // Fetch piece details
             var resp = await fetch('/embed/pieces/' + id + '/data');
@@ -242,8 +213,7 @@ ob_start();
             }
 
             var engine = data.engine || 'p5';
-            overlay = createCaptureOverlay();
-            overlay.iframe.srcdoc = window.CreatrPieceCapture.renderDocument({
+            var capture = await window.CreatrPieceCapture.captureWithOverlay({
                 title: data.title || 'Art piece',
                 engine: engine,
                 html: data.htmlCode || '',
@@ -252,14 +222,6 @@ ob_start();
                 runtimeOrigin: window.location.origin,
                 preserveDrawingBuffer: true,
                 seed: 8383,
-                width: 320,
-                height: 180
-            });
-            await window.CreatrPieceCapture.waitForRender(overlay.iframe, engine);
-
-            var capture = await window.CreatrPieceCapture.capture({
-                engine: engine,
-                liveIframe: overlay.iframe,
                 width: 320,
                 height: 180
             });
@@ -317,8 +279,6 @@ ob_start();
                 }, 3000);
             }
             throw err;
-        } finally {
-            if (overlay) overlay.remove();
         }
     }
 

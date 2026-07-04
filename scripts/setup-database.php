@@ -39,6 +39,7 @@ declare(strict_types=1);
 // ─── Environment (process env always wins over .env) ─────────────────────────
 
 require_once __DIR__ . '/../public/app/helpers/env.php';
+require_once __DIR__ . '/../public/app/helpers/art-piece-generation.php';
 
 function loadEnvFile(string $path): void
 {
@@ -402,6 +403,17 @@ function manifest(): array
         ['art piece version AI attribution (2026-06-20)', function (Ctx $ctx): void {
             ensureColumn($ctx, 'art_piece_versions', 'ai_profile_id', 'INT NULL AFTER generation_model');
             ensureColumn($ctx, 'art_piece_versions', 'ai_persona_id', 'INT NULL AFTER ai_profile_id');
+        }],
+
+        ['art piece version generation mode (2026-07-03)', function (Ctx $ctx): void {
+            ensureColumn($ctx, 'art_piece_versions', 'generation_mode', 'VARCHAR(32) NULL AFTER generation_model');
+        }],
+
+        ['art piece version c2 interactive backfill (2026-07-03)', function (Ctx $ctx): void {
+            if (!tableExists($ctx->pdo, 'art_piece_versions') || !columnExists($ctx->pdo, 'art_piece_versions', 'generation_mode')) {
+                return;
+            }
+            runBackfill($ctx, art_piece_c2_interactive_backfill_sql(), 'backfill legacy c2 interactive generation_mode');
         }],
 
         ['art piece version draft attempts (2026-06-21)', function (Ctx $ctx): void {

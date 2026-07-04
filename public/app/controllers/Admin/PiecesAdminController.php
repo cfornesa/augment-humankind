@@ -25,16 +25,22 @@ class PiecesAdminController
         if (!in_array($dir, ['asc', 'desc'], true)) {
             $dir = 'asc';
         }
-        if (!in_array($engine, art_piece_supported_engines(), true)) {
+        $allowedEngineFilters = array_merge(art_piece_supported_engines(), ['c2_interactive']);
+        if (!in_array($engine, $allowedEngineFilters, true)) {
             $engine = '';
         }
 
         $pieces = PlatformArtPiece::allForAdmin(
             $q !== '' ? $q : null,
-            $engine !== '' ? $engine : null,
+            ($engine !== '' && $engine !== 'c2_interactive') ? $engine : null,
             $sort,
             $dir
         );
+        if ($engine === 'c2_interactive') {
+            $pieces = array_values(array_filter($pieces, static function (array $piece): bool {
+                return art_piece_version_generation_mode((array) ($piece['current_version'] ?? []), $piece) === 'c2_interactive';
+            }));
+        }
         $templatesTableReady = class_exists('ArtPieceStarterTemplate') ? ArtPieceStarterTemplate::tableReady() : false;
         $templates = $tab === 'templates' && $templatesTableReady ? ArtPieceStarterTemplate::all() : [];
 
@@ -188,6 +194,7 @@ class PiecesAdminController
                     'engine' => $data['engine'],
                     'generation_vendor' => null,
                     'generation_model' => null,
+                    'generation_mode' => self::requestedGenerationModeFromPost($data['engine']),
                     'validation_status' => null,
                     'generation_attempt_count' => 0,
                     'notes' => null,
@@ -285,6 +292,7 @@ class PiecesAdminController
                         'engine' => $data['engine'],
                         'generation_vendor' => $currentVersion['generation_vendor'] ?? null,
                         'generation_model' => $currentVersion['generation_model'] ?? null,
+                        'generation_mode' => self::resolveVersionGenerationModeForUpdate($data['engine'], $currentVersion),
                         'validation_status' => $currentVersion['validation_status'] ?? null,
                         'generation_attempt_count' => $currentVersion['generation_attempt_count'] ?? 0,
                         'notes' => null,
@@ -504,6 +512,7 @@ class PiecesAdminController
             'css_code' => $version['css_code'] ?? null,
             'generated_code' => $version['generated_code'] ?? null,
             'engine' => $engine,
+            'generation_mode' => self::storedGenerationMode($version, $engine),
         ]);
         PlatformArtPiece::updateCurrentVersion($newPieceId, $newVersionId);
 
@@ -619,6 +628,7 @@ class PiecesAdminController
             'engine' => $engine,
             'generation_vendor' => trim($_POST['generation_vendor'] ?? '') ?: null,
             'generation_model' => trim($_POST['generation_model'] ?? '') ?: null,
+            'generation_mode' => self::requestedGenerationModeFromPost($engine),
             'validation_status' => $_POST['validation_status'] ?? 'validated',
             'generation_attempt_count' => (int) ($_POST['generation_attempt_count'] ?? 1),
             'notes' => trim($_POST['notes'] ?? '') ?: null,
@@ -638,6 +648,7 @@ class PiecesAdminController
             'engine' => art_piece_generation_mode_to_engine($_POST['engine'] ?? 'p5'),
             'generation_vendor' => trim((string) ($_POST['generation_vendor'] ?? '')),
             'generation_model' => trim((string) ($_POST['generation_model'] ?? '')),
+            'generation_mode' => self::requestedGenerationModeFromPost((string) ($_POST['engine'] ?? 'p5')),
             'validation_status' => $_POST['validation_status'] ?? 'validated',
             'generation_attempt_count' => (int) ($_POST['generation_attempt_count'] ?? 1),
             'notes' => trim((string) ($_POST['notes'] ?? '')),
@@ -760,6 +771,16 @@ class PiecesAdminController
             $selectedProfileId = (int) $owner['preferred_art_piece_profile_id'];
         }
 
+        $pending = self::loadPendingGeneration();
+        if (isset($_GET['restart']) && $_GET['restart'] === '1' && is_array($pending['original'] ?? null)) {
+            $original = $pending['original'];
+            $prompt = trim((string) ($original['prompt'] ?? ''));
+            $generationMode = trim((string) ($original['generation_mode'] ?? $generationMode));
+            $engine = art_piece_generation_mode_to_engine($generationMode);
+            $selectedProfileId = (int) ($original['profile_id'] ?? $selectedProfileId);
+            $selectedPersonaId = (int) ($original['persona_id'] ?? $selectedPersonaId);
+        }
+
         require dirname(__DIR__, 2) . '/views/admin/pieces/generate-form.php';
     }
 
@@ -773,6 +794,33 @@ class PiecesAdminController
             'svg' => ['value' => 'svg', 'label' => 'SVG (Vector paths & CSS animation)', 'group' => 'Stable engines'],
             'aframe' => ['value' => 'aframe', 'label' => 'A-Frame Experimental (Self-contained 3D scene)', 'group' => 'Experimental engines'],
         ];
+    }
+
+    private static function requestedGenerationModeFromPost(string $engineFallback = 'p5'): string
+    {
+        return art_piece_normalize_generation_mode(
+            (string) ($_POST['generation_mode'] ?? ($_POST['engine'] ?? $engineFallback)),
+            $engineFallback
+        );
+    }
+
+    private static function storedGenerationMode(?array $version, string $engineFallback = 'p5'): string
+    {
+        return art_piece_version_generation_mode(is_array($version) ? $version : [], ['engine' => $engineFallback]);
+    }
+
+    private static function resolveVersionGenerationModeForUpdate(string $engine, ?array $currentVersion): string
+    {
+        $requestedMode = trim((string) ($_POST['generation_mode'] ?? ''));
+        if ($requestedMode !== '') {
+            return art_piece_normalize_generation_mode($requestedMode, $engine);
+        }
+
+        if (is_array($currentVersion) && strtolower((string) ($currentVersion['engine'] ?? '')) === strtolower($engine)) {
+            return self::storedGenerationMode($currentVersion, $engine);
+        }
+
+        return art_piece_normalize_generation_mode($engine, $engine);
     }
 
     private static function loadPersonas(): array
@@ -979,34 +1027,33 @@ class PiecesAdminController
     {
         admin_check();
 
-        $pending = $_SESSION['pending_generation'] ?? null;
-        unset($_SESSION['pending_generation']);
-        if (session_status() === PHP_SESSION_ACTIVE) {
-            session_write_close();
-        }
+        $pending = self::loadPendingGeneration();
 
         if (!is_array($pending)) {
             header('Location: /admin/pieces/generate');
             exit;
         }
 
-        $engine = (string) ($pending['engine'] ?? 'p5');
-        $generationMode = (string) ($pending['generation_mode'] ?? $engine);
-        $htmlCode = (string) ($pending['html_code'] ?? '');
+        $current = is_array($pending['current'] ?? null) ? $pending['current'] : $pending;
+        $original = is_array($pending['original'] ?? null) ? $pending['original'] : $pending;
+
+        $engine = (string) ($current['engine'] ?? $pending['engine'] ?? 'p5');
+        $generationMode = (string) ($original['generation_mode'] ?? $pending['generation_mode'] ?? $engine);
+        $htmlCode = (string) ($current['html_code'] ?? $pending['html_code'] ?? '');
         if (in_array($engine, art_piece_canvas_managed_engines(), true)) {
             $htmlCode = self::getStandardHtmlForEngine($engine);
         }
-        $cssCode = (string) ($pending['css_code'] ?? '');
-        $generatedCode = (string) ($pending['generated_code'] ?? '');
+        $cssCode = (string) ($current['css_code'] ?? $pending['css_code'] ?? '');
+        $generatedCode = (string) ($current['generated_code'] ?? $pending['generated_code'] ?? '');
         $profile = [
-            'vendor' => (string) ($pending['vendor'] ?? ''),
-            'model' => (string) ($pending['model'] ?? ''),
-            'endpoint_kind' => (string) ($pending['endpoint_kind'] ?? ''),
+            'vendor' => (string) ($original['vendor'] ?? $pending['vendor'] ?? ''),
+            'model' => (string) ($original['model'] ?? $pending['model'] ?? ''),
+            'endpoint_kind' => (string) ($original['endpoint_kind'] ?? $pending['endpoint_kind'] ?? ''),
         ];
-        $attemptCount = (int) ($pending['attempt_count'] ?? 1);
-        $prompt = (string) ($pending['prompt'] ?? '');
-        $profileId = (int) ($pending['profile_id'] ?? 0);
-        $personaId = (int) ($pending['persona_id'] ?? 0);
+        $attemptCount = (int) ($original['attempt_count'] ?? $pending['attempt_count'] ?? 1);
+        $prompt = (string) ($original['prompt'] ?? $pending['prompt'] ?? '');
+        $profileId = (int) ($original['profile_id'] ?? $pending['profile_id'] ?? 0);
+        $personaId = (int) ($original['persona_id'] ?? $pending['persona_id'] ?? 0);
 
         require dirname(__DIR__, 2) . '/views/admin/pieces/generate-preview.php';
     }
@@ -1093,6 +1140,7 @@ class PiecesAdminController
                 'engine' => $engine,
                 'generation_vendor' => trim($_POST['generation_vendor'] ?? '') ?: null,
                 'generation_model' => trim($_POST['generation_model'] ?? '') ?: null,
+                'generation_mode' => art_piece_normalize_generation_mode($generationMode, $engine),
                 'validation_status' => 'validated',
                 'generation_attempt_count' => (int) ($_POST['generation_attempt_count'] ?? 1),
                 'notes' => 'Generated via AI',
@@ -1101,11 +1149,140 @@ class PiecesAdminController
             ]);
 
             PlatformArtPiece::updateCurrentVersion($pieceId, $versionId);
+            self::clearPendingGeneration();
 
             echo json_encode(['success' => true, 'redirect' => '/admin/pieces']);
         } catch (Throwable $e) {
             http_response_code(400);
             echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+        }
+        exit;
+    }
+
+    public static function generateRegenerate(): void
+    {
+        admin_check();
+        header('Content-Type: application/json; charset=utf-8');
+
+        $input = [];
+        $previousRawResponse = null;
+        $attemptNumber = 1;
+
+        try {
+            $input = json_decode(file_get_contents('php://input'), true) ?? [];
+            $prompt = trim((string) ($input['prompt'] ?? ''));
+            $engine = trim((string) ($input['engine'] ?? 'p5'));
+            if (!feature_ai_piece_engine_enabled($engine)) {
+                http_response_code(403);
+                echo json_encode(['success' => false, 'error' => 'AI regeneration is disabled for this piece engine. Enable it under Admin → Features → AI.']);
+                exit;
+            }
+            $profileId = (int) ($input['profile_id'] ?? 0);
+            $personaId = (int) ($input['persona_id'] ?? 0);
+            $html = (string) ($input['html_code'] ?? '');
+            $css = (string) ($input['css_code'] ?? '');
+            $js = (string) ($input['generated_code'] ?? '');
+            $attemptNumber = max(1, (int) ($input['attempt_number'] ?? 1));
+            $clientPreviousRawResponse = $input['previous_raw_response'] !== null && $input['previous_raw_response'] !== ''
+                ? (string) ($input['previous_raw_response'] ?? '')
+                : null;
+            $clientLastError = trim((string) ($input['last_error'] ?? ''));
+            $allowedMediaRefs = art_piece_extract_prompt_media_refs($prompt);
+            $existingMediaRefs = art_piece_collect_cms_media_refs($html, $css, $js);
+
+            if ($prompt === '') {
+                throw new InvalidArgumentException('Prompt is required.');
+            }
+            if ($profileId <= 0) {
+                throw new InvalidArgumentException('Please select an active AI profile.');
+            }
+            if ($attemptNumber > ART_PIECE_MAX_ATTEMPTS) {
+                throw new InvalidArgumentException("Maximum of " . ART_PIECE_MAX_ATTEMPTS . " attempts already reached.");
+            }
+
+            $profile = UserAiVendorSettings::find($profileId);
+            if (!$profile) {
+                throw new InvalidArgumentException('Selected AI profile was not found.');
+            }
+
+            $keyRow = UserAiVendorKeys::findForUserVendor($profile['user_id'], $profile['vendor']);
+            if (!$keyRow) {
+                throw new InvalidArgumentException("No API key configured for vendor: " . $profile['vendor']);
+            }
+
+            $apiKey = decrypt_string($keyRow['encrypted_api_key'], ai_encryption_key());
+            $aiClient = new \App\Lib\Ai\AiProviderClient($profile['vendor'], $profile['model'], $profile['endpoint_kind'], $apiKey, timeoutOverride: 180.0);
+            $persona = self::findPersonaById($personaId);
+
+            $systemPrompt = art_piece_refine_system_prompt($engine);
+            if ($persona) {
+                $systemPrompt .= "\n\nPersona guidance:\n" . trim((string) $persona['system_prompt']) . "\n\nUse the persona to influence style and creative direction, but still obey all engine, safety, and output-format requirements.";
+            }
+
+            $regenerateInstruction = 'Rebuild this piece so it better fulfills the original creative prompt. Treat the current code as the starting point, but revise any relevant HTML, CSS, or JS needed to improve fidelity, composition, and behavior while preserving the prompt-requested CMS media.';
+            if ($attemptNumber === 1) {
+                $userPromptForApi = art_piece_refine_user_prompt($engine, $regenerateInstruction, $html, $css, $js, $prompt, $allowedMediaRefs);
+            } else {
+                $userPromptForApi = art_piece_refine_repair_prompt($engine, $regenerateInstruction, $clientPreviousRawResponse, $clientLastError !== '' ? $clientLastError : 'Unknown failure', $html, $css, $js, $allowedMediaRefs);
+            }
+
+            $res = $aiClient->generate($systemPrompt, $userPromptForApi, suppressPlanningPreamble: false, maxTokensOverride: 24576);
+            if (!$res['ok']) {
+                throw new RuntimeException($res['error'] ?? 'API error');
+            }
+            if (\App\Lib\Ai\AiProviderClient::finishReasonMeansTruncated($res['finishReason'] ?? null)) {
+                $previousRawResponse = $res['text'];
+                throw new RuntimeException("The AI's response was cut off before finishing (token limit reached) — try again or reduce the scope of the current preview edits.");
+            }
+
+            $rawText = $res['text'];
+            $previousRawResponse = $rawText;
+            $patches = art_piece_extract_refine_patches($rawText);
+            if (!$patches['html'] && !$patches['css'] && !$patches['js']) {
+                if (preg_match('/```(?:css|javascript|js)\b/i', $rawText) && !preg_match('/\bPATCH\s/i', $rawText)) {
+                    throw new RuntimeException('AI ignored the required PATCH format and returned full rewritten files in fenced code blocks instead of a diff.');
+                }
+                throw new RuntimeException('AI response contained no valid PATCH blocks in the required format — at least one PATCH is required to regenerate the preview.');
+            }
+
+            $extractedHtml = art_piece_apply_refine_patches($html, $patches['html']);
+            if (in_array($engine, art_piece_canvas_managed_engines(), true)) {
+                $extractedHtml = self::getStandardHtmlForEngine($engine);
+            }
+            $extractedCss = art_piece_apply_refine_patches($css, $patches['css']);
+            $extractedJs = art_piece_apply_refine_patches($js, $patches['js']);
+
+            art_piece_preflight_document($engine, $extractedHtml, $extractedCss, $extractedJs);
+            validate_art_piece_prompted_media_refs($allowedMediaRefs, $extractedHtml, $extractedCss, $extractedJs, $existingMediaRefs, false);
+
+            if (in_array($engine, art_piece_canvas_managed_engines(), true) && !empty($patches['html'])) {
+                throw new RuntimeException('HTML changes are not allowed for p5, c2, and three engine types. Focus regeneration edits on CSS or JS instead.');
+            }
+
+            self::updatePendingGenerationCurrent([
+                'engine' => $engine,
+                'html_code' => $extractedHtml,
+                'css_code' => $extractedCss,
+                'generated_code' => $extractedJs,
+            ]);
+
+            echo json_encode([
+                'success' => true,
+                'html_code' => $extractedHtml,
+                'css_code' => $extractedCss,
+                'generated_code' => $extractedJs,
+                'plan' => art_piece_extract_refine_plan($rawText),
+                'attempt_number' => $attemptNumber,
+            ]);
+        } catch (Throwable $e) {
+            http_response_code(400);
+            echo json_encode([
+                'success' => false,
+                'error' => $e->getMessage(),
+                'raw_response' => $previousRawResponse,
+                'attempt_number' => $attemptNumber,
+                'can_retry' => $attemptNumber < ART_PIECE_MAX_ATTEMPTS,
+            ]);
         }
         exit;
     }
@@ -1456,6 +1633,10 @@ class PiecesAdminController
             $allowedMediaRefs = art_piece_extract_prompt_media_refs($prompt);
             $existingMediaRefs = art_piece_collect_cms_media_refs($html, $css, $js);
             $pieceId = (int) ($input['piece_id'] ?? 0);
+            $piece = $pieceId > 0 ? PlatformArtPiece::find($pieceId) : false;
+            $persistedGenerationMode = $piece && !empty($piece['current_version'])
+                ? self::storedGenerationMode((array) $piece['current_version'], $engine)
+                : art_piece_normalize_generation_mode($engine, $engine);
             $attemptNumber = max(1, (int) ($input['attempt_number'] ?? 1));
             $clientPreviousRawResponse = $input['previous_raw_response'] !== null && $input['previous_raw_response'] !== ''
                 ? (string) ($input['previous_raw_response'] ?? '')
@@ -1568,7 +1749,7 @@ class PiecesAdminController
             // something salvageable, rather than only persisting on the
             // success path.
             $draftVersionId = self::persistDraftAttempt(
-                $pieceId, $engine, $prompt, $extractedHtml, $extractedCss, $extractedJs,
+                $pieceId, $engine, $persistedGenerationMode, $prompt, $extractedHtml, $extractedCss, $extractedJs,
                 $profileId, $personaId, $sequenceToken, $attemptNumber, 'pending'
             );
 
@@ -1676,6 +1857,7 @@ class PiecesAdminController
     private static function persistDraftAttempt(
         int $pieceId,
         string $engine,
+        string $generationMode,
         string $prompt,
         string $html,
         string $css,
@@ -1697,6 +1879,7 @@ class PiecesAdminController
             'css_code' => $css,
             'generated_code' => $js,
             'engine' => $engine,
+            'generation_mode' => art_piece_normalize_generation_mode($generationMode, $engine),
             'validation_status' => $validationStatus,
             'generation_attempt_count' => $attemptNumber,
             'ai_profile_id' => $profileId ?: null,
@@ -1793,6 +1976,7 @@ class PiecesAdminController
             $draftIsUsable = $draftVersion
                 && (int) $draftVersion['art_piece_id'] === (int) $id
                 && (int) ($draftVersion['is_draft_attempt'] ?? 0) === 1;
+            $currentGenerationMode = self::storedGenerationMode($currentVersion, (string) ($piece['engine'] ?? 'p5'));
 
             if ($draftIsUsable) {
                 // Re-write the draft's code too, not just promote it as-is —
@@ -1809,6 +1993,7 @@ class PiecesAdminController
                     'engine' => $draftVersion['engine'] ?? ($currentVersion['engine'] ?? $piece['engine']),
                     'generation_vendor' => $currentVersion['generation_vendor'] ?? null,
                     'generation_model' => $currentVersion['generation_model'] ?? null,
+                    'generation_mode' => self::storedGenerationMode($draftVersion, $currentGenerationMode),
                     'validation_status' => 'validated',
                     'generation_attempt_count' => $draftVersion['generation_attempt_count'] ?? 1,
                     'notes' => 'Saved via AI Refine accept.',
@@ -1832,6 +2017,7 @@ class PiecesAdminController
                     'engine' => $currentVersion['engine'] ?? $piece['engine'],
                     'generation_vendor' => $currentVersion['generation_vendor'] ?? null,
                     'generation_model' => $currentVersion['generation_model'] ?? null,
+                    'generation_mode' => $currentGenerationMode,
                     'validation_status' => $currentVersion['validation_status'] ?? null,
                     'generation_attempt_count' => $currentVersion['generation_attempt_count'] ?? 0,
                     'notes' => 'Saved via AI Refine accept.',
@@ -1882,10 +2068,55 @@ class PiecesAdminController
         }
     }
 
+    private static function loadPendingGeneration(): ?array
+    {
+        self::ensureWritableSession();
+        $pending = $_SESSION['pending_generation'] ?? null;
+        session_write_close();
+        return is_array($pending) ? $pending : null;
+    }
+
     private static function storePendingGeneration(array $pending): void
     {
         self::ensureWritableSession();
+        $_SESSION['pending_generation'] = [
+            'original' => [
+                'prompt' => (string) ($pending['prompt'] ?? ''),
+                'engine' => (string) ($pending['engine'] ?? 'p5'),
+                'generation_mode' => (string) ($pending['generation_mode'] ?? ($pending['engine'] ?? 'p5')),
+                'vendor' => (string) ($pending['vendor'] ?? ''),
+                'model' => (string) ($pending['model'] ?? ''),
+                'endpoint_kind' => (string) ($pending['endpoint_kind'] ?? ''),
+                'attempt_count' => (int) ($pending['attempt_count'] ?? 1),
+                'profile_id' => (int) ($pending['profile_id'] ?? 0),
+                'persona_id' => (int) ($pending['persona_id'] ?? 0),
+            ],
+            'current' => [
+                'engine' => (string) ($pending['engine'] ?? 'p5'),
+                'html_code' => (string) ($pending['html_code'] ?? ''),
+                'css_code' => (string) ($pending['css_code'] ?? ''),
+                'generated_code' => (string) ($pending['generated_code'] ?? ''),
+            ],
+        ];
+        session_write_close();
+    }
+
+    private static function updatePendingGenerationCurrent(array $current): void
+    {
+        self::ensureWritableSession();
+        $pending = $_SESSION['pending_generation'] ?? null;
+        if (!is_array($pending)) {
+            $pending = ['original' => [], 'current' => []];
+        }
+        $pending['current'] = array_merge(is_array($pending['current'] ?? null) ? $pending['current'] : [], $current);
         $_SESSION['pending_generation'] = $pending;
+        session_write_close();
+    }
+
+    private static function clearPendingGeneration(): void
+    {
+        self::ensureWritableSession();
+        unset($_SESSION['pending_generation']);
         session_write_close();
     }
 

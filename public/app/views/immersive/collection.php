@@ -8,9 +8,6 @@ declare(strict_types=1);
 // cached copy of immersive-gallery.js indefinitely after a deploy.
 $galleryRuntimeVersion = (int) @filemtime(dirname(__DIR__, 3) . '/assets/js/immersive-gallery.js');
 
-// Pattern used to decide whether a C2 piece is interactive (pointer/mouse/touch listeners).
-$c2InteractivePattern = '/(?:addEventListener\s*\(\s*[\'"](?:pointerdown|pointerup|pointermove|mousedown|mouseup|mousemove|touchstart|touchmove|touchend|click)|on(?:click|mousedown|mouseup|mousemove|touchstart|touchmove|touchend|pointerdown|pointermove|pointerup)\s*=)/i';
-
 // Hydrate fields for display
 $hasP5 = false;
 $hasC2 = false;
@@ -43,9 +40,7 @@ foreach ($items as $index => $item) {
         };
         $pieceDescription = $piece['description'] ?? '';
         $piecePrompt = (string) ($version['prompt'] ?? $piece['prompt'] ?? '');
-        // C2 is interactive when its generated code registers pointer/mouse/touch listeners.
-        $c2LikelyInteractive = $engine === 'c2'
-            && preg_match($c2InteractivePattern, (string) ($version['generated_code'] ?? '') . "\n" . (string) ($version['html_code'] ?? '')) === 1;
+        $generationMode = art_piece_version_generation_mode($version, $piece);
         $immersiveHref = '/immersive/pieces/' . (int) ($piece['id'] ?? 0)
             . '?returnTo=' . rawurlencode($immersiveCollectionReturnTo);
         $pieceFullViewDescription = (string) ($pieceDescription !== '' ? $pieceDescription : $piecePrompt);
@@ -53,7 +48,7 @@ foreach ($items as $index => $item) {
         // user can interact with them in the overlay. P5, SVG, and non-interactive C2
         // remain read-only previews. srcdoc iframes run in their own browsing context,
         // so there is no WebGL context conflict with the exhibit wall.
-        $pieceInteractive = in_array($engine, ['three', 'aframe'], true) || $c2LikelyInteractive;
+        $pieceInteractive = in_array($generationMode, ['three', 'aframe', 'c2_interactive'], true);
         $fullView = [
             'type' => 'iframe',
             'interactive' => $pieceInteractive,

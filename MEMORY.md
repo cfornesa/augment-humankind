@@ -101,6 +101,12 @@ Source: DECISIONS.md 2026-07-02 Portable-CMS Setup Readiness Remediation (commit
 
 2026-07-03 DECISION AI piece generation may only introduce CMS media when the prompt explicitly names the exact image/media ID or path; downloaded HTML exports rewrite root-relative and relative CMS media refs to absolute URLs on the host serving the download.
 
+2026-07-03 DECISION Persisted `generation_mode` is the primary art-piece runtime contract whenever the column exists; shared art-piece/version SQL must stay schema-compatible during rollout and fall back to engine-based behavior when `generation_mode` is absent.
+
+2026-07-03 DECISION Legacy interactive C2 versions are systematically upgraded by setup-database: every saved `art_piece_versions` row with `engine='c2'`, empty/plain `generation_mode`, and code matching the existing `art_piece_c2_interactive_pattern()` is backfilled to `generation_mode='c2_interactive'`. Ambiguous non-matches stay on compatibility fallback.
+
+2026-07-03 CORRECTION The “This site isn’t configured yet / database connection failed” screen in `public/index.php` must be reserved for real connection-class PDO failures only; piece-route schema/query regressions can otherwise masquerade as whole-site DB outages and mislead debugging.
+
 # UI & Editor Patterns
 
 2026-06-15 NOTE The `<dialog>`-based `.media-picker-*` pattern is the standard for all TipTap insertion UIs (media, pieces/exhibits, iframe, AI profile) — never `window.prompt()`.

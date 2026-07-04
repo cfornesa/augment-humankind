@@ -336,7 +336,7 @@ test('bootP5 waits for instance.frameCount before signaling ready, not right aft
 
 test('bootCanvasRuntime (C2/generic) signals ready only after its first real startFrame tick', function () use ($runtime) {
     assert_contains($runtime, 'function instrumentedStartFrame(callback)');
-    assert_contains($runtime, 'readySignaled = true; signalCanvasReady(canvas);');
+    assert_contains($runtime, "ready.markRendered('canvas-startFrame-' + count);");
 });
 
 test('bootThree signals ready from an actual render call, not unconditionally right after setup', function () use ($runtime) {
@@ -357,6 +357,8 @@ test('bootThree signals ready from an actual render call, not unconditionally ri
 
 test('shared admin capture module waits for the runtime ready marker before using canvas pixels', function () use ($captureModule) {
     assert_contains($captureModule, "dataset.creatrReady === '1'");
+    assert_contains($captureModule, "dataset.creatrManagedMedia === '1'");
+    assert_contains($captureModule, "dataset.creatrSettled === '1'");
     assert_contains($captureModule, "engine === 'p5'");
     assert_contains($captureModule, "engine === 'c2'");
     assert_contains($captureModule, "engine === 'three'");
@@ -375,7 +377,7 @@ test('shared runtime boots A-Frame from the self-hosted asset and signals readin
     assert_contains($runtime, '/assets/js/aframe.min.js');
     assert_contains($runtime, "PIECE_ENGINE === 'aframe'");
     assert_contains($runtime, 'signalAFrameReadyOnce');
-    assert_contains($runtime, "canvas.dataset.creatrReady = '1'");
+    assert_contains($runtime, "ready.markRendered('aframe-renderstart');");
 });
 
 test('A-Frame immersive pieces mount as live scenes, not gallery textures', function () use ($immersive) {
@@ -408,6 +410,33 @@ test('shared admin capture module supports SVG conversion and deterministic capt
     assert_contains($captureModule, 'diffImages');
 });
 
+test('shared runtime tracks managed CMS media before signaling settled readiness', function () use ($runtime) {
+    assert_contains($runtime, 'const managedMediaState = {');
+    assert_contains($runtime, "dataset.creatrManagedMedia = managedMediaState.used ? '1' : '0'");
+    assert_contains($runtime, "dataset.creatrManagedMediaState = managedMediaState.used");
+    assert_contains($runtime, 'trackedRequests: new Set()');
+    assert_contains($runtime, 'function extractCmsMediaUrls(value)');
+    assert_contains($runtime, 'function trackBackgroundManagedMedia(root)');
+    assert_contains($runtime, "[document.querySelector('canvas'), document.querySelector('svg')].forEach");
+    assert_contains($runtime, 'node = node.parentElement;');
+    assert_contains($runtime, "window.getComputedStyle(node).backgroundImage");
+    assert_contains($runtime, 'function createReadyController(target)');
+    assert_contains($runtime, "document.documentElement.dataset.creatrSettled = '1'");
+    assert_contains($runtime, "window.Image = class CreatrTrackedImage extends nativeImageCtor");
+    assert_contains($runtime, "const previousSrc = typeof element.getAttribute === 'function' ? (element.getAttribute('src') || '') : '';");
+    assert_contains($runtime, "const completeNow = tag === 'img' && previousSrc && element.complete === true;");
+    assert_contains($runtime, "element.complete === true");
+    assert_contains($runtime, "element.naturalWidth || 0");
+    assert_contains($runtime, "if (options.surfaceErrors !== false) {");
+    assert_contains($runtime, 'const observer = new MutationObserver');
+});
+
+test('shared runtime marks p5 and SVG media-backed pieces ready only through the settled-state controller', function () use ($runtime) {
+    assert_contains($runtime, "ready.markRendered('p5-frame-' + instance.frameCount);");
+    assert_contains($runtime, "ready.markRendered('svg-document');");
+    assert_contains($runtime, 'ready.noteInlineMedia(document);');
+});
+
 foreach ([
     'form.php' => __DIR__ . '/../public/app/views/admin/pieces/form.php',
     'index.php' => __DIR__ . '/../public/app/views/admin/pieces/index.php',
@@ -424,11 +453,48 @@ foreach ([
     });
 }
 
+test('Pieces index uses the same shared overlay capture path as save-time thumbnail generation', function () {
+    $indexView = file_get_contents(__DIR__ . '/../public/app/views/admin/pieces/index.php');
+    assert_contains($indexView, 'CreatrPieceCapture.captureWithOverlay');
+    assert_not_contains($indexView, 'function createCaptureOverlay()');
+});
+
+test('shared capture module combines stricter readiness with stable-frame acceptance', function () use ($captureModule) {
+    assert_contains($captureModule, "function resolveWaitProfile(engine, profile)");
+    assert_contains($captureModule, "var attemptProfiles = [opts.waitProfile || 'default']");
+    assert_contains($captureModule, "attemptProfiles.push('manual')");
+    assert_contains($captureModule, 'Retrying thumbnail capture');
+    assert_contains($captureModule, 'function getComputedBackgroundLayers(doc, width, height)');
+    assert_contains($captureModule, "[doc.querySelector('canvas'), doc.querySelector('svg')].forEach");
+    assert_contains($captureModule, 'async function compositeVisibleSurface(doc, foregroundCanvas, width, height)');
+    assert_contains($captureModule, 'await inlineSvgManagedImages(svgClone, svgElement);');
+    assert_contains($captureModule, 'function captureStableFrame');
+    assert_contains($captureModule, 'async function analyzeFrame(dataUrl)');
+    assert_contains($captureModule, 'analysis.blankLike');
+    assert_contains($captureModule, 'Piece kept producing blank or near-blank frames instead of a usable thumbnail.');
+    assert_contains($captureModule, "acceptedBy: 'stable-rendered-frame'");
+    assert_contains($captureModule, 'Piece kept rendering, but its thumbnail never converged to a stable frame.');
+});
+
+$agents = file_get_contents(__DIR__ . '/../AGENTS.md');
+test('AGENTS planning section requires questions before proposing plans', function () use ($agents) {
+    assert_contains($agents, 'ask all necessary questions before proposing the');
+    assert_contains($agents, 'before requesting, expecting, or relying');
+    assert_contains($agents, 'Do not present a proposed plan until those questions');
+    assert_contains($agents, 'do not reopen');
+});
+
 $generatePreview = file_get_contents(__DIR__ . '/../public/app/views/admin/pieces/generate-preview.php');
 test('generate-preview no longer uses old single-delay direct canvas capture', function () use ($generatePreview) {
     assert_not_contains($generatePreview, "engine === 'three' ? 3500 : 2000");
     assert_not_contains($generatePreview, 'setTimeout(function () { if (!captured) capture(); }, 10000)');
     assert_contains($generatePreview, 'Save Without Thumbnail');
+    assert_contains($generatePreview, 'Discard &amp; Restart');
+    assert_contains($generatePreview, '/admin/pieces/generate?restart=1');
+    assert_contains($generatePreview, 'id="profile_id"');
+    assert_contains($generatePreview, 'id="persona_id"');
+    assert_contains($generatePreview, 'id="regenerate-preview-btn"');
+    assert_contains($generatePreview, "/admin/pieces/generate/regenerate");
 });
 
 $formView = file_get_contents(__DIR__ . '/../public/app/views/admin/pieces/form.php');
@@ -445,10 +511,47 @@ test('Accepting AI Refine resets dirty baselines so a later Update is not a dupl
     assert_contains($formView, 'resetDirtyBaselines();');
 });
 
-$controller = file_get_contents(__DIR__ . '/../public/app/Controllers/Admin/PiecesAdminController.php');
+$controller = file_get_contents(__DIR__ . '/../public/app/controllers/Admin/PiecesAdminController.php');
 test('refineSave JSON includes version_id for changed and unchanged saves', function () use ($controller) {
     assert_contains($controller, "'version_id' => (int) \$currentVersion['id']");
     assert_contains($controller, "'version_id' => \$versionId");
+});
+
+test('preview generation controller preserves restart context and supports preview regenerate', function () use ($controller) {
+    assert_contains($controller, "isset(\$_GET['restart']) && \$_GET['restart'] === '1'");
+    assert_contains($controller, "public static function generateRegenerate(): void");
+    assert_contains($controller, 'Rebuild this piece so it better fulfills the original creative prompt.');
+    assert_contains($controller, "private static function updatePendingGenerationCurrent(array \$current): void");
+    assert_contains($controller, "private static function clearPendingGeneration(): void");
+    assert_contains($controller, "private static function requestedGenerationModeFromPost(string \$engineFallback = 'p5'): string");
+    assert_contains($controller, "'generation_mode' => art_piece_normalize_generation_mode(\$generationMode, \$engine)");
+});
+
+test('saved versions and immersive surfaces treat persisted generation mode as primary with legacy fallback', function () {
+    $versionModel = file_get_contents(__DIR__ . '/../public/app/models/PlatformArtPieceVersion.php');
+    $pieceModel = file_get_contents(__DIR__ . '/../public/app/models/PlatformArtPiece.php');
+    $immersivePiece = file_get_contents(__DIR__ . '/../public/app/views/immersive/piece.php');
+    $immersiveCollection = file_get_contents(__DIR__ . '/../public/app/views/immersive/collection.php');
+    assert_contains($versionModel, 'art_piece_version_select_columns(self::hasGenerationModeColumn(), true, true)');
+    assert_contains($versionModel, 'art_piece_version_storage_columns(self::hasGenerationModeColumn())');
+    assert_contains($versionModel, 'if (self::hasGenerationModeColumn())');
+    assert_contains($versionModel, "return ah_column_exists('art_piece_versions', 'generation_mode');");
+    assert_contains($pieceModel, 'art_piece_version_select_columns(self::versionHasGenerationMode())');
+    assert_contains($pieceModel, "return ah_column_exists('art_piece_versions', 'generation_mode');");
+    assert_contains($immersivePiece, '$generationMode = art_piece_version_generation_mode($version, $piece);');
+    assert_contains($immersivePiece, '$c2Interactive = $generationMode === \'c2_interactive\';');
+    assert_contains($immersiveCollection, '$generationMode = art_piece_version_generation_mode($version, $piece);');
+    assert_contains($immersiveCollection, "in_array(\$generationMode, ['three', 'aframe', 'c2_interactive'], true)");
+});
+
+test('admin Pieces UI exposes C2.js Interactive as a first-class label and filter', function () {
+    $piecesIndex = file_get_contents(__DIR__ . '/../public/app/views/admin/pieces/index.php');
+    $piecesController = file_get_contents(__DIR__ . '/../public/app/controllers/Admin/PiecesAdminController.php');
+    assert_contains($piecesIndex, '<option value="c2_interactive"');
+    assert_contains($piecesIndex, 'C2.js Interactive');
+    assert_contains($piecesIndex, 'art_piece_generation_mode_label($effectiveGenerationMode)');
+    assert_contains($piecesController, "array_merge(art_piece_supported_engines(), ['c2_interactive'])");
+    assert_contains($piecesController, "if (\$engine === 'c2_interactive')");
 });
 
 echo "\n=== CreatrImmersiveImage embedded Expand button (iOS Safari) ===\n";

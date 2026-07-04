@@ -33,9 +33,8 @@ $versionId = isset($_GET['version']) ? (int) $_GET['version'] : null;
 $versionParam = $versionId ? '?version=' . $versionId : '';
 
 $embedUrl = $origin . '/embed/pieces/' . $pieceId . $versionParam;
-$c2InteractivePattern = '/(?:addEventListener\s*\(\s*[\'"](?:pointerdown|pointerup|pointermove|mousedown|mouseup|mousemove|touchstart|touchmove|touchend|click)|on(?:click|mousedown|mouseup|mousemove|touchstart|touchmove|touchend|pointerdown|pointermove|pointerup)\s*=)/i';
-$c2LikelyInteractive = $engine === 'c2'
-    && preg_match($c2InteractivePattern, (string) ($version['generated_code'] ?? '') . "\n" . (string) ($version['html_code'] ?? '')) === 1;
+$generationMode = art_piece_version_generation_mode($version, $piece);
+$c2Interactive = $generationMode === 'c2_interactive';
 
 // Build the three different iterations of embed codes mirroring legacy Node.js
 $titleSafe = htmlspecialchars($piece['title'] ?? 'Art piece', ENT_QUOTES | ENT_HTML5, 'UTF-8');
@@ -99,8 +98,8 @@ if (isset($_GET['returnTo']) && str_starts_with($_GET['returnTo'], '/')) {
 }
 $showAdminEditButton = isset($adminEditUrl) && is_string($adminEditUrl) && $adminEditUrl !== '';
 $showReadOnlyFullViewButton = !$isEmbedMode && !$isStaticEmbed
-    && ($engine === 'p5' || $engine === 'svg' || ($engine === 'c2' && !$c2LikelyInteractive));
-$showC2InteractiveOverlay = $engine === 'c2' && $c2LikelyInteractive;
+    && ($engine === 'p5' || $engine === 'svg' || ($engine === 'c2' && !$c2Interactive));
+$showC2InteractiveOverlay = $engine === 'c2' && $c2Interactive;
 $fullViewPieceSrcdoc = $showReadOnlyFullViewButton ? piece_render_document($piece, $version) : null;
 
 ?>

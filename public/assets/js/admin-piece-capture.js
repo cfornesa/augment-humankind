@@ -41,9 +41,229 @@
             .replace(/"/g, '&quot;');
     }
 
+    function normalizeCmsMediaPath(src) {
+        if (typeof src !== 'string' || src === '') return '';
+        if (/^\/(?:image\/[0-9]+|api\/media-assets\/[0-9]+|media\/[A-Za-z0-9._~/%+-]+)(?:\?[A-Za-z0-9._~%=&+-]*)?$/.test(src)) {
+            return src;
+        }
+        try {
+            var resolved = new URL(src, window.location.href);
+            if (resolved.origin !== window.location.origin) return '';
+            var path = resolved.pathname + resolved.search;
+            return /^\/(?:image\/[0-9]+|api\/media-assets\/[0-9]+|media\/[A-Za-z0-9._~/%+-]+)(?:\?[A-Za-z0-9._~%=&+-]*)?$/.test(path)
+                ? path
+                : '';
+        } catch (_) {
+            return '';
+        }
+    }
+
+    function splitCssList(value) {
+        var result = [];
+        var current = '';
+        var depth = 0;
+        for (var i = 0; i < value.length; i++) {
+            var ch = value[i];
+            if (ch === '(') depth++;
+            if (ch === ')') depth = Math.max(0, depth - 1);
+            if (ch === ',' && depth === 0) {
+                result.push(current.trim());
+                current = '';
+                continue;
+            }
+            current += ch;
+        }
+        if (current.trim()) result.push(current.trim());
+        return result;
+    }
+
+    function extractCmsMediaUrls(value) {
+        if (typeof value !== 'string' || value === '') return [];
+        var urls = [];
+        value.replace(/url\(([^)]+)\)/gi, function (_, rawUrl) {
+            var cleaned = String(rawUrl || '').trim().replace(/^['"]|['"]$/g, '');
+            var normalized = normalizeCmsMediaPath(cleaned);
+            if (normalized) urls.push(normalized);
+            return '';
+        });
+        return Array.from(new Set(urls));
+    }
+
+    function getCaptureSurfaceRoots(doc) {
+        var roots = [];
+        if (!doc) return roots;
+        var runtimeRoot = doc.getElementById('runtime-root');
+        var authoredRoot = runtimeRoot && runtimeRoot.firstElementChild ? runtimeRoot.firstElementChild : null;
+        function addRoot(node) {
+            if (node && node.nodeType === 1 && roots.indexOf(node) === -1) {
+                roots.push(node);
+            }
+        }
+        [doc.documentElement, doc.body, runtimeRoot, authoredRoot].forEach(addRoot);
+        [doc.querySelector('canvas'), doc.querySelector('svg')].forEach(function (node) {
+            while (node && node.nodeType === 1) {
+                addRoot(node);
+                if (node === runtimeRoot || node === doc.body || node === doc.documentElement) break;
+                node = node.parentElement;
+            }
+        });
+        return roots;
+    }
+
+    function colorHasVisibleAlpha(color) {
+        if (typeof color !== 'string' || color === '' || color === 'transparent') return false;
+        var match = color.match(/rgba?\(([^)]+)\)/i);
+        if (!match) return true;
+        var parts = match[1].split(',').map(function (part) { return parseFloat(part.trim()); });
+        if (parts.length < 4) return true;
+        return !isNaN(parts[3]) && parts[3] > 0;
+    }
+
+    function getNodeCaptureRect(node, doc, width, height) {
+        var viewportWidth = Math.max(1, (doc && doc.documentElement ? doc.documentElement.clientWidth : 0) || width);
+        var viewportHeight = Math.max(1, (doc && doc.documentElement ? doc.documentElement.clientHeight : 0) || height);
+        var rect;
+        try {
+            rect = node.getBoundingClientRect();
+        } catch (_) {
+            rect = { left: 0, top: 0, width: viewportWidth, height: viewportHeight };
+        }
+        var left = Math.max(0, (rect.left / viewportWidth) * width);
+        var top = Math.max(0, (rect.top / viewportHeight) * height);
+        var rectWidth = Math.max(0, (rect.width / viewportWidth) * width);
+        var rectHeight = Math.max(0, (rect.height / viewportHeight) * height);
+        if (!rectWidth || !rectHeight) {
+            return { left: 0, top: 0, width: width, height: height };
+        }
+        return { left: left, top: top, width: rectWidth, height: rectHeight };
+    }
+
+    function getComputedBackgroundLayers(doc, width, height) {
+        return getCaptureSurfaceRoots(doc).map(function (node) {
+            var style = window.getComputedStyle(node);
+            var urls = extractCmsMediaUrls(style.backgroundImage || '');
+            var colors = colorHasVisibleAlpha(style.backgroundColor || '') ? [style.backgroundColor] : [];
+            if (!urls.length && !colors.length) return null;
+            var sizeList = splitCssList(style.backgroundSize || '');
+            var positionList = splitCssList(style.backgroundPosition || '');
+            var repeatList = splitCssList(style.backgroundRepeat || '');
+            return {
+                rect: getNodeCaptureRect(node, doc, width, height),
+                backgroundColor: colors[0] || '',
+                backgrounds: urls.map(function (src, index) {
+                    return {
+                        src: src,
+                        size: sizeList[index] || sizeList[0] || 'auto',
+                        position: positionList[index] || positionList[0] || '50% 50%',
+                        repeat: repeatList[index] || repeatList[0] || 'repeat'
+                    };
+                })
+            };
+        }).filter(Boolean);
+    }
+
+    function parseBackgroundPosition(position, rect, drawWidth, drawHeight) {
+        var parts = String(position || '50% 50%').trim().split(/\s+/);
+        var xToken = parts[0] || '50%';
+        var yToken = parts[1] || parts[0] || '50%';
+        function resolve(token, space, size) {
+            if (/%$/.test(token)) {
+                var percent = parseFloat(token);
+                return isNaN(percent) ? (space - size) / 2 : (space - size) * (percent / 100);
+            }
+            if (token === 'left' || token === 'top') return 0;
+            if (token === 'right' || token === 'bottom') return space - size;
+            if (token === 'center') return (space - size) / 2;
+            var value = parseFloat(token);
+            return isNaN(value) ? (space - size) / 2 : value;
+        }
+        return {
+            x: rect.left + resolve(xToken, rect.width, drawWidth),
+            y: rect.top + resolve(yToken, rect.height, drawHeight)
+        };
+    }
+
+    function computeBackgroundDrawRect(image, layer, rect) {
+        var imageWidth = image.naturalWidth || image.width || rect.width;
+        var imageHeight = image.naturalHeight || image.height || rect.height;
+        var size = String(layer.size || 'auto').trim();
+        var drawWidth = imageWidth;
+        var drawHeight = imageHeight;
+        if (size === 'cover') {
+            var coverScale = Math.max(rect.width / imageWidth, rect.height / imageHeight);
+            drawWidth = imageWidth * coverScale;
+            drawHeight = imageHeight * coverScale;
+        } else if (size === 'contain') {
+            var containScale = Math.min(rect.width / imageWidth, rect.height / imageHeight);
+            drawWidth = imageWidth * containScale;
+            drawHeight = imageHeight * containScale;
+        } else if (/%/.test(size)) {
+            var sizeParts = size.split(/\s+/);
+            var sizeX = parseFloat(sizeParts[0]);
+            var sizeY = parseFloat(sizeParts[1] || sizeParts[0]);
+            if (!isNaN(sizeX)) drawWidth = rect.width * (sizeX / 100);
+            if (!isNaN(sizeY)) drawHeight = rect.height * (sizeY / 100);
+        } else if (size !== 'auto') {
+            var autoParts = size.split(/\s+/);
+            var widthPx = parseFloat(autoParts[0]);
+            var heightPx = parseFloat(autoParts[1] || '');
+            if (!isNaN(widthPx)) {
+                drawWidth = widthPx;
+                drawHeight = imageHeight * (drawWidth / imageWidth);
+            }
+            if (!isNaN(heightPx)) {
+                drawHeight = heightPx;
+                if (isNaN(widthPx)) drawWidth = imageWidth * (drawHeight / imageHeight);
+            }
+        }
+        var pos = parseBackgroundPosition(layer.position, rect, drawWidth, drawHeight);
+        return { x: pos.x, y: pos.y, width: drawWidth, height: drawHeight };
+    }
+
+    function drawBackgroundImage(ctx, image, layer, rect) {
+        var drawRect = computeBackgroundDrawRect(image, layer, rect);
+        var repeat = String(layer.repeat || 'repeat');
+        var repeatX = repeat === 'repeat' || repeat === 'repeat-x';
+        var repeatY = repeat === 'repeat' || repeat === 'repeat-y';
+        var tileWidth = Math.max(1, drawRect.width);
+        var tileHeight = Math.max(1, drawRect.height);
+        var startX = repeatX ? rect.left - tileWidth : drawRect.x;
+        var endX = repeatX ? rect.left + rect.width + tileWidth : drawRect.x + 1;
+        var startY = repeatY ? rect.top - tileHeight : drawRect.y;
+        var endY = repeatY ? rect.top + rect.height + tileHeight : drawRect.y + 1;
+        for (var x = startX; x < endX; x += tileWidth) {
+            for (var y = startY; y < endY; y += tileHeight) {
+                ctx.drawImage(image, x, y, tileWidth, tileHeight);
+                if (!repeatY) break;
+            }
+            if (!repeatX) break;
+        }
+    }
+
+    async function inlineSvgManagedImages(svgClone, liveSvg) {
+        var cloneImages = Array.from(svgClone.querySelectorAll('image'));
+        var liveImages = Array.from(liveSvg.querySelectorAll('image'));
+        await Promise.all(cloneImages.map(async function (cloneImage, index) {
+            var liveImage = liveImages[index] || cloneImage;
+            var href = liveImage.getAttribute('href') || liveImage.getAttribute('xlink:href') || cloneImage.getAttribute('href') || cloneImage.getAttribute('xlink:href') || '';
+            var normalized = normalizeCmsMediaPath(href);
+            if (!normalized) return;
+            var img = await loadImage(normalized);
+            var canvas = document.createElement('canvas');
+            canvas.width = Math.max(1, img.naturalWidth || img.width || 1);
+            canvas.height = Math.max(1, img.naturalHeight || img.height || 1);
+            var ctx = canvas.getContext('2d');
+            if (!ctx) return;
+            ctx.drawImage(img, 0, 0);
+            var dataUrl = canvas.toDataURL('image/png');
+            cloneImage.setAttribute('href', dataUrl);
+            cloneImage.setAttributeNS('http://www.w3.org/1999/xlink', 'xlink:href', dataUrl);
+        }));
+    }
+
     function convertSvgToCanvas(svgElement, width, height) {
         return new Promise(function (resolve, reject) {
-            try {
+            (async function () {
                 var svgClone = svgElement.cloneNode(true);
                 svgClone.setAttribute('width', width);
                 svgClone.setAttribute('height', height);
@@ -69,6 +289,7 @@
                 var styleEl = document.createElementNS('http://www.w3.org/2000/svg', 'style');
                 styleEl.textContent = '* { animation: none !important; transition: none !important; }';
                 svgClone.insertBefore(styleEl, svgClone.firstChild);
+                await inlineSvgManagedImages(svgClone, svgElement);
 
                 var serialized = new XMLSerializer().serializeToString(svgClone);
                 var svgData = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(serialized);
@@ -89,14 +310,49 @@
                     reject(new Error('Failed to load SVG image source.'));
                 };
                 img.src = svgData;
-            } catch (error) {
+            })().catch(function (error) {
                 reject(error);
-            }
+            });
         });
+    }
+
+    async function compositeVisibleSurface(doc, foregroundCanvas, width, height) {
+        var layers = getComputedBackgroundLayers(doc, width, height);
+        if (!layers.length) return foregroundCanvas;
+        var canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        var ctx = canvas.getContext('2d');
+        if (!ctx) return foregroundCanvas;
+        for (var i = 0; i < layers.length; i++) {
+            var layerGroup = layers[i];
+            var rect = layerGroup.rect;
+            if (layerGroup.backgroundColor) {
+                ctx.fillStyle = layerGroup.backgroundColor;
+                ctx.fillRect(rect.left, rect.top, rect.width, rect.height);
+            }
+            for (var j = 0; j < layerGroup.backgrounds.length; j++) {
+                var bg = layerGroup.backgrounds[j];
+                var image = await loadImage(bg.src);
+                drawBackgroundImage(ctx, image, bg, rect);
+            }
+        }
+        ctx.drawImage(foregroundCanvas, 0, 0, width, height);
+        return canvas;
     }
 
     function wait(ms) {
         return new Promise(function (resolve) { setTimeout(resolve, ms); });
+    }
+
+    function getManagedMediaState(doc) {
+        var docEl = doc && doc.documentElement ? doc.documentElement : null;
+        return {
+            root: docEl,
+            requiresSettledMedia: !!(docEl && docEl.dataset.creatrManagedMedia === '1'),
+            isSettled: !!(docEl && docEl.dataset.creatrSettled === '1'),
+            renderReady: !!(docEl && docEl.dataset.creatrRenderReady === '1')
+        };
     }
 
     // Waits for a piece rendering inside a REAL, genuinely visible iframe
@@ -108,7 +364,21 @@
     // script-side timing was. Call this before capture({ liveIframe }) so
     // that branch's immediate toDataURL() grabs a frame that has actually
     // been painted, instead of polling/guessing.
-    async function waitForRender(iframe, engine) {
+    function resolveWaitProfile(engine, profile) {
+        var mode = profile === 'manual' ? 'manual' : 'default';
+        if (engine === 'three' || engine === 'aframe') {
+            return mode === 'manual'
+                ? { warmupMs: 1500, maxAttempts: 1440 }
+                : { warmupMs: 1000, maxAttempts: 720 };
+        }
+        return mode === 'manual'
+            ? { warmupMs: 500, maxAttempts: 720 }
+            : { warmupMs: 300, maxAttempts: 360 };
+    }
+
+    async function waitForRender(iframe, engine, options) {
+        var opts = options || {};
+        var waitProfile = resolveWaitProfile(engine, opts.waitProfile);
         var requireReadyMarker = (engine === 'p5' || engine === 'c2' || engine === 'three' || engine === 'aframe');
         var runtimeError = '';
         function onMessage(event) {
@@ -130,7 +400,7 @@
             // A genuinely visible iframe isn't subject to the throttling the
             // clipped background iframe needed a long fixed warm-up for —
             // these windows are deliberately shorter.
-            await wait((engine === 'three' || engine === 'aframe') ? 1000 : 300);
+            await wait(waitProfile.warmupMs);
 
             // Checked from inside the iframe's own requestAnimationFrame
             // callback, not a setTimeout poll — a live device repro showed
@@ -145,7 +415,7 @@
             // chosen to preserve roughly the same total wait budget the old
             // 300ms-interval poll loop had (40x300ms=12s for three,
             // 20x300ms=6s otherwise), not the same attempt count.
-            var maxAttempts = (engine === 'three' || engine === 'aframe') ? 720 : 360;
+            var maxAttempts = waitProfile.maxAttempts;
             await new Promise(function (resolve, reject) {
                 var attempt = 0;
                 var raf = (iframe.contentWindow && iframe.contentWindow.requestAnimationFrame) || window.requestAnimationFrame;
@@ -153,12 +423,15 @@
                     attempt++;
                     var doc = iframe.contentDocument;
                     if (doc) {
+                        var mediaState = getManagedMediaState(doc);
+                        var requiresSettledMedia = mediaState.requiresSettledMedia;
+                        var isSettled = !requiresSettledMedia || mediaState.isSettled;
                         var canvas = doc.querySelector('canvas');
-                        if (canvas && (!requireReadyMarker || canvas.dataset.creatrReady === '1')) {
+                        if (canvas && (!requireReadyMarker || canvas.dataset.creatrReady === '1') && (!requiresSettledMedia || canvas.dataset.creatrSettled === '1' || isSettled)) {
                             resolve();
                             return;
                         }
-                        if (doc.querySelector('svg')) {
+                        if (doc.querySelector('svg') && mediaState.root && mediaState.root.dataset.creatrReady === '1' && isSettled) {
                             resolve();
                             return;
                         }
@@ -168,6 +441,16 @@
                         return;
                     }
                     if (attempt >= maxAttempts) {
+                        var timeoutDoc = iframe.contentDocument;
+                        var timeoutState = getManagedMediaState(timeoutDoc);
+                        if (timeoutState.requiresSettledMedia) {
+                            if (timeoutState.renderReady) {
+                                reject(new Error(runtimeError || 'Piece rendered, but its media-backed thumbnail never settled.'));
+                                return;
+                            }
+                            reject(new Error(runtimeError || 'Piece never reached a settled media-backed render state.'));
+                            return;
+                        }
                         reject(new Error(runtimeError || 'Piece did not finish rendering in time.'));
                         return;
                     }
@@ -180,6 +463,92 @@
         }
     }
 
+    async function captureStableFrame(liveIframe, source, options) {
+        var opts = options || {};
+        var attempts = opts.attempts || 4;
+        var sampleDelayMs = opts.sampleDelayMs || 200;
+        var acceptBlankLike = opts.acceptBlankLike === true;
+        var previousDataUrl = '';
+        var previousResult = null;
+        var previousAnalysis = null;
+        for (var i = 0; i < attempts; i++) {
+            var result = await capture(Object.assign({}, source, {
+                liveIframe: liveIframe,
+                width: source.width || 320,
+                height: source.height || 180
+            }));
+            if (!result.ok) {
+                return result;
+            }
+            if (!result.dataUrl || result.dataUrl === 'data:,' || result.dataUrl.length < 500) {
+                await wait(sampleDelayMs);
+                continue;
+            }
+            var analysis = await analyzeFrame(result.dataUrl);
+            if (analysis.blankLike && !acceptBlankLike) {
+                previousDataUrl = '';
+                previousResult = null;
+                previousAnalysis = analysis;
+                await wait(sampleDelayMs);
+                continue;
+            }
+            if (previousDataUrl) {
+                var diff = await diffImages(previousDataUrl, result.dataUrl);
+                if (!diff.significant) {
+                    return {
+                        ok: true,
+                        dataUrl: result.dataUrl,
+                        kind: result.kind,
+                        error: null,
+                        stability: {
+                            acceptedBy: 'stable-rendered-frame',
+                            diffPercent: diff.percent,
+                            changedPixelPercent: diff.changedPixelPercent,
+                            averageLuma: analysis.averageLuma,
+                            darkPixelRatio: analysis.darkPixelRatio,
+                            lumaRange: analysis.lumaRange
+                        }
+                    };
+                }
+            }
+            previousDataUrl = result.dataUrl;
+            previousResult = result;
+            previousAnalysis = analysis;
+            await wait(sampleDelayMs);
+        }
+        return {
+            ok: false,
+            dataUrl: '',
+            kind: previousResult ? previousResult.kind : null,
+            error: previousAnalysis && previousAnalysis.blankLike
+                ? 'Piece kept producing blank or near-blank frames instead of a usable thumbnail.'
+                : 'Piece kept rendering, but its thumbnail never converged to a stable frame.'
+        };
+    }
+
+    async function captureVisibleSettledFrame(iframe, source) {
+        var doc = iframe.contentDocument || (iframe.contentWindow ? iframe.contentWindow.document : null);
+        var mediaState = getManagedMediaState(doc);
+        var immediate = await capture(Object.assign({}, source, {
+            liveIframe: iframe,
+            width: source.width || 320,
+            height: source.height || 180
+        }));
+        if (!immediate.ok) {
+            return immediate;
+        }
+        var analysis = await analyzeFrame(immediate.dataUrl);
+        if (!analysis.blankLike && (!mediaState.requiresSettledMedia || mediaState.isSettled)) {
+            immediate.analysis = analysis;
+            return immediate;
+        }
+        return captureStableFrame(iframe, source, {
+            attempts: 5,
+            sampleDelayMs: 250,
+            acceptBlankLike: false
+        });
+    }
+
     // Builds a small, genuinely visible (not clipped, not inside any
     // display:none ancestor) overlay containing a fresh iframe, waits for
     // the piece to actually render, captures it via the proven liveIframe
@@ -189,35 +558,64 @@
     // function does not call or share code with it, by design, so nothing
     // here can affect that button). Never throws; mirrors capture()'s own
     // {ok, dataUrl, kind, error} contract.
-    async function captureWithOverlay(source) {
+    async function captureWithOverlay(source, options) {
+        var opts = options || {};
         var width = source.width || 320;
         var height = source.height || 180;
         var engine = source.engine || 'p5';
-
-        var overlay = document.createElement('div');
-        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:999999;display:flex;align-items:center;justify-content:center;';
-        var box = document.createElement('div');
-        box.style.cssText = 'background:#0d0d0f;border:1px solid #333;border-radius:4px;padding:0.75rem;box-shadow:0 8px 24px rgba(0,0,0,0.4);';
-        var label = document.createElement('div');
-        label.textContent = 'Capturing thumbnail…';
-        label.style.cssText = 'color:#a1a1aa;font-size:0.8rem;margin-bottom:0.5rem;text-align:center;';
-        var iframe = document.createElement('iframe');
-        iframe.style.cssText = 'width:' + width + 'px;height:' + height + 'px;border:0;display:block;';
-        iframe.sandbox = 'allow-scripts allow-same-origin';
-        box.appendChild(label);
-        box.appendChild(iframe);
-        overlay.appendChild(box);
-        document.body.appendChild(overlay);
-
-        try {
-            iframe.srcdoc = renderDocument(Object.assign({}, source, { width: width, height: height }));
-            await waitForRender(iframe, engine);
-            return await capture(Object.assign({}, source, { liveIframe: iframe, width: width, height: height }));
-        } catch (error) {
-            return { ok: false, dataUrl: '', kind: null, error: error && error.message ? error.message : String(error) };
-        } finally {
-            if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+        var attemptProfiles = [opts.waitProfile || 'default'];
+        if (attemptProfiles[attemptProfiles.length - 1] !== 'manual') {
+            attemptProfiles.push('manual');
         }
+        var lastError = null;
+
+        for (var i = 0; i < attemptProfiles.length; i++) {
+            var waitProfile = attemptProfiles[i];
+            var overlay = document.createElement('div');
+            overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:999999;display:flex;align-items:center;justify-content:center;';
+            var box = document.createElement('div');
+            box.style.cssText = 'background:#0d0d0f;border:1px solid #333;border-radius:4px;padding:0.75rem;box-shadow:0 8px 24px rgba(0,0,0,0.4);';
+            var label = document.createElement('div');
+            label.textContent = waitProfile === 'manual' ? 'Retrying thumbnail capture…' : 'Capturing thumbnail…';
+            label.style.cssText = 'color:#a1a1aa;font-size:0.8rem;margin-bottom:0.5rem;text-align:center;';
+            var iframe = document.createElement('iframe');
+            iframe.style.cssText = 'width:' + width + 'px;height:' + height + 'px;border:0;display:block;';
+            iframe.sandbox = 'allow-scripts allow-same-origin';
+            box.appendChild(label);
+            box.appendChild(iframe);
+            overlay.appendChild(box);
+            document.body.appendChild(overlay);
+
+            try {
+                iframe.srcdoc = renderDocument(Object.assign({}, source, { width: width, height: height }));
+                await waitForRender(iframe, engine, { waitProfile: waitProfile });
+                var result = await captureVisibleSettledFrame(iframe, Object.assign({}, source, { width: width, height: height }));
+                if (result.ok) {
+                    return result;
+                }
+                lastError = new Error(result.error || 'Thumbnail capture failed.');
+            } catch (error) {
+                var doc = iframe.contentDocument || (iframe.contentWindow ? iframe.contentWindow.document : null);
+                var mediaState = getManagedMediaState(doc);
+                if (mediaState.renderReady) {
+                    var stabilized = await captureStableFrame(iframe, Object.assign({}, source, { width: width, height: height }), {
+                        attempts: 6,
+                        sampleDelayMs: waitProfile === 'manual' ? 300 : 220,
+                        acceptBlankLike: false
+                    });
+                    if (stabilized.ok) {
+                        return stabilized;
+                    }
+                    lastError = new Error(stabilized.error || (error && error.message) || 'Thumbnail capture failed.');
+                } else {
+                    lastError = error;
+                }
+            } finally {
+                if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+            }
+        }
+
+        return { ok: false, dataUrl: '', kind: null, error: lastError && lastError.message ? lastError.message : String(lastError || 'Thumbnail capture failed.') };
     }
 
     async function capture(source) {
@@ -234,7 +632,8 @@
                 if (doc) {
                     var canvas = doc.querySelector('canvas');
                     if (canvas && typeof canvas.toDataURL === 'function') {
-                        var dataUrl = canvas.toDataURL('image/png');
+                        var composedCanvas = await compositeVisibleSurface(doc, canvas, width, height);
+                        var dataUrl = composedCanvas.toDataURL('image/png');
                         console.log('[DIAG] live-direct-capture-dataurl', { length: dataUrl ? dataUrl.length : 0 });
                         if (dataUrl && dataUrl !== 'data:,' && dataUrl.length > 100) {
                             return { ok: true, dataUrl: dataUrl, kind: 'live-canvas', error: null };
@@ -243,7 +642,8 @@
                     var svg = doc.querySelector('svg');
                     if (svg) {
                         var canvasFromSvg = await convertSvgToCanvas(svg, width, height);
-                        var dataUrlFromSvg = canvasFromSvg.toDataURL('image/png');
+                        var composedSvgCanvas = await compositeVisibleSurface(doc, canvasFromSvg, width, height);
+                        var dataUrlFromSvg = composedSvgCanvas.toDataURL('image/png');
                         if (dataUrlFromSvg && dataUrlFromSvg !== 'data:,' && dataUrlFromSvg.length > 100) {
                             return { ok: true, dataUrl: dataUrlFromSvg, kind: 'live-svg', error: null };
                         }
@@ -373,7 +773,8 @@
                 throw new Error(runtimeError || 'No canvas or svg element found after waiting.');
             }
 
-            var dataUrl = canvas.toDataURL('image/png');
+            var composedCanvas = await compositeVisibleSurface(frame.contentDocument, canvas, width, height);
+            var dataUrl = composedCanvas.toDataURL('image/png');
             if (!dataUrl || dataUrl === 'data:,') {
                 throw new Error('Canvas capture returned empty image data.');
             }
@@ -404,6 +805,61 @@
             img.onerror = function () { reject(new Error('Failed to load image for comparison.')); };
             img.src = src;
         });
+    }
+
+    async function analyzeFrame(dataUrl) {
+        var image = await loadImage(dataUrl);
+        var width = 64;
+        var height = 36;
+        var canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        var ctx = canvas.getContext('2d', { willReadFrequently: true });
+        if (!ctx) {
+            throw new Error('Frame analysis canvas is unavailable.');
+        }
+
+        ctx.drawImage(image, 0, 0, width, height);
+        var pixels = ctx.getImageData(0, 0, width, height).data;
+        var totalPixels = width * height;
+        var totalLuma = 0;
+        var totalAlpha = 0;
+        var darkPixels = 0;
+        var nonDarkPixels = 0;
+        var minLuma = 255;
+        var maxLuma = 0;
+
+        for (var i = 0; i < pixels.length; i += 4) {
+            var alpha = pixels[i + 3] / 255;
+            var luma = ((pixels[i] * 0.2126) + (pixels[i + 1] * 0.7152) + (pixels[i + 2] * 0.0722)) * alpha;
+            totalLuma += luma;
+            totalAlpha += alpha;
+            if (luma <= 8) {
+                darkPixels++;
+            } else if (luma >= 24) {
+                nonDarkPixels++;
+            }
+            if (luma < minLuma) minLuma = luma;
+            if (luma > maxLuma) maxLuma = luma;
+        }
+
+        var averageLuma = totalLuma / totalPixels;
+        var averageAlpha = totalAlpha / totalPixels;
+        var darkPixelRatio = darkPixels / totalPixels;
+        var nonDarkPixelRatio = nonDarkPixels / totalPixels;
+        var lumaRange = maxLuma - minLuma;
+        var blankLike = averageAlpha < 0.05
+            || (darkPixelRatio >= 0.985 && nonDarkPixelRatio <= 0.002 && lumaRange <= 10)
+            || (averageLuma <= 4 && nonDarkPixelRatio <= 0.0015 && lumaRange <= 8);
+
+        return {
+            averageLuma: averageLuma,
+            averageAlpha: averageAlpha,
+            darkPixelRatio: darkPixelRatio,
+            nonDarkPixelRatio: nonDarkPixelRatio,
+            lumaRange: lumaRange,
+            blankLike: blankLike
+        };
     }
 
     async function diffImages(beforeDataUrl, afterDataUrl) {

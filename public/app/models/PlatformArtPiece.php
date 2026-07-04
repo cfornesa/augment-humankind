@@ -2,6 +2,9 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . '/../helpers/schema.php';
+require_once __DIR__ . '/../helpers/art-piece-generation.php';
+
 class PlatformArtPiece
 {
     public static function all(): array
@@ -473,13 +476,7 @@ class PlatformArtPiece
         $placeholders = implode(',', array_fill(0, count($ids), '?'));
 
         $stmt = db()->prepare(
-            "SELECT v.id, v.art_piece_id, v.version_number, v.prompt, v.structured_spec,
-                    v.html_code, v.css_code, v.generated_code, v.engine,
-                    v.generation_vendor, v.generation_model, v.validation_status,
-                    v.generation_attempt_count, v.notes,
-                    v.ai_profile_id, v.ai_persona_id,
-                    uavs.profile_name AS ai_profile_name,
-                    ap.name AS ai_persona_name
+            "SELECT " . self::versionSelectColumns() . "
              FROM art_piece_versions v
              LEFT JOIN user_ai_vendor_settings uavs ON uavs.id = v.ai_profile_id
              LEFT JOIN ai_personas ap ON ap.id = v.ai_persona_id
@@ -594,6 +591,16 @@ class PlatformArtPiece
         } catch (Throwable) {
             return $exists = false;
         }
+    }
+
+    private static function versionSelectColumns(): string
+    {
+        return art_piece_version_select_columns(self::versionHasGenerationMode());
+    }
+
+    private static function versionHasGenerationMode(): bool
+    {
+        return ah_column_exists('art_piece_versions', 'generation_mode');
     }
 
     private static function relationTableExists(string $tableName): bool

@@ -322,6 +322,7 @@ $adminRoutes = [
     ['GET',  '/admin/pieces/generate',         [PiecesAdminController::class, 'generateForm'], 'ai_pieces_code'],
     ['POST', '/admin/pieces/generate',         [PiecesAdminController::class, 'generate'], 'ai_pieces_code'],
     ['GET',  '/admin/pieces/generate/preview', [PiecesAdminController::class, 'generatePreview'], 'ai_pieces_code'],
+    ['POST', '/admin/pieces/generate/regenerate', [PiecesAdminController::class, 'generateRegenerate'], 'ai_pieces_code'],
     ['POST', '/admin/pieces/generate/save',    [PiecesAdminController::class, 'generateSave'], 'ai_pieces_code'],
     ['POST', '/admin/pieces/refine-ai',        [PiecesAdminController::class, 'refineAi'], 'ai_pieces_code'],
     ['GET',  '/admin/pieces/templates',        [PiecesAdminController::class, 'templates']],

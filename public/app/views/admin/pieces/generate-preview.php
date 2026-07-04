@@ -19,7 +19,7 @@ $defaultTitle = 'AI ' . strtoupper($engine) . ' Piece - ' . date('M d, Y H:i');
     <div class="admin-header-row">
         <h1>AI Generation Preview</h1>
         <div style="display: flex; gap: 0.5rem;">
-            <a href="/admin/pieces/generate" class="admin-btn admin-btn-ghost">Discard &amp; Back</a>
+            <a href="/admin/pieces/generate?restart=1" class="admin-btn admin-btn-ghost">Discard &amp; Back</a>
         </div>
     </div>
 
@@ -35,13 +35,13 @@ $defaultTitle = 'AI ' . strtoupper($engine) . ' Piece - ' . date('M d, Y H:i');
 
     <form class="admin-form" data-save-url="/admin/pieces/generate/save">
         <!-- Hidden inputs for AI generation details -->
-        <input type="hidden" name="engine" value="<?= e($engine) ?>">
-        <input type="hidden" name="generation_mode" value="<?= e($generationMode ?? $engine) ?>">
-        <input type="hidden" name="generation_vendor" value="<?= e($profile['vendor'] ?? '') ?>">
-        <input type="hidden" name="generation_model" value="<?= e($profile['model'] ?? '') ?>">
-        <input type="hidden" name="generation_attempt_count" value="<?= (int) $attemptCount ?>">
-        <input type="hidden" name="profile_id" value="<?= (int) ($profileId ?? 0) ?>">
-        <input type="hidden" name="persona_id" value="<?= (int) ($personaId ?? 0) ?>">
+        <input type="hidden" id="engine" name="engine" value="<?= e($engine) ?>">
+        <input type="hidden" id="generation_mode" name="generation_mode" value="<?= e($generationMode ?? $engine) ?>">
+        <input type="hidden" id="generation_vendor" name="generation_vendor" value="<?= e($profile['vendor'] ?? '') ?>">
+        <input type="hidden" id="generation_model" name="generation_model" value="<?= e($profile['model'] ?? '') ?>">
+        <input type="hidden" id="generation_attempt_count" name="generation_attempt_count" value="<?= (int) $attemptCount ?>">
+        <input type="hidden" id="profile_id" name="profile_id" value="<?= (int) ($profileId ?? 0) ?>">
+        <input type="hidden" id="persona_id" name="persona_id" value="<?= (int) ($personaId ?? 0) ?>">
 
         <div class="admin-tabs piece-preview-tabs" role="tablist" style="margin-bottom: 1.5rem;">
             <button type="button" class="admin-tab active" data-tab="meta">Metadata</button>
@@ -109,11 +109,25 @@ $defaultTitle = 'AI ' . strtoupper($engine) . ' Piece - ' . date('M d, Y H:i');
         <div class="form-actions" style="margin-top: 2rem; display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem;">
             <span id="save-status" role="status" aria-live="polite" style="width:100%; font-size: 0.8rem; color: var(--ink-soft);"></span>
             <button type="button" class="admin-btn" id="save-insert-btn">Save and Insert (Create Version 1)</button>
+            <button type="button" class="admin-btn admin-btn-ghost" id="regenerate-preview-btn">Regenerate</button>
             <button type="button" class="admin-btn admin-btn-ghost" id="save-without-thumbnail-btn" hidden>Save Without Thumbnail</button>
-            <a href="/admin/pieces/generate" class="admin-btn admin-btn-ghost">Discard &amp; Restart</a>
+            <a href="/admin/pieces/generate?restart=1" class="admin-btn admin-btn-ghost">Discard &amp; Restart</a>
             <span id="thumbnail-status" style="font-size: 0.8rem; color: var(--ink-soft);">Waiting for piece to render…</span>
         </div>
     </form>
+
+    <dialog id="preview-regenerate-failed-dialog" class="inline-create-dialog">
+        <div class="dialog-header">
+            <h2 id="preview-regenerate-failed-title">Regenerate attempt 1 of <?= (int) ART_PIECE_MAX_ATTEMPTS ?> failed</h2>
+        </div>
+        <div class="dialog-body">
+            <p id="preview-regenerate-failed-message"></p>
+        </div>
+        <div class="dialog-footer">
+            <button type="button" class="admin-btn admin-btn-ghost" id="preview-regenerate-give-up-btn">Give Up</button>
+            <button type="button" class="admin-btn" id="preview-regenerate-try-again-btn">Try Again</button>
+        </div>
+    </dialog>
 
     <script src="/assets/js/admin-piece-capture.js?v=<?= (int) @filemtime(dirname(__DIR__, 4) . '/assets/js/admin-piece-capture.js') ?>"></script>
     <script>
@@ -164,6 +178,30 @@ $defaultTitle = 'AI ' . strtoupper($engine) . ' Piece - ' . date('M d, Y H:i');
 
     var updateTimeout = null;
     var thumbnailRevision = 0;
+    function renderPreviewDocument() {
+        var html = document.getElementById('html_code').value;
+        var css = document.getElementById('css_code').value;
+        var js = document.getElementById('generated_code').value;
+        var engine = document.querySelector('input[name="engine"]').value;
+
+        var docTemplate = window.CreatrPieceCapture.renderDocument({
+            title: 'AI Generation Preview',
+            engine: engine,
+            html: html,
+            css: css,
+            js: js,
+            runtimeOrigin: RUNTIME_ORIGIN,
+            preserveDrawingBuffer: true
+        });
+
+        var wrapper = document.getElementById('preview-iframe-wrapper');
+        if (wrapper) {
+            var iframe = wrapper.querySelector('iframe');
+            if (iframe) {
+                iframe.srcdoc = docTemplate;
+            }
+        }
+    }
     function updatePreview() {
         clearTimeout(updateTimeout);
         updateTimeout = setTimeout(function () {
@@ -175,29 +213,7 @@ $defaultTitle = 'AI ' . strtoupper($engine) . ' Piece - ' . date('M d, Y H:i');
                 thumbnailStatus.textContent = 'Waiting for updated piece to render…';
                 thumbnailStatus.style.color = 'var(--ink-soft)';
             }
-
-            var html = document.getElementById('html_code').value;
-            var css = document.getElementById('css_code').value;
-            var js = document.getElementById('generated_code').value;
-            var engine = document.querySelector('input[name="engine"]').value;
-
-            var docTemplate = window.CreatrPieceCapture.renderDocument({
-                title: 'AI Generation Preview',
-                engine: engine,
-                html: html,
-                css: css,
-                js: js,
-                runtimeOrigin: RUNTIME_ORIGIN,
-                preserveDrawingBuffer: true
-            });
-
-            var wrapper = document.getElementById('preview-iframe-wrapper');
-            if (wrapper) {
-                var iframe = wrapper.querySelector('iframe');
-                if (iframe) {
-                    iframe.srcdoc = docTemplate;
-                }
-            }
+            renderPreviewDocument();
         }, 600);
     }
 
@@ -264,6 +280,159 @@ $defaultTitle = 'AI ' . strtoupper($engine) . ' Piece - ' . date('M d, Y H:i');
     window.addEventListener('load', function () {
         setTimeout(function () { ensurePreviewThumbnail('Capturing thumbnail…'); }, 250);
     });
+
+    (function () {
+        var regenerateBtn = document.getElementById('regenerate-preview-btn');
+        var statusEl = document.getElementById('save-status');
+        var htmlField = document.getElementById('html_code');
+        var cssField = document.getElementById('css_code');
+        var jsField = document.getElementById('generated_code');
+        var promptField = document.getElementById('prompt');
+        var profileField = document.getElementById('profile_id');
+        var personaField = document.getElementById('persona_id');
+        var engineField = document.querySelector('input[name="engine"]');
+        var thumbField = document.getElementById('thumbnail_data');
+        var failedDialog = document.getElementById('preview-regenerate-failed-dialog');
+        var failedTitle = document.getElementById('preview-regenerate-failed-title');
+        var failedMessage = document.getElementById('preview-regenerate-failed-message');
+        var tryAgainBtn = document.getElementById('preview-regenerate-try-again-btn');
+        var giveUpBtn = document.getElementById('preview-regenerate-give-up-btn');
+        var regenerateInFlight = false;
+        var regenerateSequenceToken = '';
+        var ART_PIECE_MAX_ATTEMPTS = <?= (int) ART_PIECE_MAX_ATTEMPTS ?>;
+
+        function setRegenerateStatus(message, isError) {
+            if (!statusEl) return;
+            statusEl.textContent = message;
+            statusEl.style.color = isError ? '#ef4444' : 'var(--ink-soft)';
+        }
+
+        function formatElapsed(ms) {
+            var totalSeconds = Math.floor(ms / 1000);
+            var minutes = Math.floor(totalSeconds / 60);
+            var seconds = totalSeconds % 60;
+            return minutes + ':' + (seconds < 10 ? '0' : '') + seconds;
+        }
+
+        function buildRegeneratePayload(ctx) {
+            return {
+                prompt: promptField ? promptField.value.trim() : '',
+                engine: engineField ? engineField.value : 'p5',
+                profile_id: profileField ? profileField.value : '',
+                persona_id: personaField ? personaField.value : '',
+                html_code: htmlField ? htmlField.value : '',
+                css_code: cssField ? cssField.value : '',
+                generated_code: jsField ? jsField.value : '',
+                attempt_number: ctx.attemptNumber,
+                previous_raw_response: ctx.previousRawResponse || '',
+                last_error: ctx.lastError || '',
+                sequence_token: regenerateSequenceToken
+            };
+        }
+
+        function applyRegeneratedPreview(data) {
+            if (htmlField && typeof data.html_code === 'string') htmlField.value = data.html_code;
+            if (cssField && typeof data.css_code === 'string') cssField.value = data.css_code;
+            if (jsField && typeof data.generated_code === 'string') jsField.value = data.generated_code;
+            thumbnailRevision++;
+            if (thumbField) thumbField.value = '';
+            renderPreviewDocument();
+            setRegenerateStatus('Regenerate succeeded. Rebuilding thumbnail…', false);
+            ensurePreviewThumbnail('Recapturing thumbnail after regenerate…').then(function (thumbResult) {
+                if (thumbResult.ok) {
+                    setRegenerateStatus('Regenerate complete. Thumbnail updated.', false);
+                } else {
+                    setRegenerateStatus('Regenerate succeeded, but thumbnail capture failed: ' + (thumbResult.error || 'Unknown error'), true);
+                }
+            });
+        }
+
+        function handleRegenerateFailure(ctx, data) {
+            if (!failedDialog) {
+                setRegenerateStatus(data.error || 'Regenerate failed.', true);
+                return;
+            }
+            var attemptNumber = data.attempt_number || ctx.attemptNumber;
+            var canRetry = data.can_retry !== false && attemptNumber < ART_PIECE_MAX_ATTEMPTS;
+            failedTitle.textContent = 'Regenerate attempt ' + attemptNumber + ' of ' + ART_PIECE_MAX_ATTEMPTS + ' failed';
+            failedMessage.textContent = data.error || 'Unknown error';
+            tryAgainBtn.hidden = !canRetry;
+
+            var nextTryAgainBtn = tryAgainBtn.cloneNode(true);
+            tryAgainBtn.parentNode.replaceChild(nextTryAgainBtn, tryAgainBtn);
+            tryAgainBtn = nextTryAgainBtn;
+            var nextGiveUpBtn = giveUpBtn.cloneNode(true);
+            giveUpBtn.parentNode.replaceChild(nextGiveUpBtn, giveUpBtn);
+            giveUpBtn = nextGiveUpBtn;
+
+            giveUpBtn.addEventListener('click', function () {
+                failedDialog.close();
+                setRegenerateStatus('Regenerate stopped after attempt ' + attemptNumber + '.', true);
+            });
+
+            if (canRetry) {
+                tryAgainBtn.addEventListener('click', function () {
+                    failedDialog.close();
+                    performRegenerateAttempt({
+                        attemptNumber: attemptNumber + 1,
+                        previousRawResponse: data.raw_response || null,
+                        lastError: data.error || null
+                    });
+                });
+            }
+
+            failedDialog.showModal();
+        }
+
+        function performRegenerateAttempt(ctx) {
+            if (regenerateInFlight) return;
+            regenerateInFlight = true;
+            if (!regenerateSequenceToken) {
+                regenerateSequenceToken = 'preview-regen-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+            }
+            regenerateBtn.disabled = true;
+            var startedAt = Date.now();
+            var timer = setInterval(function () {
+                setRegenerateStatus('Regenerate attempt ' + ctx.attemptNumber + ' of ' + ART_PIECE_MAX_ATTEMPTS + ' - ' + formatElapsed(Date.now() - startedAt) + ' elapsed', false);
+            }, 1000);
+            setRegenerateStatus('Regenerate attempt ' + ctx.attemptNumber + ' of ' + ART_PIECE_MAX_ATTEMPTS + ' - ' + formatElapsed(0) + ' elapsed', false);
+
+            fetch('/admin/pieces/generate/regenerate', {
+                method: 'POST',
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(buildRegeneratePayload(ctx))
+            }).then(function (resp) {
+                return resp.json();
+            }).then(function (data) {
+                clearInterval(timer);
+                regenerateInFlight = false;
+                regenerateBtn.disabled = false;
+                if (!data.success) {
+                    handleRegenerateFailure(ctx, data);
+                    return;
+                }
+                applyRegeneratedPreview(data);
+            }).catch(function (err) {
+                clearInterval(timer);
+                regenerateInFlight = false;
+                regenerateBtn.disabled = false;
+                setRegenerateStatus('Regenerate failed: ' + (err && err.message ? err.message : 'Unknown error'), true);
+            });
+        }
+
+        if (regenerateBtn) {
+            regenerateBtn.addEventListener('click', function () {
+                performRegenerateAttempt({
+                    attemptNumber: 1,
+                    previousRawResponse: null,
+                    lastError: null
+                });
+            });
+        }
+    })();
 
     // Save as fetch() with a one-time retry on a network-level failure only
     // (the connection itself dying, not a server-returned error) — a stale

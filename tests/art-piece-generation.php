@@ -7,6 +7,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../public/app/helpers/art-piece-generation.php';
+require_once __DIR__ . '/../public/app/helpers/database-errors.php';
 require_once __DIR__ . '/../public/app/helpers/slugify.php';
 require_once __DIR__ . '/../public/app/helpers/piece-render.php';
 
@@ -254,6 +255,60 @@ test('Refine system prompt includes a worked PLAN/PATCH example', function () {
     assert_contains($prompt, '<<<<<<< SEARCH');
     assert_contains($prompt, '=======');
     assert_contains($prompt, '>>>>>>> REPLACE');
+});
+
+echo "\n=== generation_mode compatibility ===\n";
+
+test('Version select columns include generation_mode when supported', function () {
+    $sql = art_piece_version_select_columns(true, true, true);
+    assert_contains($sql, 'v.generation_mode');
+    assert_contains($sql, 'v.created_at');
+    assert_contains($sql, 'v.is_draft_attempt');
+});
+
+test('Version select columns omit generation_mode when unsupported', function () {
+    $sql = art_piece_version_select_columns(false, true, true);
+    assert_not_contains($sql, "v.generation_mode,\n");
+    assert_contains($sql, 'v.generation_model');
+    assert_contains($sql, 'v.validation_status');
+});
+
+test('Version storage columns include generation_mode when supported', function () {
+    $columns = art_piece_version_storage_columns(true);
+    if (!in_array('generation_mode', $columns, true)) {
+        throw new RuntimeException('Expected generation_mode column to be present');
+    }
+});
+
+test('Version storage columns omit generation_mode when unsupported', function () {
+    $columns = art_piece_version_storage_columns(false);
+    if (in_array('generation_mode', $columns, true)) {
+        throw new RuntimeException('Did not expect generation_mode column to be present');
+    }
+    assert_eq(in_array('generation_model', $columns, true), true, 'generation_model should still be present.');
+});
+
+test('Legacy C2 interactive backfill SQL upgrades only heuristic matches', function () {
+    $sql = art_piece_c2_interactive_backfill_sql();
+    assert_contains($sql, "SET generation_mode = 'c2_interactive'");
+    assert_contains($sql, "WHERE engine = 'c2'");
+    assert_contains($sql, "generation_mode IS NULL OR generation_mode = '' OR generation_mode = 'c2'");
+    assert_contains($sql, "LOWER(CONCAT(COALESCE(generated_code, '')");
+    assert_contains($sql, "COALESCE(html_code, '')))");
+    assert_contains($sql, 'REGEXP');
+    assert_contains($sql, 'pointerdown');
+});
+
+echo "\n=== pdo error classification ===\n";
+
+test('PDO connection classifier recognizes DNS lookup failure', function () {
+    $e = new PDOException('SQLSTATE[HY000] [2002] php_network_getaddresses: getaddrinfo for host failed', 2002);
+    assert_eq(ah_is_pdo_connection_failure($e), true);
+});
+
+test('PDO connection classifier rejects unknown column query failure', function () {
+    $e = new PDOException("SQLSTATE[42S22]: Column not found: 1054 Unknown column 'generation_mode' in 'field list'");
+    assert_eq(ah_is_pdo_connection_failure($e), false);
 });
 
 echo "\n=== art_piece_refine_user_prompt ===\n";
@@ -602,6 +657,24 @@ test('c2 interactive prompt requires native pointer interaction while preserving
 test('c2 interactive mode persists as c2 engine', function () {
     assert_eq(art_piece_generation_mode_to_engine('c2_interactive'), 'c2');
     assert_eq(art_piece_generation_mode_to_engine('aframe'), 'aframe');
+});
+
+test('generation mode helpers preserve explicit c2 interactive mode and legacy fallback', function () {
+    assert_eq(art_piece_normalize_generation_mode('c2_interactive', 'c2'), 'c2_interactive');
+    assert_eq(art_piece_version_generation_mode(['generation_mode' => 'c2_interactive', 'engine' => 'c2']), 'c2_interactive');
+    assert_eq(
+        art_piece_version_generation_mode([
+            'engine' => 'c2',
+            'html_code' => '<canvas id="piece-canvas"></canvas>',
+            'generated_code' => "canvas.addEventListener('pointerdown', () => {});",
+        ]),
+        'c2_interactive'
+    );
+});
+
+test('generation mode labels expose C2.js Interactive distinctly', function () {
+    assert_eq(art_piece_generation_mode_label('c2_interactive'), 'C2.js Interactive');
+    assert_eq(art_piece_generation_mode_label('c2'), 'C2.js');
 });
 
 test('A-Frame system prompt exists', function () {

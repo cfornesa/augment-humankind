@@ -10,6 +10,7 @@ if (session_status() !== PHP_SESSION_ACTIVE) {
 
 require_once __DIR__ . '/vendor/autoload.php';
 require_once __DIR__ . '/app/helpers/env.php';
+require_once __DIR__ . '/app/helpers/database-errors.php';
 
 set_exception_handler(static function (Throwable $e): void {
     error_log((string) $e);
@@ -19,7 +20,7 @@ set_exception_handler(static function (Throwable $e): void {
 
     http_response_code(500);
 
-    if ($e instanceof PDOException && !$isApiRequest) {
+    if ($e instanceof PDOException && ah_is_pdo_connection_failure($e) && !$isApiRequest) {
         header('Content-Type: text/html; charset=utf-8');
         echo '<!doctype html><html lang="en"><head><meta charset="utf-8">'
             . '<title>Site not configured</title></head><body style="font-family:system-ui,sans-serif;'
@@ -36,7 +37,7 @@ set_exception_handler(static function (Throwable $e): void {
     if ($isApiRequest) {
         header('Content-Type: application/json');
         echo json_encode([
-            'error' => $e instanceof PDOException
+            'error' => ($e instanceof PDOException && ah_is_pdo_connection_failure($e))
                 ? 'Site not configured.'
                 : 'Internal server error.',
         ]);

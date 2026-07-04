@@ -65,6 +65,149 @@ function sizeCanvas(canvas) {
 function isCmsMediaPath(src) {
   return typeof src === 'string' && /^\/(?:image\/[0-9]+|api\/media-assets\/[0-9]+|media\/[A-Za-z0-9._~/%+-]+)(?:\?[A-Za-z0-9._~%=&+-]*)?$/.test(src);
 }
+const nativeImageCtor = window.Image;
+const managedMediaState = {
+  used: false,
+  pending: 0,
+  settledCallbacks: new Set(),
+  observers: new Set(),
+  trackedRequests: new Set(),
+  nextRequestId: 0,
+};
+function normalizeCmsMediaPath(src) {
+  if (typeof src !== 'string' || src === '') return '';
+  if (isCmsMediaPath(src)) return src;
+  try {
+    const resolved = new URL(src, window.location.href);
+    if (resolved.origin !== window.location.origin) return '';
+    const path = resolved.pathname + resolved.search;
+    return isCmsMediaPath(path) ? path : '';
+  } catch (_) {
+    return '';
+  }
+}
+function extractCmsMediaUrls(value) {
+  if (typeof value !== 'string' || value === '') return [];
+  const urls = [];
+  value.replace(/url\(([^)]+)\)/gi, (_, rawUrl) => {
+    const cleaned = String(rawUrl || '').trim().replace(/^['"]|['"]$/g, '');
+    const normalized = normalizeCmsMediaPath(cleaned);
+    if (normalized) urls.push(normalized);
+    return '';
+  });
+  return Array.from(new Set(urls));
+}
+function updateManagedMediaDataset() {
+  try {
+    document.documentElement.dataset.creatrManagedMedia = managedMediaState.used ? '1' : '0';
+    document.documentElement.dataset.creatrManagedMediaPending = String(managedMediaState.pending);
+    document.documentElement.dataset.creatrManagedMediaState = managedMediaState.used
+      ? (managedMediaState.pending > 0 ? 'pending' : 'loaded')
+      : 'none';
+  } catch (_) {}
+}
+function noteManagedMediaUsage(src) {
+  if (!isCmsMediaPath(src)) return false;
+  managedMediaState.used = true;
+  updateManagedMediaDataset();
+  return true;
+}
+function onManagedMediaSettled(callback) {
+  managedMediaState.settledCallbacks.add(callback);
+  return () => managedMediaState.settledCallbacks.delete(callback);
+}
+function notifyManagedMediaSettled() {
+  if (managedMediaState.pending !== 0) return;
+  managedMediaState.settledCallbacks.forEach((callback) => {
+    try { callback(); } catch (_) {}
+  });
+}
+function trackManagedMediaRequest(element, src, opts) {
+  const normalizedSrc = normalizeCmsMediaPath(src);
+  if (!noteManagedMediaUsage(normalizedSrc)) return false;
+  const options = opts || {};
+  const requestKey = element
+    ? ((element.__creatrManagedMediaKey ||= 'el-' + (++managedMediaState.nextRequestId))) + '|' + normalizedSrc
+    : 'probe|' + normalizedSrc;
+  if (managedMediaState.trackedRequests.has(requestKey)) {
+    return true;
+  }
+  managedMediaState.trackedRequests.add(requestKey);
+  if (element && element.__creatrManagedMediaSrc === src) {
+    if (element.__creatrManagedMediaDone === true) {
+      updateManagedMediaDataset();
+      notifyManagedMediaSettled();
+    }
+    return true;
+  }
+  managedMediaState.pending += 1;
+  updateManagedMediaDataset();
+  let finished = false;
+  function finish(status) {
+    if (finished) return;
+    finished = true;
+    if (element) {
+      element.__creatrManagedMediaDone = true;
+      element.dataset.creatrManagedMediaStatus = status;
+    }
+    managedMediaState.pending = Math.max(0, managedMediaState.pending - 1);
+    updateManagedMediaDataset();
+    diag('managed-media-' + status, { src: normalizedSrc, pending: managedMediaState.pending });
+    notifyManagedMediaSettled();
+  }
+  if (element) {
+    const previousSrc = typeof element.getAttribute === 'function' ? (element.getAttribute('src') || '') : '';
+    element.__creatrManagedMediaSrc = normalizedSrc;
+    element.__creatrManagedMediaDone = false;
+    const tag = (element.tagName || '').toLowerCase();
+    const completeNow = tag === 'img' && previousSrc && element.complete === true;
+    const loadedNow = completeNow && ((element.naturalWidth || 0) > 0 || (element.naturalHeight || 0) > 0);
+    const failedNow = completeNow && !loadedNow;
+    if (loadedNow) {
+      finish('loaded');
+      return true;
+    }
+    if (failedNow) {
+      if (options.surfaceErrors !== false) {
+        showPieceError('Could not load CMS media asset: ' + normalizedSrc);
+      }
+      finish('error');
+      return true;
+    }
+    element.addEventListener('load', () => finish('loaded'), { once: true });
+    element.addEventListener('error', () => {
+      if (options.surfaceErrors !== false) {
+        showPieceError('Could not load CMS media asset: ' + normalizedSrc);
+      }
+      finish('error');
+    }, { once: true });
+    return true;
+  }
+  const probe = new nativeImageCtor();
+  probe.decoding = 'async';
+  probe.loading = 'eager';
+  probe.onload = () => finish('loaded');
+  probe.onerror = () => {
+    if (options.surfaceErrors !== false) {
+      showPieceError('Could not load CMS media asset: ' + normalizedSrc);
+    }
+    finish('error');
+  };
+  probe.src = normalizedSrc;
+  return true;
+}
+window.Image = class CreatrTrackedImage extends nativeImageCtor {
+  set src(value) {
+    if (isCmsMediaPath(value)) {
+      trackManagedMediaRequest(this, value);
+    }
+    super.src = value;
+  }
+  get src() {
+    return super.src;
+  }
+};
+updateManagedMediaDataset();
 function startFrame(callback) {
   let count = 0;
   function tick() {
@@ -74,14 +217,149 @@ function startFrame(callback) {
   }
   requestAnimationFrame(tick);
 }
-function signalCanvasReady(canvas) {
-  if (canvas) canvas.dataset.creatrReady = '1';
+function signalReady(target, options) {
+  const config = options || {};
+  const el = typeof target === 'function' ? target() : target;
+  if (el && el.dataset) {
+    el.dataset.creatrReady = '1';
+    if (config.settled) {
+      el.dataset.creatrSettled = '1';
+    }
+  }
+  try {
+    document.documentElement.dataset.creatrReady = '1';
+    if (config.settled) {
+      document.documentElement.dataset.creatrSettled = '1';
+    }
+  } catch (_) {}
   try { window.parent.postMessage({ type: 'sketch-status', valid: true }, '*'); } catch (_) {}
+}
+function trackInlineManagedMedia(root) {
+  const scope = root || document;
+  scope.querySelectorAll('img[src], image').forEach((node) => {
+    const tag = (node.tagName || '').toLowerCase();
+    const src = tag === 'image'
+      ? (node.getAttribute('href') || node.getAttribute('xlink:href') || '')
+      : (node.getAttribute('src') || '');
+    if (!isCmsMediaPath(src)) return;
+    if (tag === 'img') {
+      trackManagedMediaRequest(node, src, { surfaceErrors: false });
+    } else {
+      trackManagedMediaRequest(null, src, { surfaceErrors: false });
+    }
+  });
+}
+function getManagedMediaRoots(root) {
+  const roots = [];
+  const runtimeRoot = document.getElementById('runtime-root');
+  const authoredRoot = runtimeRoot && runtimeRoot.firstElementChild ? runtimeRoot.firstElementChild : null;
+  const addRoot = (node) => {
+    if (node && node.nodeType === 1 && !roots.includes(node)) {
+      roots.push(node);
+    }
+  };
+  [document.documentElement, document.body, runtimeRoot, root, authoredRoot].forEach(addRoot);
+  [document.querySelector('canvas'), document.querySelector('svg')].forEach((node) => {
+    while (node && node.nodeType === 1) {
+      addRoot(node);
+      if (node === runtimeRoot || node === document.body || node === document.documentElement) break;
+      node = node.parentElement;
+    }
+  });
+  return roots;
+}
+function trackBackgroundManagedMedia(root) {
+  getManagedMediaRoots(root).forEach((node) => {
+    let backgroundImage = '';
+    try {
+      backgroundImage = window.getComputedStyle(node).backgroundImage || '';
+    } catch (_) {
+      backgroundImage = '';
+    }
+    extractCmsMediaUrls(backgroundImage).forEach((src) => {
+      trackManagedMediaRequest(null, src, { surfaceErrors: false });
+    });
+  });
+}
+function scanManagedMedia(root) {
+  trackInlineManagedMedia(root);
+  trackBackgroundManagedMedia(root);
+}
+function observeManagedMedia(root, onScan) {
+  if (!root || typeof MutationObserver !== 'function' || !root.querySelectorAll) return;
+  const observer = new MutationObserver((mutations) => {
+    let shouldRescan = false;
+    mutations.forEach((mutation) => {
+      if (mutation.type === 'attributes') {
+        shouldRescan = true;
+        return;
+      }
+      mutation.addedNodes.forEach((node) => {
+        if (shouldRescan || !node || node.nodeType !== 1) return;
+        const el = node;
+        if (el.matches?.('img[src], image') || el.querySelector?.('img[src], image')) {
+          shouldRescan = true;
+        }
+      });
+    });
+    if (shouldRescan) onScan(root);
+  });
+  observer.observe(root, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['src', 'href', 'xlink:href', 'style', 'class'],
+  });
+  managedMediaState.observers.add(observer);
+}
+function createReadyController(target) {
+  let renderObserved = false;
+  let readySignaled = false;
+  let settleScheduled = false;
+  function finish(source, settled) {
+    if (readySignaled) return;
+    readySignaled = true;
+    diag('capture-ready', { source, settled, managedMedia: managedMediaState.used, pending: managedMediaState.pending });
+    signalReady(target, { settled });
+  }
+  function maybeFinish(source) {
+    if (readySignaled || !renderObserved) return;
+    if (!managedMediaState.used) {
+      finish(source, false);
+      return;
+    }
+    if (managedMediaState.pending > 0) {
+      diag('capture-waiting-managed-media', { source, pending: managedMediaState.pending });
+      return;
+    }
+    if (settleScheduled) return;
+    settleScheduled = true;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => finish(source, true));
+    });
+  }
+  onManagedMediaSettled(() => {
+    settleScheduled = false;
+    maybeFinish('managed-media-settled');
+  });
+  return {
+    markRendered(source) {
+      renderObserved = true;
+      try { document.documentElement.dataset.creatrRenderReady = '1'; } catch (_) {}
+      maybeFinish(source);
+    },
+    noteInlineMedia(root) {
+      scanManagedMedia(root);
+      observeManagedMedia(root, scanManagedMedia);
+      maybeFinish('inline-managed-media-scan');
+    }
+  };
 }
 function bootCanvasRuntime(extra) {
   runPieceCode();
   if (typeof window.sketch !== 'function') return;
   const canvas = findCanvas(PIECE_ENGINE === 'c2' ? 'c2-canvas' : 'scene');
+  const ready = createReadyController(canvas);
   // For c2, the canvas now has a fixed intrinsic resolution (sizeCanvas())
   // regardless of surface — but plain width:100%;height:100% still
   // non-uniformly stretches that bitmap to fill whatever shape box each
@@ -160,10 +438,16 @@ function bootCanvasRuntime(extra) {
   function instrumentedStartFrame(callback) {
     return startFrame((count) => {
       callback(count);
-      if (!readySignaled) { readySignaled = true; signalCanvasReady(canvas); }
+      if (!readySignaled) {
+        readySignaled = true;
+        ready.markRendered('canvas-startFrame-' + count);
+      }
     });
   }
-  try { window.sketch({ canvas, startFrame: instrumentedStartFrame, loadImage, drawImage, drawImageCover, ...(extra || {}) }); } catch (error) { showPieceError(error); }
+  try {
+    window.sketch({ canvas, startFrame: instrumentedStartFrame, loadImage, drawImage, drawImageCover, ...(extra || {}) });
+    ready.noteInlineMedia(document);
+  } catch (error) { showPieceError(error); }
 }
 function bootP5() {
   const script = document.createElement('script');
@@ -174,16 +458,18 @@ function bootP5() {
       if (typeof window.sketch === 'function' && typeof window.p5 === 'function') {
         const parent = document.getElementById('container') || document.getElementById('canvas-container') || document.getElementById('sketch-container') || document.getElementById('runtime-root');
         const instance = new window.p5(window.sketch, parent);
+        const ready = createReadyController(() => parent.querySelector('canvas') || document.querySelector('canvas'));
         // p5's own frameCount only increments after a real draw() call —
         // wait for that instead of signaling right after setup(), when the
         // canvas exists but is still blank.
         const waitForFirstDraw = () => {
           if (instance.frameCount >= 1) {
-            signalCanvasReady(parent.querySelector('canvas') || document.querySelector('canvas'));
+            ready.markRendered('p5-frame-' + instance.frameCount);
           } else {
             requestAnimationFrame(waitForFirstDraw);
           }
         };
+        ready.noteInlineMedia(document);
         requestAnimationFrame(waitForFirstDraw);
       }
     } catch (error) { showPieceError(error); }
@@ -220,6 +506,8 @@ function bootAFrame() {
       }
 
       runPieceCode();
+      const ready = createReadyController(() => scene.canvas || scene.querySelector('canvas') || document.querySelector('canvas'));
+      ready.noteInlineMedia(scene);
       if (typeof window.sketch === 'function') {
         window.sketch({ AFRAME: window.AFRAME, scene, startFrame });
       }
@@ -242,13 +530,13 @@ function bootAFrame() {
         const canvas = scene.canvas || scene.querySelector('canvas') || document.querySelector('canvas');
         if (!canvas) return;
         readySignaled = true;
-        canvas.dataset.creatrReady = '1';
-        signalCanvasReady(canvas);
+        ready.markRendered('aframe-renderstart');
       }
 
       scene.addEventListener('renderstart', signalAFrameReadyOnce, { once: true });
       scene.addEventListener('loaded', disableMotionTracking, { once: true });
       scene.addEventListener('loaded', () => {
+        ready.noteInlineMedia(scene);
         disableMotionTracking();
         requestAnimationFrame(() => requestAnimationFrame(signalAFrameReadyOnce));
       }, { once: true });
@@ -310,11 +598,12 @@ async function bootThree() {
     let rafIds = [];
     let pieceDrivesOwnRender = false;
     let readySignaled = false;
+    const ready = createReadyController(canvas);
     function signalThreeReadyOnce(source) {
       if (readySignaled) return;
       readySignaled = true;
       diag('signalThreeReadyOnce', { source: source || 'unknown' });
-      signalCanvasReady(canvas);
+      ready.markRendered(source || 'unknown');
     }
     const instrumentedThree = { ...mod };
     instrumentedThree.Scene = class extends mod.Scene {
@@ -430,6 +719,7 @@ async function bootThree() {
     }
     window.THREE = instrumentedThree;
     window.sketch({ THREE: instrumentedThree, canvas, startFrame, width, height, size: { width, height }, OrbitControls });
+    ready.noteInlineMedia(document);
     ensureFallbackLighting();
     autoFit();
 
@@ -518,5 +808,11 @@ if (PIECE_ENGINE === 'p5') {
   runPieceCode();
   if (typeof window.sketch === 'function') {
     try { window.sketch(); } catch (error) { showPieceError(error); }
+  }
+  const svg = document.querySelector('svg');
+  if (svg) {
+    const ready = createReadyController(svg);
+    ready.noteInlineMedia(document);
+    ready.markRendered('svg-document');
   }
 }

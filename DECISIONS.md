@@ -32,6 +32,64 @@ None.
 
 ---
 
+## 2026-07-03 — Art Piece Generation Mode Compatibility, Legacy C2 Backfill, And Error Classification
+
+### Decision
+The `generation_mode` rollout remains the long-term contract, but shared
+art-piece/version reads and writes must stay schema-compatible while older or
+partially aligned databases catch up. `PlatformArtPiece` and
+`PlatformArtPieceVersion` now treat `generation_mode` as optional at the SQL
+layer, preferring it whenever the column exists and falling back to legacy
+engine-based behavior otherwise.
+
+Legacy interactive C2 versions are upgraded systematically rather than left on
+heuristic-only runtime detection. The setup path now backfills every saved
+`art_piece_versions` row where `engine = 'c2'`, `generation_mode` is null/empty
+or plain `c2`, and the saved code matches the existing
+`art_piece_c2_interactive_pattern()` detector. Matching rows are promoted to
+explicit `generation_mode = 'c2_interactive'` across full version history, not
+just current versions.
+
+The public fatal screen in `public/index.php` was also narrowed: only genuine
+connection-class PDO failures now render the “site isn’t configured yet /
+database connection failed” page. Schema/query failures fall through to the
+normal server-error path so piece-route regressions are no longer mislabeled as
+total DB outages.
+
+### Root Cause
+The piece-only outage surfaced a deployment-alignment mismatch in the shared
+art-piece hydration path. Routes such as `/admin/pieces`, `/pieces`,
+`/portfolio/pieces`, and `/collections/{slug}` (when collections hydrate art
+pieces) all traverse `PlatformArtPiece::attachCurrentVersion()` and/or
+`PlatformArtPieceVersion`. Those readers had begun selecting `v.generation_mode`
+unconditionally, so any environment where the column was missing or not yet
+aligned could take down piece-facing routes specifically while the rest of the
+site kept working.
+
+### Scope
+- `public/app/helpers/art-piece-generation.php` now owns the shared
+  `generation_mode`-aware SELECT/INSERT/UPDATE column lists and the SQL record
+  used to backfill legacy interactive C2 versions.
+- `scripts/setup-database.php` gained the idempotent
+  `art piece version c2 interactive backfill (2026-07-03)` step, and
+  `docs/migrations/2026-07-03-art-piece-c2-interactive-backfill.sql` records
+  the same data upgrade.
+- `DECISIONS.md` / `MEMORY.md` carry the lasting runtime contract and the
+  regression lesson: shared art-piece/version hydration must remain
+  schema-compatible during staged rollouts.
+
+### Verification
+- `php -l public/index.php`
+- `php -l public/app/helpers/database-errors.php`
+- `php -l public/app/helpers/art-piece-generation.php`
+- `php -l public/app/models/PlatformArtPiece.php`
+- `php -l public/app/models/PlatformArtPieceVersion.php`
+- `php tests/art-piece-generation.php` — 106 passed
+- `php tests/three-runtime-consistency.php` — new generation-mode compatibility
+  assertion passes; 2 pre-existing gyro-related failures remain
+  (`DeviceOrientationControls` test parser failure and missing
+  `requestGyroCalibration()` expectation)
+
 ## 2026-07-03 — Immersive Gallery Runtime Contract Parity For C2.js
 
 ### Decision

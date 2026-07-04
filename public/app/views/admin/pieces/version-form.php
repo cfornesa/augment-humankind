@@ -38,6 +38,18 @@ $version = $version ?? [];
                 </select>
             </div>
             <div class="field">
+                <label for="generation_mode">Generation Mode</label>
+                <select id="generation_mode" name="generation_mode">
+                    <?php $generationModeVal = art_piece_version_generation_mode($version, $piece); ?>
+                    <option value="p5" <?= $generationModeVal === 'p5' ? 'selected' : '' ?>>P5.js</option>
+                    <option value="c2" <?= $generationModeVal === 'c2' ? 'selected' : '' ?>>C2.js</option>
+                    <option value="c2_interactive" <?= $generationModeVal === 'c2_interactive' ? 'selected' : '' ?>>C2.js Interactive</option>
+                    <option value="three" <?= $generationModeVal === 'three' ? 'selected' : '' ?>>Three.js</option>
+                    <option value="svg" <?= $generationModeVal === 'svg' ? 'selected' : '' ?>>SVG</option>
+                    <option value="aframe" <?= $generationModeVal === 'aframe' ? 'selected' : '' ?>>A-Frame</option>
+                </select>
+            </div>
+            <div class="field">
                 <label for="validation_status">Validation Status</label>
                 <select id="validation_status" name="validation_status">
                     <option value="validated" <?= ($version['validation_status'] ?? 'validated') === 'validated' ? 'selected' : '' ?>>Validated</option>
@@ -135,8 +147,17 @@ if ($engineVal === 'p5') {
         <script>
         (function () {
             var engineField = document.getElementById('engine');
+            var modeField = document.getElementById('generation_mode');
             var htmlField = document.getElementById('html_code');
             var fieldHtmlCode = document.getElementById('field-html-code');
+            var modeToEngine = {
+                p5: 'p5',
+                c2: 'c2',
+                c2_interactive: 'c2',
+                three: 'three',
+                svg: 'svg',
+                aframe: 'aframe'
+            };
 
             function updateEngineHtmlVisibility(engine) {
                 if (!fieldHtmlCode) return;
@@ -154,11 +175,32 @@ if ($engineVal === 'p5') {
                 }
             }
 
+            function syncModeToEngine() {
+                if (!modeField || !engineField) return;
+                engineField.value = modeToEngine[modeField.value] || 'p5';
+                updateEngineHtmlVisibility(engineField.value);
+            }
+
+            function syncEngineToMode() {
+                if (!modeField || !engineField) return;
+                if (engineField.value === 'c2') {
+                    if (modeField.value !== 'c2_interactive') {
+                        modeField.value = 'c2';
+                    }
+                } else {
+                    modeField.value = engineField.value;
+                }
+                updateEngineHtmlVisibility(engineField.value);
+            }
+
             if (engineField) {
                 engineField.addEventListener('change', function () {
-                    updateEngineHtmlVisibility(engineField.value);
+                    syncEngineToMode();
                 });
                 updateEngineHtmlVisibility(engineField.value);
+            }
+            if (modeField) {
+                modeField.addEventListener('change', syncModeToEngine);
             }
         })();
         </script>

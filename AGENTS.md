@@ -53,6 +53,15 @@ Plan/Propose note (all tools): when the prompt names a specific route,
 file, or output format — triggering gallery suppression — explicitly note
 the suppression at the top of the plan and offer one alternative framing
 before building.
+When formulating a plan, ask all necessary questions before proposing the
+plan. Ask all necessary questions before requesting, expecting, or relying
+on plan approval as well. Do not present a proposed plan until those
+questions have been surfaced and answered or explicitly recorded as
+assumptions. After a proposed plan appears and is approved, do not reopen
+planning with new questions unless the human explicitly asks to revise the
+plan.
+Do not present a proposed plan until those questions have been surfaced and
+answered or explicitly recorded as assumptions.
 
 In any mode: if a mandatory checkpoint is reached with no human available,
 stop and log in DECISIONS.md.

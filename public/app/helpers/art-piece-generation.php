@@ -10,6 +10,11 @@ function art_piece_supported_engines(): array
     return ['p5', 'c2', 'three', 'svg', 'aframe'];
 }
 
+function art_piece_supported_generation_modes(): array
+{
+    return ['p5', 'c2', 'c2_interactive', 'three', 'svg', 'aframe'];
+}
+
 function art_piece_canvas_managed_engines(): array
 {
     return ['p5', 'c2', 'three'];
@@ -18,6 +23,145 @@ function art_piece_canvas_managed_engines(): array
 function art_piece_generation_mode_to_engine(string $mode): string
 {
     return $mode === 'c2_interactive' ? 'c2' : $mode;
+}
+
+function art_piece_generation_mode_label(string $mode): string
+{
+    return match ($mode) {
+        'p5' => 'P5.js',
+        'c2' => 'C2.js',
+        'c2_interactive' => 'C2.js Interactive',
+        'three' => 'Three.js',
+        'svg' => 'SVG',
+        'aframe' => 'A-Frame',
+        default => strtoupper(trim($mode) !== '' ? $mode : 'p5'),
+    };
+}
+
+function art_piece_normalize_generation_mode(?string $mode, ?string $engineFallback = 'p5'): string
+{
+    $mode = trim((string) $mode);
+    if (in_array($mode, art_piece_supported_generation_modes(), true)) {
+        return $mode;
+    }
+
+    $fallback = art_piece_generation_mode_to_engine((string) $engineFallback);
+    return in_array($fallback, art_piece_supported_engines(), true) ? $fallback : 'p5';
+}
+
+function art_piece_c2_interactive_pattern(): string
+{
+    return '/(?:addEventListener\s*\(\s*[\'"](?:pointerdown|pointerup|pointermove|mousedown|mouseup|mousemove|touchstart|touchmove|touchend|click)|on(?:click|mousedown|mouseup|mousemove|touchstart|touchmove|touchend|pointerdown|pointermove|pointerup)\s*=)/i';
+}
+
+function art_piece_c2_interactive_sql_pattern(): string
+{
+    return "(?:addEventListener[[:space:]]*\\([[:space:]]*['\"](?:pointerdown|pointerup|pointermove|mousedown|mouseup|mousemove|touchstart|touchmove|touchend|click)|on(?:click|mousedown|mouseup|mousemove|touchstart|touchmove|touchend|pointerdown|pointermove|pointerup)[[:space:]]*=)";
+}
+
+function art_piece_c2_interactive_backfill_sql(): string
+{
+    $pattern = str_replace("'", "\\'", art_piece_c2_interactive_sql_pattern());
+
+    return "UPDATE art_piece_versions
+SET generation_mode = 'c2_interactive'
+WHERE engine = 'c2'
+  AND (generation_mode IS NULL OR generation_mode = '' OR generation_mode = 'c2')
+  AND LOWER(CONCAT(COALESCE(generated_code, ''), '\n', COALESCE(html_code, ''))) REGEXP '{$pattern}'";
+}
+
+function art_piece_version_generation_mode(array $version, array $piece = []): string
+{
+    $stored = trim((string) ($version['generation_mode'] ?? ''));
+    if ($stored !== '' && in_array($stored, art_piece_supported_generation_modes(), true)) {
+        return $stored;
+    }
+
+    $engine = strtolower((string) ($version['engine'] ?? $piece['engine'] ?? 'p5'));
+    if ($engine === 'c2' && preg_match(art_piece_c2_interactive_pattern(), (string) ($version['generated_code'] ?? '') . "\n" . (string) ($version['html_code'] ?? '')) === 1) {
+        return 'c2_interactive';
+    }
+
+    return art_piece_normalize_generation_mode($engine, 'p5');
+}
+
+function art_piece_version_base_columns(bool $includeGenerationMode = true): array
+{
+    $columns = [
+        'v.id',
+        'v.art_piece_id',
+        'v.version_number',
+        'v.prompt',
+        'v.structured_spec',
+        'v.html_code',
+        'v.css_code',
+        'v.generated_code',
+        'v.engine',
+        'v.generation_vendor',
+        'v.generation_model',
+    ];
+
+    if ($includeGenerationMode) {
+        $columns[] = 'v.generation_mode';
+    }
+
+    $columns[] = 'v.validation_status';
+    $columns[] = 'v.generation_attempt_count';
+    $columns[] = 'v.notes';
+
+    return $columns;
+}
+
+function art_piece_version_select_columns(bool $includeGenerationMode = true, bool $includeCreatedAt = false, bool $includeDraftMeta = false): string
+{
+    $columns = art_piece_version_base_columns($includeGenerationMode);
+
+    if ($includeCreatedAt) {
+        $columns[] = 'v.created_at';
+    }
+
+    $columns[] = 'v.ai_profile_id';
+    $columns[] = 'v.ai_persona_id';
+
+    if ($includeDraftMeta) {
+        $columns[] = 'v.is_draft_attempt';
+        $columns[] = 'v.attempt_sequence_token';
+    }
+
+    $columns[] = 'uavs.profile_name AS ai_profile_name';
+    $columns[] = 'ap.name AS ai_persona_name';
+
+    return implode(",\n                    ", $columns);
+}
+
+function art_piece_version_storage_columns(bool $includeGenerationMode = true): array
+{
+    $columns = [
+        'art_piece_id',
+        'version_number',
+        'prompt',
+        'structured_spec',
+        'html_code',
+        'css_code',
+        'generated_code',
+        'engine',
+        'generation_vendor',
+        'generation_model',
+    ];
+
+    if ($includeGenerationMode) {
+        $columns[] = 'generation_mode';
+    }
+
+    return array_merge($columns, [
+        'validation_status',
+        'generation_attempt_count',
+        'notes',
+        'ai_profile_id',
+        'ai_persona_id',
+        'is_draft_attempt',
+        'attempt_sequence_token',
+    ]);
 }
 
 function art_piece_normalize_cms_media_ref(string $src): ?string
