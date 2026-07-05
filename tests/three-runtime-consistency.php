@@ -72,6 +72,11 @@ test('WebGLRenderer respects PIECE_PRESERVE_DRAWING_BUFFER for thumbnail capture
     assert_contains($runtime, 'window.PIECE_PRESERVE_DRAWING_BUFFER');
 });
 
+test('A-Frame bootstrap relies on a pre-runtime WebGL context shim instead of renderer attributes', function () use ($runtime) {
+    assert_contains($runtime, "function bootAFrame()");
+    assert_not_contains($runtime, "existingScene.setAttribute('renderer'");
+});
+
 test('OrbitControls loop creates OrbitControls bound to state.camera/canvas', function () use ($runtime) {
     assert_contains($runtime, 'new OrbitControls(state.camera, canvas)');
 });

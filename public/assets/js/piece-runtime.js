@@ -305,7 +305,7 @@ function scanManagedMedia(root) {
   trackBackgroundManagedMedia(root);
 }
 function observeManagedMedia(root, onScan) {
-  if (!root || typeof MutationObserver !== 'function' || !root.querySelectorAll) return;
+  if (!root || typeof MutationObserver !== 'function' || !root.querySelectorAll || typeof root.nodeType !== 'number') return;
   const observer = new MutationObserver((mutations) => {
     let shouldRescan = false;
     mutations.forEach((mutation) => {

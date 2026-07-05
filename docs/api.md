@@ -241,6 +241,14 @@ Interactive standalone exports for `c2_interactive`, `three`, and `aframe`
 also include the lower-left screenshot icon overlay inside `index.html`.
 Supported CMS media used by the piece are embedded in a file-open-safe way so
 canvas screenshots can work when the recipient opens `index.html` directly.
+For A-Frame, the export/runtime path also normalizes supported same-origin CMS
+texture references whether they were authored through `<a-assets><img ...>`,
+direct `src="/image/{id}"`, or `material="src: /api/media-assets/{id}"`.
+Public `/pieces/[id]` pages keep a separate `Download PNG` action that
+captures the current live frame from the rendered piece. A-Frame capture is
+hardened in both the public page and exported `index.html` path with a
+document-local pre-runtime WebGL context patch plus a forced-render/nonblank
+validation retry, rather than relying on scene `renderer` attributes alone.
 
 `/exhibits` lists migrated `platform_exhibits` rows (name, description, item
 count, and a thumbnail drawn from the first item). `/exhibits/[slug]` renders

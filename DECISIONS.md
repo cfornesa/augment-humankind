@@ -10,6 +10,41 @@
 
 None.
 
+## 2026-07-05 — A-Frame PNG Capture Uses A Pre-Runtime WebGL Context Patch
+
+### Decision
+A-Frame PNG capture for both the public `/pieces/{id}` `Download PNG` action
+and the exported standalone `index.html` screenshot control now relies on a
+document-local WebGL context patch that forces `preserveDrawingBuffer` before
+A-Frame boots. Capture then forces one last render and validates that the
+copied canvas contains visible pixels before saving.
+
+### Root Cause
+The earlier hardening path assumed A-Frame would honor
+`renderer="preserveDrawingBuffer: true"` on the scene. In practice A-Frame
+1.6.0 rejected that property, so captures could read from a blank WebGL buffer
+even when the scene was visibly rendering. That produced empty PNG downloads
+for media-backed A-Frame pieces on both the live site and the direct-open
+export path.
+
+### Scope
+- `public/app/helpers/piece-render.php` now injects the pre-runtime A-Frame
+  capture shim into both public piece render documents and exported bundle
+  `index.html`.
+- `public/assets/js/public-piece-download.js` and the standalone export
+  overlay script now force a fresh A-Frame render immediately before capture
+  and retry once if the sampled pixel grid is still blank.
+- `public/assets/js/piece-runtime.js` also hardens managed-media observation so
+  console/runtime noise does not interfere with capture-state debugging.
+- Project markdown now documents the WebGL-context-based A-Frame capture
+  contract instead of the rejected renderer-attribute assumption.
+
+### Verification
+- `php tests/art-piece-generation.php`
+- `git diff --check`
+- Manual browser verification on `/pieces/109` produced a nonblank PNG after
+  clicking `Download PNG`
+
 ## 2026-07-04 — Portable Piece ZIP Export With Single-Entry `index.html`
 
 ### Decision

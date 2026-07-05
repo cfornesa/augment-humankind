@@ -6,12 +6,39 @@ function piece_render_document(array $piece, array $version, array $options = []
 {
     $title = htmlspecialchars((string) ($piece['title'] ?? 'Art piece'), ENT_QUOTES | ENT_HTML5, 'UTF-8');
     $engine = strtolower((string) ($version['engine'] ?? $piece['engine'] ?? 'p5'));
+    $captureSafeMedia = !empty($options['capture_safe_media']);
     $html = (string) ($version['html_code'] ?? '');
-    if ($engine === 'aframe') {
-        $html = piece_aframe_add_crossorigin_to_asset_images($html);
-    }
     $css = (string) ($version['css_code'] ?? '');
     $code = (string) ($version['generated_code'] ?? '');
+    $mediaMap = [];
+    if ($captureSafeMedia) {
+        $mediaMap = piece_build_media_manifest([$html, $css, $code]);
+        $rewriteMedia = static function (string $content) use ($mediaMap): string {
+            return piece_export_rewrite_media_refs($content, static function (string $normalizedRef) use ($mediaMap): ?string {
+                $asset = $mediaMap[$normalizedRef] ?? null;
+                if (!is_array($asset)) {
+                    return null;
+                }
+
+                return (string) ($asset['data_url'] ?? '');
+            });
+        };
+        $html = $rewriteMedia($html);
+        $css = $rewriteMedia($css);
+        $code = $rewriteMedia($code);
+    }
+    if ($engine === 'aframe') {
+        $aframeResolver = static function (string $src) use ($captureSafeMedia, $mediaMap): string {
+            if ($captureSafeMedia) {
+                $asset = $mediaMap[$src] ?? null;
+                return is_array($asset) ? (string) ($asset['data_url'] ?? $src) : $src;
+            }
+
+            return piece_request_origin() . $src;
+        };
+        $html = piece_aframe_normalize_texture_assets($html, $aframeResolver);
+        $html = piece_aframe_add_crossorigin_to_asset_images($html);
+    }
     $jsonCode = json_encode($code, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     $jsonEngine = json_encode($engine);
     $jsonHtml = json_encode($html, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
@@ -21,6 +48,7 @@ function piece_render_document(array $piece, array $version, array $options = []
         'interactive' => !empty($options['interactive']),
         'disableMotion' => !empty($options['disable_motion']),
     ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    $aframeCaptureShim = $engine === 'aframe' ? piece_aframe_capture_context_shim() : '';
     $aframeCss = $engine === 'aframe'
         ? "a-scene{display:block;width:100%;height:100%;}\n.a-canvas{display:block;width:100%!important;height:100%!important;}\n"
         : '';
@@ -93,6 +121,7 @@ const PIECE_CSS_CODE = {$jsonCss};
 window.CREATR_PIECE_CONTEXT = {$jsonContext};
 window.PIECE_PRESERVE_DRAWING_BUFFER = true;
 </script>
+{$aframeCaptureShim}
 <script src="{$runtimeScriptUrl}"></script>
 </body>
 </html>
@@ -101,7 +130,7 @@ HTML;
 
 function piece_render_iframe(array $piece, array $version, int $height = 520, array $attributes = []): string
 {
-    $srcdoc = htmlspecialchars(piece_render_document($piece, $version), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    $srcdoc = htmlspecialchars(piece_render_document($piece, $version, ['capture_safe_media' => true]), ENT_QUOTES | ENT_HTML5, 'UTF-8');
     $title = htmlspecialchars((string) ($piece['title'] ?? 'Art piece'), ENT_QUOTES, 'UTF-8');
     $attributeString = '';
     foreach ($attributes as $name => $value) {
@@ -166,13 +195,31 @@ function piece_export_document(array $piece, array $version, array $options = []
     };
 
     $html = $rewriteMedia((string) ($version['html_code'] ?? ''));
-    if ($engine === 'aframe' && $runtimeMode !== 'bundle') {
-        $html = piece_aframe_add_crossorigin_to_asset_images($html);
+    if ($engine === 'aframe') {
+        $aframeResolver = static function (string $src) use ($runtimeMode, $mediaMap, $embedMedia): string {
+            if ($runtimeMode === 'bundle') {
+                $asset = $mediaMap[$src] ?? null;
+                if (!is_array($asset)) {
+                    return $src;
+                }
+
+                return $embedMedia
+                    ? (string) ($asset['data_url'] ?? $src)
+                    : (string) ($asset['path'] ?? $src);
+            }
+
+            return piece_request_origin() . $src;
+        };
+        $html = piece_aframe_normalize_texture_assets($html, $aframeResolver);
+        if ($runtimeMode !== 'bundle') {
+            $html = piece_aframe_add_crossorigin_to_asset_images($html);
+        }
     }
     $css = piece_escape_inline_css($rewriteMedia((string) ($version['css_code'] ?? '')));
     $code = piece_escape_inline_script($rewriteMedia((string) ($version['generated_code'] ?? '')));
     $imports = piece_export_imports($engine, $runtimeMode);
     $inlineRuntime = $runtimeMode === 'bundle' ? piece_export_inline_runtime_markup($engine) : '';
+    $aframeCaptureShim = $engine === 'aframe' ? piece_aframe_capture_context_shim() : '';
     $bootstrap = piece_export_bootstrap($engine, $generationMode, $runtimeMode);
     $exportOverlayCss = piece_export_screenshot_overlay_css($generationMode);
     $exportOverlayMarkup = piece_export_screenshot_overlay_markup($generationMode);
@@ -197,6 +244,7 @@ function piece_export_document(array $piece, array $version, array $options = []
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{$title}</title>
 {$bundleMeta}
+{$aframeCaptureShim}
 {$imports}
 {$cssTag}
 {$inlineRuntime}
@@ -265,6 +313,127 @@ function piece_aframe_add_crossorigin_to_asset_images(string $html): string
         }
         return preg_replace('/\s*\/?>$/', ' crossorigin="anonymous"$0', $tag, 1) ?? $tag;
     }, $html) ?? $html;
+}
+
+function piece_aframe_normalize_texture_assets(string $html, callable $resolver): string
+{
+    if ($html === '' || stripos($html, '<a-scene') === false) {
+        return $html;
+    }
+
+    $dom = new DOMDocument('1.0', 'UTF-8');
+    $wrapped = '<div id="creatr-aframe-root">' . $html . '</div>';
+    $internalErrors = libxml_use_internal_errors(true);
+    $loaded = $dom->loadHTML('<?xml encoding="utf-8" ?>' . $wrapped, LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+    libxml_clear_errors();
+    libxml_use_internal_errors($internalErrors);
+    if (!$loaded) {
+        return $html;
+    }
+
+    $xpath = new DOMXPath($dom);
+    $root = $xpath->query('//*[@id="creatr-aframe-root"]')->item(0);
+    $scene = $xpath->query('.//a-scene', $root)->item(0);
+    if (!$root instanceof DOMElement || !$scene instanceof DOMElement) {
+        return $html;
+    }
+
+    $assets = $xpath->query('.//a-assets', $scene)->item(0);
+    if (!$assets instanceof DOMElement) {
+        $assets = $dom->createElement('a-assets');
+        if ($scene->firstChild) {
+            $scene->insertBefore($assets, $scene->firstChild);
+        } else {
+            $scene->appendChild($assets);
+        }
+    }
+
+    $assetMap = [];
+    foreach ($xpath->query('.//img[@id]', $assets) as $imgNode) {
+        if (!$imgNode instanceof DOMElement) {
+            continue;
+        }
+
+        $assetId = trim($imgNode->getAttribute('id'));
+        $src = trim($imgNode->getAttribute('src'));
+        if ($assetId !== '') {
+            $assetMap[$src] = $assetId;
+        }
+        if ($src !== '' && str_starts_with($src, '/')) {
+            $imgNode->setAttribute('src', $resolver($src));
+        }
+    }
+
+    $nextAssetNumber = 1;
+    $ensureAsset = static function (string $src) use ($dom, $assets, &$assetMap, &$nextAssetNumber, $resolver): string {
+        if (isset($assetMap[$src])) {
+            return $assetMap[$src];
+        }
+
+        do {
+            $assetId = 'creatr-export-asset-' . $nextAssetNumber;
+            $nextAssetNumber += 1;
+        } while (in_array($assetId, $assetMap, true));
+
+        $img = $dom->createElement('img');
+        $img->setAttribute('id', $assetId);
+        $img->setAttribute('src', $resolver($src));
+        $img->setAttribute('crossorigin', 'anonymous');
+        $assets->appendChild($img);
+        $assetMap[$src] = $assetId;
+
+        return $assetId;
+    };
+
+    foreach ($xpath->query('.//*[@src]', $scene) as $node) {
+        if (!$node instanceof DOMElement) {
+            continue;
+        }
+
+        if (strtolower($node->tagName) === 'img') {
+            $src = trim($node->getAttribute('src'));
+            if ($src !== '' && str_starts_with($src, '/')) {
+                $node->setAttribute('src', $resolver($src));
+            }
+            continue;
+        }
+
+        $src = trim($node->getAttribute('src'));
+        if ($src === '' || !str_starts_with($src, '/')) {
+            continue;
+        }
+
+        $node->setAttribute('src', '#' . $ensureAsset($src));
+    }
+
+    foreach ($xpath->query('.//*[@material]', $scene) as $node) {
+        if (!$node instanceof DOMElement) {
+            continue;
+        }
+
+        $material = (string) $node->getAttribute('material');
+        if (!preg_match('/\bsrc\s*:\s*([^;]+)/i', $material, $matches)) {
+            continue;
+        }
+
+        $src = trim((string) ($matches[1] ?? ''));
+        if ($src === '' || !str_starts_with($src, '/')) {
+            continue;
+        }
+
+        $replacement = '#' . $ensureAsset($src);
+        $updatedMaterial = preg_replace('/(\bsrc\s*:\s*)([^;]+)/i', '$1' . $replacement, $material, 1);
+        if (is_string($updatedMaterial) && $updatedMaterial !== '') {
+            $node->setAttribute('material', $updatedMaterial);
+        }
+    }
+
+    $result = '';
+    foreach ($root->childNodes as $child) {
+        $result .= $dom->saveHTML($child);
+    }
+
+    return $result !== '' ? $result : $html;
 }
 
 function piece_export_imports(string $engine, string $runtimeMode = 'cdn'): string
@@ -745,24 +914,33 @@ function piece_export_bundle(array $piece, array $version): array
     ];
 }
 
+function piece_build_media_manifest(array $contents): array
+{
+    $mediaRefs = piece_export_collect_media_refs($contents);
+    $mediaMap = [];
+    foreach ($mediaRefs as $ref) {
+        $asset = piece_export_resolve_media_ref($ref);
+        $mediaMap[$ref] = [
+            'path' => piece_export_media_zip_path($ref, $asset, array_column($mediaMap, 'path')),
+            'data_url' => piece_export_data_url((string) ($asset['mime_type'] ?? 'application/octet-stream'), (string) ($asset['data'] ?? '')),
+        ];
+    }
+
+    return $mediaMap;
+}
+
 function piece_export_build_manifest(array $piece, array $version): array
 {
     $htmlCode = (string) ($version['html_code'] ?? '');
     $cssCode = (string) ($version['css_code'] ?? '');
     $jsCode = (string) ($version['generated_code'] ?? '');
 
-    $mediaRefs = piece_export_collect_media_refs([$htmlCode, $cssCode, $jsCode]);
+    $mediaMap = piece_build_media_manifest([$htmlCode, $cssCode, $jsCode]);
     $mediaFiles = [];
-    $mediaMap = [];
-    foreach ($mediaRefs as $ref) {
+    foreach ($mediaMap as $ref => $mediaEntry) {
         $asset = piece_export_resolve_media_ref($ref);
-        $zipPath = piece_export_media_zip_path($ref, $asset, array_column($mediaMap, 'path'));
-        $mediaMap[$ref] = [
-            'path' => $zipPath,
-            'data_url' => piece_export_data_url((string) ($asset['mime_type'] ?? 'application/octet-stream'), (string) ($asset['data'] ?? '')),
-        ];
         $mediaFiles[] = [
-            'zip_path' => $zipPath,
+            'zip_path' => (string) $mediaEntry['path'],
             'data' => $asset['data'],
         ];
     }
@@ -1066,6 +1244,27 @@ function piece_export_supports_screenshot_overlay(string $generationMode): bool
     return in_array($generationMode, ['c2_interactive', 'three', 'aframe'], true);
 }
 
+function piece_aframe_capture_context_shim(): string
+{
+    return <<<'HTML'
+<script>
+(function () {
+  if (window.__creatrAframeCapturePatched) return;
+  window.__creatrAframeCapturePatched = true;
+  const originalGetContext = HTMLCanvasElement.prototype.getContext;
+  HTMLCanvasElement.prototype.getContext = function (type, options) {
+    const normalizedType = typeof type === 'string' ? type.toLowerCase() : '';
+    if (normalizedType === 'webgl' || normalizedType === 'webgl2' || normalizedType === 'experimental-webgl') {
+      const nextOptions = Object.assign({}, options || {}, { preserveDrawingBuffer: true });
+      return originalGetContext.call(this, type, nextOptions);
+    }
+    return originalGetContext.call(this, type, options);
+  };
+})();
+</script>
+HTML;
+}
+
 function piece_export_screenshot_overlay_css(string $generationMode): string
 {
     if (!piece_export_supports_screenshot_overlay($generationMode)) {
@@ -1136,6 +1335,13 @@ function piece_export_screenshot_overlay_script(array $piece, string $generation
   }
 
   function findCaptureSurface() {
+    if (generationMode === 'aframe') {
+      const scene = document.querySelector('a-scene#scene') || document.querySelector('a-scene');
+      if (scene && scene.canvas && isVisibleSurface(scene.canvas)) {
+        return scene.canvas;
+      }
+    }
+
     const selectors = generationMode === 'aframe'
       ? ['a-scene canvas', '.a-canvas', 'canvas']
       : ['canvas'];
@@ -1144,6 +1350,67 @@ function piece_export_screenshot_overlay_script(array $piece, string $generation
       if (matches.length > 0) return matches[matches.length - 1];
     }
     return null;
+  }
+
+  function tryForceAframeRender(surface) {
+    if (generationMode !== 'aframe') return;
+    const scene = document.querySelector('a-scene#scene') || document.querySelector('a-scene');
+    if (!scene || !surface || scene.canvas !== surface) return;
+    const renderer = scene.renderer;
+    const object3D = scene.object3D;
+    const camera = scene.camera || scene.cameraEl?.getObject3D?.('camera') || null;
+    if (!renderer || !object3D || !camera || typeof renderer.render !== 'function') return;
+    try {
+      renderer.render(object3D, camera);
+    } catch (_) {}
+  }
+
+  function hasVisiblePixels(canvas) {
+    const context = canvas.getContext('2d');
+    if (!context) return false;
+    const width = Math.max(1, canvas.width || 1);
+    const height = Math.max(1, canvas.height || 1);
+    const sampleX = Math.max(1, Math.min(4, width));
+    const sampleY = Math.max(1, Math.min(4, height));
+    for (let row = 0; row < sampleY; row += 1) {
+      for (let col = 0; col < sampleX; col += 1) {
+        const x = Math.min(width - 1, Math.floor((col / sampleX) * width));
+        const y = Math.min(height - 1, Math.floor((row / sampleY) * height));
+        const pixel = context.getImageData(x, y, 1, 1).data;
+        if (pixel[3] !== 0 || pixel[0] !== 0 || pixel[1] !== 0 || pixel[2] !== 0) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  function wait(ms) {
+    return new Promise((resolve) => window.setTimeout(resolve, ms));
+  }
+
+  async function waitForCaptureReady() {
+    const deadline = Date.now() + 12000;
+    while (Date.now() < deadline) {
+      const surface = findCaptureSurface();
+      if (!surface) {
+        await wait(120);
+        continue;
+      }
+
+      if (generationMode === 'aframe') {
+        const scene = document.querySelector('a-scene#scene') || document.querySelector('a-scene');
+        const loaded = !scene || scene.hasLoaded || (typeof scene.is === 'function' && scene.is('loaded'));
+        if (!loaded) {
+          await wait(120);
+          continue;
+        }
+      }
+
+      return surface;
+    }
+
+    return findCaptureSurface();
   }
 
   function canvasToBlob(canvas) {
@@ -1189,6 +1456,24 @@ function piece_export_screenshot_overlay_script(array $piece, string $generation
     return exportCanvas;
   }
 
+  async function exportSurfaceWithValidation(surface) {
+    tryForceAframeRender(surface);
+    const first = exportSurface(surface);
+    if (generationMode !== 'aframe' || hasVisiblePixels(first)) {
+      return first;
+    }
+
+    await wait(32);
+    tryForceAframeRender(surface);
+    await wait(32);
+    const retry = exportSurface(surface);
+    if (hasVisiblePixels(retry)) {
+      return retry;
+    }
+
+    throw new Error('A-Frame could not produce a nonblank screenshot right now.');
+  }
+
   function downloadBlob(blob) {
     const objectUrl = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -1209,16 +1494,16 @@ function piece_export_screenshot_overlay_script(array $piece, string $generation
     setStatus('');
 
     try {
-      const surface = findCaptureSurface();
+      const surface = await waitForCaptureReady();
       if (!surface) {
         throw new Error('No live screenshot surface is available yet.');
       }
-      const blob = await canvasToBlob(exportSurface(surface));
+      const blob = await canvasToBlob(await exportSurfaceWithValidation(surface));
       downloadBlob(blob);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Could not take a screenshot right now.';
       setStatus(/tainted canvases/i.test(message)
-        ? 'This piece still contains an image or texture the browser will not export safely. Regenerate the bundle after that asset is localized into the piece export.'
+        ? 'This piece still contains an image or texture the browser will not export safely.'
         : message);
     } finally {
       button.disabled = false;

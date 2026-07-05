@@ -167,18 +167,21 @@
 ## A-Frame Runtime (Self-Hosted)
 
 - **Purpose:** Runs generated experimental A-Frame art pieces in previews,
-  public piece views, embeds, immersive views, and thumbnail capture. Downloaded
-  standalone HTML exports use the upstream CDN version documented under "Piece
-  Renderer CDN Runtimes" so the exported file is portable outside this CMS
-  without bundling the vendored asset.
+  public piece views, embeds, immersive views, thumbnail capture, and offline
+  piece ZIP exports. The public runtime is self-hosted, and offline exports
+  package the pinned runtime locally instead of relying on the live site or a
+  CDN.
 - **Package/runtime file:** A-Frame `1.6.0` (`aframe-master.min.js`),
   vendored as `/assets/js/aframe.min.js`.
 - **Data sent off-domain:** None at runtime. Browsers load the runtime from
-  this site's own public assets.
+  this site's own public assets, and offline exports load the packaged copy
+  from the ZIP bundle.
 - **What breaks if unavailable or changed:** Saved A-Frame pieces can fail to
   render in public pages, embeds, admin previews/capture, and the direct live
   immersive stage until the runtime file or A-Frame-specific renderer code is
-  restored.
+  restored. Offline exports can also stop rendering or exporting screenshots
+  correctly if the pinned runtime becomes inconsistent with the packaging
+  logic.
 - **Self-hosting alternative:** This is already self-hosted. Updating A-Frame
   requires intentionally replacing the vendored runtime file and testing
   generated A-Frame previews, embeds, fullscreen/immersive behavior, and
@@ -248,6 +251,18 @@
   also embeds vendored runtime/media-safe equivalents where needed so supported
   interactive pieces can render and take screenshots when opened directly from
   a local file.
+- **Capture-safe media note:** Supported same-origin CMS media references
+  (`/image/{id}`, `/api/media-assets/{id}`, `/media/...`) are rewritten into
+  capture-safe forms for public PNG downloads and direct-open exported
+  screenshots. A-Frame normalization covers both generated `<a-assets><img>`
+  texture references and common legacy/manual direct texture forms such as
+  `src="/image/2"` and `material="src: /api/media-assets/7"`.
+- **A-Frame capture note:** Reliable A-Frame PNG export depends on a
+  document-local WebGL context shim that forces `preserveDrawingBuffer` before
+  A-Frame creates its renderer, plus a last-moment forced render and nonblank
+  pixel validation/retry during capture. The older idea of putting
+  `preserveDrawingBuffer` on the scene's `renderer` attribute is not the
+  active contract.
 - **What breaks if unavailable or changed:** P5, C2, and Three.js-based piece
   pages, embeds, and immersive views fail to render until local runtime copies
   are served. Downloaded piece ZIP exports depend on the vendored runtime files

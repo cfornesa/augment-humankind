@@ -1051,7 +1051,7 @@ test('piece export document creates standalone download HTML without presentatio
     assert_contains($document, 'window.sketch = (p)');
     assert_not_contains($document, 'Immersive View');
     assert_not_contains($document, 'copyEmbed');
-    assert_eq(piece_export_filename($piece), 'portable-test-piece.html');
+    assert_eq(piece_export_filename($piece), 'portable-test-piece.zip');
 });
 
 test('piece export document uses CDN imports for every engine', function () {
@@ -1091,6 +1091,8 @@ test('piece export document uses CDN imports for every engine', function () {
         ]
     );
     assert_not_contains($aframeDocument, '/assets/js/aframe.min.js');
+    assert_contains($aframeDocument, 'window.__creatrAframeCapturePatched = true');
+    assert_contains($aframeDocument, "preserveDrawingBuffer: true");
     assert_contains($aframeDocument, '<a-scene id="scene" embedded>');
     assert_contains($aframeDocument, 'window.sketch = ({ AFRAME, scene, startFrame })');
     assert_contains($aframeDocument, 'window.sketch({ AFRAME: window.AFRAME, scene, startFrame })');
@@ -1143,10 +1145,84 @@ test('A-Frame render and export documents add crossorigin to asset images', func
     ];
 
     $rendered = piece_render_document($piece, $version);
-    assert_contains($rendered, '<img id="texture" src="/api/media-assets/1" crossorigin="anonymous">');
+    assert_contains($rendered, 'window.__creatrAframeCapturePatched = true');
+    assert_contains($rendered, '<a-scene id="scene" embedded>');
+    assert_contains($rendered, '<img id="texture" src="https://example.test/api/media-assets/1" crossorigin="anonymous">');
 
     $exported = piece_export_document($piece, $version);
+    assert_contains($exported, 'window.__creatrAframeCapturePatched = true');
+    assert_contains($exported, '<a-scene id="scene" embedded>');
     assert_contains($exported, '<img id="texture" src="https://example.test/api/media-assets/1" crossorigin="anonymous">');
+});
+
+test('A-Frame render document normalizes direct texture refs into asset images', function () {
+    $_SERVER['HTTP_HOST'] = 'example.test';
+    $_SERVER['HTTPS'] = 'on';
+    $piece = ['id' => 95, 'title' => 'A-Frame Direct Texture Piece', 'engine' => 'aframe'];
+    $version = [
+        'engine' => 'aframe',
+        'html_code' => '<a-scene id="scene" embedded><a-image src="/image/2"></a-image><a-plane material="src: /api/media-assets/1"></a-plane></a-scene>',
+        'css_code' => '#scene{width:100%;height:100%;}',
+        'generated_code' => 'window.sketch = ({ scene }) => {};',
+    ];
+
+    $rendered = piece_render_document($piece, $version);
+    assert_contains($rendered, 'window.__creatrAframeCapturePatched = true');
+    assert_contains($rendered, '<a-scene id="scene" embedded><a-assets>');
+    assert_contains($rendered, 'src="https://example.test/image/2" crossorigin="anonymous"');
+    assert_contains($rendered, 'src="https://example.test/api/media-assets/1" crossorigin="anonymous"');
+    assert_contains($rendered, '<a-image src="#creatr-export-asset-1"></a-image>');
+    assert_contains($rendered, 'material="src: #creatr-export-asset-2"');
+});
+
+test('A-Frame bundle export embeds supported CMS media for direct-open screenshots', function () {
+    $piece = ['id' => 96, 'title' => 'A-Frame Bundle Piece', 'engine' => 'aframe'];
+    $version = [
+        'engine' => 'aframe',
+        'html_code' => '<a-scene id="scene" embedded><a-image src="/image/2"></a-image><a-plane material="src: /api/media-assets/1"></a-plane></a-scene>',
+        'css_code' => '#scene{width:100%;height:100%;}',
+        'generated_code' => 'window.sketch = ({ scene }) => {};',
+    ];
+    $mediaMap = [
+        '/image/2' => ['path' => 'media/image-2.png', 'data_url' => piece_export_data_url('image/png', 'img-two')],
+        '/api/media-assets/1' => ['path' => 'media/media-asset-1.png', 'data_url' => piece_export_data_url('image/png', 'asset-one')],
+    ];
+
+    $exported = piece_export_document($piece, $version, [
+        'runtime_mode' => 'bundle',
+        'media_map' => $mediaMap,
+        'embed_media' => true,
+    ]);
+    assert_contains($exported, 'window.__creatrAframeCapturePatched = true');
+    assert_contains($exported, '<a-scene id="scene" embedded><a-assets>');
+    assert_contains($exported, 'data:image/png;base64,aW1nLXR3bw==');
+    assert_contains($exported, 'data:image/png;base64,YXNzZXQtb25l');
+    assert_contains($exported, '<a-image src="data:image/png;base64,aW1nLXR3bw=="></a-image>');
+    assert_contains($exported, 'material="src: data:image/png;base64,YXNzZXQtb25l"');
+    assert_not_contains($exported, '/image/2');
+    assert_not_contains($exported, '/api/media-assets/1');
+    assert_contains($exported, 'A-Frame could not produce a nonblank screenshot right now.');
+});
+
+test('bundle export keeps index.html as the only manual entry point', function () {
+    $piece = ['id' => 97, 'title' => 'Bundle Entry Point Piece', 'engine' => 'three'];
+    $version = [
+        'engine' => 'three',
+        'html_code' => '<div id="container"></div>',
+        'css_code' => '#container{width:100%;height:100%;}',
+        'generated_code' => 'window.sketch = ({ THREE, canvas }) => { const scene = new THREE.Scene(); const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 100); const renderer = new THREE.WebGLRenderer({ canvas }); renderer.render(scene, camera); };',
+    ];
+
+    $bundle = piece_export_bundle($piece, $version);
+    $zip = new ZipArchive();
+    $zip->open($bundle['path']);
+    $index = $zip->getFromName('index.html');
+    $zip->close();
+    unlink($bundle['path']);
+
+    assert_contains($index, 'creatr-piece-export');
+    assert_not_contains($index, 'preview/');
+    assert_contains($index, 'URL.createObjectURL');
 });
 
 test('piece export document keeps Three, A-Frame, and C2 interactive in downloaded HTML', function () {

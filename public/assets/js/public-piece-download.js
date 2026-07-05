@@ -38,6 +38,14 @@
     }
 
     function findSurface(doc) {
+        const aframeScene = doc.querySelector('a-scene#scene, a-scene');
+        const aframeCanvas = aframeScene && aframeScene.canvas instanceof HTMLCanvasElement && isVisibleSurface(aframeScene.canvas)
+            ? aframeScene.canvas
+            : null;
+        if (aframeCanvas) {
+            return { type: 'canvas', node: aframeCanvas };
+        }
+
         const canvases = Array.from(doc.querySelectorAll('canvas')).filter(isVisibleSurface);
         if (canvases.length > 0) {
             return { type: 'canvas', node: canvases[canvases.length - 1] };
@@ -49,6 +57,65 @@
         }
 
         return null;
+    }
+
+    function readReadyState(doc) {
+        const root = doc.documentElement;
+        if (!root) {
+            return { ready: false, settled: false, managedMedia: false, pendingMedia: 0 };
+        }
+
+        const managedMediaState = root.dataset.creatrManagedMediaState || '';
+        const pendingMedia = Number(root.dataset.creatrManagedMediaPending || '0');
+        return {
+            ready: root.dataset.creatrReady === '1',
+            settled: root.dataset.creatrSettled === '1',
+            managedMedia: managedMediaState === 'pending' || managedMediaState === 'loaded',
+            pendingMedia: Number.isFinite(pendingMedia) ? pendingMedia : 0
+        };
+    }
+
+    function wait(ms) {
+        return new Promise((resolve) => window.setTimeout(resolve, ms));
+    }
+
+    function tryForceAframeRender(doc, surface) {
+        const scene = doc.querySelector('a-scene#scene, a-scene');
+        if (!scene || !surface || scene.canvas !== surface) {
+            return;
+        }
+
+        const renderer = scene.renderer;
+        const object3D = scene.object3D;
+        const camera = scene.camera || scene.cameraEl?.getObject3D?.('camera') || null;
+        if (!renderer || !object3D || !camera || typeof renderer.render !== 'function') {
+            return;
+        }
+
+        try {
+            renderer.render(object3D, camera);
+        } catch (_) {}
+    }
+
+    async function waitForCaptureReady(doc) {
+        const timeoutMs = 12000;
+        const startedAt = Date.now();
+
+        while ((Date.now() - startedAt) < timeoutMs) {
+            const state = readReadyState(doc);
+            const surface = findSurface(doc);
+            if (surface && state.ready && (!state.managedMedia || (state.settled && state.pendingMedia === 0))) {
+                return surface;
+            }
+            await wait(150);
+        }
+
+        const surface = findSurface(doc);
+        if (surface) {
+            return surface;
+        }
+
+        throw new Error('No downloadable canvas or SVG is available yet.');
     }
 
     function downloadBlob(blob, filename) {
@@ -106,6 +173,45 @@
         return exportCanvas;
     }
 
+    function hasVisiblePixels(canvas) {
+        const context = canvas.getContext('2d');
+        if (!context) {
+            return false;
+        }
+
+        const width = Math.max(1, canvas.width || 1);
+        const height = Math.max(1, canvas.height || 1);
+        const sampleX = Math.max(1, Math.min(4, width));
+        const sampleY = Math.max(1, Math.min(4, height));
+        for (let row = 0; row < sampleY; row += 1) {
+            for (let col = 0; col < sampleX; col += 1) {
+                const x = Math.min(width - 1, Math.floor((col / sampleX) * width));
+                const y = Math.min(height - 1, Math.floor((row / sampleY) * height));
+                const pixel = context.getImageData(x, y, 1, 1).data;
+                if (pixel[3] !== 0 || pixel[0] !== 0 || pixel[1] !== 0 || pixel[2] !== 0) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    async function exportCanvasWithValidation(doc, canvas) {
+        tryForceAframeRender(doc, canvas);
+        const first = await exportCanvas(canvas);
+        if (!hasVisiblePixels(first)) {
+            await wait(32);
+            tryForceAframeRender(doc, canvas);
+            await wait(32);
+            const retry = await exportCanvas(canvas);
+            if (hasVisiblePixels(retry)) {
+                return retry;
+            }
+            throw new Error('A-Frame could not produce a nonblank PNG right now.');
+        }
+        return first;
+    }
+
     async function exportSvg(svg) {
         const rect = svg.getBoundingClientRect();
         const width = Math.max(1, Math.round(rect.width) || svg.viewBox?.baseVal?.width || 1);
@@ -151,14 +257,14 @@
             throw new Error('The piece is still loading. Please try again.');
         }
 
-        const surface = findSurface(doc);
+        const surface = await waitForCaptureReady(doc);
         if (!surface) {
             throw new Error('No downloadable canvas or SVG is available yet.');
         }
 
         return surface.type === 'svg'
             ? exportSvg(surface.node)
-            : exportCanvas(surface.node);
+            : exportCanvasWithValidation(doc, surface.node);
     }
 
     async function handleDownload(button) {
@@ -180,7 +286,13 @@
             const blob = await canvasToBlob(exportCanvasEl);
             downloadBlob(blob, filename);
         } catch (error) {
-            setStatus(statusEl, error instanceof Error ? error.message : 'Could not download the PNG right now.');
+            const message = error instanceof Error ? error.message : 'Could not download the PNG right now.';
+            setStatus(
+                statusEl,
+                /tainted canvases/i.test(message)
+                    ? 'This piece still contains an image or texture the browser will not export safely.'
+                    : message
+            );
         } finally {
             button.disabled = false;
             button.removeAttribute('aria-busy');

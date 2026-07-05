@@ -45,4 +45,7 @@ for the current or selected version. `index.html` is the single manual entry
 point; supporting runtime/media/source files load automatically from there. The
 export omits CMS presentation controls, preserves interaction for Three.js,
 A-Frame, and C2 interactive pieces, and is designed to be rehosted as ordinary
-static web files.
+static web files. Interactive exports for those three modes also include the
+local screenshot control inside `index.html`, and supported CMS media are
+rewritten in a direct-open-safe way so the capture path works from that single
+entry file.
