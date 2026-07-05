@@ -224,15 +224,25 @@ Migrated platform generative art pieces live under their own namespace:
 piece with its current version's generated code. Numeric IDs are canonical
 because the migrated platform `art_pieces` records do not include slugs.
 `/pieces/[id]/download` returns the current version as a downloadable ZIP
-bundle. It accepts `?version=[version-id]` to export a specific version. The
-ZIP is a portable web bundle with `index.html` as the single entry point:
-opening that file should load the piece without requiring the recipient to
-manually open any helper file. The bundle still includes local `runtime/`,
-`media/`, and editable source files so the piece can be uploaded to another
-static host without the live site or CDN access. The export intentionally
-omits immersive/admin/embed controls and rewrites supported CMS image/media
-references such as `/image/2`, `image/2`, `/media/...`, `media/...`,
-`/api/media-assets/2`, and `api/media-assets/2` inside the bundle.
+bundle. It accepts `?version=[version-id]` to export a specific version. It
+also accepts `?surface=immersive` from immersive piece and collection gallery
+views; immersive exports keep `index.html` as the single manual entry point but
+open into the local immersive viewer surface, with fullscreen and PNG capture
+available from that downloaded view. Optional `viewState` may carry a
+base64url-encoded JSON object with viewer state such as camera and target
+coordinates and, for collection walls, `activeIndex`; malformed state is
+ignored. Immersive-origin exports include a local immersive renderer, fullscreen
+and PNG icon controls, C2 interactive overlay support when applicable, patched
+local Three.js/OrbitControls imports, and an embedded Blob-module fallback so
+`index.html` can still mount if direct local opening blocks sibling module
+imports. Regular exports remain a portable web bundle with `index.html` as the
+single entry point: opening that file should load the piece without requiring
+the recipient to manually open any helper file. The bundle still includes local
+`runtime/`, `media/`, and editable source files so the piece can be uploaded to
+another static host without the live site or CDN access. Regular exports
+intentionally omit immersive/admin/embed controls and rewrite supported CMS
+image/media references such as `/image/2`, `image/2`, `/media/...`,
+`media/...`, `/api/media-assets/2`, and `api/media-assets/2` inside the bundle.
 Bundled exports preserve engine-native interactivity: A-Frame receives its
 live `<a-scene>`, C2 receives the real canvas plus safe media helpers, and
 Three.js exports attach OrbitControls to the exported scene/camera/renderer so
@@ -249,6 +259,11 @@ captures the current live frame from the rendered piece. A-Frame capture is
 hardened in both the public page and exported `index.html` path with a
 document-local pre-runtime WebGL context patch plus a forced-render/nonblank
 validation retry, rather than relying on scene `renderer` attributes alone.
+Immersive `/pieces/[id]` pages expose `Download Piece` and `Download PNG` in
+the immersive action rail. PNG capture reflects the visible immersive view from
+the current camera; for gallery-room engines this is the rendered Three.js
+gallery canvas, not the off-screen source canvas, unless the C2 interactive
+overlay is open.
 
 `/exhibits` lists migrated `platform_exhibits` rows (name, description, item
 count, and a thumbnail drawn from the first item). `/exhibits/[slug]` renders
@@ -280,6 +295,13 @@ Compatibility embed and immersive routes return content rather than redirects:
   language.
 - `GET /immersive/exhibits/[slug]` — full-page presentation for one platform
   exhibit and its migrated art/media items.
+- `GET /immersive/collections/[slug]` — full-page progressive collection wall
+  for migrated art/media items. The wall tracks the selected item and exposes
+  `Download Piece` only when the selected item is an actual piece. The wall
+  `Download PNG` captures the currently rendered collection wall. The slideshow
+  overlay exposes `Download Piece` for active piece slides and `Download PNG`
+  for capturable iframe/image slides; media-only slides do not create piece ZIP
+  downloads.
 - `GET /immersive/images/[encoded-ref]` — full-page presentation for a
   base64url-encoded image reference, retained for legacy platform image
   gallery embeds. Query parameters `title`, `alt`, and `caption` are optional

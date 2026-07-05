@@ -293,6 +293,340 @@ function piece_export_rewrite_media_refs(string $content, callable $resolver): s
     ) ?? $content;
 }
 
+function piece_export_decode_view_state(string $encoded): array
+{
+    $encoded = trim($encoded);
+    if ($encoded === '' || strlen($encoded) > 8192 || !preg_match('/^[A-Za-z0-9_-]+$/', $encoded)) {
+        return [];
+    }
+
+    $padded = strtr($encoded, '-_', '+/');
+    $padding = strlen($padded) % 4;
+    if ($padding > 0) {
+        $padded .= str_repeat('=', 4 - $padding);
+    }
+
+    $json = base64_decode($padded, true);
+    if (!is_string($json) || $json === '') {
+        return [];
+    }
+
+    $decoded = json_decode($json, true);
+    return is_array($decoded) ? piece_export_sanitize_view_state($decoded) : [];
+}
+
+function piece_export_sanitize_view_state(array $state): array
+{
+    $clean = [];
+    foreach (['camera', 'target'] as $key) {
+        $value = $state[$key] ?? null;
+        if (!is_array($value)) {
+            continue;
+        }
+        $vector = [];
+        foreach (['x', 'y', 'z'] as $axis) {
+            $number = $value[$axis] ?? null;
+            if (is_numeric($number) && is_finite((float) $number)) {
+                $vector[$axis] = max(-100000, min(100000, (float) $number));
+            }
+        }
+        if (count($vector) === 3) {
+            $clean[$key] = $vector;
+        }
+    }
+
+    $activeIndex = $state['activeIndex'] ?? null;
+    if (is_numeric($activeIndex)) {
+        $clean['activeIndex'] = max(0, min(10000, (int) $activeIndex));
+    }
+
+    return $clean;
+}
+
+function piece_export_immersive_document(array $piece, array $version, array $options = []): string
+{
+    $title = htmlspecialchars((string) ($piece['title'] ?? 'Art piece'), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    $engine = strtolower((string) ($version['engine'] ?? $piece['engine'] ?? 'p5'));
+    $generationMode = art_piece_version_generation_mode($version, $piece);
+    $mediaMap = is_array($options['media_map'] ?? null) ? $options['media_map'] : [];
+    $embedMedia = !empty($options['embed_media']);
+    $viewState = is_array($options['view_state'] ?? null) ? piece_export_sanitize_view_state($options['view_state']) : [];
+    $rewriteMedia = static function (string $content) use ($mediaMap, $embedMedia): string {
+        return piece_export_rewrite_media_refs($content, static function (string $normalizedRef) use ($mediaMap, $embedMedia): ?string {
+            $asset = $mediaMap[$normalizedRef] ?? null;
+            if (!is_array($asset)) {
+                return null;
+            }
+
+            return $embedMedia
+                ? (string) ($asset['data_url'] ?? '')
+                : (string) ($asset['path'] ?? '');
+        });
+    };
+
+    $html = $rewriteMedia((string) ($version['html_code'] ?? ''));
+    if ($engine === 'aframe') {
+        $html = piece_aframe_normalize_texture_assets($html, static function (string $src) use ($mediaMap, $embedMedia): string {
+            $asset = $mediaMap[$src] ?? null;
+            if (!is_array($asset)) {
+                return $src;
+            }
+
+            return $embedMedia
+                ? (string) ($asset['data_url'] ?? $src)
+                : (string) ($asset['path'] ?? $src);
+        });
+    }
+
+    $css = $rewriteMedia((string) ($version['css_code'] ?? ''));
+    $code = $rewriteMedia((string) ($version['generated_code'] ?? ''));
+    $fullViewDocument = piece_export_document($piece, $version, [
+        'runtime_mode' => 'bundle',
+        'media_map' => $mediaMap,
+        'embed_media' => true,
+    ]);
+    $aframeCaptureShim = $engine === 'aframe' ? piece_aframe_capture_context_shim() : '';
+
+    $jsonFlags = JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE;
+    $jsonEngine = json_encode($engine, $jsonFlags);
+    $jsonGenerationMode = json_encode($generationMode, $jsonFlags);
+    $jsonTitle = json_encode((string) ($piece['title'] ?? 'Art piece'), $jsonFlags);
+    $jsonHtml = json_encode($html, $jsonFlags);
+    $jsonCss = json_encode($css, $jsonFlags);
+    $jsonCode = json_encode($code, $jsonFlags);
+    $jsonFullView = json_encode($fullViewDocument, $jsonFlags);
+    $jsonViewState = json_encode($viewState, $jsonFlags);
+    $pngFilename = json_encode(piece_export_png_filename($piece), $jsonFlags);
+    $jsonEmbeddedThree = json_encode(piece_export_runtime_source_file('assets/vendor/piece-runtime/three/three.module.js'), $jsonFlags);
+    $jsonEmbeddedOrbitControls = json_encode(piece_export_patched_orbitcontrols_source(), $jsonFlags);
+    $jsonEmbeddedDeviceOrientation = json_encode(piece_export_patched_device_orientation_source(), $jsonFlags);
+    $jsonEmbeddedImmersiveGallery = json_encode(piece_export_patched_immersive_gallery_source(), $jsonFlags);
+
+    return <<<HTML
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="creatr-piece-export" content="portable-immersive-bundle">
+<title>{$title}</title>
+{$aframeCaptureShim}
+<style>
+html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#05070f;color:#f8f5ee;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}
+#immersive-stage{position:fixed;inset:0;width:100vw;height:100dvh;background:#000;overflow:hidden;}
+#piece-error{position:fixed;left:1rem;right:1rem;bottom:5rem;z-index:220;display:none;padding:0.8rem 1rem;border:1px solid #fca5a5;border-radius:0.75rem;background:#450a0a;color:#fee2e2;font:13px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;}
+.immersive-export-actions{position:fixed;right:calc(1rem + env(safe-area-inset-right));bottom:calc(1rem + env(safe-area-inset-bottom));z-index:210;display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;justify-content:flex-end;max-width:min(24rem,calc(100vw - 2rem));}
+.immersive-export-actions button{display:inline-flex;align-items:center;justify-content:center;width:2.9rem;height:2.9rem;border:1px solid rgba(255,255,255,0.16);border-radius:999px;background:rgba(0,0,0,0.62);color:#fff;padding:0;font:700 0.82rem/1 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;cursor:pointer;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);}
+.immersive-export-actions button:hover,.immersive-export-actions button:focus-visible{background:rgba(0,0,0,0.8);border-color:rgba(255,255,255,0.5);}
+.immersive-export-actions button[disabled]{opacity:0.65;cursor:progress;}
+.immersive-export-actions button svg{width:1.35rem;height:1.35rem;display:block;}
+.c2-interactive-overlay{position:fixed;inset:0;z-index:180;background:#05070f;}
+.c2-interactive-overlay[hidden]{display:none!important;}
+.c2-interactive-overlay iframe{width:100%;height:100%;border:0;display:block;background:#05070f;}
+.c2-interactive-overlay button{position:absolute;top:calc(1rem + env(safe-area-inset-top));right:calc(1rem + env(safe-area-inset-right));z-index:1;display:inline-flex;width:2.75rem;height:2.75rem;align-items:center;justify-content:center;border:1px solid rgba(255,255,255,0.16);border-radius:999px;background:rgba(0,0,0,0.62);color:#fff;font-size:1.4rem;cursor:pointer;}
+@media (max-width:640px){.immersive-export-actions{left:calc(1rem + env(safe-area-inset-left));right:calc(1rem + env(safe-area-inset-right));justify-content:center;}.immersive-export-actions button{flex:1 1 auto;}}
+</style>
+</head>
+<body>
+<div id="immersive-stage" tabindex="-1"></div>
+<div id="piece-error" role="alert"></div>
+<div id="c2-interactive-overlay" class="c2-interactive-overlay" hidden>
+  <button id="c2-interactive-close" type="button" aria-label="Close interactive view">&times;</button>
+  <iframe id="c2-interactive-frame" title="Interactive piece" sandbox="allow-scripts allow-same-origin"></iframe>
+</div>
+<div class="immersive-export-actions" role="toolbar" aria-label="Immersive piece actions">
+  <button id="immersive-export-interact" type="button" aria-label="Open piece" hidden>
+    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
+  </button>
+  <button id="immersive-export-fullscreen" type="button" aria-label="Enter fullscreen">
+    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M21 16v3a2 2 0 0 1-2 2h-3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/></svg>
+  </button>
+  <button id="immersive-export-png" type="button" aria-label="Download PNG">
+    <svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M9 4.5 7.8 6H5.5A2.5 2.5 0 0 0 3 8.5v9A2.5 2.5 0 0 0 5.5 20h13a2.5 2.5 0 0 0 2.5-2.5v-9A2.5 2.5 0 0 0 18.5 6h-2.3L15 4.5H9Zm3 4a4.75 4.75 0 1 1 0 9.5 4.75 4.75 0 0 1 0-9.5Zm0 1.75a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"/></svg>
+  </button>
+</div>
+<script>
+function showPieceError(error){const el=document.getElementById('piece-error');if(!el)return;el.textContent=(error&&(error.stack||error.message))?(error.stack||error.message):String(error);el.style.display='block';}
+window.addEventListener('error',event=>showPieceError(event.error||event.message));
+window.addEventListener('unhandledrejection',event=>showPieceError(event.reason||'Unhandled promise rejection'));
+</script>
+<script type="module">
+const embeddedRuntimeSources = {
+  three: {$jsonEmbeddedThree},
+  orbitControls: {$jsonEmbeddedOrbitControls},
+  deviceOrientation: {$jsonEmbeddedDeviceOrientation},
+  immersiveGallery: {$jsonEmbeddedImmersiveGallery}
+};
+
+function createRuntimeModuleUrl(source) {
+  return URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
+}
+
+async function loadImmersiveRuntime() {
+  try {
+    return await import('./runtime/immersive-gallery.js');
+  } catch (error) {
+    const threeUrl = createRuntimeModuleUrl(embeddedRuntimeSources.three);
+    const orbitUrl = createRuntimeModuleUrl(embeddedRuntimeSources.orbitControls.replace("from '../../three.module.js';", `from '\${threeUrl}';`));
+    const deviceUrl = createRuntimeModuleUrl(embeddedRuntimeSources.deviceOrientation.replace("'./three/three.module.js'", `'\${threeUrl}'`));
+    const gallerySource = embeddedRuntimeSources.immersiveGallery
+      .replace("from './three/three.module.js';", `from '\${threeUrl}';`)
+      .replace("from './three/addons/controls/OrbitControls.js';", `from '\${orbitUrl}';`)
+      .replace('await import("./three-device-orientation-controls.js")', `await import('\${deviceUrl}')`);
+    return await import(createRuntimeModuleUrl(gallerySource));
+  }
+}
+
+const { mountAFrameImmersivePiece, mountGalleryPiece, mountThreeImmersivePiece } = await loadImmersiveRuntime();
+
+const piece = {
+  engine: {$jsonEngine},
+  generationMode: {$jsonGenerationMode},
+  title: {$jsonTitle},
+  html: {$jsonHtml},
+  css: {$jsonCss},
+  code: {$jsonCode},
+  fullViewSrcdoc: {$jsonFullView},
+  initialViewState: {$jsonViewState},
+  pngFilename: {$pngFilename}
+};
+const stage = document.getElementById('immersive-stage');
+const overlay = document.getElementById('c2-interactive-overlay');
+const overlayFrame = document.getElementById('c2-interactive-frame');
+const overlayClose = document.getElementById('c2-interactive-close');
+const interactBtn = document.getElementById('immersive-export-interact');
+const fullscreenBtn = document.getElementById('immersive-export-fullscreen');
+const pngBtn = document.getElementById('immersive-export-png');
+let viewer = null;
+
+function openInteractiveOverlay() {
+  overlayFrame.srcdoc = piece.fullViewSrcdoc;
+  overlay.hidden = false;
+  overlayFrame.focus();
+}
+function closeInteractiveOverlay() {
+  overlay.hidden = true;
+  overlayFrame.removeAttribute('srcdoc');
+  stage.focus();
+}
+overlayClose.addEventListener('click', closeInteractiveOverlay);
+window.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !overlay.hidden) closeInteractiveOverlay();
+});
+
+try {
+  const controls = { showViewerControls: true, initialViewState: piece.initialViewState };
+  if (piece.engine === 'three') {
+    viewer = mountThreeImmersivePiece(stage, piece.code, piece.html, piece.css, showPieceError, controls);
+  } else if (piece.engine === 'aframe') {
+    viewer = mountAFrameImmersivePiece(stage, piece.code, piece.html, piece.css, showPieceError, controls);
+  } else {
+    const isInteractiveC2 = piece.generationMode === 'c2_interactive';
+    viewer = mountGalleryPiece(stage, piece.code, piece.html, piece.css, piece.engine, piece.title, '', '', '', showPieceError, isInteractiveC2 ? openInteractiveOverlay : null, {
+      ...controls,
+      fullView: isInteractiveC2 ? null : { items: [{ type: 'iframe', srcdoc: piece.fullViewSrcdoc }] }
+    });
+    interactBtn.hidden = false;
+    interactBtn.setAttribute('aria-label', isInteractiveC2 ? 'Open piece' : 'View full size');
+    interactBtn.addEventListener('click', () => {
+      if (isInteractiveC2) openInteractiveOverlay();
+      else viewer?.openFullViewAt?.(0);
+    });
+  }
+} catch (error) {
+  showPieceError(error);
+}
+
+fullscreenBtn.addEventListener('click', async () => {
+  try {
+    if (document.fullscreenElement) {
+      await document.exitFullscreen();
+    } else if (document.documentElement.requestFullscreen) {
+      await document.documentElement.requestFullscreen();
+    }
+  } catch (_) {}
+});
+document.addEventListener('fullscreenchange', () => {
+  fullscreenBtn.setAttribute('aria-label', document.fullscreenElement ? 'Exit fullscreen' : 'Enter fullscreen');
+});
+
+function wait(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
+function hasVisiblePixels(canvas) {
+  const context = canvas.getContext('2d');
+  if (!context) return false;
+  const width = Math.max(1, canvas.width || 1);
+  const height = Math.max(1, canvas.height || 1);
+  for (let y = 0; y < Math.min(4, height); y++) {
+    for (let x = 0; x < Math.min(4, width); x++) {
+      const px = context.getImageData(Math.floor((x / 4) * width), Math.floor((y / 4) * height), 1, 1).data;
+      if (px[3] !== 0 || px[0] !== 0 || px[1] !== 0 || px[2] !== 0) return true;
+    }
+  }
+  return false;
+}
+async function canvasToBlob(canvas) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('Could not create the PNG download.')), 'image/png');
+  });
+}
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+function exportCanvas(canvas) {
+  const width = Math.max(1, canvas.width || Math.round(canvas.getBoundingClientRect().width) || 1);
+  const height = Math.max(1, canvas.height || Math.round(canvas.getBoundingClientRect().height) || 1);
+  const out = document.createElement('canvas');
+  out.width = width;
+  out.height = height;
+  const context = out.getContext('2d');
+  if (!context) throw new Error('PNG export is unavailable in this browser.');
+  context.drawImage(canvas, 0, 0, width, height);
+  return out;
+}
+pngBtn.addEventListener('click', async () => {
+  if (pngBtn.disabled) return;
+  const label = pngBtn.getAttribute('aria-label') || 'Download PNG';
+  pngBtn.disabled = true;
+  pngBtn.setAttribute('aria-label', 'Preparing PNG');
+  try {
+    let surface = null;
+    if (!overlay.hidden && overlayFrame.contentDocument) {
+      surface = Array.from(overlayFrame.contentDocument.querySelectorAll('canvas')).find((canvas) => canvas.getBoundingClientRect().width > 0 && canvas.getBoundingClientRect().height > 0);
+    }
+    if (!surface) {
+      const capture = viewer?.getCaptureSurface?.();
+      capture?.beforeCapture?.();
+      surface = capture?.canvas || null;
+    }
+    if (!surface) throw new Error('No downloadable canvas is available yet.');
+    let exported = exportCanvas(surface);
+    if (!hasVisiblePixels(exported)) {
+      await wait(120);
+      viewer?.getCaptureSurface?.()?.beforeCapture?.();
+      exported = exportCanvas(surface);
+    }
+    if (!hasVisiblePixels(exported)) throw new Error('Could not produce a non-blank PNG right now.');
+    downloadBlob(await canvasToBlob(exported), piece.pngFilename);
+  } catch (error) {
+    showPieceError(error);
+  } finally {
+    pngBtn.disabled = false;
+    pngBtn.setAttribute('aria-label', label);
+  }
+});
+</script>
+</body>
+</html>
+HTML;
+}
+
 function piece_request_origin(): string
 {
     $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
@@ -858,9 +1192,9 @@ HTML,
     };
 }
 
-function piece_export_bundle(array $piece, array $version): array
+function piece_export_bundle(array $piece, array $version, array $options = []): array
 {
-    $manifest = piece_export_build_manifest($piece, $version);
+    $manifest = piece_export_build_manifest($piece, $version, $options);
     $tempPath = tempnam(sys_get_temp_dir(), 'piece-export-');
     if ($tempPath === false) {
         throw new RuntimeException('Could not create a temporary file for the piece export.');
@@ -891,7 +1225,12 @@ function piece_export_bundle(array $piece, array $version): array
     }
 
     foreach ($manifest['runtime_files'] as $runtimeFile) {
-        if (!$zip->addFile($runtimeFile['source_path'], $runtimeFile['zip_path'])) {
+        if (isset($runtimeFile['data'])) {
+            $added = $zip->addFromString($runtimeFile['zip_path'], (string) $runtimeFile['data']);
+        } else {
+            $added = $zip->addFile($runtimeFile['source_path'], $runtimeFile['zip_path']);
+        }
+        if (!$added) {
             $zip->close();
             @unlink($tempPath);
             throw new RuntimeException('Could not package runtime file: ' . $runtimeFile['zip_path']);
@@ -929,7 +1268,7 @@ function piece_build_media_manifest(array $contents): array
     return $mediaMap;
 }
 
-function piece_export_build_manifest(array $piece, array $version): array
+function piece_export_build_manifest(array $piece, array $version, array $options = []): array
 {
     $htmlCode = (string) ($version['html_code'] ?? '');
     $cssCode = (string) ($version['css_code'] ?? '');
@@ -947,16 +1286,28 @@ function piece_export_build_manifest(array $piece, array $version): array
 
     $bundleFiles = piece_export_bundle_files($piece, $version, $mediaMap);
 
+    $surface = strtolower(trim((string) ($options['surface'] ?? '')));
+    $immersive = $surface === 'immersive';
+    $viewState = $immersive ? piece_export_decode_view_state((string) ($options['view_state'] ?? '')) : [];
+
     return [
-        'document' => piece_export_document($piece, $version, [
-            'runtime_mode' => 'bundle',
-            'media_map' => $mediaMap,
-            'embed_media' => true,
-            'css_href' => 'styles/piece.css',
-            'script_src' => 'scripts/piece.js',
-        ]),
+        'document' => $immersive
+            ? piece_export_immersive_document($piece, $version, [
+                'media_map' => $mediaMap,
+                'embed_media' => true,
+                'view_state' => $viewState,
+            ])
+            : piece_export_document($piece, $version, [
+                'runtime_mode' => 'bundle',
+                'media_map' => $mediaMap,
+                'embed_media' => true,
+                'css_href' => 'styles/piece.css',
+                'script_src' => 'scripts/piece.js',
+            ]),
         'bundle_files' => $bundleFiles,
-        'runtime_files' => piece_export_runtime_files((string) ($version['engine'] ?? $piece['engine'] ?? 'p5')),
+        'runtime_files' => $immersive
+            ? piece_export_immersive_runtime_files((string) ($version['engine'] ?? $piece['engine'] ?? 'p5'))
+            : piece_export_runtime_files((string) ($version['engine'] ?? $piece['engine'] ?? 'p5')),
         'media_files' => $mediaFiles,
     ];
 }
@@ -1040,8 +1391,8 @@ function piece_export_readme(array $piece, string $generationMode): string
     }
 
     $interactiveNote = piece_export_supports_screenshot_overlay($generationMode)
-        ? "This export includes the lower-left screenshot control directly inside index.html.\n"
-        : "This export does not include the screenshot control because this piece is not one of the interactive export modes.\n";
+        ? "This export includes lower-left fullscreen and screenshot controls directly inside index.html.\n"
+        : "This export includes a lower-left fullscreen control directly inside index.html. It does not include the screenshot control because this piece is not one of the interactive export modes.\n";
 
     return "EXPORT: {$title}\n"
         . "\n"
@@ -1234,6 +1585,80 @@ function piece_export_runtime_files(string $engine): array
     return $runtimeFiles;
 }
 
+function piece_export_immersive_runtime_files(string $engine): array
+{
+    $publicRoot = dirname(__DIR__, 2);
+    $vendorRoot = $publicRoot . '/assets/vendor/piece-runtime';
+    $engine = strtolower($engine);
+    $runtimeFiles = [
+        [
+            'zip_path' => 'runtime/immersive-gallery.js',
+            'data' => piece_export_patched_immersive_gallery_source(),
+        ],
+        [
+            'zip_path' => 'runtime/three-device-orientation-controls.js',
+            'data' => piece_export_patched_device_orientation_source(),
+        ],
+        ['source_path' => $vendorRoot . '/three/three.module.js', 'zip_path' => 'runtime/three/three.module.js'],
+        [
+            'zip_path' => 'runtime/three/addons/controls/OrbitControls.js',
+            'data' => piece_export_patched_orbitcontrols_source(),
+        ],
+    ];
+
+    if ($engine === 'p5') {
+        $runtimeFiles[] = ['source_path' => $vendorRoot . '/p5/p5.min.js', 'zip_path' => 'runtime/p5/p5.min.js'];
+    } elseif ($engine === 'c2') {
+        $runtimeFiles[] = ['source_path' => $vendorRoot . '/c2/c2.min.js', 'zip_path' => 'runtime/c2/c2.min.js'];
+    } elseif ($engine === 'aframe') {
+        $runtimeFiles[] = ['source_path' => $publicRoot . '/assets/js/aframe.min.js', 'zip_path' => 'runtime/aframe/aframe.min.js'];
+    }
+
+    foreach ($runtimeFiles as $runtimeFile) {
+        if (isset($runtimeFile['source_path']) && !is_file($runtimeFile['source_path'])) {
+            throw new RuntimeException('Missing vendored runtime file for immersive piece export: ' . $runtimeFile['source_path']);
+        }
+    }
+
+    return $runtimeFiles;
+}
+
+function piece_export_patched_immersive_gallery_source(): string
+{
+    $source = piece_export_runtime_source_file('assets/js/immersive-gallery.js');
+    $replacements = [
+        "import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';" => "import * as THREE from './three/three.module.js';",
+        "import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js';" => "import { OrbitControls } from './three/addons/controls/OrbitControls.js';",
+        'await import("/assets/js/three-device-orientation-controls.js")' => 'await import("./three-device-orientation-controls.js")',
+        'script.src = "/assets/js/aframe.min.js";' => 'script.src = "runtime/aframe/aframe.min.js";',
+        'script.src = "https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js";' => 'script.src = "runtime/p5/p5.min.js";',
+        'script.src = "https://cdn.jsdelivr.net/npm/c2.js@1.0.9/dist/c2.min.js";' => 'script.src = "runtime/c2/c2.min.js";',
+        'script.src && script.src.endsWith("/assets/js/aframe.min.js")' => 'script.src && script.src.endsWith("runtime/aframe/aframe.min.js")',
+    ];
+
+    return strtr($source, $replacements);
+}
+
+function piece_export_patched_device_orientation_source(): string
+{
+    $source = piece_export_runtime_source_file('assets/js/three-device-orientation-controls.js');
+    return str_replace(
+        "'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js'",
+        "'./three/three.module.js'",
+        $source
+    );
+}
+
+function piece_export_patched_orbitcontrols_source(): string
+{
+    $source = piece_export_runtime_source_file('assets/vendor/piece-runtime/three/OrbitControls.js');
+    return str_replace(
+        "from 'three';",
+        "from '../../three.module.js';",
+        $source
+    );
+}
+
 function piece_export_png_filename(array $piece): string
 {
     return piece_export_basename($piece) . '.png';
@@ -1267,37 +1692,56 @@ HTML;
 
 function piece_export_screenshot_overlay_css(string $generationMode): string
 {
-    if (!piece_export_supports_screenshot_overlay($generationMode)) {
-        return '';
-    }
+    $screenshotCss = piece_export_supports_screenshot_overlay($generationMode)
+        ? <<<'CSS'
+#piece-export-screenshot-btn{display:inline-flex;}
+CSS
+        : '';
 
-    return <<<'CSS'
+    return <<<CSS
 #piece-export-screenshot-shell{position:fixed;left:1rem;bottom:1rem;z-index:10000;display:flex;flex-direction:column;align-items:flex-start;gap:0.5rem;pointer-events:none;}
-#piece-export-screenshot-btn{display:inline-flex;align-items:center;justify-content:center;width:3rem;height:3rem;border:1px solid rgba(255,255,255,0.22);border-radius:999px;background:rgba(10,12,20,0.72);color:#f6f2dd;box-shadow:0 12px 30px rgba(0,0,0,0.28);backdrop-filter:blur(10px);cursor:pointer;pointer-events:auto;}
-#piece-export-screenshot-btn:hover{background:rgba(21,26,40,0.88);}
-#piece-export-screenshot-btn:focus-visible{outline:2px solid #f6f2dd;outline-offset:2px;}
-#piece-export-screenshot-btn[disabled]{opacity:0.72;cursor:progress;}
-#piece-export-screenshot-btn svg{width:1.35rem;height:1.35rem;display:block;fill:currentColor;}
+#piece-export-control-row{display:flex;align-items:center;gap:0.5rem;pointer-events:auto;}
+#piece-export-screenshot-btn,#piece-export-fullscreen-btn{align-items:center;justify-content:center;width:3rem;height:3rem;border:1px solid rgba(255,255,255,0.22);border-radius:999px;background:rgba(10,12,20,0.72);color:#f6f2dd;box-shadow:0 12px 30px rgba(0,0,0,0.28);backdrop-filter:blur(10px);cursor:pointer;pointer-events:auto;}
+#piece-export-screenshot-btn{display:none;}
+#piece-export-fullscreen-btn{display:inline-flex;}
+#piece-export-screenshot-btn:hover,#piece-export-fullscreen-btn:hover{background:rgba(21,26,40,0.88);}
+#piece-export-screenshot-btn:focus-visible,#piece-export-fullscreen-btn:focus-visible{outline:2px solid #f6f2dd;outline-offset:2px;}
+#piece-export-screenshot-btn[disabled],#piece-export-fullscreen-btn[disabled]{opacity:0.72;cursor:progress;}
+#piece-export-screenshot-btn svg,#piece-export-fullscreen-btn svg{width:1.35rem;height:1.35rem;display:block;}
+#piece-export-screenshot-btn svg{fill:currentColor;}
+#piece-export-fullscreen-btn svg{fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;}
 #piece-export-screenshot-status{max-width:min(20rem,calc(100vw - 2rem));padding:0.45rem 0.7rem;border-radius:0.8rem;background:rgba(10,12,20,0.72);color:#f6f2dd;font:13px/1.35 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;pointer-events:auto;}
 #piece-export-screenshot-status[hidden]{display:none;}
 .piece-export-sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;}
+.piece-export-fullscreen-active #runtime-root{width:100vw;height:100dvh;}
+{$screenshotCss}
 CSS;
 }
 
 function piece_export_screenshot_overlay_markup(string $generationMode): string
 {
-    if (!piece_export_supports_screenshot_overlay($generationMode)) {
-        return '';
-    }
-
-    return <<<'HTML'
-<div id="piece-export-screenshot-shell" aria-live="polite">
+    $screenshotButton = piece_export_supports_screenshot_overlay($generationMode)
+        ? <<<'HTML'
   <button id="piece-export-screenshot-btn" type="button" aria-label="Take screenshot">
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <path d="M9 4.5 7.8 6H5.5A2.5 2.5 0 0 0 3 8.5v9A2.5 2.5 0 0 0 5.5 20h13a2.5 2.5 0 0 0 2.5-2.5v-9A2.5 2.5 0 0 0 18.5 6h-2.3L15 4.5H9Zm3 4a4.75 4.75 0 1 1 0 9.5 4.75 4.75 0 0 1 0-9.5Zm0 1.75a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"/>
     </svg>
     <span class="piece-export-sr-only">Take screenshot</span>
   </button>
+HTML
+        : '';
+
+    return <<<HTML
+<div id="piece-export-screenshot-shell" aria-live="polite">
+  <div id="piece-export-control-row">
+{$screenshotButton}
+    <button id="piece-export-fullscreen-btn" type="button" aria-label="Enter fullscreen">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M21 16v3a2 2 0 0 1-2 2h-3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/>
+      </svg>
+      <span class="piece-export-sr-only">Enter fullscreen</span>
+    </button>
+  </div>
   <div id="piece-export-screenshot-status" role="status" hidden></div>
 </div>
 HTML;
@@ -1305,26 +1749,51 @@ HTML;
 
 function piece_export_screenshot_overlay_script(array $piece, string $generationMode): string
 {
-    if (!piece_export_supports_screenshot_overlay($generationMode)) {
-        return '';
-    }
-
     $jsonFilename = json_encode(piece_export_png_filename($piece), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     $jsonMode = json_encode($generationMode, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    $supportsScreenshot = piece_export_supports_screenshot_overlay($generationMode) ? 'true' : 'false';
 
     return <<<HTML
 <script>
 (function () {
   const generationMode = {$jsonMode};
   const filename = {$jsonFilename};
+  const supportsScreenshot = {$supportsScreenshot};
   const button = document.getElementById('piece-export-screenshot-btn');
+  const fullscreenButton = document.getElementById('piece-export-fullscreen-btn');
   const status = document.getElementById('piece-export-screenshot-status');
-  if (!button || !status) return;
+  if (!status) return;
 
   function setStatus(message) {
     status.textContent = message || '';
     status.hidden = !message;
   }
+
+  if (fullscreenButton) {
+    fullscreenButton.addEventListener('click', async function () {
+      try {
+        if (document.fullscreenElement) {
+          await document.exitFullscreen();
+          return;
+        }
+        const target = document.documentElement;
+        if (typeof target.requestFullscreen === 'function') {
+          await target.requestFullscreen();
+          return;
+        }
+        document.documentElement.classList.add('piece-export-fullscreen-active');
+        setStatus('Fullscreen is not available in this browser; expanded the piece instead.');
+      } catch (error) {
+        document.documentElement.classList.add('piece-export-fullscreen-active');
+      }
+    });
+    document.addEventListener('fullscreenchange', function () {
+      fullscreenButton.setAttribute('aria-label', document.fullscreenElement ? 'Exit fullscreen' : 'Enter fullscreen');
+      document.documentElement.classList.toggle('piece-export-fullscreen-active', Boolean(document.fullscreenElement));
+    });
+  }
+
+  if (!supportsScreenshot || !button) return;
 
   function isVisibleSurface(node) {
     if (!node || node.nodeType !== 1 || typeof node.getBoundingClientRect !== 'function') return false;

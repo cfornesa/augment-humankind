@@ -231,6 +231,40 @@ test('immersive viewer controls are optional and gated by the piece view', funct
     assert_contains($pieceView, 'showViewerControls: <?= (!$isEmbedMode && !$isStaticEmbed)');
 });
 
+test('immersive downloads serialize viewer state and expose collection slideshow downloads', function () use ($immersive) {
+    $pieceView = file_get_contents(__DIR__ . '/../public/app/views/immersive/piece.php');
+    $collectionView = file_get_contents(__DIR__ . '/../public/app/views/immersive/collection.php');
+    assert_contains($immersive, 'function encodeViewState');
+    assert_contains($immersive, 'getViewState: () => shellViewState');
+    assert_contains($immersive, 'onActiveItemChange');
+    assert_contains($immersive, 'download_url');
+    assert_contains($pieceView, 'data-immersive-download-piece');
+    assert_contains($pieceView, "url.searchParams.set('surface', 'immersive')");
+    assert_contains($collectionView, 'data-collection-download-piece');
+    assert_contains($collectionView, 'data-collection-download-png');
+    assert_contains($collectionView, "'download_url' => \$pieceDownloadUrl");
+    assert_contains($collectionView, "'download_url' => \$pieceImmersiveDownloadUrl");
+});
+
+test('immersive bundle export patches renderer runtime URLs to local bundle paths', function () {
+    $render = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
+    assert_contains($render, 'function piece_export_immersive_runtime_files');
+    assert_contains($render, 'function piece_export_patched_orbitcontrols_source');
+    assert_contains($render, 'runtime/immersive-gallery.js');
+    assert_contains($render, "import * as THREE from './three/three.module.js';");
+    assert_contains($render, "from '../../three.module.js';");
+    assert_contains($render, 'runtime/aframe/aframe.min.js');
+    assert_contains($render, 'runtime/p5/p5.min.js');
+    assert_contains($render, 'runtime/c2/c2.min.js');
+});
+
+test('immersive gallery-room piece PNG capture uses the rendered gallery canvas', function () use ($immersive) {
+    $mountGalleryPiece = substr($immersive, strpos($immersive, 'export function mountGalleryPiece'));
+    $mountGalleryPiece = substr($mountGalleryPiece, 0, strpos($mountGalleryPiece, '// Standalone image gallery mounting helper'));
+    assert_contains($mountGalleryPiece, 'canvas: shell.renderer.domElement');
+    assert_contains($mountGalleryPiece, 'shell.renderer.render(shell.scene, shell.camera)');
+});
+
 test('tap/click movement preserves Three.js camera distance by translating camera and target together', function () use ($immersive) {
     assert_contains($immersive, 'threeAnimToTarget = threeAnimFromTarget.clone().add(shift)');
     assert_contains($immersive, 'threeAnimToCam = threeAnimFromCam.clone().add(shift)');

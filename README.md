@@ -49,12 +49,12 @@ this instance's content.
 - `/search` — public blog post search
 - `/pieces` — public gallery listing of generative art pieces
 - `/pieces/[id]` — public render page of a generative art piece
-- `/pieces/[id]/download` — downloadable ZIP export for the piece's current version, with `index.html` as the single manual entry point plus bundled runtime/media/source files
+- `/pieces/[id]/download` — downloadable ZIP export for the piece's current or selected version, with `index.html` as the single manual entry point plus bundled runtime/media/source files; `surface=immersive` exports the same piece in its immersive gallery context
 - `/collections` and `/collections/[slug]` — public archive/detail for migrated platform art collections
 - `/embed/pieces/[id]` — public embeddable HTML of a generative art piece
 - `/embed/pieces/[id]/data` — public JSON feed of art piece parameters and source code
-- `/immersive/pieces/[id]` — public 3D full-immersion stage or gallery room framing with viewer zoom, movement, keyboard, pointer, and touch controls where supported
-- `/immersive/collections/[slug]` — public progressive rendering collection wall (`/immersive/exhibits/[slug]` 301-redirects here for legacy links)
+- `/immersive/pieces/[id]` — public 3D full-immersion stage or gallery room framing with viewer zoom, movement, keyboard, pointer, touch, fullscreen, `Download Piece`, and `Download PNG` controls where supported
+- `/immersive/collections/[slug]` — public progressive rendering collection wall with selected-piece `Download Piece` and wall/slideshow PNG capture (`/immersive/exhibits/[slug]` 301-redirects here for legacy links)
 - `/feeds/mf2` — mf2 JSON format feed export
 
 Admin routes are flat and protected by OAuth login:
@@ -133,6 +133,23 @@ a fixed `visualViewport`-sized mode, page scrolling is locked, safe-area insets
 are respected, and the button state uses "Expand immersive view" / "Return to
 page" language instead of promising true browser fullscreen.
 
+Full immersive piece pages and collection gallery walls expose export controls
+from the same action rail as fullscreen. `Download PNG` captures the rendered
+immersive surface from the user's current perspective. For gallery-room pieces
+and collection walls, that means the Three.js gallery renderer, not the hidden
+source canvas. If a C2 interactive full-size overlay is open, PNG capture uses
+that overlay iframe instead.
+
+`Download Piece` from immersive surfaces calls the existing
+`/pieces/[id]/download` route with `surface=immersive` and a serialized
+viewer-state payload. The resulting ZIP still opens through `index.html`, but
+that file mounts the local immersive renderer, restores camera/target state
+when provided, includes fullscreen and PNG icons, and preserves C2 interactive
+full-size behavior through the local overlay. Collection walls target the
+currently selected piece, and collection slideshow overlays target the active
+slide when it is a piece. Media-only collection slides do not invent a piece
+ZIP; they expose PNG behavior only for capturable image/iframe surfaces.
+
 ## Art Piece Downloads And Templates
 
 Art pieces store CMS-runtime-compatible HTML/CSS/JS, but public piece pages
@@ -148,6 +165,11 @@ rewrites supported CMS media references such as `/image/2`, `image/2`,
 into export-safe local or embedded forms. For the direct `index.html` path,
 supported CMS-owned images/media are embedded in a file-open-safe way so
 interactive pieces can still export screenshots when opened from a local file.
+Regular exports keep the regular standalone piece surface. Immersive-origin
+exports use the same ZIP route with `surface=immersive`; those bundles open
+directly into the immersive viewer, include fullscreen and PNG controls, and
+embed a fallback copy of the immersive runtime graph so the page can still
+mount when browser `file://` module loading rejects sibling runtime imports.
 
 The export bootstrap preserves interaction semantics for the engines that need
 runtime help:
@@ -161,8 +183,10 @@ runtime help:
 - C2.js interactive downloads receive the real canvas, `startFrame`, and safe
   image helpers, so authored pointer/click/touch/drag handlers continue to
   work.
-- Interactive `c2_interactive`, `three`, and `aframe` downloads include the
-  lower-left screenshot control directly inside `index.html`.
+- Regular interactive `c2_interactive`, `three`, and `aframe` downloads include
+  fullscreen plus the local screenshot control directly inside `index.html`.
+  Immersive exports include icon controls for opening the piece overlay where
+  applicable, fullscreen, and PNG capture.
 
 Starter templates are database-owned and seeded by `scripts/setup-database.php`.
 In `/admin/pieces`, the `Art Pieces` subtab holds the current piece list and

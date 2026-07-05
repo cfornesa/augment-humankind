@@ -250,7 +250,16 @@
   files for editing/rehosting, but the single-entry-point `index.html` path
   also embeds vendored runtime/media-safe equivalents where needed so supported
   interactive pieces can render and take screenshots when opened directly from
-  a local file.
+  a local file. Immersive-origin exports additionally embed the patched
+  immersive renderer, local Three.js/OrbitControls/DeviceOrientationControls
+  sources, and a Blob-module fallback so a downloaded `index.html` can mount
+  even when a browser refuses sibling ES-module imports from `file://`.
+- **Immersive export note:** `surface=immersive` downloads are still piece ZIP
+  exports, not whole-collection exports. Immersive piece pages, collection
+  walls, and collection slideshow overlays pass serialized camera/selection
+  state into the existing `/pieces/{id}/download` route; the downloaded
+  `index.html` opens in the same gallery-style surface with fullscreen and PNG
+  controls.
 - **Capture-safe media note:** Supported same-origin CMS media references
   (`/image/{id}`, `/api/media-assets/{id}`, `/media/...`) are rewritten into
   capture-safe forms for public PNG downloads and direct-open exported
@@ -267,8 +276,8 @@
   pages, embeds, and immersive views fail to render until local runtime copies
   are served. Downloaded piece ZIP exports depend on the vendored runtime files
   checked into this repo; if those pinned files are missing or replaced
-  incompatibly, the exported bundle may stop working until the owner updates
-  the packaged runtime set.
+  incompatibly, regular and immersive exported bundles may stop working until
+  the owner updates the packaged runtime set.
 - **Self-hosting alternative:** Store p5.js, c2.min.js, three.module.js,
   OrbitControls.js, and aframe.min.js under a repo-owned runtime/vendor path
   and bundle them into offline piece ZIP exports. This is the chosen export

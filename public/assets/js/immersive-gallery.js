@@ -33,6 +33,58 @@ const WALL_LABEL_GAP = 0.08;
 const EXHIBIT_FLOOR_CLEARANCE = 0.2;
 export const EXHIBIT_FRAME_ASPECT = WALL_FRAME_ART_WIDTH / WALL_FRAME_ART_HEIGHT;
 
+function readViewVector(value) {
+  if (!value || typeof value !== "object") return null;
+  const x = Number(value.x);
+  const y = Number(value.y);
+  const z = Number(value.z);
+  if (![x, y, z].every(Number.isFinite)) return null;
+  return new THREE.Vector3(x, y, z);
+}
+
+function applyShellViewState(shell, viewState) {
+  const camera = readViewVector(viewState?.camera);
+  const target = readViewVector(viewState?.target);
+  if (!shell?.camera || !shell?.controls || !camera || !target) return false;
+  shell.camera.position.copy(camera);
+  shell.controls.target.copy(target);
+  shell.camera.lookAt(target);
+  shell.camera.updateMatrixWorld?.(true);
+  shell.controls.update();
+  return true;
+}
+
+function shellViewState(shell, extra = {}) {
+  const state = { ...extra };
+  if (shell?.camera) {
+    state.camera = {
+      x: Number(shell.camera.position.x.toFixed(5)),
+      y: Number(shell.camera.position.y.toFixed(5)),
+      z: Number(shell.camera.position.z.toFixed(5)),
+    };
+  }
+  if (shell?.controls?.target) {
+    state.target = {
+      x: Number(shell.controls.target.x.toFixed(5)),
+      y: Number(shell.controls.target.y.toFixed(5)),
+      z: Number(shell.controls.target.z.toFixed(5)),
+    };
+  }
+  return state;
+}
+
+function encodeViewState(viewState) {
+  try {
+    const json = JSON.stringify(viewState || {});
+    const bytes = new TextEncoder().encode(json);
+    let binary = "";
+    bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+    return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  } catch (_) {
+    return "";
+  }
+}
+
 export function computeMountedArtworkLayout(aspect, profile = {}) {
   const safeAspect = Math.max(aspect, 0.35);
   const maxArtWidth = profile.maxArtWidth ?? MAX_ART_WIDTH;
@@ -888,6 +940,15 @@ export function createReadOnlyFullViewOverlay(stageEl, items, options = {}) {
   controlsWrap.style.cssText = "display:flex;align-items:center;gap:0.5rem;flex-shrink:0;";
   topBar.appendChild(controlsWrap);
 
+  const downloadPieceLink = document.createElement("a");
+  downloadPieceLink.textContent = "Download Piece";
+  downloadPieceLink.setAttribute("download", "");
+  downloadPieceLink.style.cssText = "display:none;align-items:center;justify-content:center;min-height:2.75rem;padding:0 0.85rem;border:1px solid rgba(255,255,255,0.16);border-radius:9999px;background:rgba(255,255,255,0.06);color:#fff;font-size:0.9rem;font-weight:600;text-decoration:none;";
+  controlsWrap.appendChild(downloadPieceLink);
+
+  const downloadPngBtn = chromeButton("PNG", "Download PNG");
+  controlsWrap.appendChild(downloadPngBtn);
+
   const prevBtn = chromeButton("Prev", "Show previous work");
   const nextBtn = chromeButton("Next", "Show next work");
   const closeBtn = chromeButton("×", "Close full view");
@@ -910,6 +971,7 @@ export function createReadOnlyFullViewOverlay(stageEl, items, options = {}) {
   let currentStartIndex = 0;
   let priorKeyboardDisabled = false;
   let previouslyFocused = null;
+  let currentRenderedItem = null;
 
   function normalizeIndex(index) {
     const total = overlayItems.length;
@@ -949,6 +1011,48 @@ export function createReadOnlyFullViewOverlay(stageEl, items, options = {}) {
     }
   }
 
+  function getActiveItem() {
+    return overlayItems[normalizeIndex(currentStartIndex)] || null;
+  }
+
+  async function captureActiveItemPng() {
+    const dl = window.CreatrPieceDownload;
+    if (!dl) {
+      throw new Error("PNG download tools are not available yet.");
+    }
+    const viewport = contentWrap.querySelector("[data-full-view-viewport]");
+    const iframe = viewport?.querySelector("iframe");
+    if (iframe?.contentDocument) {
+      const surface = await dl.waitForCaptureReady(iframe.contentDocument);
+      return surface.type === "svg"
+        ? dl.exportSvg(surface.node)
+        : dl.exportCanvasWithValidation(iframe.contentDocument, surface.node);
+    }
+    const image = viewport?.querySelector("img");
+    if (image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0) {
+      const canvas = document.createElement("canvas");
+      canvas.width = image.naturalWidth;
+      canvas.height = image.naturalHeight;
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("PNG export is unavailable in this browser.");
+      context.drawImage(image, 0, 0);
+      return canvas;
+    }
+    throw new Error("No downloadable slide surface is available yet.");
+  }
+
+  function syncDownloadControls() {
+    const item = getActiveItem();
+    currentRenderedItem = item;
+    const downloadUrl = typeof item?.download_url === "string" ? item.download_url : "";
+    downloadPieceLink.href = downloadUrl;
+    downloadPieceLink.style.display = downloadUrl ? "inline-flex" : "none";
+    downloadPngBtn.style.display = item?.type === "iframe" || item?.type === "image" ? "" : "none";
+    if (typeof options.onActiveItemChange === "function") {
+      options.onActiveItemChange(item, normalizeIndex(currentStartIndex));
+    }
+  }
+
   function renderCurrentItems() {
     clearViewport();
     const cols = getColumns();
@@ -959,6 +1063,7 @@ export function createReadOnlyFullViewOverlay(stageEl, items, options = {}) {
     if (cols === 1) {
       contentWrap.style.cssText = "flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:1rem 1rem 0.75rem;";
       const viewport = document.createElement("div");
+      viewport.dataset.fullViewViewport = "true";
       viewport.style.cssText = "width:100%;height:100%;display:flex;align-items:center;justify-content:center;border-radius:1rem;background:#05070f;overflow:hidden;";
       contentWrap.appendChild(viewport);
       const item = overlayItems[normalizeIndex(currentStartIndex)];
@@ -970,11 +1075,13 @@ export function createReadOnlyFullViewOverlay(stageEl, items, options = {}) {
       metaWrap.style.display = (titleEl.textContent || subtitleEl.textContent) ? "" : "none";
       descriptionEl.textContent = item.description || "";
       descriptionEl.style.display = descriptionEl.textContent ? "" : "none";
+      syncDownloadControls();
     } else {
       contentWrap.style.cssText = `flex:1;min-height:0;display:grid;grid-template-columns:repeat(${cols},1fr);gap:0.75rem;padding:1rem 1rem 0.75rem;`;
       titleEl.textContent = "";
       subtitleEl.style.display = "none";
       descriptionEl.style.display = "none";
+      syncDownloadControls();
       for (let i = 0; i < cols; i++) {
         const item = overlayItems[normalizeIndex(currentStartIndex + i)];
         const slot = document.createElement("div");
@@ -1068,6 +1175,29 @@ export function createReadOnlyFullViewOverlay(stageEl, items, options = {}) {
   prevBtn.addEventListener("click", showPrevious);
   nextBtn.addEventListener("click", showNext);
   closeBtn.addEventListener("click", close);
+  downloadPngBtn.addEventListener("click", async () => {
+    if (downloadPngBtn.disabled) return;
+    const originalLabel = downloadPngBtn.textContent;
+    const item = getActiveItem();
+    const filename = item?.png_filename || item?.title?.toLowerCase?.().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") + ".png" || "piece.png";
+    downloadPngBtn.disabled = true;
+    downloadPngBtn.textContent = "Preparing...";
+    try {
+      const dl = window.CreatrPieceDownload;
+      const canvas = await captureActiveItemPng();
+      const blob = await dl.canvasToBlob(canvas);
+      dl.downloadBlob(blob, filename);
+      downloadPngBtn.textContent = originalLabel;
+    } catch (error) {
+      downloadPngBtn.textContent = "Try Again";
+      window.setTimeout(() => {
+        if (!downloadPngBtn.disabled) downloadPngBtn.textContent = originalLabel;
+      }, 1800);
+      console.error(error);
+    } finally {
+      downloadPngBtn.disabled = false;
+    }
+  });
   root.addEventListener("click", (event) => {
     if (event.target === root) close();
   });
@@ -2164,6 +2294,10 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
     const initialTargetDist = state.camera.position.distanceTo(controls.target);
     controls.maxDistance = Math.max(40, initialTargetDist * 4);
     controls.update();
+    if (applyShellViewState({ camera: state.camera, controls }, options.initialViewState)) {
+      saveOrbitState();
+      userHasInteracted = true;
+    }
 
     threeNavLimit = getThreeNavigationLimit();
     keyNav = createKeyboardNavigation(controls, {
@@ -2268,6 +2402,7 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
           } catch (_) {}
         },
       }),
+      getViewState: () => shellViewState({ camera: state.camera, controls }),
     };
   } catch (err) {
     onError(err);
@@ -2425,6 +2560,37 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
     const THREE_NS = getAFrameThree();
     if (!THREE_NS || !Number.isFinite(verticalScale)) return;
     moveAFrameCameraByWorldDelta(new THREE_NS.Vector3(0, verticalScale * 0.14, 0));
+  }
+
+  function applyAFrameInitialViewState() {
+    const camera = readViewVector(options.initialViewState?.camera);
+    const target = readViewVector(options.initialViewState?.target);
+    const mover = getAFrameCameraMover();
+    if (!camera || !mover) return false;
+    if (mover.parent) {
+      const localCamera = camera.clone();
+      mover.parent.worldToLocal(localCamera);
+      mover.position.copy(localCamera);
+    } else {
+      mover.position.copy(camera);
+    }
+    if (target && typeof mover.lookAt === "function") {
+      mover.lookAt(target);
+    }
+    return true;
+  }
+
+  function getAFrameViewState() {
+    const THREE_NS = getAFrameThree();
+    const mover = getAFrameCameraMover();
+    if (!THREE_NS || !mover) return {};
+    const camera = new THREE_NS.Vector3();
+    mover.getWorldPosition(camera);
+    const forward = new THREE_NS.Vector3();
+    const cameraObject = getAFrameCameraObject();
+    cameraObject?.getWorldDirection?.(forward);
+    const target = camera.clone().add(forward.lengthSq() > 0 ? forward.multiplyScalar(4) : new THREE_NS.Vector3(0, 0, -4));
+    return shellViewState({ camera: { position: camera }, controls: { target } });
   }
 
   function activeAFrameTouchCount() {
@@ -2586,7 +2752,10 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
     resizeObserver = new ResizeObserver(resizeScene);
     resizeObserver.observe(stageEl);
     requestAnimationFrame(resizeScene);
-    requestAnimationFrame(bindAFramePointerControls);
+    requestAnimationFrame(() => {
+      bindAFramePointerControls();
+      applyAFrameInitialViewState();
+    });
     scene.addEventListener("renderstart", bindAFramePointerControls, { once: true });
     frameId = requestAnimationFrame(animateAFrameViewerControls);
     if (options.showViewerControls) {
@@ -2639,7 +2808,8 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
           }
         } catch (_) {}
       },
-    }),
+      }),
+    getViewState: getAFrameViewState,
   };
 }
 
@@ -3044,6 +3214,7 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
 
   bootRuntime();
   fitMountedGalleryCamera(shell, stageEl);
+  applyShellViewState(shell, options.initialViewState);
   gyroController.setup();
   animate();
 
@@ -3091,12 +3262,16 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
     isFullViewOpen() {
       return readOnlyOverlay?.isOpen?.() ?? false;
     },
-    // PNG capture: the artwork's own 2D canvas (p5 presentation surface,
-    // rasterized svg, or c2 managed canvas) — never the 3D gallery room.
+    // PNG capture: the gallery renderer as currently seen from the user's perspective.
     getCaptureSurface: () => ({
-      canvas: presentationSurface?.canvas ?? sourceCanvas ?? null,
-      beforeCapture: null,
+      canvas: shell.renderer.domElement,
+      beforeCapture: () => {
+        try {
+          shell.renderer.render(shell.scene, shell.camera);
+        } catch (_) {}
+      },
     }),
+    getViewState: () => shellViewState(shell),
   };
 }
 
@@ -3634,6 +3809,8 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
 
   const fullViewItems = items.map((item) => item?.full_view || null);
   const immersiveHrefs = items.map((item) => item?.immersive_href || null);
+  let selectedSourceIndex = items.findIndex((item) => item?.download_url);
+  if (selectedSourceIndex < 0) selectedSourceIndex = 0;
   const hasFullViewItems = fullViewItems.some((item) => Boolean(item));
   const hasImmersiveHrefs = immersiveHrefs.some((href) => Boolean(href));
   const slideshowEntries = fullViewItems
@@ -3643,7 +3820,12 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
     slideshowEntries.map((entry, slideshowIndex) => [entry.sourceIndex, slideshowIndex]),
   );
   if (hasFullViewItems) {
-    readOnlyOverlay = createReadOnlyFullViewOverlay(stageEl, slideshowEntries.map((entry) => entry.item));
+    readOnlyOverlay = createReadOnlyFullViewOverlay(stageEl, slideshowEntries.map((entry) => entry.item), {
+      onActiveItemChange(item) {
+        const matchedIndex = items.findIndex((candidate) => candidate?.full_view === item);
+        if (matchedIndex >= 0) selectedSourceIndex = matchedIndex;
+      },
+    });
   }
   if (hasFullViewItems || hasImmersiveHrefs) {
 
@@ -3667,6 +3849,7 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
       if (!hits.length) return;
       const slotIndex = slotMeshes.indexOf(hits[0].object);
       if (slotIndex < 0) return;
+      selectedSourceIndex = slotIndex;
       if (fullViewItems[slotIndex]) {
         const slideshowIndex = slideshowIndexBySourceIndex.get(slotIndex);
         if (Number.isFinite(slideshowIndex)) {
@@ -3711,6 +3894,7 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
 
   updateProgressiveLoading();
   gyroController.setup();
+  applyShellViewState(shell, options.initialViewState);
   animate();
 
   const resizeObserver = new ResizeObserver(() => {
@@ -3758,9 +3942,24 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
 
   return {
     destroy,
+    getSelectedItem() {
+      return items[selectedSourceIndex] || null;
+    },
+    getViewState() {
+      return shellViewState(shell, { activeIndex: selectedSourceIndex });
+    },
+    getCaptureSurface: () => ({
+      canvas: shell.renderer.domElement,
+      beforeCapture: () => {
+        try {
+          shell.renderer.render(shell.scene, shell.camera);
+        } catch (_) {}
+      },
+    }),
     openSlideshowAt(index = 0) {
       if (!slideshowEntries.length && !immersiveHrefs.some(Boolean)) return;
       const safeIndex = Math.max(0, Math.min(items.length - 1, index));
+      selectedSourceIndex = safeIndex;
       const slideshowIndex = slideshowIndexBySourceIndex.get(safeIndex);
       if (Number.isFinite(slideshowIndex)) {
         readOnlyOverlay?.openAt(slideshowIndex);

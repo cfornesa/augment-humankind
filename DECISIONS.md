@@ -10,6 +10,58 @@
 
 None.
 
+## 2026-07-05 — Immersive And Collection Piece Downloads Preserve Render Surface
+
+### Decision
+`/pieces/{id}/download` remains the single piece export endpoint, but it now
+accepts `surface=immersive` and an optional base64url `viewState` payload from
+immersive piece and collection gallery surfaces. Regular `/pieces/{id}` exports
+continue to produce the regular standalone piece view. Immersive-origin exports
+produce a ZIP whose `index.html` opens directly into the local immersive
+renderer, restores sanitized camera/target/selection state where available,
+and includes icon controls for fullscreen and PNG capture.
+
+Collection downloads target the active or selected piece, not the entire
+collection. Collection image/media slides do not invent piece ZIP downloads;
+they only expose PNG behavior where an image or iframe surface can actually be
+captured.
+
+### Root Cause
+The earlier implementation reused the regular standalone export path from
+immersive gallery controls, so downloads did not preserve the view the user was
+actually looking at. A follow-up failure showed that simply packaging local
+runtime files was not enough: local direct-open behavior can still fail when a
+browser blocks sibling ES-module imports from `file://`, producing a blank
+stage with only static export controls visible.
+
+### Scope
+- `public/app/controllers/PiecesController.php` forwards `surface` and
+  `viewState` into the export helper.
+- `public/app/helpers/piece-render.php` builds immersive standalone documents,
+  patches local runtime imports, embeds a direct-open Blob-module fallback for
+  the immersive runtime graph, and keeps regular bundle exports unchanged.
+- `public/app/views/immersive/piece.php` and
+  `public/app/views/immersive/collection.php` expose download controls from
+  immersive action rails and slideshow overlays without overlapping existing
+  fullscreen/movement/zoom controls.
+- `public/assets/js/immersive-gallery.js` serializes/restores viewer state,
+  tracks selected collection items, and captures PNGs from the rendered
+  immersive gallery canvas unless an interactive overlay is open.
+- Project markdown documents the route parameters, collection semantics,
+  direct-open fallback, and selected-piece download rule.
+
+### Verification
+- `php tests/art-piece-generation.php` — 120 passed
+- `php -l` on changed PHP files
+- `node --check public/assets/js/immersive-gallery.js`
+- `git diff --check`
+- Browser verification of a regenerated piece 110 immersive ZIP rendered when
+  served normally and when `runtime/immersive-gallery.js` was deliberately
+  unavailable, forcing the embedded fallback path
+- `php tests/three-runtime-consistency.php` still has 2 unrelated pre-existing
+  gyroscope assertions failing, while the new immersive download/export checks
+  pass
+
 ## 2026-07-05 — A-Frame PNG Capture Uses A Pre-Runtime WebGL Context Patch
 
 ### Decision

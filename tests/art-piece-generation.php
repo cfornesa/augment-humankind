@@ -1223,6 +1223,68 @@ test('bundle export keeps index.html as the only manual entry point', function (
     assert_contains($index, 'creatr-piece-export');
     assert_not_contains($index, 'preview/');
     assert_contains($index, 'URL.createObjectURL');
+    assert_contains($index, 'piece-export-fullscreen-btn');
+    assert_contains($index, 'aria-label="Enter fullscreen"');
+});
+
+test('immersive bundle export keeps index.html as the immersive manual entry point', function () {
+    $piece = ['id' => 98, 'title' => 'Immersive Bundle Piece', 'engine' => 'three'];
+    $version = [
+        'id' => 198,
+        'engine' => 'three',
+        'html_code' => '<div id="container"></div>',
+        'css_code' => '#container{width:100%;height:100%;}',
+        'generated_code' => 'window.sketch = ({ THREE, canvas, startFrame }) => { const scene = new THREE.Scene(); const camera = new THREE.PerspectiveCamera(60, canvas.width / canvas.height, 0.1, 100); camera.position.z = 5; const renderer = new THREE.WebGLRenderer({ canvas }); renderer.render(scene, camera); };',
+    ];
+    $stateJson = json_encode(['camera' => ['x' => 1, 'y' => 2, 'z' => 3], 'target' => ['x' => 0, 'y' => 1, 'z' => 0]]);
+    $state = rtrim(strtr(base64_encode((string) $stateJson), '+/', '-_'), '=');
+
+    $bundle = piece_export_bundle($piece, $version, [
+        'surface' => 'immersive',
+        'view_state' => $state,
+    ]);
+    $zip = new ZipArchive();
+    $zip->open($bundle['path']);
+    $index = $zip->getFromName('index.html');
+    $runtime = $zip->getFromName('runtime/immersive-gallery.js');
+    $orbitControls = $zip->getFromName('runtime/three/addons/controls/OrbitControls.js');
+    $regularScript = $zip->getFromName('scripts/piece.js');
+    $zip->close();
+    unlink($bundle['path']);
+
+    assert_contains($index, 'portable-immersive-bundle');
+    assert_contains($index, "await import('./runtime/immersive-gallery.js')");
+    assert_contains($index, 'embeddedRuntimeSources');
+    assert_contains($index, 'createRuntimeModuleUrl');
+    assert_contains($index, 'mountThreeImmersivePiece');
+    assert_contains($index, 'immersive-export-fullscreen');
+    assert_contains($index, 'aria-label="Enter fullscreen"');
+    assert_contains($index, '"camera":{"x":1,"y":2,"z":3}');
+    assert_contains($runtime, "from './three/three.module.js'");
+    assert_contains($runtime, 'runtime/p5/p5.min.js');
+    assert_contains($orbitControls, "from '../../three.module.js';");
+    assert_not_contains($orbitControls, "from 'three';");
+    assert_contains($regularScript, 'window.sketch');
+});
+
+test('regular bundle export does not switch to immersive markup without surface flag', function () {
+    $bundle = piece_export_bundle(
+        ['id' => 99, 'title' => 'Regular Bundle Piece', 'engine' => 'p5'],
+        [
+            'engine' => 'p5',
+            'html_code' => '<div id="canvas-container"></div>',
+            'css_code' => '',
+            'generated_code' => 'window.sketch = (p) => { p.setup = () => p.createCanvas(100, 100); };',
+        ]
+    );
+    $zip = new ZipArchive();
+    $zip->open($bundle['path']);
+    $index = $zip->getFromName('index.html');
+    $zip->close();
+    unlink($bundle['path']);
+
+    assert_contains($index, 'portable-bundle');
+    assert_not_contains($index, 'portable-immersive-bundle');
 });
 
 test('piece export document keeps Three, A-Frame, and C2 interactive in downloaded HTML', function () {

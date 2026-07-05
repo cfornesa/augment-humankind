@@ -250,10 +250,7 @@ html, body {
 
 /* Fullscreen Toggle Button */
 .fullscreen-toggle-btn {
-  position: absolute;
-  bottom: calc(1rem + env(safe-area-inset-bottom));
-  right: calc(1rem + env(safe-area-inset-right));
-  z-index: 130;
+  position: static;
   display: inline-flex;
   height: 2.75rem;
   width: 2.75rem;
@@ -498,11 +495,19 @@ canvas[aria-hidden="true"] {
   background: rgba(0, 0, 0, 0.7);
   border-color: #fff;
 }
-.immersive-download-cluster {
+.immersive-action-rail {
   position: absolute;
   bottom: calc(1rem + env(safe-area-inset-bottom));
-  right: calc(1rem + 2.75rem + 0.75rem + env(safe-area-inset-right));
+  right: calc(1rem + env(safe-area-inset-right));
   z-index: 130;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0.5rem;
+  max-width: min(28rem, calc(100% - 2rem));
+}
+.immersive-download-cluster {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
@@ -515,6 +520,19 @@ canvas[aria-hidden="true"] {
 .immersive-download-cluster .immersive-download-btn[disabled] {
   opacity: 0.6;
   cursor: progress;
+}
+@media (max-width: 640px) {
+  .immersive-action-rail {
+    left: calc(1rem + env(safe-area-inset-left));
+    justify-content: center;
+  }
+  .immersive-download-cluster {
+    flex: 1 1 auto;
+  }
+  .immersive-download-cluster .immersive-download-btn {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
 }
 .c2-interactive-overlay {
   position: absolute;
@@ -606,17 +624,16 @@ canvas[aria-hidden="true"] {
 
         <!-- Fullscreen controls (hidden in static embeds, and iOS embeds without handshakes) -->
         <?php if (!$isStaticEmbed): ?>
-            <button id="fullscreen-toggle-btn" class="fullscreen-toggle-btn" onclick="toggleFullscreen()" aria-label="Expand immersive view">
-                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
-            </button>
-
-            <!-- Downloads stay reachable in fullscreen: stage children are
-                 never hidden by .immersive-shell.fullscreen (only header/
-                 copy/metadata are). -->
-            <div class="immersive-download-cluster" role="group" aria-label="Download this piece">
-                <a href="<?= e($pieceDownloadUrl) ?>" class="immersive-stage-action-btn immersive-download-btn" download>Download Piece</a>
-                <button type="button" id="immersive-download-png-btn" class="immersive-stage-action-btn immersive-download-btn"
-                        data-immersive-download-png data-download-filename="<?= e($pngFilename) ?>">Download PNG</button>
+            <div class="immersive-action-rail" role="toolbar" aria-label="Immersive piece actions">
+                <div class="immersive-download-cluster" role="group" aria-label="Download this piece">
+                    <a href="<?= e($pieceDownloadUrl) ?>" class="immersive-stage-action-btn immersive-download-btn"
+                       data-immersive-download-piece="<?= e($pieceDownloadUrl) ?>" download>Download Piece</a>
+                    <button type="button" id="immersive-download-png-btn" class="immersive-stage-action-btn immersive-download-btn"
+                            data-immersive-download-png data-download-filename="<?= e($pngFilename) ?>">Download PNG</button>
+                </div>
+                <button id="fullscreen-toggle-btn" class="fullscreen-toggle-btn" onclick="toggleFullscreen()" aria-label="Expand immersive view">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+                </button>
             </div>
         <?php endif; ?>
 
@@ -1068,9 +1085,31 @@ try {
         readOnlyBtn.addEventListener('click', () => immersiveViewer.openFullViewAt(0));
     }
 
-    // Download PNG from the live immersive view. Three/A-Frame capture the
-    // stage canvas (the user's current perspective); gallery-room engines
-    // capture the artwork's own canvas, never the 3D room.
+    const downloadPieceLink = document.querySelector('[data-immersive-download-piece]');
+    if (downloadPieceLink) {
+        downloadPieceLink.addEventListener('click', () => {
+            const baseHref = downloadPieceLink.dataset.immersiveDownloadPiece || downloadPieceLink.getAttribute('href') || '';
+            const state = immersiveViewer?.getViewState?.() || {};
+            try {
+                const encoded = btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify(state))))
+                    .replace(/\+/g, '-')
+                    .replace(/\//g, '_')
+                    .replace(/=+$/g, '');
+                const url = new URL(baseHref, window.location.href);
+                url.searchParams.set('surface', 'immersive');
+                if (encoded) url.searchParams.set('viewState', encoded);
+                downloadPieceLink.href = url.pathname + url.search;
+            } catch (_) {
+                const url = new URL(baseHref, window.location.href);
+                url.searchParams.set('surface', 'immersive');
+                downloadPieceLink.href = url.pathname + url.search;
+            }
+        });
+    }
+
+    // Download PNG from the live immersive view. The default capture is the
+    // stage canvas from the user's current perspective; an open interactive
+    // overlay captures its iframe state instead.
     const downloadPngBtn = document.querySelector('[data-immersive-download-png]');
     if (downloadPngBtn && window.CreatrPieceDownload) {
         const dl = window.CreatrPieceDownload;

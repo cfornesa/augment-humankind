@@ -7,6 +7,7 @@ declare(strict_types=1);
 // this, browsers (WebKit/Safari especially) can keep serving a stale
 // cached copy of immersive-gallery.js indefinitely after a deploy.
 $galleryRuntimeVersion = (int) @filemtime(dirname(__DIR__, 3) . '/assets/js/immersive-gallery.js');
+$publicPieceScriptVersion = (int) @filemtime(dirname(__DIR__, 3) . '/assets/js/public-piece-download.js');
 
 // Hydrate fields for display
 $hasP5 = false;
@@ -36,6 +37,11 @@ foreach ($items as $index => $item) {
         $itemEngineLabel = art_piece_generation_mode_label($generationMode);
         $immersiveHref = '/immersive/pieces/' . (int) ($piece['id'] ?? 0)
             . '?returnTo=' . rawurlencode($immersiveCollectionReturnTo);
+        $versionParam = !empty($version['id']) ? '?version=' . (int) $version['id'] : '';
+        $pieceDownloadUrl = '/pieces/' . (int) ($piece['id'] ?? 0) . '/download' . $versionParam;
+        $pieceImmersiveDownloadUrl = $pieceDownloadUrl . (str_contains($pieceDownloadUrl, '?') ? '&' : '?') . 'surface=immersive';
+        $pngFilenameBase = pathinfo(piece_export_filename($piece), PATHINFO_FILENAME);
+        $piecePngFilename = ($pngFilenameBase !== '' ? $pngFilenameBase : 'piece-' . (int) ($piece['id'] ?? 0)) . '.png';
         $pieceFullViewDescription = (string) ($pieceDescription !== '' ? $pieceDescription : $piecePrompt);
         // Three.js, A-Frame, and interactive C2 pieces get pointer-events enabled so the
         // user can interact with them in the overlay. P5, SVG, and non-interactive C2
@@ -48,9 +54,13 @@ foreach ($items as $index => $item) {
             'srcdoc' => piece_render_document($piece, $version),
             'title' => $piece['title'] ?? 'Untitled Piece',
             'subtitle' => $itemEngineLabel,
+            'download_url' => $pieceImmersiveDownloadUrl,
+            'png_filename' => $piecePngFilename,
         ];
         $jsItems[] = [
             'kind' => 'piece',
+            'piece_id' => (int) ($piece['id'] ?? 0),
+            'version_id' => (int) ($version['id'] ?? 0),
             'title' => $piece['title'] ?? 'Untitled Piece',
             'engine' => $engine,
             'thumbnail_url' => $piece['thumbnail_url'] ?? '',
@@ -59,6 +69,8 @@ foreach ($items as $index => $item) {
             'generated_code' => $version['generated_code'] ?? '',
             'description' => $pieceDescription,
             'immersive_href' => $immersiveHref,
+            'download_url' => $pieceDownloadUrl,
+            'png_filename' => $piecePngFilename,
             'full_view' => $fullView,
         ];
         $detailItems[] = [
@@ -313,10 +325,7 @@ html, body {
 
 /* Fullscreen Toggle Button */
 .fullscreen-toggle-btn {
-  position: absolute;
-  bottom: calc(1rem + env(safe-area-inset-bottom));
-  right: calc(1rem + env(safe-area-inset-right));
-  z-index: 130;
+  position: static;
   display: inline-flex;
   height: 2.75rem;
   width: 2.75rem;
@@ -358,6 +367,45 @@ html, body {
 .immersive-stage-action-btn:hover {
   background: rgba(0, 0, 0, 0.7);
   border-color: #fff;
+}
+.immersive-action-rail {
+  position: absolute;
+  bottom: calc(1rem + env(safe-area-inset-bottom));
+  right: calc(1rem + env(safe-area-inset-right));
+  z-index: 130;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0.5rem;
+  max-width: min(32rem, calc(100% - 2rem));
+}
+.immersive-download-cluster {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+.immersive-download-cluster .immersive-download-btn {
+  position: static;
+  text-decoration: none;
+}
+.immersive-download-cluster .immersive-download-btn[disabled] {
+  opacity: 0.6;
+  cursor: progress;
+}
+@media (max-width: 640px) {
+  .immersive-action-rail {
+    left: calc(1rem + env(safe-area-inset-left));
+    justify-content: center;
+  }
+  .immersive-download-cluster {
+    flex: 1 1 auto;
+  }
+  .immersive-download-cluster .immersive-download-btn {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
 }
 
 /* Copy Codes Toolbar */
@@ -677,9 +725,15 @@ html, body {
         
         <!-- Fullscreen controls (hidden in static embeds, and iOS embeds without handshakes) -->
         <?php if (!$isStaticEmbed): ?>
-            <button id="fullscreen-toggle-btn" class="fullscreen-toggle-btn" onclick="toggleFullscreen()" aria-label="Expand immersive view">
-                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
-            </button>
+            <div class="immersive-action-rail" role="toolbar" aria-label="Collection gallery actions">
+                <div class="immersive-download-cluster" role="group" aria-label="Download selected piece">
+                    <a href="#" class="immersive-stage-action-btn immersive-download-btn" data-collection-download-piece download hidden>Download Piece</a>
+                    <button type="button" class="immersive-stage-action-btn immersive-download-btn" data-collection-download-png data-download-filename="collection-view.png">Download PNG</button>
+                </div>
+                <button id="fullscreen-toggle-btn" class="fullscreen-toggle-btn" onclick="toggleFullscreen()" aria-label="Expand immersive view">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+                </button>
+            </div>
         <?php endif; ?>
         <?php if (!$isEmbedMode && !$isStaticEmbed && $collectionSlideshowStartIndex !== null): ?>
             <button
@@ -798,6 +852,7 @@ html, body {
     <span id="toast-message"></span>
 </div>
 
+<script src="/assets/js/public-piece-download.js?v=<?= $publicPieceScriptVersion ?>"></script>
 <script type="module">
 import { mountExhibitWall } from '/assets/js/immersive-gallery.js?v=<?= $galleryRuntimeVersion ?>';
 
@@ -1026,6 +1081,71 @@ const stage = document.getElementById('immersive-stage');
 
 try {
     const immersiveViewer = mountExhibitWall(stage, items, rows, cols, viewerControlsOptions);
+    const downloadPieceLink = document.querySelector('[data-collection-download-piece]');
+    const downloadPngBtn = document.querySelector('[data-collection-download-png]');
+    function encodeViewState(state) {
+        try {
+            return btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify(state || {}))))
+                .replace(/\+/g, '-')
+                .replace(/\//g, '_')
+                .replace(/=+$/g, '');
+        } catch (_) {
+            return '';
+        }
+    }
+    function selectedPieceDownloadUrl() {
+        const item = immersiveViewer?.getSelectedItem?.();
+        if (!item?.download_url) return '';
+        const url = new URL(item.download_url, window.location.href);
+        url.searchParams.set('surface', 'immersive');
+        const encoded = encodeViewState(immersiveViewer?.getViewState?.() || {});
+        if (encoded) url.searchParams.set('viewState', encoded);
+        return url.pathname + url.search;
+    }
+    function syncCollectionDownloadLink() {
+        if (!downloadPieceLink) return;
+        const href = selectedPieceDownloadUrl();
+        downloadPieceLink.hidden = href === '';
+        if (href) downloadPieceLink.href = href;
+    }
+    syncCollectionDownloadLink();
+    stage.addEventListener('pointerup', () => window.setTimeout(syncCollectionDownloadLink, 0));
+    if (downloadPieceLink) {
+        downloadPieceLink.addEventListener('click', () => {
+            syncCollectionDownloadLink();
+        });
+    }
+    if (downloadPngBtn && window.CreatrPieceDownload) {
+        const dl = window.CreatrPieceDownload;
+        downloadPngBtn.addEventListener('click', async () => {
+            if (downloadPngBtn.disabled) return;
+            const selected = immersiveViewer?.getSelectedItem?.();
+            const filename = selected?.png_filename || downloadPngBtn.dataset.downloadFilename || 'collection-view.png';
+            const originalLabel = downloadPngBtn.textContent;
+            downloadPngBtn.disabled = true;
+            downloadPngBtn.setAttribute('aria-busy', 'true');
+            downloadPngBtn.textContent = 'Preparing PNG...';
+            try {
+                const surface = immersiveViewer?.getCaptureSurface?.();
+                if (!surface?.canvas) throw new Error('No downloadable canvas is available yet.');
+                surface.beforeCapture?.();
+                let exported = await dl.exportCanvas(surface.canvas);
+                if (!dl.hasVisiblePixels(exported)) {
+                    await new Promise((resolve) => setTimeout(resolve, 120));
+                    surface.beforeCapture?.();
+                    exported = await dl.exportCanvas(surface.canvas);
+                }
+                if (!dl.hasVisiblePixels(exported)) throw new Error('Could not produce a non-blank PNG right now.');
+                dl.downloadBlob(await dl.canvasToBlob(exported), filename);
+            } catch (error) {
+                showToast(error instanceof Error ? error.message : 'Could not download the PNG right now.');
+            } finally {
+                downloadPngBtn.disabled = false;
+                downloadPngBtn.removeAttribute('aria-busy');
+                downloadPngBtn.textContent = originalLabel;
+            }
+        });
+    }
     const slideshowBtn = document.getElementById('collection-full-view-btn');
     if (slideshowBtn && immersiveViewer?.openSlideshowAt) {
         slideshowBtn.addEventListener('click', () => {

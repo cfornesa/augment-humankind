@@ -49,3 +49,12 @@ static web files. Interactive exports for those three modes also include the
 local screenshot control inside `index.html`, and supported CMS media are
 rewritten in a direct-open-safe way so the capture path works from that single
 entry file.
+
+Immersive piece pages and immersive collection galleries use the same download
+route with `surface=immersive` when the user chooses `Download Piece`. Those
+ZIPs still use `index.html` as the manual entry point, but open into the local
+immersive renderer with fullscreen and PNG controls, preserve the serialized
+viewer state where available, and include a direct-open runtime fallback for
+local file use. Collection downloads target the selected or active piece; image
+or media-only collection slides expose PNG capture where a capturable surface
+exists but do not create standalone piece ZIPs.

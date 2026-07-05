@@ -100,7 +100,12 @@ class PiecesController
             self::notFound();
         }
 
-        $bundle = piece_export_bundle($data['piece'], $data['version']);
+        $surface = isset($_GET['surface']) ? strtolower(trim((string) $_GET['surface'])) : '';
+        $viewState = isset($_GET['viewState']) ? trim((string) $_GET['viewState']) : '';
+        $bundle = piece_export_bundle($data['piece'], $data['version'], [
+            'surface' => $surface,
+            'view_state' => $viewState,
+        ]);
         $filename = $bundle['filename'];
         $path = $bundle['path'];
 
