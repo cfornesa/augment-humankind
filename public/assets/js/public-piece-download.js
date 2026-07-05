@@ -308,4 +308,18 @@
             handleDownload(button);
         });
     });
+
+    // Shared primitives for other piece surfaces (immersive view) that
+    // capture from a live canvas or overlay iframe instead of the
+    // [data-piece-download-frame] iframe handled above.
+    window.CreatrPieceDownload = {
+        canvasToBlob,
+        downloadBlob,
+        exportCanvas,
+        exportCanvasWithValidation,
+        exportSvg,
+        findSurface,
+        hasVisiblePixels,
+        waitForCaptureReady,
+    };
 })();

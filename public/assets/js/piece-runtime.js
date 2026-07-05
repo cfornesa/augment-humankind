@@ -81,8 +81,24 @@ function fitCanvasBox(canvas) {
   canvas.style.width = (canvas.width * scale) + 'px';
   canvas.style.height = (canvas.height * scale) + 'px';
 }
+// KEEP IN SYNC (creatr-media-path-guard): piece-runtime.js / immersive-gallery.js
 function isCmsMediaPath(src) {
   return typeof src === 'string' && /^\/(?:image\/[0-9]+|api\/media-assets\/[0-9]+|media\/[A-Za-z0-9._~/%+-]+)(?:\?[A-Za-z0-9._~%=&+-]*)?$/.test(src);
+}
+// Capture-safe rendering (piece_render_document with capture_safe_media) and
+// standalone exports rewrite CMS media refs to data: URLs server-side before
+// this runtime ever sees them — those substituted values must pass the guard
+// even though authors only ever write CMS paths.
+function isInlineMediaSrc(src) {
+  return typeof src === 'string' && (/^data:image\//i.test(src) || /^blob:/i.test(src));
+}
+function resolveRuntimeMediaSrc(src) {
+  if (isInlineMediaSrc(src)) return src;
+  return normalizeCmsMediaPath(src);
+}
+function describeMediaSrc(src) {
+  if (typeof src !== 'string') return String(src);
+  return isInlineMediaSrc(src) ? src.slice(0, 64) + '… (inline media data)' : src;
 }
 const nativeImageCtor = window.Image;
 const managedMediaState = {
@@ -126,7 +142,7 @@ function updateManagedMediaDataset() {
   } catch (_) {}
 }
 function noteManagedMediaUsage(src) {
-  if (!isCmsMediaPath(src)) return false;
+  if (!isCmsMediaPath(src) && !isInlineMediaSrc(src)) return false;
   managedMediaState.used = true;
   updateManagedMediaDataset();
   return true;
@@ -142,7 +158,7 @@ function notifyManagedMediaSettled() {
   });
 }
 function trackManagedMediaRequest(element, src, opts) {
-  const normalizedSrc = normalizeCmsMediaPath(src);
+  const normalizedSrc = resolveRuntimeMediaSrc(src);
   if (!noteManagedMediaUsage(normalizedSrc)) return false;
   const options = opts || {};
   const requestKey = element
@@ -188,7 +204,7 @@ function trackManagedMediaRequest(element, src, opts) {
     }
     if (failedNow) {
       if (options.surfaceErrors !== false) {
-        showPieceError('Could not load CMS media asset: ' + normalizedSrc);
+        showPieceError('Could not load CMS media asset: ' + describeMediaSrc(normalizedSrc));
       }
       finish('error');
       return true;
@@ -196,7 +212,7 @@ function trackManagedMediaRequest(element, src, opts) {
     element.addEventListener('load', () => finish('loaded'), { once: true });
     element.addEventListener('error', () => {
       if (options.surfaceErrors !== false) {
-        showPieceError('Could not load CMS media asset: ' + normalizedSrc);
+        showPieceError('Could not load CMS media asset: ' + describeMediaSrc(normalizedSrc));
       }
       finish('error');
     }, { once: true });
@@ -208,7 +224,7 @@ function trackManagedMediaRequest(element, src, opts) {
   probe.onload = () => finish('loaded');
   probe.onerror = () => {
     if (options.surfaceErrors !== false) {
-      showPieceError('Could not load CMS media asset: ' + normalizedSrc);
+      showPieceError('Could not load CMS media asset: ' + describeMediaSrc(normalizedSrc));
     }
     finish('error');
   };
@@ -419,10 +435,12 @@ function bootCanvasRuntime(extra) {
   const mediaContext = PIECE_ENGINE === 'c2' ? canvas.getContext('2d') : null;
   const imageCache = new Map();
   function loadImage(src) {
-    if (!isCmsMediaPath(src)) {
+    const resolved = resolveRuntimeMediaSrc(src);
+    if (!resolved) {
       showPieceError('C2 media helpers may only load same-origin CMS media paths such as /image/2, /media/..., or /api/media-assets/2.');
       return null;
     }
+    src = resolved;
     if (imageCache.has(src)) return imageCache.get(src);
     const image = new Image();
     image.decoding = 'async';
@@ -436,13 +454,19 @@ function bootCanvasRuntime(extra) {
     const loaded = new Promise((resolve, reject) => {
       image.onload = () => { image.dataset.creatrLoaded = '1'; resolve(image); };
       image.onerror = () => {
-        const message = 'Could not load CMS media asset: ' + src;
+        const message = 'Could not load CMS media asset: ' + describeMediaSrc(src);
         showPieceError(message);
         reject(new Error(message));
       };
     });
     loaded.catch(() => {}); // already surfaced via showPieceError; avoid a duplicate unhandledrejection overlay
     loaded.__creatrImage = image;
+    // The window.Image setter only tracks CMS paths — inline (data:/blob:)
+    // srcs substituted by capture-safe rewriting must be tracked here so the
+    // PNG capture poll waits for their async decode instead of racing it.
+    if (isInlineMediaSrc(src)) {
+      trackManagedMediaRequest(image, src, { surfaceErrors: false });
+    }
     image.src = src;
     imageCache.set(src, loaded);
     return loaded;

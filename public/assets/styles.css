@@ -1706,6 +1706,103 @@ h3 {
     color: var(--ink-soft);
 }
 
+/* Piece fullscreen overlay */
+
+.piece-canvas-container {
+    position: relative;
+}
+
+.piece-fullscreen-toggle {
+    position: absolute;
+    top: 0.75rem;
+    right: 0.75rem;
+    z-index: 10;
+    display: inline-flex;
+    height: 2.75rem;
+    width: 2.75rem;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    border-radius: 0.75rem;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    cursor: pointer;
+    transition: background 0.2s, border-color 0.2s;
+}
+
+.piece-fullscreen-toggle:hover,
+.piece-fullscreen-toggle:focus-visible {
+    background: rgba(0, 0, 0, 0.7);
+    border-color: #fff;
+}
+
+.piece-stage-fullscreen {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    background: #0d0d0f;
+}
+
+.piece-stage-fullscreen .piece-canvas-container {
+    height: 100%;
+}
+
+/* piece_render_iframe emits an inline height; !important wins over inline
+   non-important styles, scoped to the fullscreen overlay only. */
+.piece-stage-fullscreen .piece-canvas-container iframe {
+    height: 100% !important;
+}
+
+.piece-stage-fullscreen .piece-action-row {
+    display: none;
+}
+
+.piece-stage-fullscreen .piece-fullscreen-toggle {
+    top: calc(0.75rem + env(safe-area-inset-top));
+    right: calc(0.75rem + env(safe-area-inset-right));
+}
+
+.piece-fullscreen-bar[hidden] {
+    display: none;
+}
+
+.piece-fullscreen-bar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1001;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0 1.25rem;
+    padding: 0.75rem 1.25rem calc(0.75rem + env(safe-area-inset-bottom));
+    background: rgba(0, 0, 0, 0.65);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+}
+
+.piece-fullscreen-bar .piece-immersive-link {
+    margin-top: 0;
+    color: #f8f5ee;
+}
+
+.piece-stage-fullscreen .piece-download-status {
+    position: fixed;
+    left: 1.25rem;
+    right: 1.25rem;
+    bottom: calc(4rem + env(safe-area-inset-bottom));
+    z-index: 1001;
+    color: #f8f5ee;
+}
+
+body.piece-fullscreen-locked {
+    overflow: hidden;
+}
+
 @media (max-width: 860px) {
     .artwork-card.size-large  { grid-column: span 8; }
     .artwork-card.size-medium { grid-column: span 6; }

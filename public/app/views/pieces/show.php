@@ -10,6 +10,7 @@ $engineLabel = art_piece_effective_generation_mode_label($piece, is_array($versi
 $pngFilenameBase = pathinfo(piece_export_filename($piece), PATHINFO_FILENAME);
 $pngFilename = ($pngFilenameBase !== '' ? $pngFilenameBase : 'piece-' . (int) ($piece['id'] ?? 0)) . '.png';
 $publicPieceScriptVersion = (int) @filemtime(dirname(__DIR__, 3) . '/assets/js/public-piece-download.js');
+$pieceFullscreenScriptVersion = (int) @filemtime(dirname(__DIR__, 3) . '/assets/js/piece-fullscreen.js');
 ?>
 <section class="page-hero" aria-labelledby="piece-title">
     <p class="eyebrow">Art Piece</p>
@@ -34,6 +35,14 @@ $publicPieceScriptVersion = (int) @filemtime(dirname(__DIR__, 3) . '/assets/js/p
         <div data-piece-download-root>
             <div class="piece-canvas-container">
                 <?= piece_render_iframe($piece, $version, 560, ['data-piece-download-frame' => 'true']) ?>
+                <button type="button" class="piece-fullscreen-toggle" data-piece-fullscreen-toggle aria-expanded="false" aria-label="Expand piece to fullscreen">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+                </button>
+            </div>
+            <div class="piece-fullscreen-bar" data-piece-fullscreen-bar role="toolbar" aria-label="Piece downloads" hidden>
+                <a href="/pieces/<?= (int) $piece['id'] ?>/download" class="piece-immersive-link">Download Piece</a>
+                <button type="button" class="piece-immersive-link piece-download-button" data-piece-download-trigger data-download-filename="<?= e($pngFilename) ?>">Download PNG</button>
+                <button type="button" class="piece-immersive-link piece-download-button" data-piece-fullscreen-close>Close</button>
             </div>
             <div class="piece-action-row">
                 <a href="/immersive/pieces/<?= (int) $piece['id'] ?>?returnTo=<?= rawurlencode($_SERVER['REQUEST_URI'] ?? '') ?>" target="_blank" rel="noopener" class="piece-immersive-link">View in Immersive / VR Mode</a>
@@ -100,5 +109,6 @@ $publicPieceScriptVersion = (int) @filemtime(dirname(__DIR__, 3) . '/assets/js/p
 </section>
 <?php endif; ?>
 <script src="/assets/js/public-piece-download.js?v=<?= $publicPieceScriptVersion ?>"></script>
+<script src="/assets/js/piece-fullscreen.js?v=<?= $pieceFullscreenScriptVersion ?>"></script>
 <?php
 require dirname(__DIR__) . '/partials/footer.php';

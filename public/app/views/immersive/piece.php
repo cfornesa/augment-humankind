@@ -17,6 +17,10 @@ $versionId = isset($_GET['version']) ? (int) $_GET['version'] : null;
 $versionParam = $versionId ? '?version=' . $versionId : '';
 
 $embedUrl = $origin . '/embed/pieces/' . $pieceId . $versionParam;
+$pieceDownloadUrl = '/pieces/' . $pieceId . '/download' . $versionParam;
+$pngFilenameBase = pathinfo(piece_export_filename($piece), PATHINFO_FILENAME);
+$pngFilename = ($pngFilenameBase !== '' ? $pngFilenameBase : 'piece-' . $pieceId) . '.png';
+$publicPieceScriptVersion = (int) @filemtime(dirname(__DIR__, 3) . '/assets/js/public-piece-download.js');
 $generationMode = art_piece_version_generation_mode($version, $piece);
 $engineLabel = art_piece_generation_mode_label($generationMode);
 $c2Interactive = $generationMode === 'c2_interactive';
@@ -494,6 +498,24 @@ canvas[aria-hidden="true"] {
   background: rgba(0, 0, 0, 0.7);
   border-color: #fff;
 }
+.immersive-download-cluster {
+  position: absolute;
+  bottom: calc(1rem + env(safe-area-inset-bottom));
+  right: calc(1rem + 2.75rem + 0.75rem + env(safe-area-inset-right));
+  z-index: 130;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+.immersive-download-cluster .immersive-download-btn {
+  position: static;
+  text-decoration: none;
+}
+.immersive-download-cluster .immersive-download-btn[disabled] {
+  opacity: 0.6;
+  cursor: progress;
+}
 .c2-interactive-overlay {
   position: absolute;
   inset: 0;
@@ -587,6 +609,15 @@ canvas[aria-hidden="true"] {
             <button id="fullscreen-toggle-btn" class="fullscreen-toggle-btn" onclick="toggleFullscreen()" aria-label="Expand immersive view">
                 <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
             </button>
+
+            <!-- Downloads stay reachable in fullscreen: stage children are
+                 never hidden by .immersive-shell.fullscreen (only header/
+                 copy/metadata are). -->
+            <div class="immersive-download-cluster" role="group" aria-label="Download this piece">
+                <a href="<?= e($pieceDownloadUrl) ?>" class="immersive-stage-action-btn immersive-download-btn" download>Download Piece</a>
+                <button type="button" id="immersive-download-png-btn" class="immersive-stage-action-btn immersive-download-btn"
+                        data-immersive-download-png data-download-filename="<?= e($pngFilename) ?>">Download PNG</button>
+            </div>
         <?php endif; ?>
 
         <?php if ($showC2InteractiveOverlay): ?>
@@ -734,6 +765,7 @@ canvas[aria-hidden="true"] {
     <span id="toast-message"></span>
 </div>
 
+<script src="/assets/js/public-piece-download.js?v=<?= $publicPieceScriptVersion ?>"></script>
 <script type="module">
 import { mountThreeImmersivePiece, mountAFrameImmersivePiece, mountGalleryPiece } from '/assets/js/immersive-gallery.js?v=<?= $galleryRuntimeVersion ?>';
 
@@ -1034,6 +1066,69 @@ try {
     const readOnlyBtn = document.getElementById('readonly-full-view-btn');
     if (readOnlyBtn && immersiveViewer?.openFullViewAt) {
         readOnlyBtn.addEventListener('click', () => immersiveViewer.openFullViewAt(0));
+    }
+
+    // Download PNG from the live immersive view. Three/A-Frame capture the
+    // stage canvas (the user's current perspective); gallery-room engines
+    // capture the artwork's own canvas, never the 3D room.
+    const downloadPngBtn = document.querySelector('[data-immersive-download-png]');
+    if (downloadPngBtn && window.CreatrPieceDownload) {
+        const dl = window.CreatrPieceDownload;
+        const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+        async function captureImmersivePng() {
+            <?php if ($showC2InteractiveOverlay): ?>
+            // Interactive overlay open: snapshot the user's current
+            // interactive state from the overlay iframe instead.
+            if (!c2Overlay.hidden && c2Frame.contentDocument) {
+                const doc = c2Frame.contentDocument;
+                const surface = await dl.waitForCaptureReady(doc);
+                return surface.type === 'svg'
+                    ? dl.exportSvg(surface.node)
+                    : dl.exportCanvasWithValidation(doc, surface.node);
+            }
+            <?php endif; ?>
+            const surface = immersiveViewer?.getCaptureSurface?.();
+            if (!surface || !surface.canvas) {
+                throw new Error('No downloadable canvas is available yet.');
+            }
+            surface.beforeCapture?.();
+            let exported = await dl.exportCanvas(surface.canvas);
+            if (!dl.hasVisiblePixels(exported)) {
+                // svg pieces rasterize on a ~100ms cadence; give one redraw
+                // a chance before giving up.
+                await wait(120);
+                surface.beforeCapture?.();
+                exported = await dl.exportCanvas(surface.canvas);
+            }
+            if (!dl.hasVisiblePixels(exported)) {
+                throw new Error('Could not produce a non-blank PNG right now. Please try again.');
+            }
+            return exported;
+        }
+
+        downloadPngBtn.addEventListener('click', async () => {
+            if (downloadPngBtn.disabled) return;
+            const filename = downloadPngBtn.dataset.downloadFilename || 'piece.png';
+            const originalLabel = downloadPngBtn.textContent;
+            downloadPngBtn.disabled = true;
+            downloadPngBtn.setAttribute('aria-busy', 'true');
+            downloadPngBtn.textContent = 'Preparing PNG...';
+            try {
+                const exported = await captureImmersivePng();
+                const blob = await dl.canvasToBlob(exported);
+                dl.downloadBlob(blob, filename);
+            } catch (error) {
+                const message = error instanceof Error ? error.message : 'Could not download the PNG right now.';
+                showToast(/tainted canvases/i.test(message)
+                    ? 'This piece still contains an image or texture the browser will not export safely.'
+                    : message);
+            } finally {
+                downloadPngBtn.disabled = false;
+                downloadPngBtn.removeAttribute('aria-busy');
+                downloadPngBtn.textContent = originalLabel;
+            }
+        });
     }
 } catch (e) {
     handleRuntimeError(e);

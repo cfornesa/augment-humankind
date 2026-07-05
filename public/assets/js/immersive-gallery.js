@@ -1277,8 +1277,38 @@ function loadC2Runtime() {
   return c2RuntimePromise;
 }
 
+// KEEP IN SYNC (creatr-media-path-guard): piece-runtime.js / immersive-gallery.js
 function isCmsMediaPath(src) {
   return typeof src === "string" && /^\/(?:image\/[0-9]+|api\/media-assets\/[0-9]+|media\/[A-Za-z0-9._~/%+-]+)(?:\?[A-Za-z0-9._~%=&+-]*)?$/.test(src);
+}
+
+// Server-side capture-safe rewriting substitutes data: URLs for CMS media
+// refs before code reaches this helper — accept those alongside CMS paths.
+function isInlineMediaSrc(src) {
+  return typeof src === "string" && (/^data:image\//i.test(src) || /^blob:/i.test(src));
+}
+
+function normalizeCmsMediaPath(src) {
+  if (typeof src !== "string" || src === "") return "";
+  if (isCmsMediaPath(src)) return src;
+  try {
+    const resolved = new URL(src, window.location.href);
+    if (resolved.origin !== window.location.origin) return "";
+    const path = resolved.pathname + resolved.search;
+    return isCmsMediaPath(path) ? path : "";
+  } catch (_) {
+    return "";
+  }
+}
+
+function resolveRuntimeMediaSrc(src) {
+  if (isInlineMediaSrc(src)) return src;
+  return normalizeCmsMediaPath(src);
+}
+
+function describeMediaSrc(src) {
+  if (typeof src !== "string") return String(src);
+  return isInlineMediaSrc(src) ? src.slice(0, 64) + "… (inline media data)" : src;
 }
 
 function createC2MediaHelpers(canvas, onError = console.error) {
@@ -1290,10 +1320,12 @@ function createC2MediaHelpers(canvas, onError = console.error) {
   }
 
   function loadImage(src) {
-    if (!isCmsMediaPath(src)) {
+    const resolved = resolveRuntimeMediaSrc(src);
+    if (!resolved) {
       reportError("C2 media helpers may only load same-origin CMS media paths such as /image/2, /media/..., or /api/media-assets/2.");
       return null;
     }
+    src = resolved;
     if (imageCache.has(src)) return imageCache.get(src);
     const image = new Image();
     image.decoding = "async";
@@ -1304,7 +1336,7 @@ function createC2MediaHelpers(canvas, onError = console.error) {
     const loaded = new Promise((resolve, reject) => {
       image.onload = () => { image.dataset.creatrLoaded = "1"; resolve(image); };
       image.onerror = () => {
-        const message = "Could not load CMS media asset: " + src;
+        const message = "Could not load CMS media asset: " + describeMediaSrc(src);
         reportError(message);
         reject(new Error(message));
       };
@@ -1579,7 +1611,9 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
   const OriginalRenderer = THREE.WebGLRenderer;
   instrumentedThree.WebGLRenderer = class extends OriginalRenderer {
     constructor(input) {
-      super({ ...input, canvas });
+      // preserveDrawingBuffer keeps the frame readable for PNG capture,
+      // matching the regular-view three bootstrap in piece-runtime.js.
+      super({ ...input, canvas, preserveDrawingBuffer: true });
       state.renderer = this;
       this.setPixelRatio?.(Math.min(window.devicePixelRatio, 2));
       const _origSetSize = this.setSize.bind(this);
@@ -2199,7 +2233,7 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
     resizeObserver.observe(stageEl);
     window.addEventListener("resize", resize);
 
-    return () => {
+    const destroy = () => {
       resizeObserver.disconnect();
       window.removeEventListener("resize", resize);
       cancelAnimationFrame(frameId);
@@ -2220,6 +2254,20 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
       if (typeof cleanup === "function") cleanup();
       host.remove();
       stageEl.innerHTML = "";
+    };
+    return {
+      destroy,
+      // PNG capture: the stage canvas as currently seen (user's perspective).
+      getCaptureSurface: () => ({
+        canvas,
+        beforeCapture: () => {
+          try {
+            if (state.renderer && state.scene && state.camera) {
+              state.renderer.render(state.scene, state.camera);
+            }
+          } catch (_) {}
+        },
+      }),
     };
   } catch (err) {
     onError(err);
@@ -2508,6 +2556,16 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
     if (!scene.id) scene.id = "scene";
     if (!scene.hasAttribute("embedded")) scene.setAttribute("embedded", "");
     scene.setAttribute("vr-mode-ui", "enabled: false");
+    // preserveDrawingBuffer keeps frames readable for PNG capture — same
+    // renderer-attr merge as the regular-view aframe bootstrap in
+    // piece-render.php (piece_export_bootstrap 'aframe').
+    {
+      const currentRenderer = scene.getAttribute("renderer");
+      const rendererValue = typeof currentRenderer === "string" && currentRenderer.trim() !== ""
+        ? currentRenderer.replace(/\s*;?\s*$/, "; ") + "preserveDrawingBuffer: true"
+        : "preserveDrawingBuffer: true";
+      scene.setAttribute("renderer", rendererValue);
+    }
     scene.style.display = "block";
     scene.style.width = "100%";
     scene.style.height = "100%";
@@ -2545,7 +2603,7 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
     }
   }).catch(onError);
 
-  return () => {
+  const destroy = () => {
     disposed = true;
     cancelAnimationFrame(frameId);
     resizeObserver?.disconnect();
@@ -2563,6 +2621,25 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
     } catch (e) {}
     host.remove();
     stageEl.innerHTML = "";
+  };
+  return {
+    destroy,
+    // PNG capture: the WebXR scene canvas as currently seen. beforeCapture
+    // forces a render so the frame is fresh even if the loop is idle —
+    // same fallback as tryForceAframeRender in public-piece-download.js.
+    getCaptureSurface: () => ({
+      canvas: scene?.canvas || scene?.querySelector?.("canvas.a-canvas") || null,
+      beforeCapture: () => {
+        try {
+          const renderer = scene?.renderer;
+          const sceneObject = scene?.object3D;
+          const camera = scene?.camera;
+          if (renderer && sceneObject && camera) {
+            renderer.render(sceneObject, camera);
+          }
+        } catch (_) {}
+      },
+    }),
   };
 }
 
@@ -3014,6 +3091,12 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
     isFullViewOpen() {
       return readOnlyOverlay?.isOpen?.() ?? false;
     },
+    // PNG capture: the artwork's own 2D canvas (p5 presentation surface,
+    // rasterized svg, or c2 managed canvas) — never the 3D gallery room.
+    getCaptureSurface: () => ({
+      canvas: presentationSurface?.canvas ?? sourceCanvas ?? null,
+      beforeCapture: null,
+    }),
   };
 }
 

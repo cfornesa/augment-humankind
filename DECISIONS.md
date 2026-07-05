@@ -1049,3 +1049,44 @@ prompts now document the Promise contract. Regression tests added to
 tests/three-runtime-consistency.php; all three patterns verified end-to-end
 in-browser against the live runtime and /image/82 (marker + image pixels
 drawn, no piece-error).
+
+## 2026-07-05 — C2 media guard vs capture-safe data: URLs; downloads in immersive view; regular-view fullscreen overlay
+
+### Context
+C2/C2-interactive pieces showed "C2 media helpers may only load same-origin
+CMS media paths…" on /pieces/{id} and produced blank PNGs, while other
+engines were fine. Stored code was correct (runtime.loadImage('/image/82')):
+piece_render_iframe() renders with capture_safe_media, which rewrites CMS
+refs to data: URLs (keeps the canvas untainted for PNG capture), but the C2
+loadImage guard in piece-runtime.js only accepted literal CMS paths — it
+rejected the very data: URL the server substituted, so nothing drew and the
+capture copied a blank canvas. Only C2 routes media through this guard.
+
+### Decision (user-approved plan)
+1. Guard fix: piece-runtime.js gains isInlineMediaSrc (data:image/, blob:)
+   and resolveRuntimeMediaSrc (inline pass-through, else the existing
+   normalizeCmsMediaPath — also fixing the latent rejection of absolute
+   same-origin URLs). loadImage resolves-then-rejects; managed-media
+   tracking now counts inline srcs so PNG capture waits for their decode.
+   Same guard parity in immersive-gallery.js createC2MediaHelpers, marked
+   KEEP IN SYNC (creatr-media-path-guard). Generation-time validation stays
+   strict (CMS paths only); ZIP-export bootstrap was already guard-free.
+2. Immersive downloads: all three mounts in immersive-gallery.js return
+   { destroy, getCaptureSurface } (three/aframe get preserveDrawingBuffer);
+   three/aframe capture the stage canvas (user's current perspective, per
+   user choice), gallery-room engines capture the artwork's own canvas,
+   c2-interactive snapshots the open overlay iframe. public-piece-download.js
+   exposes window.CreatrPieceDownload primitives; immersive piece.php adds a
+   Download Piece / Download PNG cluster in .stage-wrapper (visible in
+   fullscreen, gated !$isStaticEmbed).
+3. Regular-view fullscreen: expand toggle on .piece-canvas-container +
+   fixed bottom toolbar (Download Piece / Download PNG / Close) via new
+   piece-fullscreen.js (native requestFullscreen, iPhone-WebKit CSS
+   fallback, Escape/fullscreenchange sync, focus restore).
+Verified locally against the deployment DB: c2 (106) renders image-82 with
+no guard error and exports a non-blank untainted PNG on regular, fullscreen,
+and immersive surfaces; three (107), aframe (109), svg (108), p5 (105), and
+c2-interactive overlay (104) all capture non-blank PNGs in immersive; ZIP
+export embeds media as data: URLs and stays guard-free; suites pass
+(118/0 generation; 82 pass consistency with only the 2 pre-existing gyro
+failures also present on HEAD).
