@@ -217,6 +217,7 @@ Migrated platform generative art pieces live under their own namespace:
 - `GET /pieces`
 - `GET /pieces/[id]`
 - `GET /pieces/[id]/download`
+- `GET /collections/[slug]/download`
 - `GET /exhibits`
 - `GET /exhibits/[slug]`
 
@@ -259,6 +260,14 @@ captures the current live frame from the rendered piece. A-Frame capture is
 hardened in both the public page and exported `index.html` path with a
 document-local pre-runtime WebGL context patch plus a forced-render/nonblank
 validation retry, rather than relying on scene `renderer` attributes alone.
+`/collections/[slug]/download` returns a platform collection gallery ZIP. It
+accepts optional `viewState` with the same base64url JSON shape used by
+immersive piece downloads, including camera/target and active selection state.
+The collection export is not a selected-piece export: `index.html` opens into
+the full local collection wall with all supported piece and media items,
+fullscreen, PNG capture, slideshow/full-view behavior, and local runtime/media
+packaging for direct local opening.
+
 Immersive `/pieces/[id]` pages expose `Download Piece` and `Download PNG` in
 the immersive action rail. PNG capture reflects the visible immersive view from
 the current camera; for gallery-room engines this is the rendered Three.js
@@ -296,12 +305,12 @@ Compatibility embed and immersive routes return content rather than redirects:
 - `GET /immersive/exhibits/[slug]` — full-page presentation for one platform
   exhibit and its migrated art/media items.
 - `GET /immersive/collections/[slug]` — full-page progressive collection wall
-  for migrated art/media items. The wall tracks the selected item and exposes
-  `Download Piece` only when the selected item is an actual piece. The wall
+  for migrated art/media items. The wall exposes `Download Piece` as a
+  collection-gallery export via `/collections/[slug]/download`; that ZIP
+  contains the full gallery wall, not only the selected item. The wall
   `Download PNG` captures the currently rendered collection wall. The slideshow
-  overlay exposes `Download Piece` for active piece slides and `Download PNG`
-  for capturable iframe/image slides; media-only slides do not create piece ZIP
-  downloads.
+  overlay keeps active-slide PNG behavior for capturable iframe/image slides
+  and routes `Download Piece` to the same full collection export.
 - `GET /immersive/images/[encoded-ref]` — full-page presentation for a
   base64url-encoded image reference, retained for legacy platform image
   gallery embeds. Query parameters `title`, `alt`, and `caption` are optional

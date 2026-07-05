@@ -234,6 +234,8 @@ test('immersive viewer controls are optional and gated by the piece view', funct
 test('immersive downloads serialize viewer state and expose collection slideshow downloads', function () use ($immersive) {
     $pieceView = file_get_contents(__DIR__ . '/../public/app/views/immersive/piece.php');
     $collectionView = file_get_contents(__DIR__ . '/../public/app/views/immersive/collection.php');
+    $collectionController = file_get_contents(__DIR__ . '/../public/app/controllers/CollectionsController.php');
+    $router = file_get_contents(__DIR__ . '/../public/app/router.php');
     assert_contains($immersive, 'function encodeViewState');
     assert_contains($immersive, 'getViewState: () => shellViewState');
     assert_contains($immersive, 'onActiveItemChange');
@@ -243,7 +245,10 @@ test('immersive downloads serialize viewer state and expose collection slideshow
     assert_contains($collectionView, 'data-collection-download-piece');
     assert_contains($collectionView, 'data-collection-download-png');
     assert_contains($collectionView, "'download_url' => \$pieceDownloadUrl");
-    assert_contains($collectionView, "'download_url' => \$pieceImmersiveDownloadUrl");
+    assert_contains($collectionView, "'download_url' => \$collectionDownloadUrl");
+    assert_contains($collectionView, 'collectionGalleryDownloadUrl');
+    assert_contains($collectionController, 'collection_export_bundle');
+    assert_contains($router, "/collections/([a-z0-9-]+)/download");
 });
 
 test('immersive bundle export patches renderer runtime URLs to local bundle paths', function () {

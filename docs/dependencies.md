@@ -254,12 +254,12 @@
   immersive renderer, local Three.js/OrbitControls/DeviceOrientationControls
   sources, and a Blob-module fallback so a downloaded `index.html` can mount
   even when a browser refuses sibling ES-module imports from `file://`.
-- **Immersive export note:** `surface=immersive` downloads are still piece ZIP
-  exports, not whole-collection exports. Immersive piece pages, collection
-  walls, and collection slideshow overlays pass serialized camera/selection
-  state into the existing `/pieces/{id}/download` route; the downloaded
-  `index.html` opens in the same gallery-style surface with fullscreen and PNG
-  controls.
+- **Immersive export note:** `surface=immersive` downloads are piece ZIP
+  exports for individual immersive piece pages. Platform collection walls and
+  collection slideshow overlays use `/collections/{slug}/download` instead;
+  those downloaded bundles include the full collection wall with all supported
+  items, serialized camera/selection state, fullscreen, slideshow/full-view
+  behavior, and PNG controls.
 - **Capture-safe media note:** Supported same-origin CMS media references
   (`/image/{id}`, `/api/media-assets/{id}`, `/media/...`) are rewritten into
   capture-safe forms for public PNG downloads and direct-open exported

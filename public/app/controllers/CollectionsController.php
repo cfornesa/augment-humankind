@@ -85,6 +85,29 @@ class CollectionsController
         require dirname(__DIR__) . '/views/collections/show.php';
     }
 
+    public static function download(string $slug): void
+    {
+        $collection = PlatformCollection::findBySlug($slug);
+        if (!$collection) {
+            self::notFound();
+        }
+
+        $items = self::hydrateItemsForExport($collection['items'] ?? []);
+        $viewState = isset($_GET['viewState']) ? trim((string) $_GET['viewState']) : '';
+        $bundle = collection_export_bundle($collection, $items, [
+            'view_state' => $viewState,
+        ]);
+        $filename = $bundle['filename'];
+        $path = $bundle['path'];
+
+        header('Content-Type: application/zip');
+        header('Content-Disposition: attachment; filename="' . addcslashes($filename, "\"\\") . '"');
+        header('Content-Length: ' . (string) filesize($path));
+        readfile($path);
+        @unlink($path);
+        exit;
+    }
+
     private static function hydrateItems(array $items): array
     {
         $hydrated = [];
@@ -100,6 +123,34 @@ class CollectionsController
                 $media = MediaAsset::find($id);
                 if ($media) {
                     $hydrated[] = ['type' => 'media_asset', 'media' => $media];
+                }
+            }
+        }
+        return $hydrated;
+    }
+
+    private static function hydrateItemsForExport(array $items): array
+    {
+        $hydrated = [];
+        foreach ($items as $item) {
+            $type = (string) ($item['item_type'] ?? '');
+            $id = (int) ($item['item_id'] ?? 0);
+            if ($type === 'art_piece') {
+                $piece = PlatformArtPiece::find($id);
+                if ($piece && !empty($piece['current_version'])) {
+                    $hydrated[] = [
+                        'type' => 'art_piece',
+                        'piece' => $piece,
+                        'version' => $piece['current_version'],
+                    ];
+                }
+            } elseif ($type === 'media_asset') {
+                $media = MediaAsset::find($id);
+                if ($media) {
+                    $hydrated[] = [
+                        'type' => 'media_asset',
+                        'media' => $media,
+                    ];
                 }
             }
         }

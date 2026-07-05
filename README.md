@@ -51,10 +51,11 @@ this instance's content.
 - `/pieces/[id]` — public render page of a generative art piece
 - `/pieces/[id]/download` — downloadable ZIP export for the piece's current or selected version, with `index.html` as the single manual entry point plus bundled runtime/media/source files; `surface=immersive` exports the same piece in its immersive gallery context
 - `/collections` and `/collections/[slug]` — public archive/detail for migrated platform art collections
+- `/collections/[slug]/download` — downloadable ZIP export for the full platform collection gallery wall, with all supported pieces/images in one local immersive `index.html`
 - `/embed/pieces/[id]` — public embeddable HTML of a generative art piece
 - `/embed/pieces/[id]/data` — public JSON feed of art piece parameters and source code
 - `/immersive/pieces/[id]` — public 3D full-immersion stage or gallery room framing with viewer zoom, movement, keyboard, pointer, touch, fullscreen, `Download Piece`, and `Download PNG` controls where supported
-- `/immersive/collections/[slug]` — public progressive rendering collection wall with selected-piece `Download Piece` and wall/slideshow PNG capture (`/immersive/exhibits/[slug]` 301-redirects here for legacy links)
+- `/immersive/collections/[slug]` — public progressive rendering collection wall with full-gallery `Download Piece` export and wall/slideshow PNG capture (`/immersive/exhibits/[slug]` 301-redirects here for legacy links)
 - `/feeds/mf2` — mf2 JSON format feed export
 
 Admin routes are flat and protected by OAuth login:
@@ -140,15 +141,15 @@ and collection walls, that means the Three.js gallery renderer, not the hidden
 source canvas. If a C2 interactive full-size overlay is open, PNG capture uses
 that overlay iframe instead.
 
-`Download Piece` from immersive surfaces calls the existing
+`Download Piece` from immersive piece pages calls the existing
 `/pieces/[id]/download` route with `surface=immersive` and a serialized
 viewer-state payload. The resulting ZIP still opens through `index.html`, but
 that file mounts the local immersive renderer, restores camera/target state
 when provided, includes fullscreen and PNG icons, and preserves C2 interactive
-full-size behavior through the local overlay. Collection walls target the
-currently selected piece, and collection slideshow overlays target the active
-slide when it is a piece. Media-only collection slides do not invent a piece
-ZIP; they expose PNG behavior only for capturable image/iframe surfaces.
+full-size behavior through the local overlay. `Download Piece` from immersive
+collection walls and their slideshow overlays calls `/collections/[slug]/download`
+instead; that ZIP exports the full local collection gallery wall with all
+supported pieces and images, not only the selected or active slide.
 
 ## Art Piece Downloads And Templates
 

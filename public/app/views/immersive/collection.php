@@ -10,6 +10,8 @@ $galleryRuntimeVersion = (int) @filemtime(dirname(__DIR__, 3) . '/assets/js/imme
 $publicPieceScriptVersion = (int) @filemtime(dirname(__DIR__, 3) . '/assets/js/public-piece-download.js');
 
 // Hydrate fields for display
+$slug = $collection['slug'] ?? '';
+$collectionDownloadUrl = '/collections/' . rawurlencode((string) $slug) . '/download';
 $hasP5 = false;
 $hasC2 = false;
 $collectionSlideshowStartIndex = !empty($items) ? 0 : null;
@@ -39,7 +41,6 @@ foreach ($items as $index => $item) {
             . '?returnTo=' . rawurlencode($immersiveCollectionReturnTo);
         $versionParam = !empty($version['id']) ? '?version=' . (int) $version['id'] : '';
         $pieceDownloadUrl = '/pieces/' . (int) ($piece['id'] ?? 0) . '/download' . $versionParam;
-        $pieceImmersiveDownloadUrl = $pieceDownloadUrl . (str_contains($pieceDownloadUrl, '?') ? '&' : '?') . 'surface=immersive';
         $pngFilenameBase = pathinfo(piece_export_filename($piece), PATHINFO_FILENAME);
         $piecePngFilename = ($pngFilenameBase !== '' ? $pngFilenameBase : 'piece-' . (int) ($piece['id'] ?? 0)) . '.png';
         $pieceFullViewDescription = (string) ($pieceDescription !== '' ? $pieceDescription : $piecePrompt);
@@ -54,7 +55,7 @@ foreach ($items as $index => $item) {
             'srcdoc' => piece_render_document($piece, $version),
             'title' => $piece['title'] ?? 'Untitled Piece',
             'subtitle' => $itemEngineLabel,
-            'download_url' => $pieceImmersiveDownloadUrl,
+            'download_url' => $collectionDownloadUrl,
             'png_filename' => $piecePngFilename,
         ];
         $jsItems[] = [
@@ -113,7 +114,6 @@ foreach ($items as $index => $item) {
 $description = $collection['description'] ?? '';
 $artistStatement = $collection['artist_statement'] ?? '';
 $biography = $collection['biography'] ?? '';
-$slug = $collection['slug'] ?? '';
 $exhibitName = $collection['name'] ?? 'Collection';
 
 // Determine details for URL/origin
@@ -726,8 +726,8 @@ html, body {
         <!-- Fullscreen controls (hidden in static embeds, and iOS embeds without handshakes) -->
         <?php if (!$isStaticEmbed): ?>
             <div class="immersive-action-rail" role="toolbar" aria-label="Collection gallery actions">
-                <div class="immersive-download-cluster" role="group" aria-label="Download selected piece">
-                    <a href="#" class="immersive-stage-action-btn immersive-download-btn" data-collection-download-piece download hidden>Download Piece</a>
+                <div class="immersive-download-cluster" role="group" aria-label="Download this collection gallery">
+                    <a href="<?= e($collectionDownloadUrl) ?>" class="immersive-stage-action-btn immersive-download-btn" data-collection-download-piece="<?= e($collectionDownloadUrl) ?>" download>Download Piece</a>
                     <button type="button" class="immersive-stage-action-btn immersive-download-btn" data-collection-download-png data-download-filename="collection-view.png">Download PNG</button>
                 </div>
                 <button id="fullscreen-toggle-btn" class="fullscreen-toggle-btn" onclick="toggleFullscreen()" aria-label="Expand immersive view">
@@ -1093,19 +1093,17 @@ try {
             return '';
         }
     }
-    function selectedPieceDownloadUrl() {
-        const item = immersiveViewer?.getSelectedItem?.();
-        if (!item?.download_url) return '';
-        const url = new URL(item.download_url, window.location.href);
-        url.searchParams.set('surface', 'immersive');
+    function collectionGalleryDownloadUrl() {
+        const baseHref = downloadPieceLink?.dataset.collectionDownloadPiece || downloadPieceLink?.getAttribute('href') || '';
+        if (!baseHref) return '';
+        const url = new URL(baseHref, window.location.href);
         const encoded = encodeViewState(immersiveViewer?.getViewState?.() || {});
         if (encoded) url.searchParams.set('viewState', encoded);
         return url.pathname + url.search;
     }
     function syncCollectionDownloadLink() {
         if (!downloadPieceLink) return;
-        const href = selectedPieceDownloadUrl();
-        downloadPieceLink.hidden = href === '';
+        const href = collectionGalleryDownloadUrl();
         if (href) downloadPieceLink.href = href;
     }
     syncCollectionDownloadLink();

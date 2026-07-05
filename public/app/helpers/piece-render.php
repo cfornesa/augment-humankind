@@ -1253,6 +1253,408 @@ function piece_export_bundle(array $piece, array $version, array $options = []):
     ];
 }
 
+function collection_export_bundle(array $collection, array $items, array $options = []): array
+{
+    $manifest = collection_export_build_manifest($collection, $items, $options);
+    $tempPath = tempnam(sys_get_temp_dir(), 'collection-export-');
+    if ($tempPath === false) {
+        throw new RuntimeException('Could not create a temporary file for the collection export.');
+    }
+
+    $zip = new ZipArchive();
+    if ($zip->open($tempPath, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
+        @unlink($tempPath);
+        throw new RuntimeException('Could not create the collection ZIP export.');
+    }
+
+    $zip->addFromString('index.html', $manifest['document']);
+
+    foreach ($manifest['bundle_files'] as $bundleFile) {
+        if (!$zip->addFromString($bundleFile['zip_path'], $bundleFile['data'])) {
+            $zip->close();
+            @unlink($tempPath);
+            throw new RuntimeException('Could not package collection bundle file: ' . $bundleFile['zip_path']);
+        }
+    }
+
+    foreach ($manifest['runtime_files'] as $runtimeFile) {
+        if (isset($runtimeFile['data'])) {
+            $added = $zip->addFromString($runtimeFile['zip_path'], (string) $runtimeFile['data']);
+        } else {
+            $added = $zip->addFile($runtimeFile['source_path'], $runtimeFile['zip_path']);
+        }
+        if (!$added) {
+            $zip->close();
+            @unlink($tempPath);
+            throw new RuntimeException('Could not package collection runtime file: ' . $runtimeFile['zip_path']);
+        }
+    }
+
+    $zip->close();
+
+    return [
+        'filename' => collection_export_filename($collection),
+        'path' => $tempPath,
+    ];
+}
+
+function collection_export_filename(array $collection): string
+{
+    $base = function_exists('slugify') ? slugify((string) ($collection['name'] ?? '')) : '';
+    if ($base === '') {
+        $base = (string) ($collection['slug'] ?? '');
+    }
+    if ($base === '') {
+        $base = 'collection-' . (int) ($collection['id'] ?? 0);
+    }
+
+    return $base . '-gallery.zip';
+}
+
+function collection_export_build_manifest(array $collection, array $items, array $options = []): array
+{
+    return [
+        'document' => collection_export_document($collection, $items, $options),
+        'bundle_files' => [
+            [
+                'zip_path' => 'README.txt',
+                'data' => collection_export_readme($collection),
+            ],
+        ],
+        'runtime_files' => collection_export_runtime_files(),
+    ];
+}
+
+function collection_export_readme(array $collection): string
+{
+    $title = trim((string) ($collection['name'] ?? 'Collection'));
+    if ($title === '') {
+        $title = 'Collection';
+    }
+
+    return "EXPORT: {$title}\n"
+        . "\n"
+        . "Open index.html to run this full collection gallery.\n"
+        . "\n"
+        . "This is a collection-wall export, not a single-piece export. The gallery includes all supported exported collection items, fullscreen, slideshow/full-view behavior, and PNG capture from the rendered gallery view.\n"
+        . "\n"
+        . "Other files are supporting runtime files only. You should not need to manually open any file besides index.html.\n";
+}
+
+function collection_export_runtime_files(): array
+{
+    $runtimeFiles = [];
+    foreach (['p5', 'c2', 'aframe'] as $engine) {
+        foreach (piece_export_immersive_runtime_files($engine) as $runtimeFile) {
+            $runtimeFiles[(string) $runtimeFile['zip_path']] = $runtimeFile;
+        }
+    }
+
+    return array_values($runtimeFiles);
+}
+
+function collection_export_document(array $collection, array $items, array $options = []): string
+{
+    $titleText = trim((string) ($collection['name'] ?? 'Collection'));
+    if ($titleText === '') {
+        $titleText = 'Collection';
+    }
+    $title = htmlspecialchars($titleText, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    $rows = isset($collection['rows']) && (int) $collection['rows'] > 0 ? (int) $collection['rows'] : 1;
+    $cols = isset($collection['cols']) && (int) $collection['cols'] > 0 ? (int) $collection['cols'] : max(1, count($items));
+    $viewState = piece_export_decode_view_state((string) ($options['view_state'] ?? ''));
+    $jsItems = collection_export_items_payload($items);
+
+    $jsonFlags = JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE;
+    $jsonItems = json_encode($jsItems, $jsonFlags);
+    $jsonRows = json_encode($rows, $jsonFlags);
+    $jsonCols = json_encode($cols, $jsonFlags);
+    $jsonViewState = json_encode($viewState, $jsonFlags);
+    $jsonPngFilename = json_encode((function_exists('slugify') ? slugify($titleText) : '') ?: 'collection-gallery', $jsonFlags);
+    $jsonEmbeddedThree = json_encode(piece_export_runtime_source_file('assets/vendor/piece-runtime/three/three.module.js'), $jsonFlags);
+    $jsonEmbeddedOrbitControls = json_encode(piece_export_patched_orbitcontrols_source(), $jsonFlags);
+    $jsonEmbeddedDeviceOrientation = json_encode(piece_export_patched_device_orientation_source(), $jsonFlags);
+    $jsonEmbeddedImmersiveGallery = json_encode(piece_export_patched_immersive_gallery_source(), $jsonFlags);
+
+    return <<<HTML
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="creatr-collection-export" content="portable-immersive-collection">
+<title>{$title}</title>
+<style>
+html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#05070f;color:#f8f5ee;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}
+#immersive-stage{position:fixed;inset:0;width:100vw;height:100dvh;background:#000;overflow:hidden;}
+#collection-error{position:fixed;left:1rem;right:1rem;bottom:5rem;z-index:220;display:none;padding:0.8rem 1rem;border:1px solid #fca5a5;border-radius:0.75rem;background:#450a0a;color:#fee2e2;font:13px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;}
+.collection-export-actions{position:fixed;right:calc(1rem + env(safe-area-inset-right));bottom:calc(1rem + env(safe-area-inset-bottom));z-index:210;display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;justify-content:flex-end;max-width:min(24rem,calc(100vw - 2rem));}
+.collection-export-actions button{display:inline-flex;align-items:center;justify-content:center;width:2.9rem;height:2.9rem;border:1px solid rgba(255,255,255,0.16);border-radius:999px;background:rgba(0,0,0,0.62);color:#fff;padding:0;cursor:pointer;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);}
+.collection-export-actions button:hover,.collection-export-actions button:focus-visible{background:rgba(0,0,0,0.8);border-color:rgba(255,255,255,0.5);}
+.collection-export-actions button[disabled]{opacity:0.65;cursor:progress;}
+.collection-export-actions button svg{width:1.35rem;height:1.35rem;display:block;}
+@media (max-width:640px){.collection-export-actions{left:calc(1rem + env(safe-area-inset-left));right:calc(1rem + env(safe-area-inset-right));justify-content:center;}.collection-export-actions button{flex:1 1 auto;}}
+</style>
+</head>
+<body>
+<div id="immersive-stage" tabindex="-1"></div>
+<div id="collection-error" role="alert"></div>
+<div class="collection-export-actions" role="toolbar" aria-label="Collection gallery actions">
+  <button id="collection-export-slideshow" type="button" aria-label="Open slideshow">
+    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m10 9 5 3-5 3V9Z"/></svg>
+  </button>
+  <button id="collection-export-fullscreen" type="button" aria-label="Enter fullscreen">
+    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M21 16v3a2 2 0 0 1-2 2h-3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/></svg>
+  </button>
+  <button id="collection-export-png" type="button" aria-label="Download PNG">
+    <svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M9 4.5 7.8 6H5.5A2.5 2.5 0 0 0 3 8.5v9A2.5 2.5 0 0 0 5.5 20h13a2.5 2.5 0 0 0 2.5-2.5v-9A2.5 2.5 0 0 0 18.5 6h-2.3L15 4.5H9Zm3 4a4.75 4.75 0 1 1 0 9.5 4.75 4.75 0 0 1 0-9.5Zm0 1.75a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"/></svg>
+  </button>
+</div>
+<script>
+function showCollectionError(error){const el=document.getElementById('collection-error');if(!el)return;el.textContent=(error&&(error.stack||error.message))?(error.stack||error.message):String(error);el.style.display='block';}
+window.addEventListener('error',event=>showCollectionError(event.error||event.message));
+window.addEventListener('unhandledrejection',event=>showCollectionError(event.reason||'Unhandled promise rejection'));
+</script>
+<script type="module">
+const embeddedRuntimeSources = {
+  three: {$jsonEmbeddedThree},
+  orbitControls: {$jsonEmbeddedOrbitControls},
+  deviceOrientation: {$jsonEmbeddedDeviceOrientation},
+  immersiveGallery: {$jsonEmbeddedImmersiveGallery}
+};
+function createRuntimeModuleUrl(source) {
+  return URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
+}
+async function loadImmersiveRuntime() {
+  try {
+    return await import('./runtime/immersive-gallery.js');
+  } catch (error) {
+    const threeUrl = createRuntimeModuleUrl(embeddedRuntimeSources.three);
+    const orbitUrl = createRuntimeModuleUrl(embeddedRuntimeSources.orbitControls.replace("from '../../three.module.js';", `from '\${threeUrl}';`));
+    const deviceUrl = createRuntimeModuleUrl(embeddedRuntimeSources.deviceOrientation.replace("'./three/three.module.js'", `'\${threeUrl}'`));
+    const gallerySource = embeddedRuntimeSources.immersiveGallery
+      .replace("from './three/three.module.js';", `from '\${threeUrl}';`)
+      .replace("from './three/addons/controls/OrbitControls.js';", `from '\${orbitUrl}';`)
+      .replace('await import("./three-device-orientation-controls.js")', `await import('\${deviceUrl}')`);
+    return await import(createRuntimeModuleUrl(gallerySource));
+  }
+}
+const { mountExhibitWall } = await loadImmersiveRuntime();
+const stage = document.getElementById('immersive-stage');
+const rows = {$jsonRows};
+const cols = {$jsonCols};
+const items = {$jsonItems};
+const initialViewState = {$jsonViewState};
+const pngFilename = {$jsonPngFilename} + '.png';
+let viewer = null;
+try {
+  viewer = mountExhibitWall(stage, items, rows, cols, { showViewerControls: true, initialViewState });
+} catch (error) {
+  showCollectionError(error);
+}
+const slideshowBtn = document.getElementById('collection-export-slideshow');
+const fullscreenBtn = document.getElementById('collection-export-fullscreen');
+const pngBtn = document.getElementById('collection-export-png');
+slideshowBtn.addEventListener('click', () => {
+  const state = viewer?.getViewState?.() || {};
+  viewer?.openSlideshowAt?.(Number.isFinite(Number(state.activeIndex)) ? Number(state.activeIndex) : 0);
+});
+fullscreenBtn.addEventListener('click', async () => {
+  try {
+    if (document.fullscreenElement) await document.exitFullscreen();
+    else if (document.documentElement.requestFullscreen) await document.documentElement.requestFullscreen();
+  } catch (_) {}
+});
+document.addEventListener('fullscreenchange', () => {
+  fullscreenBtn.setAttribute('aria-label', document.fullscreenElement ? 'Exit fullscreen' : 'Enter fullscreen');
+});
+function wait(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
+function hasVisiblePixels(canvas) {
+  const context = canvas.getContext('2d');
+  if (!context) return false;
+  const width = Math.max(1, canvas.width || 1);
+  const height = Math.max(1, canvas.height || 1);
+  for (let y = 0; y < Math.min(4, height); y++) {
+    for (let x = 0; x < Math.min(4, width); x++) {
+      const px = context.getImageData(Math.floor((x / 4) * width), Math.floor((y / 4) * height), 1, 1).data;
+      if (px[3] !== 0 || px[0] !== 0 || px[1] !== 0 || px[2] !== 0) return true;
+    }
+  }
+  return false;
+}
+function exportCanvas(canvas) {
+  const width = Math.max(1, canvas.width || Math.round(canvas.getBoundingClientRect().width) || 1);
+  const height = Math.max(1, canvas.height || Math.round(canvas.getBoundingClientRect().height) || 1);
+  const out = document.createElement('canvas');
+  out.width = width;
+  out.height = height;
+  const context = out.getContext('2d');
+  if (!context) throw new Error('PNG export is unavailable in this browser.');
+  context.drawImage(canvas, 0, 0, width, height);
+  return out;
+}
+async function canvasToBlob(canvas) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('Could not create the PNG download.')), 'image/png');
+  });
+}
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+pngBtn.addEventListener('click', async () => {
+  if (pngBtn.disabled) return;
+  const label = pngBtn.getAttribute('aria-label') || 'Download PNG';
+  pngBtn.disabled = true;
+  pngBtn.setAttribute('aria-label', 'Preparing PNG');
+  try {
+    const capture = viewer?.getCaptureSurface?.();
+    capture?.beforeCapture?.();
+    const surface = capture?.canvas || null;
+    if (!surface) throw new Error('No downloadable canvas is available yet.');
+    let exported = exportCanvas(surface);
+    if (!hasVisiblePixels(exported)) {
+      await wait(120);
+      capture?.beforeCapture?.();
+      exported = exportCanvas(surface);
+    }
+    if (!hasVisiblePixels(exported)) throw new Error('Could not produce a non-blank PNG right now.');
+    downloadBlob(await canvasToBlob(exported), pngFilename);
+  } catch (error) {
+    showCollectionError(error);
+  } finally {
+    pngBtn.disabled = false;
+    pngBtn.setAttribute('aria-label', label);
+  }
+});
+</script>
+</body>
+</html>
+HTML;
+}
+
+function collection_export_items_payload(array $items): array
+{
+    $payload = [];
+    foreach ($items as $item) {
+        if (($item['type'] ?? '') === 'art_piece' && !empty($item['piece']) && !empty($item['version'])) {
+            $payload[] = collection_export_piece_item_payload($item['piece'], $item['version']);
+        } elseif (($item['type'] ?? '') === 'media_asset' && !empty($item['media'])) {
+            $media = $item['media'];
+            $imageUrl = collection_export_media_asset_url($media);
+            $payload[] = [
+                'kind' => 'image',
+                'title' => $media['title'] ?? 'Untitled Image',
+                'imageUrl' => $imageUrl,
+                'alt_text' => $media['alt_text'] ?? '',
+                'description' => $media['alt_text'] ?? '',
+                'full_view' => [
+                    'type' => 'image',
+                    'src' => $imageUrl,
+                    'alt' => ($media['alt_text'] ?? '') !== '' ? $media['alt_text'] : ($media['title'] ?? 'Untitled Image'),
+                    'title' => $media['title'] ?? 'Untitled Image',
+                    'subtitle' => 'Image',
+                ],
+            ];
+        }
+    }
+
+    return $payload;
+}
+
+function collection_export_piece_item_payload(array $piece, array $version): array
+{
+    $htmlCode = (string) ($version['html_code'] ?? '');
+    $cssCode = (string) ($version['css_code'] ?? '');
+    $jsCode = (string) ($version['generated_code'] ?? '');
+    $mediaMap = piece_build_media_manifest([$htmlCode, $cssCode, $jsCode, (string) ($piece['thumbnail_url'] ?? '')]);
+    $rewriteMedia = static function (string $content) use ($mediaMap): string {
+        return piece_export_rewrite_media_refs($content, static function (string $normalizedRef) use ($mediaMap): ?string {
+            $asset = $mediaMap[$normalizedRef] ?? null;
+            return is_array($asset) ? (string) ($asset['data_url'] ?? '') : null;
+        });
+    };
+
+    $engine = strtolower((string) ($version['engine'] ?? $piece['engine'] ?? 'p5'));
+    $html = $rewriteMedia($htmlCode);
+    if ($engine === 'aframe') {
+        $html = piece_aframe_normalize_texture_assets($html, static function (string $src) use ($mediaMap): string {
+            $asset = $mediaMap[$src] ?? null;
+            return is_array($asset) ? (string) ($asset['data_url'] ?? $src) : $src;
+        });
+    }
+
+    $generationMode = art_piece_version_generation_mode($version, $piece);
+    $itemEngineLabel = art_piece_generation_mode_label($generationMode);
+    $thumbnailUrl = collection_export_media_url((string) ($piece['thumbnail_url'] ?? ''));
+    $pngFilenameBase = pathinfo(piece_export_filename($piece), PATHINFO_FILENAME);
+    $piecePngFilename = ($pngFilenameBase !== '' ? $pngFilenameBase : 'piece-' . (int) ($piece['id'] ?? 0)) . '.png';
+    $pieceDescription = (string) ($piece['description'] ?? '');
+
+    return [
+        'kind' => 'piece',
+        'piece_id' => (int) ($piece['id'] ?? 0),
+        'version_id' => (int) ($version['id'] ?? 0),
+        'title' => $piece['title'] ?? 'Untitled Piece',
+        'engine' => $engine,
+        'thumbnail_url' => $thumbnailUrl,
+        'html_code' => $html,
+        'css_code' => $rewriteMedia($cssCode),
+        'generated_code' => $rewriteMedia($jsCode),
+        'description' => $pieceDescription,
+        'png_filename' => $piecePngFilename,
+        'full_view' => [
+            'type' => 'iframe',
+            'interactive' => in_array($generationMode, ['three', 'aframe', 'c2_interactive'], true),
+            'srcdoc' => piece_export_document($piece, $version, [
+                'runtime_mode' => 'bundle',
+                'media_map' => $mediaMap,
+                'embed_media' => true,
+            ]),
+            'title' => $piece['title'] ?? 'Untitled Piece',
+            'subtitle' => $itemEngineLabel,
+            'png_filename' => $piecePngFilename,
+        ],
+    ];
+}
+
+function collection_export_media_asset_url(array $media): string
+{
+    if (!empty($media['file_data'])) {
+        return piece_export_data_url(
+            (string) ($media['mime_type'] ?? 'application/octet-stream'),
+            (string) ($media['file_data'] ?? '')
+        );
+    }
+
+    return collection_export_media_url((string) (($media['url'] ?? '') ?: ('/api/media-assets/' . (int) ($media['id'] ?? 0))));
+}
+
+function collection_export_media_url(string $url): string
+{
+    $url = trim($url);
+    if ($url === '') {
+        return '';
+    }
+    $path = (string) parse_url($url, PHP_URL_PATH);
+    if ($path !== '' && preg_match('#^/(?:image/[0-9]+|media/[A-Za-z0-9._~/%+-]+|api/media-assets/[0-9]+)$#', $path)) {
+        try {
+            $asset = piece_export_resolve_media_ref($path);
+            return piece_export_data_url((string) ($asset['mime_type'] ?? 'application/octet-stream'), (string) ($asset['data'] ?? ''));
+        } catch (Throwable) {
+            return $url;
+        }
+    }
+
+    return $url;
+}
+
 function piece_build_media_manifest(array $contents): array
 {
     $mediaRefs = piece_export_collect_media_refs($contents);

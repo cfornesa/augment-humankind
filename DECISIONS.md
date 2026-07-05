@@ -13,42 +13,48 @@ None.
 ## 2026-07-05 — Immersive And Collection Piece Downloads Preserve Render Surface
 
 ### Decision
-`/pieces/{id}/download` remains the single piece export endpoint, but it now
+`/pieces/{id}/download` remains the single-piece export endpoint, but it now
 accepts `surface=immersive` and an optional base64url `viewState` payload from
-immersive piece and collection gallery surfaces. Regular `/pieces/{id}` exports
-continue to produce the regular standalone piece view. Immersive-origin exports
-produce a ZIP whose `index.html` opens directly into the local immersive
-renderer, restores sanitized camera/target/selection state where available,
-and includes icon controls for fullscreen and PNG capture.
+immersive piece surfaces. Regular `/pieces/{id}` exports continue to produce
+the regular standalone piece view. Immersive-origin piece exports produce a ZIP
+whose `index.html` opens directly into the local immersive renderer, restores
+sanitized camera/target state where available, and includes icon controls for
+fullscreen and PNG capture.
 
-Collection downloads target the active or selected piece, not the entire
-collection. Collection image/media slides do not invent piece ZIP downloads;
-they only expose PNG behavior where an image or iframe surface can actually be
-captured.
+Platform collections use `/collections/{slug}/download` for downloads from the
+collection wall and slideshow overlay. That export is the full collection
+gallery implementation with all supported pieces and images, not a selected or
+active-piece export. The collection `viewState` may include camera, target, and
+active selection state.
 
 ### Root Cause
 The earlier implementation reused the regular standalone export path from
 immersive gallery controls, so downloads did not preserve the view the user was
-actually looking at. A follow-up failure showed that simply packaging local
-runtime files was not enough: local direct-open behavior can still fail when a
-browser blocks sibling ES-module imports from `file://`, producing a blank
-stage with only static export controls visible.
+actually looking at. The first collection implementation then exported only the
+selected piece, which missed the point of downloading a platform collection
+gallery. A follow-up failure showed that simply packaging local runtime files
+was not enough: local direct-open behavior can still fail when a browser blocks
+sibling ES-module imports from `file://`, producing a blank stage with only
+static export controls visible.
 
 ### Scope
 - `public/app/controllers/PiecesController.php` forwards `surface` and
   `viewState` into the export helper.
+- `public/app/controllers/CollectionsController.php` streams full collection
+  gallery ZIP exports from `/collections/{slug}/download`.
 - `public/app/helpers/piece-render.php` builds immersive standalone documents,
-  patches local runtime imports, embeds a direct-open Blob-module fallback for
-  the immersive runtime graph, and keeps regular bundle exports unchanged.
+  full collection gallery documents, patched local runtime imports, and a
+  direct-open Blob-module fallback for the immersive runtime graph while
+  keeping regular bundle exports unchanged.
 - `public/app/views/immersive/piece.php` and
   `public/app/views/immersive/collection.php` expose download controls from
   immersive action rails and slideshow overlays without overlapping existing
   fullscreen/movement/zoom controls.
 - `public/assets/js/immersive-gallery.js` serializes/restores viewer state,
-  tracks selected collection items, and captures PNGs from the rendered
-  immersive gallery canvas unless an interactive overlay is open.
+  tracks active collection items for slideshow state, and captures PNGs from
+  the rendered immersive gallery canvas unless an interactive overlay is open.
 - Project markdown documents the route parameters, collection semantics,
-  direct-open fallback, and selected-piece download rule.
+  direct-open fallback, and full-gallery collection download rule.
 
 ### Verification
 - `php tests/art-piece-generation.php` — 120 passed

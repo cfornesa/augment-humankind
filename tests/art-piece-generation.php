@@ -1287,6 +1287,53 @@ test('regular bundle export does not switch to immersive markup without surface 
     assert_not_contains($index, 'portable-immersive-bundle');
 });
 
+test('collection bundle export keeps all pieces in one immersive gallery entry point', function () {
+    $pieceA = ['id' => 201, 'title' => 'Collection Piece A', 'engine' => 'p5'];
+    $versionA = [
+        'id' => 301,
+        'engine' => 'p5',
+        'html_code' => '<div id="canvas-container"></div>',
+        'css_code' => '',
+        'generated_code' => 'window.sketch = (p) => { p.setup = () => p.createCanvas(100, 100); };',
+    ];
+    $pieceB = ['id' => 202, 'title' => 'Collection Piece B', 'engine' => 'c2'];
+    $versionB = [
+        'id' => 302,
+        'engine' => 'c2',
+        'html_code' => '<canvas id="piece-canvas"></canvas>',
+        'css_code' => '',
+        'generated_code' => 'window.sketch = ({ canvas, startFrame }) => { startFrame(() => {}); };',
+    ];
+    $stateJson = json_encode(['camera' => ['x' => 4, 'y' => 2, 'z' => 8], 'target' => ['x' => 0, 'y' => 1, 'z' => 0], 'activeIndex' => 1]);
+    $state = rtrim(strtr(base64_encode((string) $stateJson), '+/', '-_'), '=');
+
+    $bundle = collection_export_bundle(
+        ['id' => 3, 'slug' => 'collection-export', 'name' => 'Collection Export', 'rows' => 1, 'cols' => 2],
+        [
+            ['type' => 'art_piece', 'piece' => $pieceA, 'version' => $versionA],
+            ['type' => 'art_piece', 'piece' => $pieceB, 'version' => $versionB],
+        ],
+        ['view_state' => $state]
+    );
+    $zip = new ZipArchive();
+    $zip->open($bundle['path']);
+    $index = $zip->getFromName('index.html');
+    $runtime = $zip->getFromName('runtime/immersive-gallery.js');
+    $readme = $zip->getFromName('README.txt');
+    $zip->close();
+    unlink($bundle['path']);
+
+    assert_contains($index, 'portable-immersive-collection');
+    assert_contains($index, 'mountExhibitWall');
+    assert_contains($index, 'Collection Piece A');
+    assert_contains($index, 'Collection Piece B');
+    assert_contains($index, '"activeIndex":1');
+    assert_contains($index, 'collection-export-fullscreen');
+    assert_contains($index, 'collection-export-png');
+    assert_contains($runtime, "from './three/three.module.js'");
+    assert_contains($readme, 'This is a collection-wall export, not a single-piece export.');
+});
+
 test('piece export document keeps Three, A-Frame, and C2 interactive in downloaded HTML', function () {
     $threeDocument = piece_export_document(
         ['id' => 83, 'title' => 'Interactive Three', 'engine' => 'three'],
