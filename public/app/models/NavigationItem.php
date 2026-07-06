@@ -19,35 +19,41 @@ class NavigationItem
             'is_visible' => 1,
             'sort_order' => 0,
         ],
+        'about' => [
+            'label' => 'About',
+            'url' => '/about',
+            'is_visible' => 0,
+            'sort_order' => 1,
+        ],
         'services' => [
             'label' => 'Services',
             'url' => '/services',
             'is_visible' => 1,
-            'sort_order' => 1,
+            'sort_order' => 2,
         ],
         'notes' => [
             'label' => 'Field Notes',
             'url' => '/notes',
             'is_visible' => 1,
-            'sort_order' => 2,
+            'sort_order' => 3,
         ],
         'blog' => [
             'label' => 'Blog',
             'url' => '/blog',
             'is_visible' => 1,
-            'sort_order' => 3,
+            'sort_order' => 4,
         ],
         'contact' => [
             'label' => 'Contact',
             'url' => '/contact',
             'is_visible' => 1,
-            'sort_order' => 4,
+            'sort_order' => 5,
         ],
         'portfolio' => [
             'label' => 'Portfolio',
             'url' => '/portfolio',
             'is_visible' => 1,
-            'sort_order' => 5,
+            'sort_order' => 6,
         ],
     ];
 
@@ -62,13 +68,18 @@ class NavigationItem
         $stmt = db()->query(
             "SELECT
                 n.*,
-                p.slug AS page_slug,
-                p.title AS page_title,
-                p.nav_label AS page_nav_label,
-                p.status AS page_status,
-                p.deleted_at AS page_deleted_at
+                COALESCE(p.slug, sp.slug) AS page_slug,
+                COALESCE(p.title, sp.title) AS page_title,
+                COALESCE(p.nav_label, sp.nav_label) AS page_nav_label,
+                COALESCE(p.status, sp.status) AS page_status,
+                COALESCE(p.deleted_at, sp.deleted_at) AS page_deleted_at
              FROM navigation_items n
              LEFT JOIN pages p ON p.id = n.page_id
+             LEFT JOIN pages sp
+                ON n.source_type = 'system'
+               AND n.system_key IS NOT NULL
+               AND sp.system_key = n.system_key
+               AND sp.deleted_at IS NULL
              WHERE n.is_visible = 1
              ORDER BY n.sort_order ASC, n.id ASC"
         );
@@ -87,13 +98,18 @@ class NavigationItem
         $stmt = db()->prepare(
             "SELECT
                 n.*,
-                p.slug AS page_slug,
-                p.title AS page_title,
-                p.nav_label AS page_nav_label,
-                p.status AS page_status,
-                p.deleted_at AS page_deleted_at
+                COALESCE(p.slug, sp.slug) AS page_slug,
+                COALESCE(p.title, sp.title) AS page_title,
+                COALESCE(p.nav_label, sp.nav_label) AS page_nav_label,
+                COALESCE(p.status, sp.status) AS page_status,
+                COALESCE(p.deleted_at, sp.deleted_at) AS page_deleted_at
              FROM navigation_items n
              LEFT JOIN pages p ON p.id = n.page_id
+             LEFT JOIN pages sp
+                ON n.source_type = 'system'
+               AND n.system_key IS NOT NULL
+               AND sp.system_key = n.system_key
+               AND sp.deleted_at IS NULL
              WHERE n.is_visible = ?
                AND (n.source_type != 'page' OR p.id IS NOT NULL)
                AND (n.source_type != 'page' OR p.deleted_at IS NULL)
@@ -166,6 +182,10 @@ class NavigationItem
              WHERE id = ?'
         );
         $stmt->execute([$newVisibility, self::nextSortOrder((bool) $newVisibility), $id]);
+
+        if (($item['source_type'] ?? '') === self::SOURCE_SYSTEM && !empty($item['system_key'])) {
+            self::syncSystemPageVisibility((string) $item['system_key'], (bool) $newVisibility);
+        }
     }
 
     public static function deleteExternal(int $id): void
@@ -275,6 +295,7 @@ class NavigationItem
 
         if (class_exists('Page') && Page::isSystemPage($pageData)) {
             self::deletePageItem($pageId);
+            self::syncSystemPageItem($pageData);
             return;
         }
 
@@ -333,6 +354,7 @@ class NavigationItem
         try {
             self::seedSystemItems();
             self::removeDefunctSystemItems();
+            self::syncSystemPageItems();
             self::removePageItemsForSystemUrls();
             self::syncAllPages();
             self::$isInitialized = true;
@@ -396,6 +418,20 @@ class NavigationItem
         }
     }
 
+    private static function syncSystemPageItems(): void
+    {
+        if (!class_exists('Page')) {
+            return;
+        }
+
+        foreach (array_keys(self::SYSTEM_ITEMS) as $systemKey) {
+            $page = Page::findBySystemKey($systemKey);
+            if ($page !== false) {
+                self::syncSystemPageItem($page);
+            }
+        }
+    }
+
     private static function hydratePublicItems(array $rows): array
     {
         $items = [];
@@ -447,12 +483,24 @@ class NavigationItem
             return $storedLabel !== '' ? $storedLabel : ($pageLabel !== '' ? $pageLabel : $pageTitle);
         }
 
+        if (($row['source_type'] ?? '') === self::SOURCE_SYSTEM && !empty($row['page_slug'])) {
+            $pageLabel = trim((string) ($row['page_nav_label'] ?? ''));
+            $pageTitle = trim((string) ($row['page_title'] ?? ''));
+            if ($pageLabel !== '' || $pageTitle !== '') {
+                return $pageLabel !== '' ? $pageLabel : $pageTitle;
+            }
+        }
+
         return trim((string) ($row['label'] ?? ''));
     }
 
     private static function resolvedUrl(array $row): string
     {
         if (($row['source_type'] ?? '') === self::SOURCE_PAGE && !empty($row['page_slug'])) {
+            return '/' . ltrim((string) $row['page_slug'], '/');
+        }
+
+        if (($row['source_type'] ?? '') === self::SOURCE_SYSTEM && !empty($row['page_slug'])) {
             return '/' . ltrim((string) $row['page_slug'], '/');
         }
 
@@ -471,6 +519,14 @@ class NavigationItem
     private static function isPublicRowRenderable(array $row): bool
     {
         if (($row['source_type'] ?? '') !== self::SOURCE_PAGE) {
+            if (
+                ($row['source_type'] ?? '') === self::SOURCE_SYSTEM
+                && isset(self::SYSTEM_ITEMS[(string) ($row['system_key'] ?? '')])
+                && !empty($row['page_slug'])
+            ) {
+                return ($row['page_status'] ?? 'draft') === 'published' && empty($row['page_deleted_at']);
+            }
+
             return true;
         }
 
@@ -761,6 +817,45 @@ class NavigationItem
             $isVisible,
             $sortOrder,
         ]);
+    }
+
+    private static function syncSystemPageItem(array $pageData): void
+    {
+        if (!class_exists('Page')) {
+            return;
+        }
+
+        $systemKey = Page::systemKeyForPage($pageData);
+        if ($systemKey === null || !isset(self::SYSTEM_ITEMS[$systemKey])) {
+            return;
+        }
+
+        $stmt = db()->prepare(
+            'UPDATE navigation_items
+             SET label = ?, url = ?, is_visible = ?, updated_at = NOW()
+             WHERE source_type = ? AND system_key = ?'
+        );
+        $stmt->execute([
+            trim((string) ($pageData['nav_label'] ?? '')) ?: trim((string) ($pageData['title'] ?? '')) ?: self::SYSTEM_ITEMS[$systemKey]['label'],
+            '/' . ltrim((string) ($pageData['slug'] ?? self::SYSTEM_ITEMS[$systemKey]['url']), '/'),
+            !empty($pageData['show_in_nav']) ? 1 : 0,
+            self::SOURCE_SYSTEM,
+            $systemKey,
+        ]);
+    }
+
+    private static function syncSystemPageVisibility(string $systemKey, bool $isVisible): void
+    {
+        if (!class_exists('Page') || !isset(self::SYSTEM_ITEMS[$systemKey])) {
+            return;
+        }
+
+        try {
+            $stmt = db()->prepare('UPDATE pages SET show_in_nav = ? WHERE system_key = ? AND deleted_at IS NULL');
+            $stmt->execute([$isVisible ? 1 : 0, $systemKey]);
+        } catch (Throwable) {
+            return;
+        }
     }
 
     private static function find(int $id): array|false

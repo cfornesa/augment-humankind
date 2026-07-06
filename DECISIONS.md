@@ -10,6 +10,22 @@
 
 None.
 
+## 2026-07-06 — About/Bio System Page Navigation Respects Pages Visibility
+
+### Decision
+The About system page, currently used as Bio via slug rename support, now has a real `navigation_items` system row instead of being excluded as a special page-nav case. The system navigation item mirrors the current system page's `show_in_nav`, nav label/title fallback, slug, published status, and deletion state, so the Pages UI checkbox and public navigation agree.
+
+### Scope
+- `public/app/models/NavigationItem.php`: added the `about` system navigation registration, hydrates system navigation rows from matching `pages.system_key`, syncs system-page visibility from Pages saves, and keeps `/admin/navigation` toggles aligned back to `pages.show_in_nav`.
+- `tests/system-page-navigation.php`: added focused coverage for a visible Bio page rendering as `Bio` -> `/bio` in public navigation.
+
+### Verification
+- `php -l public/app/models/NavigationItem.php`
+- `php -l tests/system-page-navigation.php`
+- `php tests/system-page-identity.php`
+- `php tests/system-page-navigation.php`
+- `git diff --check`
+
 ## 2026-07-06 — Public Copy Subtabs, Footer Consolidation, Widen Text Columns, and CSS Layout Alignment
 
 ### Decision

@@ -35,6 +35,8 @@ Source: DECISIONS.md 2026-07-02 Portable-CMS Setup Readiness Remediation (commit
 
 2026-06-19 DECISION Home and About are the only two protected "system pages" (`Page::PROTECTED_SLUGS`) — undeletable, auto-seeded/self-healing, each rendering a mandatory top section from existing `site_settings` fields before normal Pages-CMS sections.
 
+2026-07-06 CORRECTION About/Bio is a system page but must still respect `pages.show_in_nav` through a real system navigation item, using the current page nav label and slug.
+
 2026-06-19 DECISION Managed pages in `draft` are public-404/private-preview: guests never see them at public URLs; signed-in admins preview with an explicit draft notice.
 
 2026-06-19 DECISION `site_settings.settings_json` is the compatibility fallback for editable settings when a dedicated column is missing, so the admin UI never silently drops saved values.
