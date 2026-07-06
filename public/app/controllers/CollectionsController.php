@@ -53,7 +53,7 @@ class CollectionsController
         }
 
         $pageTitle = 'Collections | ' . app_site_name();
-        $pageDescription = 'Curated collections of generative art pieces and images.';
+        $pageDescription = public_copy_value('public_art_copy.collections_archive.meta_description');
         $bodyClass = 'page-collections';
         $canonicalUrl = seo_absolute_url('/collections');
         require dirname(__DIR__) . '/views/collections/index.php';

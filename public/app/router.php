@@ -13,6 +13,7 @@ require_once __DIR__ . '/helpers/feed-ingest.php';
 require_once __DIR__ . '/helpers/encryption.php';
 require_once __DIR__ . '/helpers/audit-log.php';
 require_once __DIR__ . '/helpers/rate-limit.php';
+require_once __DIR__ . '/helpers/public-copy.php';
 require_once __DIR__ . '/helpers/piece-render.php';
 require_once __DIR__ . '/helpers/art-piece-generation.php';
 require_once __DIR__ . '/helpers/site-theme-generation.php';
@@ -66,6 +67,7 @@ require_once __DIR__ . '/controllers/Admin/NavigationController.php';
 require_once __DIR__ . '/controllers/Admin/FeedSourcesAdminController.php';
 require_once __DIR__ . '/controllers/Admin/SiteIdentityAdminController.php';
 require_once __DIR__ . '/controllers/Admin/FeaturesAdminController.php';
+require_once __DIR__ . '/controllers/Admin/PublicCopyAdminController.php';
 require_once __DIR__ . '/controllers/Admin/UserProfilesAdminController.php';
 require_once __DIR__ . '/lib/syndication/AdapterFactory.php';
 require_once __DIR__ . '/controllers/Admin/PlatformConnectionsAdminController.php';
@@ -368,6 +370,9 @@ $adminRoutes = [
 
     ['GET',  '/admin/features',      [FeaturesAdminController::class, 'index']],
     ['POST', '/admin/features/save', [FeaturesAdminController::class, 'save']],
+
+    ['GET',  '/admin/public-copy',      [PublicCopyAdminController::class, 'index']],
+    ['POST', '/admin/public-copy/save', [PublicCopyAdminController::class, 'save']],
 
     ['GET',  '/admin/site-identity', [SiteIdentityAdminController::class, 'index']],
     ['POST', '/admin/site-identity/settings', [SiteIdentityAdminController::class, 'settingsUpdate']],

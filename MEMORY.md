@@ -47,6 +47,12 @@ Source: DECISIONS.md 2026-07-02 Portable-CMS Setup Readiness Remediation (commit
 
 2026-07-02 DECISION Forms are the reusable special page element abstraction. Installer/setup seeds Contact Form and Newsletter Signup; newsletter signups persist to `newsletter_subscribers` with consent defaulting true and do not require recipient email or send email by default. Ordinary forms email the configured recipient and do not store payloads.
 
+2026-07-06 DECISION The Public Copy admin UI uses a 5-tab sub-interface with grouped archives page sections; footer credit copy and copyright line are consolidated inside Site Identity Settings as textareas.
+Source: DECISIONS.md 2026-07-06 Public Copy Subtabs, Footer Consolidation, Widen Text Columns, and CSS Layout Alignment.
+
+2026-07-06 DECISION Footer credit and copyright columns are text/HTML-enabled via safe sanitization; layout wraps in site-footer-text div with row-gap and align-self flex-start controls preventing vertical stretch.
+Source: DECISIONS.md 2026-07-06 Public Copy Subtabs, Footer Consolidation, Widen Text Columns, and CSS Layout Alignment.
+
 # Standing Decisions — Blog, Feeds & Syndication
 
 2026-06-14 DECISION Phase 4B: `publishDuePosts()` flips `scheduled` → `published`. Feed routes `/feeds/mf2`, `/blog/category/{slug}/feed.*`, `/{slug}/feed.*` plus legacy 301 redirects; `/export.json` remains JSON Feed 1.1 per Rule 5.

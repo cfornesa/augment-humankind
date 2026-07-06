@@ -3,10 +3,17 @@
     <?php
     $_ahFooterSettings = class_exists('SiteSettings') ? (SiteSettings::current() ?: []) : [];
     $_ahCopyrightLine = trim((string) ($_ahFooterSettings['copyright_line'] ?? ''));
-    $_ahFooterCredit = trim((string) ($_ahFooterSettings['footer_credit'] ?? ''));
+    $_ahCopyrightHtml = function_exists('public_copy_footer_credit_html')
+        ? public_copy_footer_credit_html($_ahCopyrightLine !== '' ? $_ahCopyrightLine : app_site_name())
+        : e($_ahCopyrightLine !== '' ? $_ahCopyrightLine : app_site_name());
+    $_ahFooterCreditHtml = function_exists('public_copy_footer_credit_html')
+        ? public_copy_footer_credit_html((string) ($_ahFooterSettings['footer_credit'] ?? ''))
+        : '';
     ?>
     <footer class="site-footer">
-        <p>&copy; <?= date('Y') ?> <?= e($_ahCopyrightLine !== '' ? $_ahCopyrightLine : app_site_name()) ?><?= $_ahFooterCredit !== '' ? '. ' . e($_ahFooterCredit) : '' ?></p>
+        <div class="site-footer-text">
+            &copy; <?= date('Y') ?> <?= $_ahCopyrightHtml ?><?= $_ahFooterCreditHtml !== '' ? '. ' . $_ahFooterCreditHtml : '' ?>
+        </div>
         <nav aria-label="Footer navigation">
             <?php foreach ($navigationItems as $_ahFooterNavItem): ?>
             <a href="<?= e($_ahFooterNavItem['url']) ?>"<?= !empty($_ahFooterNavItem['target']) ? ' target="' . e($_ahFooterNavItem['target']) . '"' : '' ?>><?= e($_ahFooterNavItem['label']) ?></a>

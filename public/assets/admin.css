@@ -482,6 +482,36 @@ tr.drag-over td {
     text-transform: uppercase;
 }
 
+.public-copy-group-heading {
+    margin: 2rem 0 0.5rem;
+    padding-top: 1.25rem;
+    border-top: 3px solid var(--line);
+    font-size: 0.86rem;
+    font-weight: 950;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+}
+
+fieldset > .public-copy-group-heading:first-of-type {
+    margin-top: 0.5rem;
+    padding-top: 0;
+    border-top: none;
+}
+
+.field-group-heading {
+    display: block;
+    margin-bottom: 0;
+    padding-bottom: 0.4rem;
+    border-bottom: 3px solid var(--line);
+    font-size: 0.86rem;
+    font-weight: 950;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    cursor: default;
+}
+
 .feature-section .feature-toggle-row + .feature-toggle-row,
 .feature-section .feature-toggle-row + .feature-section-title {
     margin-top: 0.85rem;

@@ -5,9 +5,9 @@ declare(strict_types=1);
 require dirname(__DIR__) . '/partials/header.php';
 ?>
 <section class="page-hero" aria-labelledby="collections-title">
-    <p class="eyebrow">Curated Collections</p>
-    <h1 id="collections-title">Collections</h1>
-    <p>Curated collections of generative art pieces and images, viewable in an immersive 3D gallery.</p>
+    <p class="eyebrow"><?= e(public_copy_value('public_art_copy.collections_archive.eyebrow')) ?></p>
+    <h1 id="collections-title"><?= e(public_copy_value('public_art_copy.collections_archive.heading')) ?></h1>
+    <p><?= e(public_copy_value('public_art_copy.collections_archive.intro')) ?></p>
 </section>
 
 <section class="managed-section">
@@ -44,7 +44,7 @@ require dirname(__DIR__) . '/partials/header.php';
 
         <?php if (empty($collections)): ?>
             <p class="admin-empty">
-                <?= $q !== '' ? 'No collections matched your search.' : 'No collections published yet.' ?>
+                <?= e($q !== '' ? public_copy_value('public_art_copy.collections_archive.empty_search') : public_copy_value('public_art_copy.collections_archive.empty_default')) ?>
             </p>
         <?php else: ?>
             <div data-lazy-listing

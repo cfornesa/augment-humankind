@@ -21,6 +21,7 @@ function admin_navigation_registry(): array
         ['key' => 'pieces', 'label' => 'Pieces', 'href' => '/admin/pieces', 'description' => 'Platform art pieces and generation.'],
         ['key' => 'categories', 'label' => 'Categories', 'href' => '/admin/categories', 'description' => 'Blog categories.'],
         ['key' => 'art_media', 'label' => 'Art Media', 'href' => '/admin/art-media', 'description' => 'Portfolio taxonomy.'],
+        ['key' => 'public_copy', 'label' => 'Public Copy', 'href' => '/admin/public-copy', 'description' => 'Portfolio and public art system copy.'],
         ['key' => 'exhibit_collections', 'label' => 'Exhibit Collections', 'href' => '/admin/exhibit-collections', 'description' => 'Native collections.'],
         ['key' => 'platform_collections', 'label' => 'Platform Collections', 'href' => '/admin/platform-collections', 'description' => 'Migrated platform collections.'],
         ['key' => 'media', 'label' => 'Media', 'href' => '/admin/media', 'description' => 'Uploads and media assets.'],

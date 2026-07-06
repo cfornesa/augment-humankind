@@ -10,6 +10,30 @@
 
 None.
 
+## 2026-07-06 — Public Copy Subtabs, Footer Consolidation, Widen Text Columns, and CSS Layout Alignment
+
+### Decision
+Refactored the `/admin/public-copy` interface into a 5-tab subtab layout ('Portfolio Gallery', 'Portfolio Archives', 'Portfolio Detail Chrome', 'Standalone Art Archives', and 'Shared Public UI') using the `admin-tabs` navigation patterns for improved readability. Visual organization of the 'Portfolio Archives' page was enhanced by grouping field clusters into rule-divided `<h2>` sections.
+
+Moved the `footer_credit` field out of the Public Copy tab layout and consolidated all footer text configuration (Copyright Line and Footer Credit) under a shared **Footer** section in Site Identity → Settings. Upgraded both `site_settings.copyright_line` and `site_settings.footer_credit` to `TEXT` (supporting up to 64KB) in the schema to support HTML formatting and nested structures. Idempotent column modification steps were added to the `setup-database.php` manifest.
+
+Modified both the main layout index and the partial footer views to parse these fields through the HTML sanitizer (adding `<p>` and `<span>` tags to the allowed elements whitelist). The markup container was changed from `<p>` to `<div class="site-footer-text">` to prevent layout breaking from nested paragraph elements. Updated the stylesheet (`styles.css`) to enforce `align-self: flex-start`, `align-content: flex-start`, and `row-gap: 0.5rem` on the footer navigation, preventing vertical stretching and matching the leading/margins of the text block.
+
+### Scope
+- `public/app/helpers/public-copy.php`: removed the footer tab from helper list, updated sanitizer allowed elements.
+- `public/app/controllers/Admin/PublicCopyAdminController.php`: removed footer tab and special-case save logic.
+- `public/app/views/admin/public-copy/index.php`: updated valid tabs list and rendered subtabs layout with sub-section headings.
+- `public/app/views/admin/site-identity/index.php`: updated inputs to use textareas, added the Footer group heading and descriptions.
+- `public/app/views/partials/footer.php` / `public/index.php`: switched from p to div wrappers, enabled HTML parsing on copyright.
+- `public/assets/admin.css` / `styles.css`: added styles for group headings, corrected footer nav flex-stretch.
+- `scripts/setup-database.php`: added manifest migration steps for both columns.
+- `migrations/2026-07-06-footer-credit-text.sql` / `migrations/2026-07-06-copyright-line-text.sql`: new migrations.
+
+### Verification
+- Checked syntax across all changed PHP and view files.
+- Verified live database changes (both columns widened to `text` successfully).
+- Verified the correct visual layout structure of the footer and group headers.
+
 ## 2026-07-05 — Shared Top Stage Toolbar Across All Immersive Surfaces + Broken Piece View Fix
 
 ### Decision

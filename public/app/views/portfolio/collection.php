@@ -12,7 +12,7 @@ $bodyClass = bodyClass('portfolio-exhibit');
 require __DIR__ . '/../partials/header.php';
 ?>
     <section class="collection-detail-page">
-        <a href="/portfolio/exhibit-collections" class="work-back">&#8592; Return to exhibit collections</a>
+        <a href="/portfolio/exhibit-collections" class="work-back">&#8592; <?= e(public_copy_value('portfolio_copy.detail.collection.back_label')) ?></a>
 
         <div class="collection-detail-header" aria-labelledby="exhibit-title">
             <?php if ($collection['thumbnail_value']): ?>
@@ -37,7 +37,7 @@ require __DIR__ . '/../partials/header.php';
         <?php $status = $collection['status'] ?? 'active'; require __DIR__ . '/../partials/status-banner.php'; ?>
 
         <?php if (empty($exhibits)): ?>
-            <p class="gallery-empty">No exhibits in this collection yet.</p>
+            <p class="gallery-empty"><?= e(public_copy_value('portfolio_copy.detail.collection.empty_state')) ?></p>
         <?php else: ?>
             <div class="artwork-grid collection-artworks" aria-label="Exhibits in this collection">
                 <?php foreach ($exhibits as $i => $ex): ?>
@@ -79,10 +79,10 @@ require __DIR__ . '/../partials/header.php';
 
         <?php if (!empty($collection['comments_enabled'])): ?>
         <section class="comments-section blog-comments" aria-labelledby="collection-comments-title">
-            <h2 id="collection-comments-title">Comments</h2>
+            <h2 id="collection-comments-title"><?= e(public_copy_value('public_art_copy.shared_ui.comments_heading')) ?></h2>
             <?php
             $commentsUrl = '/api/exhibit-collections/' . (string) $collection['slug'] . '/comments';
-            $emptyCommentMessage = 'No comments yet. Be the first.';
+            $emptyCommentMessage = public_copy_value('public_art_copy.shared_ui.comments_empty');
             require dirname(__DIR__) . '/partials/comment-list.php';
             ?>
             <?php

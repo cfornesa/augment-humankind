@@ -15,7 +15,7 @@ $initialItem = $mediaItems[0] ?? null;
 require __DIR__ . '/../partials/header.php';
 ?>
     <section class="work-page">
-        <a href="/portfolio/exhibits" class="work-back">&#8592; Return to exhibits</a>
+        <a href="/portfolio/exhibits" class="work-back">&#8592; <?= e(public_copy_value('portfolio_copy.detail.exhibit.back_label')) ?></a>
 
         <article class="work-detail" aria-labelledby="work-title">
             <div class="work-header">
@@ -32,8 +32,8 @@ require __DIR__ . '/../partials/header.php';
             <div class="work-piece-wrap">
                 <?php if ($initialItem === null): ?>
                     <div class="work-piece-fallback" role="status">
-                        <strong class="work-piece-fallback-title">No media yet</strong>
-                        <p>This exhibit doesn't have any media added yet.</p>
+                        <strong class="work-piece-fallback-title"><?= e(public_copy_value('portfolio_copy.detail.exhibit.media_empty_title')) ?></strong>
+                        <p><?= e(public_copy_value('portfolio_copy.detail.exhibit.media_empty_body')) ?></p>
                     </div>
                 <?php else: ?>
                     <div class="work-carousel" data-artwork-carousel tabindex="0" aria-label="Artwork media carousel">
@@ -162,10 +162,10 @@ require __DIR__ . '/../partials/header.php';
 
         <?php if (!empty($exhibit['comments_enabled'])): ?>
         <section class="comments-section blog-comments" aria-labelledby="exhibit-comments-title">
-            <h2 id="exhibit-comments-title">Comments</h2>
+            <h2 id="exhibit-comments-title"><?= e(public_copy_value('public_art_copy.shared_ui.comments_heading')) ?></h2>
             <?php
             $commentsUrl = '/api/exhibits/' . (string) $exhibit['slug'] . '/comments';
-            $emptyCommentMessage = 'No comments yet. Be the first.';
+            $emptyCommentMessage = public_copy_value('public_art_copy.shared_ui.comments_empty');
             require dirname(__DIR__) . '/partials/comment-list.php';
             ?>
             <?php

@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 $pageTitle = 'Portfolio Gallery | ' . app_site_name();
-$pageDescription = 'Browse exhibits, exhibit collections, platform collections, and generative pieces from the ' . app_site_name() . ' portfolio.';
+$pageDescription = public_copy_value('portfolio_copy.gallery.meta_description');
 $ogImage = $collections[0]['preview_image'] ?? ($exhibits[0]['preview_image'] ?? null);
 $canonicalUrl = seo_absolute_url('/portfolio');
 $bodyClass = bodyClass('portfolio-gallery');
@@ -12,22 +12,22 @@ require __DIR__ . '/../partials/header.php';
 ?>
     <section class="gallery-page">
         <div class="gallery-intro">
-            <p class="eyebrow">Portfolio</p>
-            <h1>Gallery</h1>
-            <p>The gallery is a sampler. Each section links to a dedicated archive page with all works. Use <strong>See More</strong> to load additional items here, or browse the full archive.</p>
+            <p class="eyebrow"><?= e(public_copy_value('portfolio_copy.gallery.eyebrow')) ?></p>
+            <h1><?= e(public_copy_value('portfolio_copy.gallery.title')) ?></h1>
+            <p><?= e(public_copy_value('portfolio_copy.gallery.intro')) ?></p>
         </div>
 
         <div class="gallery-section" aria-labelledby="gallery-collections-heading">
             <div class="gallery-section-header">
                 <div>
-                    <h2 class="category-name" id="gallery-collections-heading">Exhibit Collections</h2>
-                    <p class="gallery-section-copy">Native exhibit collections built from related exhibits.</p>
+                    <h2 class="category-name" id="gallery-collections-heading"><?= e(public_copy_value('portfolio_copy.gallery.sections.exhibit_collections.heading')) ?></h2>
+                    <p class="gallery-section-copy"><?= e(public_copy_value('portfolio_copy.gallery.sections.exhibit_collections.description')) ?></p>
                 </div>
-                <a href="/portfolio/exhibit-collections" class="gallery-section-link">Browse all exhibit collections</a>
+                <a href="/portfolio/exhibit-collections" class="gallery-section-link"><?= e(public_copy_value('portfolio_copy.gallery.sections.exhibit_collections.cta_label')) ?></a>
                 <span class="section-rule" aria-hidden="true"></span>
             </div>
             <?php if (empty($collections)): ?>
-                <p class="gallery-empty">No exhibit collections have been added yet.</p>
+                <p class="gallery-empty"><?= e(public_copy_value('portfolio_copy.gallery.sections.exhibit_collections.empty_state')) ?></p>
             <?php else: ?>
                 <div
                     class="portfolio-archive-listing"
@@ -56,15 +56,15 @@ require __DIR__ . '/../partials/header.php';
         <div class="gallery-section" aria-labelledby="gallery-exhibits-heading">
             <div class="gallery-section-header">
                 <div>
-                    <h2 class="category-name" id="gallery-exhibits-heading">Exhibits</h2>
-                    <p class="gallery-section-copy">Individual exhibits with their own carousel, placard, and context.</p>
+                    <h2 class="category-name" id="gallery-exhibits-heading"><?= e(public_copy_value('portfolio_copy.gallery.sections.exhibits.heading')) ?></h2>
+                    <p class="gallery-section-copy"><?= e(public_copy_value('portfolio_copy.gallery.sections.exhibits.description')) ?></p>
                 </div>
-                <a href="/portfolio/exhibits" class="gallery-section-link">Browse all exhibits</a>
+                <a href="/portfolio/exhibits" class="gallery-section-link"><?= e(public_copy_value('portfolio_copy.gallery.sections.exhibits.cta_label')) ?></a>
                 <span class="section-rule" aria-hidden="true"></span>
             </div>
 
             <?php if (empty($exhibits)): ?>
-                <p class="gallery-empty">No exhibits have been added yet.</p>
+                <p class="gallery-empty"><?= e(public_copy_value('portfolio_copy.gallery.sections.exhibits.empty_state')) ?></p>
             <?php else: ?>
                 <div
                     class="portfolio-archive-listing"
@@ -90,16 +90,18 @@ require __DIR__ . '/../partials/header.php';
             <?php endif ?>
         </div>
 
-        <?php if (!empty($platformCollections)): ?>
-            <div class="gallery-section" aria-labelledby="gallery-platform-collections-heading">
-                <div class="gallery-section-header">
-                    <div>
-                        <h2 class="category-name" id="gallery-platform-collections-heading">Platform Collections</h2>
-                        <p class="gallery-section-copy">Migrated platform-native collections with public detail pages and immersive room views.</p>
-                    </div>
-                    <a href="/portfolio/platform-collections" class="gallery-section-link">Browse all platform collections</a>
-                    <span class="section-rule" aria-hidden="true"></span>
+        <div class="gallery-section" aria-labelledby="gallery-platform-collections-heading">
+            <div class="gallery-section-header">
+                <div>
+                    <h2 class="category-name" id="gallery-platform-collections-heading"><?= e(public_copy_value('portfolio_copy.gallery.sections.platform_collections.heading')) ?></h2>
+                    <p class="gallery-section-copy"><?= e(public_copy_value('portfolio_copy.gallery.sections.platform_collections.description')) ?></p>
                 </div>
+                <a href="/portfolio/platform-collections" class="gallery-section-link"><?= e(public_copy_value('portfolio_copy.gallery.sections.platform_collections.cta_label')) ?></a>
+                <span class="section-rule" aria-hidden="true"></span>
+            </div>
+            <?php if (empty($platformCollections)): ?>
+                <p class="gallery-empty"><?= e(public_copy_value('portfolio_copy.gallery.sections.platform_collections.empty_state')) ?></p>
+            <?php else: ?>
                 <div
                     class="portfolio-archive-listing"
                     data-see-more-listing
@@ -121,19 +123,21 @@ require __DIR__ . '/../partials/header.php';
                         <?php endif; ?>
                     </div>
                 </div>
-            </div>
-        <?php endif ?>
+            <?php endif ?>
+        </div>
 
-        <?php if (!empty($pieces)): ?>
-            <div class="gallery-section" aria-labelledby="gallery-pieces-heading">
-                <div class="gallery-section-header">
-                    <div>
-                        <h2 class="category-name" id="gallery-pieces-heading">Art Pieces</h2>
-                        <p class="gallery-section-copy">Migrated generative pieces, code-driven experiments, and runtime sketches.</p>
-                    </div>
-                    <a href="/portfolio/pieces" class="gallery-section-link">Browse all art pieces</a>
-                    <span class="section-rule" aria-hidden="true"></span>
+        <div class="gallery-section" aria-labelledby="gallery-pieces-heading">
+            <div class="gallery-section-header">
+                <div>
+                    <h2 class="category-name" id="gallery-pieces-heading"><?= e(public_copy_value('portfolio_copy.gallery.sections.pieces.heading')) ?></h2>
+                    <p class="gallery-section-copy"><?= e(public_copy_value('portfolio_copy.gallery.sections.pieces.description')) ?></p>
                 </div>
+                <a href="/portfolio/pieces" class="gallery-section-link"><?= e(public_copy_value('portfolio_copy.gallery.sections.pieces.cta_label')) ?></a>
+                <span class="section-rule" aria-hidden="true"></span>
+            </div>
+            <?php if (empty($pieces)): ?>
+                <p class="gallery-empty"><?= e(public_copy_value('portfolio_copy.gallery.sections.pieces.empty_state')) ?></p>
+            <?php else: ?>
                 <div
                     class="portfolio-archive-listing"
                     data-see-more-listing
@@ -155,8 +159,8 @@ require __DIR__ . '/../partials/header.php';
                         <?php endif; ?>
                     </div>
                 </div>
-            </div>
-        <?php endif ?>
+            <?php endif ?>
+        </div>
 
     </section>
 <?php

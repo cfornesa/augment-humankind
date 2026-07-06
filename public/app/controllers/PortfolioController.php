@@ -55,11 +55,11 @@ class PortfolioController
         self::renderArchive(
             itemType: 'collections',
             pageTitle: 'Exhibit Collections | ' . app_site_name(),
-            pageDescription: 'Browse native exhibit collections from ' . app_site_name() . '.',
+            pageDescription: public_copy_value('portfolio_copy.archives.exhibit_collections.meta_description'),
             canonicalPath: '/portfolio/exhibit-collections',
-            eyebrow: 'Portfolio',
-            heading: 'Exhibit Collections',
-            intro: 'Native exhibit collections, each gathering related exhibits into a durable archive page.',
+            eyebrow: public_copy_value('portfolio_copy.archives.exhibit_collections.eyebrow'),
+            heading: public_copy_value('portfolio_copy.archives.exhibit_collections.heading'),
+            intro: public_copy_value('portfolio_copy.archives.exhibit_collections.intro'),
             fetchItems: static fn (int $offset, int $limit): array => self::decorateCollections(
                 Collection::searchFiltered($q, $modelSort, $dir, $offset, $limit)
             ),
@@ -97,11 +97,11 @@ class PortfolioController
         self::renderArchive(
             itemType: 'exhibits',
             pageTitle: 'Portfolio Exhibits | ' . app_site_name(),
-            pageDescription: 'Browse exhibits from the ' . app_site_name() . ' portfolio.',
+            pageDescription: public_copy_value('portfolio_copy.archives.exhibits.meta_description'),
             canonicalPath: '/portfolio/exhibits',
-            eyebrow: 'Portfolio',
-            heading: 'Exhibits',
-            intro: 'Individual exhibits with media, metadata, and collection context.',
+            eyebrow: public_copy_value('portfolio_copy.archives.exhibits.eyebrow'),
+            heading: public_copy_value('portfolio_copy.archives.exhibits.heading'),
+            intro: public_copy_value('portfolio_copy.archives.exhibits.intro'),
             fetchItems: static fn (int $offset, int $limit): array => self::decorateExhibits(
                 Exhibit::searchFiltered($q, $modelSort, $dir, $offset, $limit)
             ),
@@ -139,11 +139,11 @@ class PortfolioController
         self::renderArchive(
             itemType: 'platform-collections',
             pageTitle: 'Platform Collections | ' . app_site_name(),
-            pageDescription: 'Browse migrated platform collections from ' . app_site_name() . '.',
+            pageDescription: public_copy_value('portfolio_copy.archives.platform_collections.meta_description'),
             canonicalPath: '/portfolio/platform-collections',
-            eyebrow: 'Portfolio',
-            heading: 'Platform Collections',
-            intro: 'Migrated platform-native collections, each with its own public detail page and immersive mode.',
+            eyebrow: public_copy_value('portfolio_copy.archives.platform_collections.eyebrow'),
+            heading: public_copy_value('portfolio_copy.archives.platform_collections.heading'),
+            intro: public_copy_value('portfolio_copy.archives.platform_collections.intro'),
             fetchItems: static fn (int $offset, int $limit): array => self::decoratePlatformCollections(
                 PlatformCollection::searchFiltered($q, $modelSort, $dir, $offset, $limit)
             ),
@@ -185,11 +185,11 @@ class PortfolioController
         self::renderArchive(
             itemType: 'pieces',
             pageTitle: 'Portfolio Art Pieces | ' . app_site_name(),
-            pageDescription: 'Browse generative art pieces from ' . app_site_name() . '.',
+            pageDescription: public_copy_value('portfolio_copy.archives.pieces.meta_description'),
             canonicalPath: '/portfolio/pieces',
-            eyebrow: 'Portfolio',
-            heading: 'Art Pieces',
-            intro: 'Generative art pieces and creative experiments from the migrated platform archive.',
+            eyebrow: public_copy_value('portfolio_copy.archives.pieces.eyebrow'),
+            heading: public_copy_value('portfolio_copy.archives.pieces.heading'),
+            intro: public_copy_value('portfolio_copy.archives.pieces.intro'),
             fetchItems: static fn (int $offset, int $limit): array => self::decoratePieces(
                 PlatformArtPiece::searchFilteredByGenerationMode($q ?: null, $engine ?: null, $modelSort, $dir, $offset, $limit)
             ),
@@ -207,11 +207,11 @@ class PortfolioController
         self::renderArchive(
             itemType: 'art-media',
             pageTitle: 'Art Media | ' . app_site_name(),
-            pageDescription: 'Browse art media terms used to organize pieces within the ' . app_site_name() . ' portfolio.',
+            pageDescription: public_copy_value('portfolio_copy.archives.art_media.meta_description'),
             canonicalPath: '/portfolio/art-media',
-            eyebrow: 'Portfolio',
-            heading: 'Art Media',
-            intro: 'Piece-oriented taxonomy terms that group related art pieces across the portfolio.',
+            eyebrow: public_copy_value('portfolio_copy.archives.art_media.eyebrow'),
+            heading: public_copy_value('portfolio_copy.archives.art_media.heading'),
+            intro: public_copy_value('portfolio_copy.archives.art_media.intro'),
             fetchItems: static fn (int $offset, int $limit): array => Category::paginate($offset, $limit),
             fetchTotal: static fn (): int => Category::countVisible()
         );

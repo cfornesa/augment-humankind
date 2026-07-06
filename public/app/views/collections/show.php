@@ -5,7 +5,7 @@ declare(strict_types=1);
 require dirname(__DIR__) . '/partials/header.php';
 ?>
 <section class="page-hero" aria-labelledby="collection-title">
-    <p class="eyebrow">Collection</p>
+    <p class="eyebrow"><?= e(public_copy_value('public_art_copy.collection_detail.eyebrow')) ?></p>
     <h1 id="collection-title"><?= e($collection['name'] ?? 'Untitled Collection') ?></h1>
     <?php if (!empty($collection['description'])): ?>
         <p><?= e($collection['description']) ?></p>
@@ -18,7 +18,7 @@ require dirname(__DIR__) . '/partials/header.php';
 <?php $status = $collection['status'] ?? 'active'; require dirname(__DIR__) . '/partials/status-banner.php'; ?>
 
 <section class="piece-stage" aria-label="Collection">
-    <a href="/immersive/collections/<?= e($collection['slug']) ?>?returnTo=<?= rawurlencode($_SERVER['REQUEST_URI'] ?? '') ?>" target="_blank" rel="noopener" class="piece-immersive-link">View in Immersive / VR Mode</a>
+    <a href="/immersive/collections/<?= e($collection['slug']) ?>?returnTo=<?= rawurlencode($_SERVER['REQUEST_URI'] ?? '') ?>" target="_blank" rel="noopener" class="piece-immersive-link"><?= e(public_copy_value('public_art_copy.shared_ui.view_immersive_label')) ?></a>
 </section>
 
 <section class="managed-section">
@@ -28,7 +28,7 @@ require dirname(__DIR__) . '/partials/header.php';
                 <?= $collection['iframe_code'] ?>
             </div>
         <?php elseif (empty($items)): ?>
-            <p>This collection has no items yet.</p>
+            <p><?= e(public_copy_value('public_art_copy.collection_detail.empty_state')) ?></p>
         <?php else: ?>
             <div class="piece-grid">
                 <?php foreach ($items as $item): ?>

@@ -652,6 +652,40 @@ function manifest(): array
             $ctx->apply("INSERT INTO site_settings (id, site_title, hero_subheading, about_body) VALUES (1, 'My Site', '', '')", 'row site_settings id=1');
         }],
 
+        ['footer_credit VARCHAR→TEXT (2026-07-06)', function (Ctx $ctx): void {
+            // Widen footer_credit from VARCHAR(255) to TEXT so that
+            // multi-anchor HTML credit lines don't get silently truncated.
+            // columnnDataType returns 'varchar' for VARCHAR and 'text' for
+            // TEXT/MEDIUMTEXT/LONGTEXT — skip if already at TEXT or wider.
+            if (!tableExists($ctx->pdo, 'site_settings')) {
+                return;
+            }
+            $type = columnDataType($ctx->pdo, 'site_settings', 'footer_credit');
+            if ($type === '' || $type === 'text' || $type === 'mediumtext' || $type === 'longtext') {
+                return;
+            }
+            $ctx->apply(
+                "ALTER TABLE site_settings MODIFY COLUMN footer_credit TEXT NOT NULL DEFAULT ''",
+                'site_settings.footer_credit VARCHAR→TEXT'
+            );
+        }],
+
+        ['copyright_line VARCHAR→TEXT (2026-07-06)', function (Ctx $ctx): void {
+            // Widen copyright_line from VARCHAR(255) to TEXT so that
+            // HTML markup (links, emphasis) isn't silently truncated.
+            if (!tableExists($ctx->pdo, 'site_settings')) {
+                return;
+            }
+            $type = columnDataType($ctx->pdo, 'site_settings', 'copyright_line');
+            if ($type === '' || $type === 'text' || $type === 'mediumtext' || $type === 'longtext') {
+                return;
+            }
+            $ctx->apply(
+                "ALTER TABLE site_settings MODIFY COLUMN copyright_line TEXT NOT NULL DEFAULT ''",
+                'site_settings.copyright_line VARCHAR→TEXT'
+            );
+        }],
+
     ];
 }
 

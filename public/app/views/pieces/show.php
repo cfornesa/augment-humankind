@@ -13,7 +13,7 @@ $publicPieceScriptVersion = (int) @filemtime(dirname(__DIR__, 3) . '/assets/js/p
 $pieceFullscreenScriptVersion = (int) @filemtime(dirname(__DIR__, 3) . '/assets/js/piece-fullscreen.js');
 ?>
 <section class="page-hero" aria-labelledby="piece-title">
-    <p class="eyebrow">Art Piece</p>
+    <p class="eyebrow"><?= e(public_copy_value('public_art_copy.piece_detail.eyebrow')) ?></p>
     <h1 id="piece-title"><?= e($piece['title'] ?? 'Untitled') ?></h1>
     <?php if (!empty($piece['categories'])): ?>
         <p>
@@ -40,20 +40,20 @@ $pieceFullscreenScriptVersion = (int) @filemtime(dirname(__DIR__, 3) . '/assets/
                 </button>
             </div>
             <div class="piece-fullscreen-bar" data-piece-fullscreen-bar role="toolbar" aria-label="Piece downloads" hidden>
-                <a href="/pieces/<?= (int) $piece['id'] ?>/download" class="piece-immersive-link">Download Piece</a>
-                <button type="button" class="piece-immersive-link piece-download-button" data-piece-download-trigger data-download-filename="<?= e($pngFilename) ?>">Download PNG</button>
+                <a href="/pieces/<?= (int) $piece['id'] ?>/download" class="piece-immersive-link"><?= e(public_copy_value('public_art_copy.shared_ui.download_piece_label')) ?></a>
+                <button type="button" class="piece-immersive-link piece-download-button" data-piece-download-trigger data-download-filename="<?= e($pngFilename) ?>"><?= e(public_copy_value('public_art_copy.shared_ui.download_png_label')) ?></button>
                 <button type="button" class="piece-immersive-link piece-download-button" data-piece-fullscreen-close>Close</button>
             </div>
             <div class="piece-action-row">
-                <a href="/immersive/pieces/<?= (int) $piece['id'] ?>?returnTo=<?= rawurlencode($_SERVER['REQUEST_URI'] ?? '') ?>" target="_blank" rel="noopener" class="piece-immersive-link">View in Immersive / VR Mode</a>
-                <a href="/pieces/<?= (int) $piece['id'] ?>/download" class="piece-immersive-link">Download Piece</a>
-                <button type="button" class="piece-immersive-link piece-download-button" data-piece-download-trigger data-download-filename="<?= e($pngFilename) ?>">Download PNG</button>
+                <a href="/immersive/pieces/<?= (int) $piece['id'] ?>?returnTo=<?= rawurlencode($_SERVER['REQUEST_URI'] ?? '') ?>" target="_blank" rel="noopener" class="piece-immersive-link"><?= e(public_copy_value('public_art_copy.shared_ui.view_immersive_label')) ?></a>
+                <a href="/pieces/<?= (int) $piece['id'] ?>/download" class="piece-immersive-link"><?= e(public_copy_value('public_art_copy.shared_ui.download_piece_label')) ?></a>
+                <button type="button" class="piece-immersive-link piece-download-button" data-piece-download-trigger data-download-filename="<?= e($pngFilename) ?>"><?= e(public_copy_value('public_art_copy.shared_ui.download_png_label')) ?></button>
             </div>
             <p class="piece-download-status" data-piece-download-status role="status" aria-live="polite" hidden></p>
         </div>
     <?php else: ?>
         <div class="piece-placeholder">
-            <p>This piece has no rendered version yet.</p>
+            <p><?= e(public_copy_value('public_art_copy.piece_detail.placeholder_empty')) ?></p>
         </div>
     <?php endif; ?>
 </section>
@@ -95,10 +95,10 @@ $pieceFullscreenScriptVersion = (int) @filemtime(dirname(__DIR__, 3) . '/assets/
 
 <?php if (!empty($piece['comments_enabled'])): ?>
 <section class="comments-section blog-comments" aria-labelledby="piece-comments-title">
-    <h2 id="piece-comments-title">Comments</h2>
+    <h2 id="piece-comments-title"><?= e(public_copy_value('public_art_copy.shared_ui.comments_heading')) ?></h2>
     <?php
     $commentsUrl = '/api/pieces/' . (int) $piece['id'] . '/comments';
-    $emptyCommentMessage = 'No comments yet. Be the first.';
+    $emptyCommentMessage = public_copy_value('public_art_copy.shared_ui.comments_empty');
     require dirname(__DIR__) . '/partials/comment-list.php';
     ?>
     <?php

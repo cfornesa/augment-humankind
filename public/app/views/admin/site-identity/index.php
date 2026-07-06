@@ -49,14 +49,18 @@ if (!in_array($tab, ['settings', 'design', 'assets', 'media'], true)) {
                 <textarea id="hero_subheading" name="hero_subheading" rows="3"><?= e($settings['hero_subheading'] ?? '') ?></textarea>
             </div>
             <div class="field">
+                <label class="field-group-heading">Footer</label>
+                <p class="admin-hint">These fields control what appears in the footer on every page.</p>
+            </div>
+            <div class="field">
                 <label for="copyright_line">Copyright Line</label>
-                <input id="copyright_line" name="copyright_line" type="text" maxlength="255"
-                       value="<?= e($settings['copyright_line'] ?? '') ?>">
+                <textarea id="copyright_line" name="copyright_line" rows="2"><?= e($settings['copyright_line'] ?? '') ?></textarea>
+                <p class="admin-hint">Renders as <strong>&copy; <?= date('Y') ?> <em>{this value}</em></strong>. HTML is supported (links, emphasis, paragraphs). Leave empty to use the Site Title.</p>
             </div>
             <div class="field">
                 <label for="footer_credit">Footer Credit</label>
-                <input id="footer_credit" name="footer_credit" type="text" maxlength="255"
-                       value="<?= e($settings['footer_credit'] ?? '') ?>">
+                <textarea id="footer_credit" name="footer_credit" rows="3"><?= e($settings['footer_credit'] ?? '') ?></textarea>
+                <p class="admin-hint">Appended after the copyright line. Allowed markup: <code>&lt;p&gt;</code>, <code>&lt;span&gt;</code>, <code>&lt;a&gt;</code>, <code>&lt;strong&gt;</code>, <code>&lt;em&gt;</code>, <code>&lt;b&gt;</code>, <code>&lt;i&gt;</code>, and <code>&lt;br&gt;</code>. Links may use relative URLs, https, mailto, tel, or # anchors.</p>
             </div>
             <div class="field-grid">
                 <div class="field">

@@ -60,7 +60,7 @@ class PiecesController
         }
 
         $pageTitle = 'Art Pieces | ' . app_site_name();
-        $pageDescription = 'Generative art pieces and creative experiments.';
+        $pageDescription = public_copy_value('public_art_copy.pieces_archive.meta_description');
         $bodyClass = 'page-pieces';
         $canonicalUrl = seo_absolute_url('/pieces');
         require dirname(__DIR__) . '/views/pieces/index.php';

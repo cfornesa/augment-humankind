@@ -95,6 +95,7 @@ require_once __DIR__ . '/app/helpers/audit-log.php';
 require_once __DIR__ . '/app/helpers/rate-limit.php';
 require_once __DIR__ . '/app/helpers/auth.php';
 require_once __DIR__ . '/app/helpers/admin-navigation.php';
+require_once __DIR__ . '/app/helpers/public-copy.php';
 require_once __DIR__ . '/app/models/AdminIdentity.php';
 require_once __DIR__ . '/app/models/SiteSettings.php';
 require_once __DIR__ . '/app/helpers/bootstrap_state.php';
@@ -222,7 +223,7 @@ $pageMeta = [
     ],
     '404' => [
         'title' => 'Page not found | ' . $siteName,
-        'description' => 'The requested page could not be found.',
+        'description' => public_copy_value('public_art_copy.not_found.meta_description'),
     ],
 ];
 
@@ -758,16 +759,25 @@ if ($page === 'contact') {
             </section>
         <?php else: ?>
             <section class="page-hero" aria-labelledby="missing-title">
-                <p class="eyebrow">404</p>
-                <h1 id="missing-title">Page not found.</h1>
-                <p>The page may have moved, or the address may be incorrect.</p>
-                <a class="button button-primary" href="/">Return home</a>
+                <p class="eyebrow"><?= e(public_copy_value('public_art_copy.not_found.eyebrow')) ?></p>
+                <h1 id="missing-title"><?= e(public_copy_value('public_art_copy.not_found.title')) ?></h1>
+                <p><?= e(public_copy_value('public_art_copy.not_found.body')) ?></p>
+                <a class="button button-primary" href="/portfolio"><?= e(public_copy_value('public_art_copy.not_found.cta_label')) ?></a>
             </section>
         <?php endif; ?>
     </main>
 
+    <?php
+    $indexFooterCopyright = trim((string) ($siteSettings['copyright_line'] ?? ''));
+    $indexFooterCopyrightHtml = function_exists('public_copy_footer_credit_html')
+        ? public_copy_footer_credit_html($indexFooterCopyright !== '' ? $indexFooterCopyright : $siteName)
+        : e($indexFooterCopyright !== '' ? $indexFooterCopyright : $siteName);
+    $indexFooterCreditHtml = public_copy_footer_credit_html((string) ($siteSettings['footer_credit'] ?? ''));
+    ?>
     <footer class="site-footer">
-        <p>&copy; <?= date('Y') ?> <?= e($siteName) ?></p>
+        <div class="site-footer-text">
+            &copy; <?= date('Y') ?> <?= $indexFooterCopyrightHtml ?><?= $indexFooterCreditHtml !== '' ? '. ' . $indexFooterCreditHtml : '' ?>
+        </div>
         <nav aria-label="Footer navigation">
             <a href="/">Home</a>
             <a href="/portfolio">Portfolio</a>

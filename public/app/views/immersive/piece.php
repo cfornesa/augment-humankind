@@ -579,7 +579,7 @@ canvas[aria-hidden="true"] {
             'download_items' => !$isStaticEmbed ? [
                 [
                     'tag' => 'a',
-                    'label' => 'Download Piece',
+                    'label' => public_copy_value('public_art_copy.shared_ui.download_piece_label'),
                     'icon' => 'download-small',
                     'attrs' => [
                         'href' => $pieceDownloadUrl,
@@ -589,7 +589,7 @@ canvas[aria-hidden="true"] {
                 ],
                 [
                     'tag' => 'button',
-                    'label' => 'Download PNG',
+                    'label' => public_copy_value('public_art_copy.shared_ui.download_png_label'),
                     'icon' => 'png',
                     'attrs' => [
                         'id' => 'immersive-download-png-btn',

@@ -194,6 +194,11 @@ at least one exhibit. `/portfolio/exhibits` lists native exhibits.
 lists piece taxonomy entries, and `/portfolio/art-media/[slug]` renders the
 pieces assigned to one art-medium term.
 
+The gallery intro, section labels/copy, archive intro/meta copy, and portfolio
+detail-page chrome are admin-editable. Those visitor-facing strings are read
+from `site_settings.settings_json` under `portfolio_copy`, with the previous
+hard-coded text retained as runtime fallback defaults for fresh installs.
+
 `/portfolio/collection/[slug]` renders a native collection detail page.
 `/portfolio/exhibit/[slug]` renders a native exhibit detail page. Missing,
 deleted, or unknown portfolio slugs return the shared 404 view.
@@ -678,6 +683,27 @@ Theme-generation default profile selection is managed from
 `/admin/ai-settings?tab=vendor`, not from the Features panel.
 `POST /api/cron/refresh-feeds` responds `200 {"ok": true, "skipped": "blog disabled"}`
 instead of ingesting while the blog feature is off.
+
+### Public Copy
+
+- `GET /admin/public-copy`
+- `POST /admin/public-copy/save`
+
+`/admin/public-copy` edits visitor-facing system copy for the portfolio and
+adjacent public art surfaces. Portfolio-owned strings are stored under
+`site_settings.settings_json.portfolio_copy`; shared public-art/UI strings are
+stored under `site_settings.settings_json.public_art_copy`.
+
+The surface covers `/portfolio`, the portfolio archive pages, portfolio detail
+page chrome, `/pieces`, `/collections`, the shared 404 hero, selected
+immersive/download labels, and the comments empty-state copy used by those
+surfaces. Record-owned descriptions and statements remain on their original
+content models.
+
+The footer credit remains `site_settings.footer_credit`, but it now renders as
+sanitized inline HTML. Allowed tags: `<a>`, `<strong>`, `<em>`, `<b>`, `<i>`,
+and `<br>`. Link URLs may be relative, `https`, `mailto`, `tel`, or `#`
+anchors; unsafe tags and attributes are stripped.
 
 ### Categories, Art Media, and Exhibits
 

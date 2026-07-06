@@ -6,6 +6,14 @@ $ogImage = $items[0]['preview_image']
     ?? ($items[0]['thumbnail_url'] ?? null)
     ?? ($items[0]['thumbnail_value'] ?? null)
     ?? null;
+$emptyStateMap = [
+    'collections' => 'portfolio_copy.archives.exhibit_collections.empty_state',
+    'exhibits' => 'portfolio_copy.archives.exhibits.empty_state',
+    'platform-collections' => 'portfolio_copy.archives.platform_collections.empty_state',
+    'pieces' => 'portfolio_copy.archives.pieces.empty_state',
+    'art-media' => 'portfolio_copy.archives.art_media.empty_state',
+];
+$emptyStateText = isset($emptyStateMap[$itemType]) ? public_copy_value($emptyStateMap[$itemType]) : 'Nothing has been published here yet.';
 
 require __DIR__ . '/../partials/header.php';
 ?>
@@ -75,7 +83,7 @@ require __DIR__ . '/../partials/header.php';
         <?php endif; ?>
 
         <?php if (empty($items)): ?>
-            <p class="gallery-empty">Nothing has been published here yet.</p>
+            <p class="gallery-empty"><?= e($emptyStateText) ?></p>
         <?php else: ?>
             <div
                 class="portfolio-archive-listing"

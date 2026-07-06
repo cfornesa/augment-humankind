@@ -12,7 +12,7 @@ $bodyClass = bodyClass('portfolio-category');
 require __DIR__ . '/../partials/header.php';
 ?>
     <section class="collection-detail-page">
-        <a href="/portfolio/art-media" class="work-back">&#8592; All Art Media</a>
+        <a href="/portfolio/art-media" class="work-back">&#8592; <?= e(public_copy_value('portfolio_copy.archives.art_media.detail_back_label')) ?></a>
 
         <div class="collection-detail-header" aria-labelledby="category-title">
             <?php if ($category['thumbnail_value']): ?>
@@ -35,7 +35,7 @@ require __DIR__ . '/../partials/header.php';
         </div>
 
         <?php if (empty($pieces)): ?>
-            <p class="gallery-empty">No pieces use this art medium yet.</p>
+            <p class="gallery-empty"><?= e(public_copy_value('portfolio_copy.archives.art_media.detail_empty_state')) ?></p>
         <?php else: ?>
             <div class="artwork-grid collection-artworks" aria-label="Pieces in this art medium">
                 <?php foreach ($pieces as $i => $piece): ?>

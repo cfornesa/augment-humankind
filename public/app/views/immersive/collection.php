@@ -699,7 +699,7 @@ html, body {
                 'download_items' => [
                     [
                         'tag' => 'a',
-                        'label' => 'Download Piece',
+                        'label' => public_copy_value('public_art_copy.shared_ui.download_piece_label'),
                         'icon' => 'download-small',
                         'attrs' => [
                             'href' => $collectionDownloadUrl,
@@ -709,7 +709,7 @@ html, body {
                     ],
                     [
                         'tag' => 'button',
-                        'label' => 'Download PNG',
+                        'label' => public_copy_value('public_art_copy.shared_ui.download_png_label'),
                         'icon' => 'png',
                         'attrs' => [
                             'data-collection-download-png' => true,

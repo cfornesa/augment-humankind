@@ -1011,14 +1011,26 @@ h3 {
     border-top: 3px solid var(--line);
 }
 
-.site-footer p {
+.site-footer p,
+.site-footer-text {
     max-width: 34rem;
     margin: 0;
+}
+
+.site-footer-text p {
+    margin: 0 0 0.5rem;
+}
+
+.site-footer-text p:last-child {
+    margin-bottom: 0;
 }
 
 .site-footer nav {
     flex-wrap: wrap;
     justify-content: flex-end;
+    align-content: flex-start;
+    align-self: flex-start;
+    row-gap: 0.5rem;
 }
 
 @media (max-width: 860px) {

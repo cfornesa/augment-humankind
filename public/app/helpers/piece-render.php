@@ -3,6 +3,9 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/immersive-chrome.php';
+if (!function_exists('public_copy_value')) {
+    require_once __DIR__ . '/public-copy.php';
+}
 
 function piece_render_document(array $piece, array $version, array $options = []): string
 {
@@ -418,7 +421,7 @@ function piece_export_immersive_document(array $piece, array $version, array $op
         ] : null,
         'download_items' => [[
             'tag' => 'button',
-            'label' => 'Download PNG',
+            'label' => public_copy_value('public_art_copy.shared_ui.download_png_label'),
             'icon' => 'png',
             'attrs' => [
                 'data-immersive-download-png' => true,
@@ -2050,7 +2053,7 @@ function collection_export_document(array $collection, array $items, array $opti
         ],
         'download_items' => [[
             'tag' => 'button',
-            'label' => 'Download PNG',
+            'label' => public_copy_value('public_art_copy.shared_ui.download_png_label'),
             'icon' => 'png',
             'attrs' => [
                 'data-immersive-download-png' => true,

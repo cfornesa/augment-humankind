@@ -5,7 +5,7 @@ declare(strict_types=1);
 http_response_code(404);
 
 $pageTitle = 'Not found | ' . app_site_name();
-$pageDescription = 'The requested page could not be found.';
+$pageDescription = public_copy_value('public_art_copy.not_found.meta_description');
 $bodyClass = 'page-404';
 $canonicalUrl = null;
 $ogImage = null;
@@ -13,10 +13,10 @@ $ogImage = null;
 require __DIR__ . '/partials/header.php';
 ?>
     <section class="page-hero" aria-labelledby="missing-title">
-        <p class="eyebrow">404</p>
-        <h1 id="missing-title">This page is not on the map.</h1>
-        <p>The page may have moved, or the address may be incorrect.</p>
-        <a class="button button-primary" href="/portfolio">Return to the gallery</a>
+        <p class="eyebrow"><?= e(public_copy_value('public_art_copy.not_found.eyebrow')) ?></p>
+        <h1 id="missing-title"><?= e(public_copy_value('public_art_copy.not_found.title')) ?></h1>
+        <p><?= e(public_copy_value('public_art_copy.not_found.body')) ?></p>
+        <a class="button button-primary" href="/portfolio"><?= e(public_copy_value('public_art_copy.not_found.cta_label')) ?></a>
     </section>
 <?php
 require __DIR__ . '/partials/footer.php';

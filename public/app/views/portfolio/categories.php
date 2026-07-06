@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 $pageTitle = 'Art Media | ' . app_site_name() . ' Portfolio';
-$pageDescription = 'Explore the art media that organize pieces within the ' . app_site_name() . ' portfolio.';
+$pageDescription = public_copy_value('portfolio_copy.archives.art_media.categories_meta_description');
 $ogImage = $categories[0]['thumbnail_value'] ?? null;
 $canonicalUrl = seo_absolute_url('/portfolio/art-media');
 $bodyClass = bodyClass('portfolio-categories');
@@ -12,12 +12,12 @@ require __DIR__ . '/../partials/header.php';
 ?>
     <section class="collection-page">
         <div class="collection-header">
-            <a href="/portfolio" class="work-back">&#8592; Back to gallery</a>
-            <h1 class="collection-title">Art Media</h1>
+            <a href="/portfolio" class="work-back">&#8592; <?= e(public_copy_value('portfolio_copy.archives.art_media.index_back_label')) ?></a>
+            <h1 class="collection-title"><?= e(public_copy_value('portfolio_copy.archives.art_media.heading')) ?></h1>
         </div>
 
         <?php if (empty($categories)): ?>
-            <p class="gallery-empty">No art media have been created yet.</p>
+            <p class="gallery-empty"><?= e(public_copy_value('portfolio_copy.archives.art_media.index_empty_state')) ?></p>
         <?php else: ?>
             <div class="collection-grid" aria-label="Art media list">
                 <?php foreach ($categories as $catIndex => $cat): ?>
