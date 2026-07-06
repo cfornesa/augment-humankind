@@ -95,7 +95,13 @@ $showAdminEditButton = isset($adminEditUrl) && is_string($adminEditUrl) && $admi
 $showReadOnlyFullViewButton = !$isEmbedMode && !$isStaticEmbed
     && ($engine === 'p5' || $engine === 'svg' || ($engine === 'c2' && !$c2Interactive));
 $showC2InteractiveOverlay = $engine === 'c2' && $c2Interactive;
-$fullViewPieceSrcdoc = $showReadOnlyFullViewButton ? piece_render_document($piece, $version) : null;
+$fullViewPieceSrcdoc = ($showReadOnlyFullViewButton || $showC2InteractiveOverlay) ? piece_render_document($piece, $version) : null;
+$pieceViewActionLabel = null;
+if ($showC2InteractiveOverlay) {
+    $pieceViewActionLabel = 'Open interactive view';
+} elseif ($showReadOnlyFullViewButton) {
+    $pieceViewActionLabel = 'View piece full size';
+}
 
 ?>
 <!DOCTYPE html>
@@ -471,102 +477,45 @@ canvas[aria-hidden="true"] {
   display: none !important;
 }
 
-/* C2.js click-to-interact overlay */
-.immersive-stage-action-btn {
-  position: absolute;
-  bottom: calc(1rem + env(safe-area-inset-bottom));
-  left: calc(1rem + env(safe-area-inset-left));
-  z-index: 130;
-  display: inline-flex;
-  align-items: center;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  background: rgba(0, 0, 0, 0.55);
-  color: #fff;
-  padding: 0.5rem 1rem;
-  font-size: 0.8rem;
-  font-weight: 500;
-  border-radius: 9999px;
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-  cursor: pointer;
-  transition: background 0.2s, border-color 0.2s;
-}
-.immersive-stage-action-btn:hover {
-  background: rgba(0, 0, 0, 0.7);
-  border-color: #fff;
-}
-.immersive-action-rail {
-  position: absolute;
-  bottom: calc(1rem + env(safe-area-inset-bottom));
-  right: calc(1rem + env(safe-area-inset-right));
-  z-index: 130;
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  align-items: center;
-  gap: 0.5rem;
-  max-width: min(28rem, calc(100% - 2rem));
-}
-.immersive-download-cluster {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 0.5rem;
-}
-.immersive-download-cluster .immersive-download-btn {
-  position: static;
-  text-decoration: none;
-}
-.immersive-download-cluster .immersive-download-btn[disabled] {
-  opacity: 0.6;
-  cursor: progress;
-}
-@media (max-width: 640px) {
-  .immersive-action-rail {
-    left: calc(1rem + env(safe-area-inset-left));
-    justify-content: center;
+/* Shared immersive stage toolbar (immersive-chrome.php) */
+<?= immersive_stage_toolbar_css() ?>
+@media (max-width: 700px), (max-height: 560px) {
+  .immersive-header {
+    flex-wrap: wrap;
+    align-items: flex-start;
+    padding: 0.7rem 0.85rem;
+    gap: 0.7rem;
   }
-  .immersive-download-cluster {
-    flex: 1 1 auto;
+  .back-btn,
+  .immersive-admin-link {
+    padding: 0.45rem 0.85rem;
+    font-size: 0.78rem;
   }
-  .immersive-download-cluster .immersive-download-btn {
-    flex: 1 1 auto;
-    justify-content: center;
+  .header-actions {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 0.65rem;
   }
-}
-.c2-interactive-overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 140;
-  background: #05070f;
-}
-.c2-interactive-overlay[hidden] {
-  display: none !important;
-}
-.c2-interactive-frame {
-  width: 100%;
-  height: 100%;
-  border: 0;
-  display: block;
-}
-.c2-interactive-close-btn {
-  position: absolute;
-  top: calc(0.75rem + env(safe-area-inset-top));
-  right: calc(0.75rem + env(safe-area-inset-right));
-  z-index: 150;
-  display: inline-flex;
-  height: 2.5rem;
-  width: 2.5rem;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  background: rgba(0, 0, 0, 0.6);
-  color: #fff;
-  border-radius: 9999px;
-  cursor: pointer;
-}
-.c2-interactive-close-btn:hover {
-  background: rgba(0, 0, 0, 0.8);
+  .header-info {
+    flex: 1 1 14rem;
+    min-width: 0;
+    text-align: left;
+    order: -1;
+  }
+  .header-info .title {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    white-space: normal;
+    overflow: hidden;
+    text-overflow: unset;
+    line-height: 1.3;
+  }
+  .stage-wrapper {
+    height: 40vh;
+    min-height: 250px;
+  }
 }
 
 /* A-Frame's device-orientation-permission-ui dialog hardcodes a white card
@@ -622,44 +571,37 @@ canvas[aria-hidden="true"] {
     <div class="stage-wrapper">
         <div id="immersive-stage"></div>
 
-        <!-- Fullscreen controls (hidden in static embeds, and iOS embeds without handshakes) -->
-        <?php if (!$isStaticEmbed): ?>
-            <div class="immersive-action-rail" role="toolbar" aria-label="Immersive piece actions">
-                <div class="immersive-download-cluster" role="group" aria-label="Download this piece">
-                    <a href="<?= e($pieceDownloadUrl) ?>" class="immersive-stage-action-btn immersive-download-btn"
-                       data-immersive-download-piece="<?= e($pieceDownloadUrl) ?>" download>Download Piece</a>
-                    <button type="button" id="immersive-download-png-btn" class="immersive-stage-action-btn immersive-download-btn"
-                            data-immersive-download-png data-download-filename="<?= e($pngFilename) ?>">Download PNG</button>
-                </div>
-                <button id="fullscreen-toggle-btn" class="fullscreen-toggle-btn" onclick="toggleFullscreen()" aria-label="Expand immersive view">
-                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
-                </button>
-            </div>
-        <?php endif; ?>
+        <?= immersive_stage_toolbar_markup([
+            'view_action' => $pieceViewActionLabel !== null ? [
+                'label' => $pieceViewActionLabel,
+                'icon' => $showC2InteractiveOverlay ? 'interactive' : 'view',
+            ] : null,
+            'download_items' => !$isStaticEmbed ? [
+                [
+                    'tag' => 'a',
+                    'label' => 'Download Piece',
+                    'icon' => 'download-small',
+                    'attrs' => [
+                        'href' => $pieceDownloadUrl,
+                        'data-immersive-download-piece' => $pieceDownloadUrl,
+                        'download' => true,
+                    ],
+                ],
+                [
+                    'tag' => 'button',
+                    'label' => 'Download PNG',
+                    'icon' => 'png',
+                    'attrs' => [
+                        'id' => 'immersive-download-png-btn',
+                        'data-immersive-download-png' => true,
+                        'data-download-filename' => $pngFilename,
+                    ],
+                ],
+            ] : null,
+            'show_fullscreen' => !$isStaticEmbed,
+            'fullscreen_onclick' => 'toggleFullscreen()',
+        ]) ?>
 
-        <?php if ($showC2InteractiveOverlay): ?>
-            <!-- Click-to-interact overlay: the gallery room only ever shows this
-                 piece as a texture-projected frame (off-screen canvas, no pointer
-                 events reach it). Opening the same on-screen render document used
-                 by the non-immersive /pieces/{id} view here gives full click/touch/
-                 drag without building pointer-forwarding/raycasting into the 3D
-                 scene. -->
-            <div id="c2-interactive-overlay" class="c2-interactive-overlay" hidden>
-                <button id="c2-interactive-close-btn" class="c2-interactive-close-btn" aria-label="Close interactive view">
-                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                </button>
-                <iframe id="c2-interactive-frame" class="c2-interactive-frame" title="Interactive view" tabindex="-1" sandbox="allow-scripts allow-same-origin"></iframe>
-            </div>
-            <button id="c2-interact-hint-btn" class="immersive-stage-action-btn" type="button">
-                Click to interact
-            </button>
-        <?php endif; ?>
-
-        <?php if ($showReadOnlyFullViewButton): ?>
-            <button id="readonly-full-view-btn" class="immersive-stage-action-btn" type="button">
-                View full size
-            </button>
-        <?php endif; ?>
     </div>
 
     <!-- Copy Embeds Toolbar (only shown in standard mode) -->
@@ -784,7 +726,7 @@ canvas[aria-hidden="true"] {
 
 <script src="/assets/js/public-piece-download.js?v=<?= $publicPieceScriptVersion ?>"></script>
 <script type="module">
-import { mountThreeImmersivePiece, mountAFrameImmersivePiece, mountGalleryPiece } from '/assets/js/immersive-gallery.js?v=<?= $galleryRuntimeVersion ?>';
+import { mountThreeImmersivePiece, mountAFrameImmersivePiece, mountGalleryPiece, setupImmersiveStageChrome } from '/assets/js/immersive-gallery.js?v=<?= $galleryRuntimeVersion ?>';
 
 // Setup full screen toggling variables
 const shell = document.getElementById('immersive-shell');
@@ -935,9 +877,17 @@ document.addEventListener('fullscreenchange', () => {
     syncFullscreenState(isFull);
 });
 
-// Exit fullscreen on Escape
+// Exit fullscreen on Escape — unless the download menu or the full-view
+// overlay is open (each handles its own Escape close first).
 window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
+        if (document.querySelector('[data-immersive-download-menu]:not([hidden])')) {
+            return;
+        }
+        const stageEl = document.getElementById('immersive-stage');
+        if (stageEl?.dataset.keyboardNavigationDisabled === 'true') {
+            return;
+        }
         if (shell.classList.contains('fullscreen')) {
             toggleFullscreen();
         }
@@ -1021,48 +971,10 @@ function handleRuntimeError(err) {
     }
 }
 
-// Click-to-interact overlay (c2 only): the gallery room only ever shows
-// this piece as a texture-projected frame, so opening the same on-screen
-// render document used by /pieces/{id} is the only way to get real
-// click/touch/drag here.
-let openInteractiveOverlay = null;
-<?php if ($showC2InteractiveOverlay): ?>
-const c2InteractiveSrcdoc = <?= json_encode(piece_render_document($piece, $version)) ?>;
-const c2Overlay = document.getElementById('c2-interactive-overlay');
-const c2Frame = document.getElementById('c2-interactive-frame');
-const c2CloseBtn = document.getElementById('c2-interactive-close-btn');
-const c2HintBtn = document.getElementById('c2-interact-hint-btn');
-
-openInteractiveOverlay = function () {
-    if (!c2Frame.getAttribute('srcdoc')) {
-        c2Frame.setAttribute('srcdoc', c2InteractiveSrcdoc);
-    }
-    stage.dataset.keyboardNavigationDisabled = 'true';
-    c2Overlay.hidden = false;
-    requestAnimationFrame(() => {
-        try {
-            c2Frame.focus();
-        } catch (e) {
-            c2CloseBtn.focus();
-        }
-    });
-};
-
-function closeInteractiveOverlay() {
-    c2Overlay.hidden = true;
-    delete stage.dataset.keyboardNavigationDisabled;
-    requestAnimationFrame(() => {
-        stage.focus();
-    });
-}
-
-c2CloseBtn.addEventListener('click', closeInteractiveOverlay);
-c2HintBtn.addEventListener('click', openInteractiveOverlay);
-window.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !c2Overlay.hidden) closeInteractiveOverlay();
-});
-<?php endif; ?>
-
+// C2 interactive pieces open inside the shared full-view overlay (slideshow
+// shell) with an interactive iframe: the gallery room only ever shows the
+// piece as a texture-projected frame, so the overlay's on-screen render
+// document is the only way to get real click/touch/drag here.
 try {
     let immersiveViewer = null;
     if (engine === 'three') {
@@ -1070,20 +982,24 @@ try {
     } else if (engine === 'aframe') {
         immersiveViewer = mountAFrameImmersivePiece(stage, code, htmlCode, cssCode, handleRuntimeError, viewerControlsOptions);
     } else {
-        immersiveViewer = mountGalleryPiece(stage, code, htmlCode, cssCode, engine, title, sourceUrl, prompt, description, handleRuntimeError, openInteractiveOverlay, {
+        immersiveViewer = mountGalleryPiece(stage, code, htmlCode, cssCode, engine, title, sourceUrl, prompt, description, handleRuntimeError, null, {
             ...viewerControlsOptions,
-            fullView: <?= $showReadOnlyFullViewButton ? json_encode([
+            fullView: <?= ($showReadOnlyFullViewButton || $showC2InteractiveOverlay) ? json_encode([
                 'items' => [[
                     'type' => 'iframe',
                     'srcdoc' => $fullViewPieceSrcdoc,
+                    'interactive' => $showC2InteractiveOverlay,
+                    'title' => (string) ($piece['title'] ?? ''),
                 ]],
+                'overlayOptions' => ['showDownloadControls' => false],
             ], JSON_HEX_TAG | JSON_UNESCAPED_UNICODE) : 'null' ?>,
         });
     }
-    const readOnlyBtn = document.getElementById('readonly-full-view-btn');
-    if (readOnlyBtn && immersiveViewer?.openFullViewAt) {
-        readOnlyBtn.addEventListener('click', () => immersiveViewer.openFullViewAt(0));
-    }
+    setupImmersiveStageChrome(stage, {
+        onViewAction() {
+            immersiveViewer?.openFullViewAt?.(0);
+        },
+    });
 
     const downloadPieceLink = document.querySelector('[data-immersive-download-piece]');
     if (downloadPieceLink) {
@@ -1116,17 +1032,18 @@ try {
         const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
         async function captureImmersivePng() {
-            <?php if ($showC2InteractiveOverlay): ?>
-            // Interactive overlay open: snapshot the user's current
-            // interactive state from the overlay iframe instead.
-            if (!c2Overlay.hidden && c2Frame.contentDocument) {
-                const doc = c2Frame.contentDocument;
-                const surface = await dl.waitForCaptureReady(doc);
-                return surface.type === 'svg'
-                    ? dl.exportSvg(surface.node)
-                    : dl.exportCanvasWithValidation(doc, surface.node);
+            // Full-view overlay open: snapshot the user's current state from
+            // the overlay iframe instead (covers interactive C2 pieces too).
+            if (immersiveViewer?.isFullViewOpen?.()) {
+                const overlayFrame = document.querySelector('[data-full-view-viewport] iframe');
+                if (overlayFrame?.contentDocument) {
+                    const doc = overlayFrame.contentDocument;
+                    const surface = await dl.waitForCaptureReady(doc);
+                    return surface.type === 'svg'
+                        ? dl.exportSvg(surface.node)
+                        : dl.exportCanvasWithValidation(doc, surface.node);
+                }
             }
-            <?php endif; ?>
             const surface = immersiveViewer?.getCaptureSurface?.();
             if (!surface || !surface.canvas) {
                 throw new Error('No downloadable canvas is available yet.');
@@ -1149,10 +1066,11 @@ try {
         downloadPngBtn.addEventListener('click', async () => {
             if (downloadPngBtn.disabled) return;
             const filename = downloadPngBtn.dataset.downloadFilename || 'piece.png';
-            const originalLabel = downloadPngBtn.textContent;
+            const labelEl = downloadPngBtn.querySelector('span') || downloadPngBtn;
+            const originalLabel = labelEl.textContent;
             downloadPngBtn.disabled = true;
             downloadPngBtn.setAttribute('aria-busy', 'true');
-            downloadPngBtn.textContent = 'Preparing PNG...';
+            labelEl.textContent = 'Preparing PNG...';
             try {
                 const exported = await captureImmersivePng();
                 const blob = await dl.canvasToBlob(exported);
@@ -1165,7 +1083,7 @@ try {
             } finally {
                 downloadPngBtn.disabled = false;
                 downloadPngBtn.removeAttribute('aria-busy');
-                downloadPngBtn.textContent = originalLabel;
+                labelEl.textContent = originalLabel;
             }
         });
     }

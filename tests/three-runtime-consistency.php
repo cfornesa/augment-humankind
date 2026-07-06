@@ -360,11 +360,19 @@ foreach ([
         assert_contains($src, 'isIPhoneWebKitBrowser');
         assert_contains($src, 'creatr-toggle-fullscreen');
     });
-    test("{$label} fullscreen button clears the iPhone notch/home-indicator via safe-area insets", function () use ($src) {
-        assert_contains($src, 'env(safe-area-inset-bottom)');
-        assert_contains($src, 'env(safe-area-inset-right)');
+    test("{$label} renders the shared top stage toolbar (immersive-chrome.php)", function () use ($src) {
+        assert_contains($src, 'immersive_stage_toolbar_css()');
+        assert_contains($src, 'immersive_stage_toolbar_markup(');
     });
 }
+
+test('shared stage toolbar clears the iPhone notch via safe-area insets and anchors to the top', function () {
+    $chrome = file_get_contents(__DIR__ . '/../public/app/helpers/immersive-chrome.php');
+    assert_contains($chrome, 'env(safe-area-inset-top)');
+    assert_contains($chrome, 'env(safe-area-inset-left)');
+    assert_contains($chrome, 'env(safe-area-inset-right)');
+    assert_contains($chrome, 'top: calc(0.75rem + env(safe-area-inset-top))');
+});
 
 echo "\n=== thumbnail capture readiness signal (P5/C2/Three) ===\n";
 

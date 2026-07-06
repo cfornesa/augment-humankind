@@ -761,7 +761,14 @@ function createSharedGyroController(stageEl, camera, options = {}) {
     btn.type = "button";
     btn.setAttribute("aria-label", "Toggle gyroscope camera control");
     btn.textContent = "⟲";
-    btn.style.cssText = "position:absolute;top:calc(0.75rem + env(safe-area-inset-top));left:calc(0.75rem + env(safe-area-inset-left));z-index:130;display:inline-flex;align-items:center;justify-content:center;height:2.5rem;width:2.5rem;border:1px solid rgba(255,255,255,0.15);background:rgba(89,184,201,0.85);color:#fff;border-radius:9999px;font-size:1.1rem;cursor:pointer;";
+    // The stage toolbar reserves a slot so the gyro toggle never overlaps the
+    // top-left control group; stages without a toolbar keep the absolute
+    // top-left placement.
+    const slot = document.querySelector("[data-immersive-gyro-slot]");
+    const placement = slot
+      ? "position:static;"
+      : "position:absolute;top:calc(0.75rem + env(safe-area-inset-top));left:calc(0.75rem + env(safe-area-inset-left));z-index:130;";
+    btn.style.cssText = placement + "display:inline-flex;align-items:center;justify-content:center;height:2.5rem;width:2.5rem;border:1px solid rgba(255,255,255,0.15);background:rgba(89,184,201,0.85);color:#fff;border-radius:9999px;font-size:1.1rem;cursor:pointer;";
     btn.addEventListener("click", () => {
       const nextActive = !gyroActive;
       if (nextActive) {
@@ -770,7 +777,7 @@ function createSharedGyroController(stageEl, camera, options = {}) {
       }
       setGyroActive(nextActive);
     });
-    stageEl.appendChild(btn);
+    (slot || stageEl).appendChild(btn);
     return btn;
   }
 
@@ -890,6 +897,10 @@ function createSharedGyroController(stageEl, camera, options = {}) {
 
 export function createReadOnlyFullViewOverlay(stageEl, items, options = {}) {
   const overlayItems = Array.isArray(items) ? items : [];
+  const singleItemMode = options.layout === "single";
+  // Piece full view keeps download controls in the stage toolbar instead of
+  // duplicating them inside the overlay shell.
+  const showDownloadControls = options.showDownloadControls !== false;
   const host = stageEl.parentElement ?? stageEl;
   if (!overlayItems.length) {
     return {
@@ -980,7 +991,12 @@ export function createReadOnlyFullViewOverlay(stageEl, items, options = {}) {
   }
 
   function getColumns() {
+    if (singleItemMode) return 1;
     return Math.min(getProgressiveExhibitLiveBudget(window.innerWidth), overlayItems.length);
+  }
+
+  function getStepSize() {
+    return singleItemMode ? 1 : getColumns();
   }
 
   function clearViewport() {
@@ -1046,8 +1062,8 @@ export function createReadOnlyFullViewOverlay(stageEl, items, options = {}) {
     currentRenderedItem = item;
     const downloadUrl = typeof item?.download_url === "string" ? item.download_url : "";
     downloadPieceLink.href = downloadUrl;
-    downloadPieceLink.style.display = downloadUrl ? "inline-flex" : "none";
-    downloadPngBtn.style.display = item?.type === "iframe" || item?.type === "image" ? "" : "none";
+    downloadPieceLink.style.display = showDownloadControls && downloadUrl ? "inline-flex" : "none";
+    downloadPngBtn.style.display = showDownloadControls && (item?.type === "iframe" || item?.type === "image") ? "" : "none";
     if (typeof options.onActiveItemChange === "function") {
       options.onActiveItemChange(item, normalizeIndex(currentStartIndex));
     }
@@ -1108,6 +1124,8 @@ export function createReadOnlyFullViewOverlay(stageEl, items, options = {}) {
     }
   }
 
+  let blockCloseUntil = 0;
+
   function openAt(index = 0) {
     currentStartIndex = normalizeIndex(index);
     priorKeyboardDisabled = stageEl.dataset.keyboardNavigationDisabled === "true";
@@ -1117,6 +1135,9 @@ export function createReadOnlyFullViewOverlay(stageEl, items, options = {}) {
     root.hidden = false;
     root.setAttribute("aria-hidden", "false");
     root.style.display = "flex";
+    // Absorb any ghost/synthetic click events the browser fires after a
+    // touch/pointerup. Must be set BEFORE the close handlers can fire.
+    blockCloseUntil = Date.now() + 600;
     closeBtn.focus();
   }
 
@@ -1141,12 +1162,12 @@ export function createReadOnlyFullViewOverlay(stageEl, items, options = {}) {
   }
 
   function showPrevious() {
-    currentStartIndex = normalizeIndex(currentStartIndex - getColumns());
+    currentStartIndex = normalizeIndex(currentStartIndex - getStepSize());
     renderCurrentItems();
   }
 
   function showNext() {
-    currentStartIndex = normalizeIndex(currentStartIndex + getColumns());
+    currentStartIndex = normalizeIndex(currentStartIndex + getStepSize());
     renderCurrentItems();
   }
 
@@ -1199,6 +1220,7 @@ export function createReadOnlyFullViewOverlay(stageEl, items, options = {}) {
     }
   });
   root.addEventListener("click", (event) => {
+    if (Date.now() < blockCloseUntil) return;   // absorb ghost clicks
     if (event.target === root) close();
   });
   shell.addEventListener("click", (event) => {
@@ -1223,6 +1245,83 @@ export function createReadOnlyFullViewOverlay(stageEl, items, options = {}) {
       root.remove();
     },
     isOpen,
+  };
+}
+
+// Wires the immersive stage toolbar (view/slideshow trigger + download menu)
+// rendered by immersive_stage_toolbar_markup(). Every lookup is null-safe so
+// surfaces without a view button (three/aframe) or without a download menu
+// (image view, static embeds) can share the same call.
+export function setupImmersiveStageChrome(stageEl, options = {}) {
+  const root = options.root ?? document;
+  const viewTrigger = root.querySelector("[data-immersive-view-trigger]");
+  const downloadTrigger = root.querySelector("[data-immersive-download-trigger]");
+  const downloadMenu = root.querySelector("[data-immersive-download-menu]");
+  const downloadWrap = downloadTrigger?.closest(".immersive-stage-download-wrap") ?? null;
+
+  const onViewClick = () => options.onViewAction?.();
+  viewTrigger?.addEventListener("click", onViewClick);
+
+  function isMenuOpen() {
+    return !!downloadMenu && !downloadMenu.hidden;
+  }
+
+  function setMenuOpen(open, { focusTrigger = false } = {}) {
+    if (!downloadTrigger || !downloadMenu) return;
+    downloadMenu.hidden = !open;
+    downloadTrigger.setAttribute("aria-expanded", open ? "true" : "false");
+    if (open) {
+      downloadMenu.querySelector("a, button")?.focus?.();
+    } else if (focusTrigger) {
+      downloadTrigger.focus?.();
+    }
+  }
+
+  const onDownloadToggle = () => setMenuOpen(!isMenuOpen());
+
+  // Capture-phase pointerdown so an outside tap/click closes the menu before
+  // whatever it lands on handles the event (mouse + touch + pen).
+  const onDocumentPointerDown = (event) => {
+    if (!isMenuOpen()) return;
+    if (downloadWrap && event.target instanceof Node && downloadWrap.contains(event.target)) return;
+    setMenuOpen(false);
+  };
+
+  const onDocumentKeyDown = (event) => {
+    if (event.key === "Escape" && isMenuOpen()) {
+      event.stopPropagation();
+      setMenuOpen(false, { focusTrigger: true });
+    }
+  };
+
+  // Let menu item handlers (download link URL rewriting, PNG capture) run
+  // before the menu hides.
+  const onMenuClick = (event) => {
+    if (!(event.target instanceof Element)) return;
+    if (!event.target.closest("a, button")) return;
+    window.setTimeout(() => setMenuOpen(false), 120);
+  };
+
+  downloadTrigger?.addEventListener("click", onDownloadToggle);
+  downloadMenu?.addEventListener("click", onMenuClick);
+  if (downloadTrigger && downloadMenu) {
+    document.addEventListener("pointerdown", onDocumentPointerDown, { capture: true });
+    document.addEventListener("keydown", onDocumentKeyDown);
+  }
+
+  return {
+    closeDownloadMenu() {
+      setMenuOpen(false);
+    },
+    dispose() {
+      viewTrigger?.removeEventListener("click", onViewClick);
+      downloadTrigger?.removeEventListener("click", onDownloadToggle);
+      downloadMenu?.removeEventListener("click", onMenuClick);
+      if (downloadTrigger && downloadMenu) {
+        document.removeEventListener("pointerdown", onDocumentPointerDown, { capture: true });
+        document.removeEventListener("keydown", onDocumentKeyDown);
+      }
+    },
   };
 }
 
@@ -3175,7 +3274,7 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
   }
 
   if (Array.isArray(options.fullView?.items) && options.fullView.items.length > 0) {
-    readOnlyOverlay = createReadOnlyFullViewOverlay(stageEl, options.fullView.items);
+    readOnlyOverlay = createReadOnlyFullViewOverlay(stageEl, options.fullView.items, options.fullView.overlayOptions || {});
   }
 
   function animate() {
@@ -3821,6 +3920,7 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
   );
   if (hasFullViewItems) {
     readOnlyOverlay = createReadOnlyFullViewOverlay(stageEl, slideshowEntries.map((entry) => entry.item), {
+      layout: "single",
       onActiveItemChange(item) {
         const matchedIndex = items.findIndex((candidate) => candidate?.full_view === item);
         if (matchedIndex >= 0) selectedSourceIndex = matchedIndex;
@@ -3944,6 +4044,25 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
     destroy,
     getSelectedItem() {
       return items[selectedSourceIndex] || null;
+    },
+    getActiveIndex() {
+      // Return the index of the wall slot closest to the camera's look-at target.
+      // Used by the slideshow button to open at the piece the user is focused on.
+      let closestIndex = -1;
+      let minDistance = Infinity;
+      const target = shell.controls.target;
+      items.forEach((item, index) => {
+        if (item.kind !== "piece" && item.kind !== "image") return;
+        const slot = shell.slots[index];
+        const center = slot?.center;
+        if (!center) return;
+        const dx = center.x - target.x;
+        const dy = center.y - target.y;
+        const dz = center.z - target.z;
+        const dist = dx * dx + dy * dy + dz * dz * 0.35;
+        if (dist < minDistance) { minDistance = dist; closestIndex = index; }
+      });
+      return closestIndex >= 0 ? closestIndex : selectedSourceIndex;
     },
     getViewState() {
       return shellViewState(shell, { activeIndex: selectedSourceIndex });

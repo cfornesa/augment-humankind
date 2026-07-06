@@ -124,6 +124,13 @@ Source: DECISIONS.md 2026-07-03 C2.js Interactive pointer-coordinate fix.
 
 2026-06-19 DECISION The shared Three.js runtime reconciles OrbitControls after keyboard/click translation so drag/pan preserves zoom; only wheel/pinch changes zoom. (Regressed once when an unrelated refactor deleted `onThreeWheel` — the incident that motivated Rule 7.)
 
+2026-07-05 DECISION Immersive collections slideshow allows traversing all art pieces in a single unified traversal experience. While the slideshow overlay is open, the main exhibit wall's rendering loop is suspended and active slot WebGL runtimes are destroyed to free up GPU resources and prevent WebGL context conflict failures (especially on Safari). They are re-hydrated when the overlay is closed. The slideshow opens at the currently focused/closest piece using `getActiveIndex()` on the viewer.
+
+2026-07-05 DECISION Immersive collections slideshow traversal is hardened against touch/pointer ghost-click closures on mobile Safari/touchscreens by delaying the overlay opening (50ms) and increasing the backdrop click guard to 500ms. getActiveIndex() supports both piece and image kinds.
+
+2026-07-05 DECISION The immersive stage toolbar is shared chrome: markup/CSS live in `public/app/helpers/immersive-chrome.php` (`immersive_stage_toolbar_markup()`/`_css()`), wiring in `setupImmersiveStageChrome()` (immersive-gallery.js). Any new immersive surface or export must use it rather than hand-rolling controls, and controls must stay TOP-anchored so they never overlap the bottom-center iOS "Enable Motion Controls" permission button; the gyro ⟲ toggle mounts into the toolbar's `data-immersive-gyro-slot`. View-button gating: collections=slideshow, p5/svg/non-interactive-c2=single-item overlay (slideshow shell, no Prev/Next), interactive c2=same overlay with interactive iframe, three/aframe=no view button. Export download menus are PNG-only.
+Source: DECISIONS.md 2026-07-05 Shared Top Stage Toolbar session.
+
 # Regression Watchlist
 
 2026-06-14 NOTE Admin-view bug pattern: `$content = function () ... ;` produces a Closure that `<?= $content ?>` can't stringify (fatal). Correct pattern: `ob_start(); ... $content = ob_get_clean();`.

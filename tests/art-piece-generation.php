@@ -1257,8 +1257,10 @@ test('immersive bundle export keeps index.html as the immersive manual entry poi
     assert_contains($index, 'embeddedRuntimeSources');
     assert_contains($index, 'createRuntimeModuleUrl');
     assert_contains($index, 'mountThreeImmersivePiece');
-    assert_contains($index, 'immersive-export-fullscreen');
-    assert_contains($index, 'aria-label="Enter fullscreen"');
+    assert_contains($index, 'fullscreen-toggle-btn');
+    assert_contains($index, 'immersive-stage-toolbar');
+    assert_contains($index, 'data-immersive-download-png');
+    assert_contains($index, 'setupImmersiveStageChrome');
     assert_contains($index, '"camera":{"x":1,"y":2,"z":3}');
     assert_contains($runtime, "from './three/three.module.js'");
     assert_contains($runtime, 'runtime/p5/p5.min.js');
@@ -1328,8 +1330,10 @@ test('collection bundle export keeps all pieces in one immersive gallery entry p
     assert_contains($index, 'Collection Piece A');
     assert_contains($index, 'Collection Piece B');
     assert_contains($index, '"activeIndex":1');
-    assert_contains($index, 'collection-export-fullscreen');
-    assert_contains($index, 'collection-export-png');
+    assert_contains($index, 'fullscreen-toggle-btn');
+    assert_contains($index, 'immersive-stage-toolbar');
+    assert_contains($index, 'data-immersive-download-png');
+    assert_contains($index, 'setupImmersiveStageChrome');
     assert_contains($runtime, "from './three/three.module.js'");
     assert_contains($readme, 'This is a collection-wall export, not a single-piece export.');
 });

@@ -232,9 +232,11 @@ open into the local immersive viewer surface, with fullscreen and PNG capture
 available from that downloaded view. Optional `viewState` may carry a
 base64url-encoded JSON object with viewer state such as camera and target
 coordinates and, for collection walls, `activeIndex`; malformed state is
-ignored. Immersive-origin exports include a local immersive renderer, fullscreen
-and PNG icon controls, C2 interactive overlay support when applicable, patched
-local Three.js/OrbitControls imports, and an embedded Blob-module fallback so
+ignored. Immersive-origin exports include a local immersive renderer, the same
+shared top stage toolbar as the live immersive surfaces (engine-gated
+view/slideshow button, a download menu containing only `Download PNG`, and
+fullscreen), interactive C2 support through the shared full-view overlay,
+patched local Three.js/OrbitControls imports, and an embedded Blob-module fallback so
 `index.html` can still mount if direct local opening blocks sibling module
 imports. Regular exports remain a portable web bundle with `index.html` as the
 single entry point: opening that file should load the piece without requiring
@@ -269,10 +271,12 @@ fullscreen, PNG capture, slideshow/full-view behavior, and local runtime/media
 packaging for direct local opening.
 
 Immersive `/pieces/[id]` pages expose `Download Piece` and `Download PNG` in
-the immersive action rail. PNG capture reflects the visible immersive view from
-the current camera; for gallery-room engines this is the rendered Three.js
-gallery canvas, not the off-screen source canvas, unless the C2 interactive
-overlay is open.
+a download menu inside the shared top stage toolbar (see the immersive route
+notes below). PNG capture reflects the visible immersive view from the
+current camera; for gallery-room engines this is the rendered Three.js
+gallery canvas, not the off-screen source canvas, unless the full-view
+overlay (including interactive C2) is open — then capture uses the overlay
+iframe.
 
 `/exhibits` lists migrated `platform_exhibits` rows (name, description, item
 count, and a thumbnail drawn from the first item). `/exhibits/[slug]` renders
@@ -302,6 +306,19 @@ Compatibility embed and immersive routes return content rather than redirects:
   Safari uses Immersive Focus, a fixed `visualViewport`-sized mode with page
   scrolling locked and "Expand immersive view" / "Return to page" button
   language.
+  All immersive surfaces (pieces, collections, images, and downloaded
+  standalone exports) render one shared stage toolbar anchored to the top of
+  the stage — built by `public/app/helpers/immersive-chrome.php` and wired by
+  `setupImmersiveStageChrome()` in `immersive-gallery.js`. Top placement
+  keeps it clear of the bottom-center iOS "Enable Motion Controls" button;
+  after permission is granted the gyro toggle mounts into a reserved toolbar
+  slot. The left group holds an engine-gated view button and a
+  downward-opening download menu; the right side holds fullscreen. View
+  button gating: collections get a slideshow button; P5/SVG/non-interactive
+  C2 pieces get a full-size button opening the slideshow-style overlay
+  without Prev/Next or overlay download controls; interactive C2 pieces open
+  the same overlay with a fully interactive iframe; Three.js and A-Frame
+  pieces render no view button.
 - `GET /immersive/exhibits/[slug]` — full-page presentation for one platform
   exhibit and its migrated art/media items.
 - `GET /immersive/collections/[slug]` — full-page progressive collection wall
@@ -435,9 +452,10 @@ control, with iPhone Safari using Immersive Focus rather than native browser
 fullscreen.
 C2.js pieces in the immersive gallery/exhibit wall are texture-projected
 (no native pointer events reach the off-screen canvas); clicking the framed
-piece opens a fullscreen interactive overlay — the same on-screen render
-document `/pieces/[id]` uses — for full click/touch/drag, closable via an
-X button or Escape. The off-screen C2 runtime used for the projected gallery
+piece or the toolbar view button opens the shared full-view overlay — the
+slideshow-style shell hosting the same on-screen render document
+`/pieces/[id]` uses in a fully interactive iframe — for full
+click/touch/drag, closable via the × button or Escape. The off-screen C2 runtime used for the projected gallery
 frame still follows the same safe CMS-media helper contract as normal C2
 renders: `runtime.loadImage()`, `runtime.drawImage()`, and
 `runtime.drawImageCover()` are available for same-origin CMS media paths.

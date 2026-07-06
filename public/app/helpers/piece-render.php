@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+require_once __DIR__ . '/immersive-chrome.php';
+
 function piece_render_document(array $piece, array $version, array $options = []): string
 {
     $title = htmlspecialchars((string) ($piece['title'] ?? 'Art piece'), ENT_QUOTES | ENT_HTML5, 'UTF-8');
@@ -402,6 +404,30 @@ function piece_export_immersive_document(array $piece, array $version, array $op
     $jsonEmbeddedDeviceOrientation = json_encode(piece_export_patched_device_orientation_source(), $jsonFlags);
     $jsonEmbeddedImmersiveGallery = json_encode(piece_export_patched_immersive_gallery_source(), $jsonFlags);
 
+    // Shared top toolbar — identical placement/appearance to the live
+    // immersive surfaces. Three/A-Frame pieces have no gallery full view, so
+    // they render no view button; the download menu is PNG-only because a
+    // standalone export cannot re-download itself offline.
+    $isInteractiveC2 = $generationMode === 'c2_interactive';
+    $toolbarCss = immersive_stage_toolbar_css();
+    $toolbarMarkup = immersive_stage_toolbar_markup([
+        'view_action' => !in_array($engine, ['three', 'aframe'], true) ? [
+            'label' => $isInteractiveC2 ? 'Open interactive view' : 'View piece full size',
+            'icon' => $isInteractiveC2 ? 'interactive' : 'view',
+        ] : null,
+        'download_items' => [[
+            'tag' => 'button',
+            'label' => 'Download PNG',
+            'icon' => 'png',
+            'attrs' => [
+                'data-immersive-download-png' => true,
+                'data-download-filename' => piece_export_png_filename($piece),
+            ],
+        ]],
+        'show_fullscreen' => true,
+        'fullscreen_onclick' => null,
+    ]);
+
     return <<<HTML
 <!DOCTYPE html>
 <html lang="en">
@@ -415,36 +441,14 @@ function piece_export_immersive_document(array $piece, array $version, array $op
 html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#05070f;color:#f8f5ee;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}
 #immersive-stage{position:fixed;inset:0;width:100vw;height:100dvh;background:#000;overflow:hidden;}
 #piece-error{position:fixed;left:1rem;right:1rem;bottom:5rem;z-index:220;display:none;padding:0.8rem 1rem;border:1px solid #fca5a5;border-radius:0.75rem;background:#450a0a;color:#fee2e2;font:13px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;}
-.immersive-export-actions{position:fixed;right:calc(1rem + env(safe-area-inset-right));bottom:calc(1rem + env(safe-area-inset-bottom));z-index:210;display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;justify-content:flex-end;max-width:min(24rem,calc(100vw - 2rem));}
-.immersive-export-actions button{display:inline-flex;align-items:center;justify-content:center;width:2.9rem;height:2.9rem;border:1px solid rgba(255,255,255,0.16);border-radius:999px;background:rgba(0,0,0,0.62);color:#fff;padding:0;font:700 0.82rem/1 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;cursor:pointer;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);}
-.immersive-export-actions button:hover,.immersive-export-actions button:focus-visible{background:rgba(0,0,0,0.8);border-color:rgba(255,255,255,0.5);}
-.immersive-export-actions button[disabled]{opacity:0.65;cursor:progress;}
-.immersive-export-actions button svg{width:1.35rem;height:1.35rem;display:block;}
-.c2-interactive-overlay{position:fixed;inset:0;z-index:180;background:#05070f;}
-.c2-interactive-overlay[hidden]{display:none!important;}
-.c2-interactive-overlay iframe{width:100%;height:100%;border:0;display:block;background:#05070f;}
-.c2-interactive-overlay button{position:absolute;top:calc(1rem + env(safe-area-inset-top));right:calc(1rem + env(safe-area-inset-right));z-index:1;display:inline-flex;width:2.75rem;height:2.75rem;align-items:center;justify-content:center;border:1px solid rgba(255,255,255,0.16);border-radius:999px;background:rgba(0,0,0,0.62);color:#fff;font-size:1.4rem;cursor:pointer;}
-@media (max-width:640px){.immersive-export-actions{left:calc(1rem + env(safe-area-inset-left));right:calc(1rem + env(safe-area-inset-right));justify-content:center;}.immersive-export-actions button{flex:1 1 auto;}}
+{$toolbarCss}
+.immersive-stage-toolbar{position:fixed;}
 </style>
 </head>
 <body>
 <div id="immersive-stage" tabindex="-1"></div>
 <div id="piece-error" role="alert"></div>
-<div id="c2-interactive-overlay" class="c2-interactive-overlay" hidden>
-  <button id="c2-interactive-close" type="button" aria-label="Close interactive view">&times;</button>
-  <iframe id="c2-interactive-frame" title="Interactive piece" sandbox="allow-scripts allow-same-origin"></iframe>
-</div>
-<div class="immersive-export-actions" role="toolbar" aria-label="Immersive piece actions">
-  <button id="immersive-export-interact" type="button" aria-label="Open piece" hidden>
-    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
-  </button>
-  <button id="immersive-export-fullscreen" type="button" aria-label="Enter fullscreen">
-    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M21 16v3a2 2 0 0 1-2 2h-3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/></svg>
-  </button>
-  <button id="immersive-export-png" type="button" aria-label="Download PNG">
-    <svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M9 4.5 7.8 6H5.5A2.5 2.5 0 0 0 3 8.5v9A2.5 2.5 0 0 0 5.5 20h13a2.5 2.5 0 0 0 2.5-2.5v-9A2.5 2.5 0 0 0 18.5 6h-2.3L15 4.5H9Zm3 4a4.75 4.75 0 1 1 0 9.5 4.75 4.75 0 0 1 0-9.5Zm0 1.75a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"/></svg>
-  </button>
-</div>
+{$toolbarMarkup}
 <script>
 function showPieceError(error){const el=document.getElementById('piece-error');if(!el)return;el.textContent=(error&&(error.stack||error.message))?(error.stack||error.message):String(error);el.style.display='block';}
 window.addEventListener('error',event=>showPieceError(event.error||event.message));
@@ -477,7 +481,7 @@ async function loadImmersiveRuntime() {
   }
 }
 
-const { mountAFrameImmersivePiece, mountGalleryPiece, mountThreeImmersivePiece } = await loadImmersiveRuntime();
+const { mountAFrameImmersivePiece, mountGalleryPiece, mountThreeImmersivePiece, setupImmersiveStageChrome } = await loadImmersiveRuntime();
 
 const piece = {
   engine: {$jsonEngine},
@@ -491,28 +495,9 @@ const piece = {
   pngFilename: {$pngFilename}
 };
 const stage = document.getElementById('immersive-stage');
-const overlay = document.getElementById('c2-interactive-overlay');
-const overlayFrame = document.getElementById('c2-interactive-frame');
-const overlayClose = document.getElementById('c2-interactive-close');
-const interactBtn = document.getElementById('immersive-export-interact');
-const fullscreenBtn = document.getElementById('immersive-export-fullscreen');
-const pngBtn = document.getElementById('immersive-export-png');
+const fullscreenBtn = document.getElementById('fullscreen-toggle-btn');
+const pngBtn = document.querySelector('[data-immersive-download-png]');
 let viewer = null;
-
-function openInteractiveOverlay() {
-  overlayFrame.srcdoc = piece.fullViewSrcdoc;
-  overlay.hidden = false;
-  overlayFrame.focus();
-}
-function closeInteractiveOverlay() {
-  overlay.hidden = true;
-  overlayFrame.removeAttribute('srcdoc');
-  stage.focus();
-}
-overlayClose.addEventListener('click', closeInteractiveOverlay);
-window.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && !overlay.hidden) closeInteractiveOverlay();
-});
 
 try {
   const controls = { showViewerControls: true, initialViewState: piece.initialViewState };
@@ -522,22 +507,24 @@ try {
     viewer = mountAFrameImmersivePiece(stage, piece.code, piece.html, piece.css, showPieceError, controls);
   } else {
     const isInteractiveC2 = piece.generationMode === 'c2_interactive';
-    viewer = mountGalleryPiece(stage, piece.code, piece.html, piece.css, piece.engine, piece.title, '', '', '', showPieceError, isInteractiveC2 ? openInteractiveOverlay : null, {
+    viewer = mountGalleryPiece(stage, piece.code, piece.html, piece.css, piece.engine, piece.title, '', '', '', showPieceError, null, {
       ...controls,
-      fullView: isInteractiveC2 ? null : { items: [{ type: 'iframe', srcdoc: piece.fullViewSrcdoc }] }
-    });
-    interactBtn.hidden = false;
-    interactBtn.setAttribute('aria-label', isInteractiveC2 ? 'Open piece' : 'View full size');
-    interactBtn.addEventListener('click', () => {
-      if (isInteractiveC2) openInteractiveOverlay();
-      else viewer?.openFullViewAt?.(0);
+      fullView: {
+        items: [{ type: 'iframe', srcdoc: piece.fullViewSrcdoc, interactive: isInteractiveC2, title: piece.title }],
+        overlayOptions: { showDownloadControls: false }
+      }
     });
   }
+  setupImmersiveStageChrome(stage, {
+    onViewAction() {
+      viewer?.openFullViewAt?.(0);
+    }
+  });
 } catch (error) {
   showPieceError(error);
 }
 
-fullscreenBtn.addEventListener('click', async () => {
+fullscreenBtn?.addEventListener('click', async () => {
   try {
     if (document.fullscreenElement) {
       await document.exitFullscreen();
@@ -547,7 +534,7 @@ fullscreenBtn.addEventListener('click', async () => {
   } catch (_) {}
 });
 document.addEventListener('fullscreenchange', () => {
-  fullscreenBtn.setAttribute('aria-label', document.fullscreenElement ? 'Exit fullscreen' : 'Enter fullscreen');
+  fullscreenBtn?.setAttribute('aria-label', document.fullscreenElement ? 'Exit fullscreen' : 'Enter fullscreen');
 });
 
 function wait(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
@@ -590,15 +577,21 @@ function exportCanvas(canvas) {
   context.drawImage(canvas, 0, 0, width, height);
   return out;
 }
-pngBtn.addEventListener('click', async () => {
+pngBtn?.addEventListener('click', async () => {
   if (pngBtn.disabled) return;
-  const label = pngBtn.getAttribute('aria-label') || 'Download PNG';
+  const labelEl = pngBtn.querySelector('span') || pngBtn;
+  const label = labelEl.textContent;
   pngBtn.disabled = true;
-  pngBtn.setAttribute('aria-label', 'Preparing PNG');
+  labelEl.textContent = 'Preparing PNG...';
   try {
     let surface = null;
-    if (!overlay.hidden && overlayFrame.contentDocument) {
-      surface = Array.from(overlayFrame.contentDocument.querySelectorAll('canvas')).find((canvas) => canvas.getBoundingClientRect().width > 0 && canvas.getBoundingClientRect().height > 0);
+    // Full-view overlay open: snapshot the user's current state from the
+    // overlay iframe instead (covers interactive C2 pieces too).
+    if (viewer?.isFullViewOpen?.()) {
+      const overlayFrame = document.querySelector('[data-full-view-viewport] iframe');
+      if (overlayFrame?.contentDocument) {
+        surface = Array.from(overlayFrame.contentDocument.querySelectorAll('canvas')).find((canvas) => canvas.getBoundingClientRect().width > 0 && canvas.getBoundingClientRect().height > 0);
+      }
     }
     if (!surface) {
       const capture = viewer?.getCaptureSurface?.();
@@ -618,7 +611,7 @@ pngBtn.addEventListener('click', async () => {
     showPieceError(error);
   } finally {
     pngBtn.disabled = false;
-    pngBtn.setAttribute('aria-label', label);
+    labelEl.textContent = label;
   }
 });
 </script>
@@ -1376,6 +1369,28 @@ function collection_export_document(array $collection, array $items, array $opti
     $jsonEmbeddedDeviceOrientation = json_encode(piece_export_patched_device_orientation_source(), $jsonFlags);
     $jsonEmbeddedImmersiveGallery = json_encode(piece_export_patched_immersive_gallery_source(), $jsonFlags);
 
+    // Shared top toolbar — same placement/appearance as the live collection
+    // surface; the download menu is PNG-only because a standalone export
+    // cannot re-download itself offline.
+    $toolbarCss = immersive_stage_toolbar_css();
+    $toolbarMarkup = immersive_stage_toolbar_markup([
+        'view_action' => [
+            'label' => 'View slideshow',
+            'icon' => 'slideshow',
+        ],
+        'download_items' => [[
+            'tag' => 'button',
+            'label' => 'Download PNG',
+            'icon' => 'png',
+            'attrs' => [
+                'data-immersive-download-png' => true,
+                'data-download-filename' => ((function_exists('slugify') ? slugify($titleText) : '') ?: 'collection-gallery') . '.png',
+            ],
+        ]],
+        'show_fullscreen' => true,
+        'fullscreen_onclick' => null,
+    ]);
+
     return <<<HTML
 <!DOCTYPE html>
 <html lang="en">
@@ -1388,28 +1403,14 @@ function collection_export_document(array $collection, array $items, array $opti
 html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#05070f;color:#f8f5ee;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}
 #immersive-stage{position:fixed;inset:0;width:100vw;height:100dvh;background:#000;overflow:hidden;}
 #collection-error{position:fixed;left:1rem;right:1rem;bottom:5rem;z-index:220;display:none;padding:0.8rem 1rem;border:1px solid #fca5a5;border-radius:0.75rem;background:#450a0a;color:#fee2e2;font:13px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;}
-.collection-export-actions{position:fixed;right:calc(1rem + env(safe-area-inset-right));bottom:calc(1rem + env(safe-area-inset-bottom));z-index:210;display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;justify-content:flex-end;max-width:min(24rem,calc(100vw - 2rem));}
-.collection-export-actions button{display:inline-flex;align-items:center;justify-content:center;width:2.9rem;height:2.9rem;border:1px solid rgba(255,255,255,0.16);border-radius:999px;background:rgba(0,0,0,0.62);color:#fff;padding:0;cursor:pointer;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);}
-.collection-export-actions button:hover,.collection-export-actions button:focus-visible{background:rgba(0,0,0,0.8);border-color:rgba(255,255,255,0.5);}
-.collection-export-actions button[disabled]{opacity:0.65;cursor:progress;}
-.collection-export-actions button svg{width:1.35rem;height:1.35rem;display:block;}
-@media (max-width:640px){.collection-export-actions{left:calc(1rem + env(safe-area-inset-left));right:calc(1rem + env(safe-area-inset-right));justify-content:center;}.collection-export-actions button{flex:1 1 auto;}}
+{$toolbarCss}
+.immersive-stage-toolbar{position:fixed;}
 </style>
 </head>
 <body>
 <div id="immersive-stage" tabindex="-1"></div>
 <div id="collection-error" role="alert"></div>
-<div class="collection-export-actions" role="toolbar" aria-label="Collection gallery actions">
-  <button id="collection-export-slideshow" type="button" aria-label="Open slideshow">
-    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m10 9 5 3-5 3V9Z"/></svg>
-  </button>
-  <button id="collection-export-fullscreen" type="button" aria-label="Enter fullscreen">
-    <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M21 16v3a2 2 0 0 1-2 2h-3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/></svg>
-  </button>
-  <button id="collection-export-png" type="button" aria-label="Download PNG">
-    <svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M9 4.5 7.8 6H5.5A2.5 2.5 0 0 0 3 8.5v9A2.5 2.5 0 0 0 5.5 20h13a2.5 2.5 0 0 0 2.5-2.5v-9A2.5 2.5 0 0 0 18.5 6h-2.3L15 4.5H9Zm3 4a4.75 4.75 0 1 1 0 9.5 4.75 4.75 0 0 1 0-9.5Zm0 1.75a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"/></svg>
-  </button>
-</div>
+{$toolbarMarkup}
 <script>
 function showCollectionError(error){const el=document.getElementById('collection-error');if(!el)return;el.textContent=(error&&(error.stack||error.message))?(error.stack||error.message):String(error);el.style.display='block';}
 window.addEventListener('error',event=>showCollectionError(event.error||event.message));
@@ -1439,7 +1440,7 @@ async function loadImmersiveRuntime() {
     return await import(createRuntimeModuleUrl(gallerySource));
   }
 }
-const { mountExhibitWall } = await loadImmersiveRuntime();
+const { mountExhibitWall, setupImmersiveStageChrome } = await loadImmersiveRuntime();
 const stage = document.getElementById('immersive-stage');
 const rows = {$jsonRows};
 const cols = {$jsonCols};
@@ -1452,21 +1453,27 @@ try {
 } catch (error) {
   showCollectionError(error);
 }
-const slideshowBtn = document.getElementById('collection-export-slideshow');
-const fullscreenBtn = document.getElementById('collection-export-fullscreen');
-const pngBtn = document.getElementById('collection-export-png');
-slideshowBtn.addEventListener('click', () => {
-  const state = viewer?.getViewState?.() || {};
-  viewer?.openSlideshowAt?.(Number.isFinite(Number(state.activeIndex)) ? Number(state.activeIndex) : 0);
+const fullscreenBtn = document.getElementById('fullscreen-toggle-btn');
+const pngBtn = document.querySelector('[data-immersive-download-png]');
+setupImmersiveStageChrome(stage, {
+  onViewAction() {
+    const activeIndex = viewer?.getActiveIndex?.();
+    if (Number.isFinite(activeIndex)) {
+      viewer?.openSlideshowAt?.(activeIndex);
+      return;
+    }
+    const state = viewer?.getViewState?.() || {};
+    viewer?.openSlideshowAt?.(Number.isFinite(Number(state.activeIndex)) ? Number(state.activeIndex) : 0);
+  }
 });
-fullscreenBtn.addEventListener('click', async () => {
+fullscreenBtn?.addEventListener('click', async () => {
   try {
     if (document.fullscreenElement) await document.exitFullscreen();
     else if (document.documentElement.requestFullscreen) await document.documentElement.requestFullscreen();
   } catch (_) {}
 });
 document.addEventListener('fullscreenchange', () => {
-  fullscreenBtn.setAttribute('aria-label', document.fullscreenElement ? 'Exit fullscreen' : 'Enter fullscreen');
+  fullscreenBtn?.setAttribute('aria-label', document.fullscreenElement ? 'Exit fullscreen' : 'Enter fullscreen');
 });
 function wait(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 function hasVisiblePixels(canvas) {
@@ -1508,11 +1515,12 @@ function downloadBlob(blob, filename) {
   link.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-pngBtn.addEventListener('click', async () => {
+pngBtn?.addEventListener('click', async () => {
   if (pngBtn.disabled) return;
-  const label = pngBtn.getAttribute('aria-label') || 'Download PNG';
+  const labelEl = pngBtn.querySelector('span') || pngBtn;
+  const label = labelEl.textContent;
   pngBtn.disabled = true;
-  pngBtn.setAttribute('aria-label', 'Preparing PNG');
+  labelEl.textContent = 'Preparing PNG...';
   try {
     const capture = viewer?.getCaptureSurface?.();
     capture?.beforeCapture?.();
@@ -1530,7 +1538,7 @@ pngBtn.addEventListener('click', async () => {
     showCollectionError(error);
   } finally {
     pngBtn.disabled = false;
-    pngBtn.setAttribute('aria-label', label);
+    labelEl.textContent = label;
   }
 });
 </script>

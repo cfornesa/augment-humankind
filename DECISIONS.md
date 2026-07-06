@@ -10,6 +10,84 @@
 
 None.
 
+## 2026-07-05 — Shared Top Stage Toolbar Across All Immersive Surfaces + Broken Piece View Fix
+
+### Decision
+All immersive surfaces — `/immersive/pieces/{id}`, `/immersive/collections/{slug}`,
+`/immersive/images/{ref}`, and both immersive export documents — render one
+shared stage toolbar anchored to the TOP of the stage, built by the new
+`public/app/helpers/immersive-chrome.php` (`immersive_stage_toolbar_css()` /
+`immersive_stage_toolbar_markup()`) and wired by the new
+`setupImmersiveStageChrome()` export in `immersive-gallery.js`. Top placement
+is mandatory: the bottom-anchored collection action bar overlapped the
+bottom-center "Enable Motion Controls" iOS permission button. Once motion is
+granted, the gyro ⟲ toggle mounts into a `data-immersive-gyro-slot` span
+reserved inside the toolbar (absolute top-left fallback for old exports).
+
+View-button gating (user-stated absolute requirements): collections get a
+slideshow button opening the real slideshow at the active index; P5/SVG/
+non-interactive-C2 pieces get a full-size button opening the slideshow-style
+overlay with `showDownloadControls: false` (title + × only, no Prev/Next);
+interactive C2 pieces open the same overlay with an `interactive: true`
+iframe (raw `#c2-interactive-overlay` deleted from piece.php and the piece
+export); Three.js/A-Frame pieces render no view button. Export download menus
+contain only `Download PNG` (user-confirmed — offline exports cannot
+re-download themselves); live surfaces keep `Download Piece` + `Download PNG`.
+
+### Root Cause of the broken piece view
+piece.php imported `setupImmersiveStageChrome` from immersive-gallery.js, but
+the function was never written — the missing named export failed the whole ES
+module link, so no mount function ran and every `/immersive/pieces/{id}`
+rendered a black stage. Collections only imported `mountExhibitWall`, which
+existed, so they kept working.
+
+### Scope
+- `public/assets/js/immersive-gallery.js`: new `setupImmersiveStageChrome()`
+  (view trigger + download menu wiring: aria-expanded, focus-first-item,
+  capture-phase outside-pointerdown close, Escape close with focus return,
+  120 ms deferred close after item clicks); gyro-slot mounting in
+  `createGyroToggleButton()`; `showDownloadControls` option and
+  `fullView.overlayOptions` pass-through for `createReadOnlyFullViewOverlay`.
+- `public/app/helpers/immersive-chrome.php` (new, required by
+  piece-render.php, loaded transitively via router.php): toolbar CSS/markup.
+- piece.php / collection.php / image.php: shared toolbar replaces the
+  view-local CSS+markup (collection's `.iab-*` bottom bar and image.php's
+  bottom-corner buttons deleted); Escape handlers now yield to open menus and
+  the full-view overlay; PNG button label updates target the inner span so
+  the icon survives.
+- piece-render.php: both immersive export builders emit the shared toolbar
+  (`position:fixed` override) and wire it via `setupImmersiveStageChrome`
+  from the exported/embedded runtime; blob-fallback import rewrites verified
+  intact.
+- Tests updated: art-piece-generation export assertions now check
+  `immersive-stage-toolbar`/`data-immersive-download-png`/
+  `setupImmersiveStageChrome`; three-runtime-consistency safe-area test now
+  checks the shared helper and both views' use of it.
+- Docs: README.md and docs/api.md rewritten for the top toolbar, engine
+  gating, PNG-only export menu, and slideshow-shell C2 overlay.
+
+### Verification
+- `php -l` all touched PHP; `node --check` on immersive-gallery.js.
+- `php tests/art-piece-generation.php` — 121 passed.
+- `php tests/three-runtime-consistency.php` — 86 passed, only the 2
+  pre-existing gyro assertion failures (confirmed identical at git HEAD).
+- Browser (Chrome, local php -S): piece 108 (SVG) mounts and its overlay
+  shows title + × only; piece 50 (Three) has no view button; piece 49
+  (non-interactive C2) and piece 88 (interactive C2 — iframe pointer-events
+  auto, tabindex 0) open the shared overlay; collection wall toolbar at top,
+  slideshow + arrows + Escape work; download menu open/outside-close/Escape/
+  focus-return verified via scripted events; `Download Piece` appends
+  `viewState` (and `surface=immersive` on pieces); immersive image view
+  full-size + fullscreen at top; exported ZIPs (interactive C2, Three,
+  collection) mount with the same toolbar, engine-gated buttons, PNG-only
+  menus — including with `runtime/immersive-gallery.js` + `runtime/three`
+  deleted to force the embedded Blob-module fallback.
+
+### Known pre-existing issue (not introduced here; user-facing chip filed)
+Collection export slideshow slides for Three.js pieces throw
+"OrbitControls is not a constructor" inside the slide iframe
+(`piece_export_document()` payload path, untouched by this session).
+
 ## 2026-07-05 — Immersive And Collection Piece Downloads Preserve Render Surface
 
 ### Decision
@@ -1148,3 +1226,21 @@ c2-interactive overlay (104) all capture non-blank PNGs in immersive; ZIP
 export embeds media as data: URLs and stays guard-free; suites pass
 (118/0 generation; 82 pass consistency with only the 2 pre-existing gyro
 failures also present on HEAD).
+
+## 2026-07-05 — Immersive Collection Slideshow Traversal and Piece Interaction
+
+### Context
+User reported that the immersive collection slideshow (e.g. `/immersive/collections/apocalyptic`) only allowed viewing/animating the active piece, rather than enabling a complete slideshow traversal of all collection pieces. Touching a piece on the 3D VR gallery wall did not open the slideshow at that piece (or did not open it at all for Three.js/A-Frame pieces because their `full_view` was previously set to null to avoid WebGL context conflicts). Clicking the slideshow button always hardcoded the start index to 0.
+
+### Decision (user-approved plan Option A)
+1. **Unified Traversal & WebGL Suspension**: We restore `full_view` iframe renders for Three.js and A-Frame collection pieces in the PHP view. To prevent WebGL context limit conflicts and performance issues (especially in Safari) when multiple 3D scenes run simultaneously, we implement a resource-saving protocol. When the slideshow overlay is open (`onOpen`), the main gallery wall's Three.js rendering loop is suspended (`isWallSuspended = true`) and all active wall slot WebGL contexts are destroyed. When the overlay is closed (`onClose`), the wall rendering loop resumes and the visible slots are progressively re-hydrated.
+2. **Active Slide Tracking**: Added `getActiveIndex()` on the exhibit wall viewer to determine the index of the piece closest to the camera center target. Clicking the slideshow button queries `getActiveIndex()` to open the slideshow starting with the currently focused piece on the wall.
+3. **Interactive Touch Open**: Clicking/touching any piece in the immersive VR view maps to `readOnlyOverlay.openAt(slideshowIndex)`, correctly launching the slideshow overlay at that piece's index. Clicking P5.js, C2.js, and interactive C2.js pieces in gallery immersive VR modes successfully opens the slideshow/fullscreen view within the browser.
+
+### 2026-07-05 Follow-Up — Ghost Click Mitigation & Image Support in getActiveIndex
+1. **Ghost Click Prevention**: On mobile Safari and touchscreen browsers, the 300ms delayed synthetic click event after pointerup/touchend targeted the newly visible overlay background (`root`), triggering the backdrop-close listener immediately and exiting the slideshow. To resolve this:
+   - Changed overlay `openAt` calls to execute inside a `setTimeout(..., 50)` delay, allowing pointer events to fully disperse before rendering the overlay.
+   - Increased the overlay's backdrop click guard to 500ms (`elapsed < 500`).
+   - Unified the click handler inside `onPointerUp` to go through a local `openSlideshowAt()` wrapper.
+2. **Image Support in getActiveIndex**: Updated `getActiveIndex()` to match both `piece` and `image` kinds so that the wall correctly calculates the closest item when images are active.
+3. **Debugging Logs**: Added stack trace printing (`new Error().stack`) inside `openAt()`, `close()`, and `suspendExhibitWall()` to trace execution call stacks in the browser console.

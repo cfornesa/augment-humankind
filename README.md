@@ -134,19 +134,46 @@ a fixed `visualViewport`-sized mode, page scrolling is locked, safe-area insets
 are respected, and the button state uses "Expand immersive view" / "Return to
 page" language instead of promising true browser fullscreen.
 
-Full immersive piece pages and collection gallery walls expose export controls
-from the same action rail as fullscreen. `Download PNG` captures the rendered
-immersive surface from the user's current perspective. For gallery-room pieces
-and collection walls, that means the Three.js gallery renderer, not the hidden
-source canvas. If a C2 interactive full-size overlay is open, PNG capture uses
-that overlay iframe instead.
+All immersive surfaces — pieces, collection gallery walls, standalone images,
+and downloaded standalone exports — share one stage toolbar anchored to the
+TOP of the stage (`immersive_stage_toolbar_markup()` /
+`immersive_stage_toolbar_css()` in `public/app/helpers/immersive-chrome.php`,
+wired by `setupImmersiveStageChrome()` in `immersive-gallery.js`). Top
+placement keeps the toolbar clear of the bottom-center "Enable Motion
+Controls" iOS permission button; once motion is granted, the gyroscope toggle
+mounts into a reserved slot inside the toolbar instead of floating over it.
+The left group holds the view/slideshow button and the download menu (which
+opens downward); the right side holds the fullscreen toggle. The download
+menu supports mouse, touch, and keyboard: Escape closes it and outside
+clicks dismiss it.
+
+The view button differs per surface, and is otherwise identical everywhere:
+
+- Collection walls show a slideshow button that opens the full slideshow at
+  the active item.
+- P5, SVG, and non-interactive C2 pieces show a full-size button that opens
+  the same overlay shell as the slideshow, minus Prev/Next and the overlay's
+  own download controls (downloads stay in the stage toolbar).
+- Interactive C2 pieces open that same overlay with a fully interactive
+  iframe — authored click/touch/drag handlers work inside it.
+- Three.js and A-Frame pieces render no view button at all: they have no
+  gallery full view, and the stage itself is the interactive surface.
+- Standalone immersive images show a full-size button that opens the image
+  in the overlay.
+
+`Download PNG` captures the rendered immersive surface from the user's
+current perspective. For gallery-room pieces and collection walls, that means
+the Three.js gallery renderer, not the hidden source canvas. If the full-view
+overlay is open (including interactive C2), PNG capture uses that overlay
+iframe instead.
 
 `Download Piece` from immersive piece pages calls the existing
 `/pieces/[id]/download` route with `surface=immersive` and a serialized
 viewer-state payload. The resulting ZIP still opens through `index.html`, but
 that file mounts the local immersive renderer, restores camera/target state
-when provided, includes fullscreen and PNG icons, and preserves C2 interactive
-full-size behavior through the local overlay. `Download Piece` from immersive
+when provided, renders the shared top stage toolbar (view/slideshow button
+where applicable, PNG-only download menu, fullscreen), and preserves C2
+interactive full-size behavior through the shared full-view overlay. `Download Piece` from immersive
 collection walls and their slideshow overlays calls `/collections/[slug]/download`
 instead; that ZIP exports the full local collection gallery wall with all
 supported pieces and images, not only the selected or active slide.
@@ -186,8 +213,10 @@ runtime help:
   work.
 - Regular interactive `c2_interactive`, `three`, and `aframe` downloads include
   fullscreen plus the local screenshot control directly inside `index.html`.
-  Immersive exports include icon controls for opening the piece overlay where
-  applicable, fullscreen, and PNG capture.
+  Immersive piece and collection exports render the same shared top stage
+  toolbar as the live surfaces: the engine-gated view/slideshow button, a
+  download menu containing only `Download PNG` (a standalone export cannot
+  re-download itself offline), and fullscreen.
 
 Starter templates are database-owned and seeded by `scripts/setup-database.php`.
 In `/admin/pieces`, the `Art Pieces` subtab holds the current piece list and

@@ -240,53 +240,45 @@ html, body {
   display: block;
 }
 
-/* Fullscreen Toggle Button */
-.fullscreen-toggle-btn {
-  position: absolute;
-  bottom: 1rem;
-  right: 1rem;
-  z-index: 130;
-  display: inline-flex;
-  height: 2.75rem;
-  width: 2.75rem;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  background: rgba(0, 0, 0, 0.55);
-  color: #fff;
-  border-radius: 0.75rem;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-  cursor: pointer;
-  transition: background 0.2s, border-color 0.2s;
-}
-.fullscreen-toggle-btn:hover {
-  background: rgba(0, 0, 0, 0.7);
-  border-color: #fff;
-}
-.immersive-stage-action-btn {
-  position: absolute;
-  bottom: calc(1rem + env(safe-area-inset-bottom));
-  left: calc(1rem + env(safe-area-inset-left));
-  z-index: 130;
-  display: inline-flex;
-  align-items: center;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  background: rgba(0, 0, 0, 0.55);
-  color: #fff;
-  padding: 0.5rem 1rem;
-  font-size: 0.8rem;
-  font-weight: 500;
-  border-radius: 9999px;
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-  cursor: pointer;
-  transition: background 0.2s, border-color 0.2s;
-}
-.immersive-stage-action-btn:hover {
-  background: rgba(0, 0, 0, 0.7);
-  border-color: #fff;
+/* Shared immersive stage toolbar (immersive-chrome.php) */
+<?= immersive_stage_toolbar_css() ?>
+@media (max-width: 700px), (max-height: 560px) {
+  .immersive-header {
+    flex-wrap: wrap;
+    align-items: flex-start;
+    padding: 0.7rem 0.85rem;
+    gap: 0.7rem;
+  }
+  .back-btn,
+  .immersive-admin-link {
+    padding: 0.45rem 0.85rem;
+    font-size: 0.78rem;
+  }
+  .header-actions {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 0.65rem;
+  }
+  .header-info {
+    flex: 1 1 14rem;
+    min-width: 0;
+    text-align: left;
+    order: -1;
+  }
+  .header-info .title {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    white-space: normal;
+    overflow: hidden;
+    text-overflow: unset;
+    line-height: 1.3;
+  }
+  .stage-wrapper {
+    height: 40vh;
+    min-height: 250px;
+  }
 }
 
 /* Copy Codes Toolbar */
@@ -493,16 +485,17 @@ html, body {
     <div class="stage-wrapper">
         <div id="immersive-stage"></div>
         
-        <!-- Fullscreen controls (hidden in static embeds, and iOS embeds without handshakes) -->
+        <!-- Top stage toolbar (hidden in static embeds, and iOS embeds without handshakes) -->
         <?php if (!$isStaticEmbed): ?>
-            <button id="fullscreen-toggle-btn" class="fullscreen-toggle-btn" onclick="toggleFullscreen()" aria-label="Expand immersive view">
-                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
-            </button>
-        <?php endif; ?>
-        <?php if ($showReadOnlyFullViewButton): ?>
-            <button id="readonly-full-view-btn" class="immersive-stage-action-btn" type="button">
-                View full size
-            </button>
+            <?= immersive_stage_toolbar_markup([
+                'view_action' => $showReadOnlyFullViewButton ? [
+                    'label' => 'View full size',
+                    'icon' => 'view',
+                ] : null,
+                'download_items' => null,
+                'show_fullscreen' => true,
+                'fullscreen_onclick' => 'toggleFullscreen()',
+            ]) ?>
         <?php endif; ?>
     </div>
 
@@ -568,7 +561,7 @@ html, body {
 </div>
 
 <script type="module">
-import { mountExhibitWall } from '/assets/js/immersive-gallery.js';
+import { mountExhibitWall, setupImmersiveStageChrome } from '/assets/js/immersive-gallery.js';
 
 // Setup full screen toggling variables
 const shell = document.getElementById('immersive-shell');
@@ -617,9 +610,14 @@ document.addEventListener('fullscreenchange', () => {
     syncFullscreenState(isFull);
 });
 
-// Exit fullscreen on Escape
+// Exit fullscreen on Escape — unless the full-view overlay is open (it
+// handles its own Escape close first).
 window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
+        const stageEl = document.getElementById('immersive-stage');
+        if (stageEl?.dataset.keyboardNavigationDisabled === 'true') {
+            return;
+        }
         if (shell.classList.contains('fullscreen')) {
             toggleFullscreen();
         }
@@ -687,10 +685,11 @@ const viewerControlsOptions = { showViewerControls: <?= (!$isEmbedMode && !$isSt
 
 try {
     const immersiveViewer = mountExhibitWall(stage, items, 1, 1, viewerControlsOptions);
-    const readOnlyBtn = document.getElementById('readonly-full-view-btn');
-    if (readOnlyBtn && immersiveViewer?.openFullViewAt) {
-        readOnlyBtn.addEventListener('click', () => immersiveViewer.openFullViewAt(0));
-    }
+    setupImmersiveStageChrome(stage, {
+        onViewAction() {
+            immersiveViewer?.openFullViewAt?.(0);
+        },
+    });
 } catch (error) {
     console.error('Failed to mount immersive image:', error);
     stage.innerHTML = '<img src="<?= e($imageSrc) ?>" alt="<?= e($alt !== '' ? $alt : $displayTitle) ?>" style="max-width:100%;max-height:100%;object-fit:contain;display:block;margin:auto;">';

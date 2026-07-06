@@ -368,45 +368,11 @@ html, body {
   background: rgba(0, 0, 0, 0.7);
   border-color: #fff;
 }
-.immersive-action-rail {
-  position: absolute;
-  bottom: calc(1rem + env(safe-area-inset-bottom));
-  right: calc(1rem + env(safe-area-inset-right));
-  z-index: 130;
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  align-items: center;
-  gap: 0.5rem;
-  max-width: min(32rem, calc(100% - 2rem));
-}
-.immersive-download-cluster {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 0.5rem;
-}
-.immersive-download-cluster .immersive-download-btn {
-  position: static;
-  text-decoration: none;
-}
-.immersive-download-cluster .immersive-download-btn[disabled] {
-  opacity: 0.6;
-  cursor: progress;
-}
-@media (max-width: 640px) {
-  .immersive-action-rail {
-    left: calc(1rem + env(safe-area-inset-left));
-    justify-content: center;
-  }
-  .immersive-download-cluster {
-    flex: 1 1 auto;
-  }
-  .immersive-download-cluster .immersive-download-btn {
-    flex: 1 1 auto;
-    justify-content: center;
-  }
-}
+/* Shared immersive stage toolbar (immersive-chrome.php) */
+<?= immersive_stage_toolbar_css() ?>
+/* Legacy class shims — kept for any existing selectors */
+.immersive-action-rail { display: none !important; }
+.immersive-stage-action-btn { display: none !important; }
 
 /* Copy Codes Toolbar */
 .copy-section {
@@ -723,27 +689,37 @@ html, body {
     <div class="stage-wrapper">
         <div id="immersive-stage"></div>
         
-        <!-- Fullscreen controls (hidden in static embeds, and iOS embeds without handshakes) -->
+        <!-- Top stage toolbar (hidden in static embeds, and iOS embeds without handshakes) -->
         <?php if (!$isStaticEmbed): ?>
-            <div class="immersive-action-rail" role="toolbar" aria-label="Collection gallery actions">
-                <div class="immersive-download-cluster" role="group" aria-label="Download this collection gallery">
-                    <a href="<?= e($collectionDownloadUrl) ?>" class="immersive-stage-action-btn immersive-download-btn" data-collection-download-piece="<?= e($collectionDownloadUrl) ?>" download>Download Piece</a>
-                    <button type="button" class="immersive-stage-action-btn immersive-download-btn" data-collection-download-png data-download-filename="collection-view.png">Download PNG</button>
-                </div>
-                <button id="fullscreen-toggle-btn" class="fullscreen-toggle-btn" onclick="toggleFullscreen()" aria-label="Expand immersive view">
-                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
-                </button>
-            </div>
-        <?php endif; ?>
-        <?php if (!$isEmbedMode && !$isStaticEmbed && $collectionSlideshowStartIndex !== null): ?>
-            <button
-                id="collection-full-view-btn"
-                class="immersive-stage-action-btn"
-                type="button"
-                data-start-index="<?= (int) $collectionSlideshowStartIndex ?>"
-            >
-                View slideshow
-            </button>
+            <?= immersive_stage_toolbar_markup([
+                'view_action' => (!$isEmbedMode && $collectionSlideshowStartIndex !== null) ? [
+                    'label' => 'View slideshow',
+                    'icon' => 'slideshow',
+                ] : null,
+                'download_items' => [
+                    [
+                        'tag' => 'a',
+                        'label' => 'Download Piece',
+                        'icon' => 'download-small',
+                        'attrs' => [
+                            'href' => $collectionDownloadUrl,
+                            'data-collection-download-piece' => $collectionDownloadUrl,
+                            'download' => true,
+                        ],
+                    ],
+                    [
+                        'tag' => 'button',
+                        'label' => 'Download PNG',
+                        'icon' => 'png',
+                        'attrs' => [
+                            'data-collection-download-png' => true,
+                            'data-download-filename' => 'collection-view.png',
+                        ],
+                    ],
+                ],
+                'show_fullscreen' => true,
+                'fullscreen_onclick' => 'toggleFullscreen()',
+            ]) ?>
         <?php endif; ?>
     </div>
 
@@ -854,7 +830,7 @@ html, body {
 
 <script src="/assets/js/public-piece-download.js?v=<?= $publicPieceScriptVersion ?>"></script>
 <script type="module">
-import { mountExhibitWall } from '/assets/js/immersive-gallery.js?v=<?= $galleryRuntimeVersion ?>';
+import { mountExhibitWall, setupImmersiveStageChrome } from '/assets/js/immersive-gallery.js?v=<?= $galleryRuntimeVersion ?>';
 
 // Setup full screen toggling variables
 const shell = document.getElementById('immersive-shell');
@@ -1005,9 +981,17 @@ document.addEventListener('fullscreenchange', () => {
     syncFullscreenState(isFull);
 });
 
-// Exit fullscreen on Escape
+// Exit fullscreen on Escape — unless the download menu or the slideshow
+// overlay is open (each handles its own Escape close first).
 window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
+        if (document.querySelector('[data-immersive-download-menu]:not([hidden])')) {
+            return;
+        }
+        const stageEl = document.getElementById('immersive-stage');
+        if (stageEl?.dataset.keyboardNavigationDisabled === 'true') {
+            return;
+        }
         if (shell.classList.contains('fullscreen')) {
             toggleFullscreen();
         }
@@ -1081,6 +1065,12 @@ const stage = document.getElementById('immersive-stage');
 
 try {
     const immersiveViewer = mountExhibitWall(stage, items, rows, cols, viewerControlsOptions);
+    setupImmersiveStageChrome(stage, {
+        onViewAction() {
+            const activeIndex = immersiveViewer?.getActiveIndex?.() ?? 0;
+            immersiveViewer?.openSlideshowAt?.(activeIndex);
+        },
+    });
     const downloadPieceLink = document.querySelector('[data-collection-download-piece]');
     const downloadPngBtn = document.querySelector('[data-collection-download-png]');
     function encodeViewState(state) {
@@ -1119,10 +1109,11 @@ try {
             if (downloadPngBtn.disabled) return;
             const selected = immersiveViewer?.getSelectedItem?.();
             const filename = selected?.png_filename || downloadPngBtn.dataset.downloadFilename || 'collection-view.png';
-            const originalLabel = downloadPngBtn.textContent;
+            const labelEl = downloadPngBtn.querySelector('span') || downloadPngBtn;
+            const originalLabel = labelEl.textContent;
             downloadPngBtn.disabled = true;
             downloadPngBtn.setAttribute('aria-busy', 'true');
-            downloadPngBtn.textContent = 'Preparing PNG...';
+            labelEl.textContent = 'Preparing PNG...';
             try {
                 const surface = immersiveViewer?.getCaptureSurface?.();
                 if (!surface?.canvas) throw new Error('No downloadable canvas is available yet.');
@@ -1140,15 +1131,8 @@ try {
             } finally {
                 downloadPngBtn.disabled = false;
                 downloadPngBtn.removeAttribute('aria-busy');
-                downloadPngBtn.textContent = originalLabel;
+                labelEl.textContent = originalLabel;
             }
-        });
-    }
-    const slideshowBtn = document.getElementById('collection-full-view-btn');
-    if (slideshowBtn && immersiveViewer?.openSlideshowAt) {
-        slideshowBtn.addEventListener('click', () => {
-            const startIndex = Number(slideshowBtn.getAttribute('data-start-index'));
-            immersiveViewer.openSlideshowAt(Number.isFinite(startIndex) ? startIndex : 0);
         });
     }
     document.querySelectorAll('[data-full-view-index]').forEach((link) => {
@@ -1162,6 +1146,7 @@ try {
 } catch (e) {
     console.error("Failed to mount exhibit wall:", e);
 }
+
 </script>
 
 </body>
