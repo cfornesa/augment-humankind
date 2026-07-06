@@ -99,6 +99,10 @@ Source: DECISIONS.md 2026-07-02 Portable-CMS Setup Readiness Remediation (commit
 
 2026-07-04 DECISION Public piece downloads (`/pieces/{id}/download`) are ZIP bundles with `index.html` as the single manual entry point. The bundle remains editable/rehostable (`styles/piece.css`, `scripts/piece.js`, `runtime/`, `media/`), but the direct-open `index.html` path embeds vendored runtime/media-safe equivalents so supported interactive pieces can still render and take screenshots when opened locally. Stored code remains CMS-runtime-compatible via `window.sketch`; standalone Three.js exports still attach OrbitControls in the bootstrap.
 
+2026-07-05 DECISION Preserved the OrbitControls export statement in `piece_export_three_orbitcontrols_inline_source()` so that offline Three.js exports (both standalone piece downloads and slideshow mode iframe srcdocs in collection downloads) can successfully dynamically import OrbitControls as an ES module without throwing constructor errors.
+
+2026-07-05 DECISION Enabled keyboard navigation (WASD/arrows) for Three.js OrbitControls in focused live regular views and downloaded index files by calling `controls.listenToKeyEvents(window)`. Modified collection ZIP downloads to package all individual collection pieces in their entirety under `pieces/{slug}/` (with their own standalone `index.html`, runtimes, assets, and styles) so they can be run and edited fully offline.
+
 2026-07-03 DECISION AI piece generation may only introduce CMS media when the prompt explicitly names the exact image/media ID or path; downloaded HTML exports rewrite root-relative and relative CMS media refs to absolute URLs on the host serving the download.
 
 2026-07-04 DECISION AI piece prompting treats `image/photo/picture ID` and `media asset ID` as parallel but distinct media-authoring language: image/photo/picture wording authorizes `/image/{id}`, media-asset wording authorizes `/api/media-assets/{id}`, and prompts must name both explicitly to authorize both families. No hidden ID aliasing layer exists between those route families.

@@ -1244,3 +1244,17 @@ User reported that the immersive collection slideshow (e.g. `/immersive/collecti
    - Unified the click handler inside `onPointerUp` to go through a local `openSlideshowAt()` wrapper.
 2. **Image Support in getActiveIndex**: Updated `getActiveIndex()` to match both `piece` and `image` kinds so that the wall correctly calculates the closest item when images are active.
 3. **Debugging Logs**: Added stack trace printing (`new Error().stack`) inside `openAt()`, `close()`, and `suspendExhibitWall()` to trace execution call stacks in the browser console.
+
+## 2026-07-05 — Preserving OrbitControls Export in Offline Three.js Bundles
+
+### Context
+When downloading a platform collection, clicking on a Three.js piece in the slideshow mode failed with a `TypeError: OrbitControls is not a constructor` at runtime inside the iframe. The same crash affected standalone downloaded Three.js pieces (`/pieces/{id}/download`).
+
+### Decision (user-approved plan Option 1)
+1. **Preserve OrbitControls Export**: We resolved the crash by removing the regex replace statement in `piece_export_three_orbitcontrols_inline_source()` inside `public/app/helpers/piece-render.php` that was stripping out `export { OrbitControls };`.
+2. **Dynamic ES Module Resolution**: Preserving the export statement ensures that the dynamic module bootstrapper `await import(creatrOrbitUrl)` can successfully load and resolve the `OrbitControls` constructor offline without any internet connection.
+3. **Verified**: Verified that existing Three.js runtime consistency test suites pass cleanly and OrbitControls is correctly exported in the bundled offline source.
+
+### 2026-07-05 Follow-Up — OrbitControls Keyboard Controls & Collection ZIP Packaging
+1. **OrbitControls Keyboard Controls**: Called `controls.listenToKeyEvents(window)` after instantiating `OrbitControls` in `piece-runtime.js` and in both the bundle-mode and CDN-mode `piece-render.php` bootstrap templates. This enables keyboard navigation (WASD/arrows) for focused regular views and downloaded index files.
+2. **Collection ZIP Packaging**: Updated `collection_export_build_manifest()` to compile and write each item in the collection inside its own standalone directory under `pieces/{slug}/` (containing its own standalone `index.html`, assets, styles, scripts, and runtime files). Updated the packaging loop in `collection_export_bundle()` to support files using `source_path` as well as raw string `data`.

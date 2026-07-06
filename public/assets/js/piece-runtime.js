@@ -252,6 +252,136 @@ function startFrame(callback) {
   }
   requestAnimationFrame(tick);
 }
+function mapMovementKey(event) {
+  if (event.code === 'KeyW') return 'ArrowUp';
+  if (event.code === 'KeyS') return 'ArrowDown';
+  if (event.code === 'KeyA') return 'ArrowLeft';
+  if (event.code === 'KeyD') return 'ArrowRight';
+  if (event.key === 'ArrowLeft' || event.key === 'ArrowRight' || event.key === 'ArrowUp' || event.key === 'ArrowDown') return event.key;
+  return null;
+}
+function shouldIgnoreKeyEventTarget(eventTarget) {
+  if (!(eventTarget instanceof Element)) return false;
+  if (eventTarget.tagName === 'IFRAME') return true;
+  if (eventTarget instanceof HTMLInputElement || eventTarget instanceof HTMLTextAreaElement || eventTarget instanceof HTMLSelectElement) return true;
+  if (eventTarget.isContentEditable) return true;
+  return Boolean(eventTarget.closest('[contenteditable="true"], [contenteditable=""], input, textarea, select'));
+}
+function computeOrbitKeyboardMotion(forward, keys, speed) {
+  const activeKeys = keys instanceof Set ? keys : new Set(keys);
+  let fwdScale = 0;
+  let rightScale = 0;
+  if (activeKeys.has('ArrowUp')) fwdScale += speed;
+  if (activeKeys.has('ArrowDown')) fwdScale -= speed;
+  if (activeKeys.has('ArrowLeft')) rightScale -= speed;
+  if (activeKeys.has('ArrowRight')) rightScale += speed;
+  if (fwdScale === 0 && rightScale === 0) return { dx: 0, dy: 0, dz: 0 };
+
+  const horizontalLength = Math.sqrt(forward.x ** 2 + forward.z ** 2);
+  const right = horizontalLength > 1e-6
+    ? { x: -forward.z / horizontalLength, y: 0, z: forward.x / horizontalLength }
+    : { x: 1, y: 0, z: 0 };
+
+  return {
+    dx: (forward.x * fwdScale) + (right.x * rightScale),
+    dy: forward.y * fwdScale,
+    dz: (forward.z * fwdScale) + (right.z * rightScale),
+  };
+}
+function createKeyboardNavigation(controls, options = {}) {
+  const { speed = 0.05, minX = -8, maxX = 8, minY = -Infinity, maxY = Infinity, minZ = 0.5, maxZ = Infinity, container, isEnabled } = options;
+  const keys = new Set();
+  const target = window;
+  const _forward = new window.THREE.Vector3();
+  const TARGET_FRAME_MS = 1000 / 60;
+  const MAX_FRAME_SCALE = 4;
+  let lastUpdateAt = null;
+
+  function keyboardNavEnabled() {
+    if (typeof isEnabled === 'function') return isEnabled() !== false;
+    if (!container) return true;
+    return container.dataset.keyboardNavigationDisabled !== 'true';
+  }
+
+  function onKeyDown(event) {
+    const mappedKey = mapMovementKey(event);
+    if (!mappedKey) return;
+    if (!keyboardNavEnabled() || shouldIgnoreKeyEventTarget(event.target)) return;
+    event.preventDefault();
+    keys.add(mappedKey);
+  }
+
+  function onKeyUp(event) {
+    const mappedKey = mapMovementKey(event);
+    if (!mappedKey) return;
+    if (!keyboardNavEnabled() || shouldIgnoreKeyEventTarget(event.target)) {
+      keys.delete(mappedKey);
+      return;
+    }
+    keys.delete(mappedKey);
+    keys.delete(event.key);
+  }
+
+  function clearKeys() {
+    keys.clear();
+  }
+
+  function onWindowBlur() {
+    clearKeys();
+  }
+
+  function update() {
+    if (!keyboardNavEnabled()) {
+      clearKeys();
+      return false;
+    }
+    const now = performance.now();
+    const frameScale = lastUpdateAt === null
+      ? 1
+      : Math.min(MAX_FRAME_SCALE, Math.max(0, (now - lastUpdateAt) / TARGET_FRAME_MS));
+    lastUpdateAt = now;
+    if (!controls.enabled || keys.size === 0) return false;
+    controls.object.getWorldDirection(_forward);
+    const resolvedSpeed = (typeof speed === 'function' ? speed(controls) : speed) * frameScale;
+    const { dx, dy, dz } = computeOrbitKeyboardMotion(_forward, keys, resolvedSpeed);
+    const newCamX = Math.max(minX, Math.min(maxX, controls.object.position.x + dx));
+    const newCamY = Math.max(minY, Math.min(maxY, controls.object.position.y + dy));
+    const newCamZ = Math.max(minZ, Math.min(maxZ, controls.object.position.z + dz));
+    const actualDx = newCamX - controls.object.position.x;
+    const actualDy = newCamY - controls.object.position.y;
+    const actualDz = newCamZ - controls.object.position.z;
+    if (Math.abs(actualDx) < 1e-6 && Math.abs(actualDy) < 1e-6 && Math.abs(actualDz) < 1e-6) return false;
+    controls.object.position.x = newCamX;
+    controls.object.position.y = newCamY;
+    controls.object.position.z = newCamZ;
+    controls.target.x += actualDx;
+    controls.target.y += actualDy;
+    controls.target.z += actualDz;
+    return true;
+  }
+
+  function onContainerClick() {
+    container?.focus();
+  }
+
+  if (container) {
+    container.tabIndex = 0;
+    container.addEventListener('click', onContainerClick, { passive: true });
+  }
+
+  function dispose() {
+    target.removeEventListener('keydown', onKeyDown);
+    target.removeEventListener('keyup', onKeyUp);
+    window.removeEventListener('blur', onWindowBlur);
+    if (container) container.removeEventListener('click', onContainerClick);
+    clearKeys();
+  }
+
+  target.addEventListener('keydown', onKeyDown);
+  target.addEventListener('keyup', onKeyUp);
+  window.addEventListener('blur', onWindowBlur);
+  return { update, dispose, clearKeys };
+}
 function signalReady(target, options) {
   const config = options || {};
   const el = typeof target === 'function' ? target() : target;
@@ -588,6 +718,151 @@ function bootAFrame() {
       if (typeof window.sketch === 'function') {
         window.sketch({ AFRAME: window.AFRAME, scene, startFrame });
       }
+      let pointerTarget = null;
+      let frameId = 0;
+      const aframeNav = {
+        animFrom: null,
+        animTo: null,
+        animStart: 0,
+        pointer: null,
+        hadMultiTouch: false,
+        activeTouches: new Set(),
+      };
+
+      function getAFrameThree() {
+        return window.AFRAME?.THREE || window.THREE;
+      }
+
+      function getAFrameCameraObject() {
+        if (scene?.camera) return scene.camera;
+        const cameraEl = scene?.querySelector('[camera]') || scene?.querySelector('a-camera');
+        return cameraEl?.object3D || null;
+      }
+
+      function getAFrameCameraMover() {
+        const cameraObject = getAFrameCameraObject();
+        if (!cameraObject) return null;
+        const cameraEl = cameraObject.el || scene?.querySelector('[camera]') || scene?.querySelector('a-camera');
+        return cameraEl?.object3D || cameraObject;
+      }
+
+      function activeAFrameTouchCount() {
+        return aframeNav.activeTouches.size;
+      }
+
+      function onAFramePointerDown(event) {
+        if ((event.pointerType || 'mouse') === 'touch') {
+          aframeNav.activeTouches.add(event.pointerId);
+          if (activeAFrameTouchCount() > 1) aframeNav.hadMultiTouch = true;
+        }
+        aframeNav.pointer = {
+          id: event.pointerId,
+          pointerType: event.pointerType || 'mouse',
+          button: event.button,
+          startX: event.clientX,
+          startY: event.clientY,
+          moved: false,
+        };
+      }
+
+      function onAFramePointerMove(event) {
+        if (!aframeNav.pointer || aframeNav.pointer.id !== event.pointerId) return;
+        if (Math.hypot(event.clientX - aframeNav.pointer.startX, event.clientY - aframeNav.pointer.startY) >= 6) {
+          aframeNav.pointer.moved = true;
+        }
+        if ((event.pointerType || 'mouse') === 'touch' && activeAFrameTouchCount() > 1) {
+          aframeNav.hadMultiTouch = true;
+        }
+      }
+
+      function clearAFramePointer(event) {
+        if ((event.pointerType || 'mouse') === 'touch') {
+          aframeNav.activeTouches.delete(event.pointerId);
+          if (activeAFrameTouchCount() === 0) aframeNav.hadMultiTouch = false;
+        }
+        if (aframeNav.pointer?.id === event.pointerId) {
+          aframeNav.pointer = null;
+        }
+      }
+
+      function moveAFrameViewTo(hitPoint) {
+        const THREE_NS = getAFrameThree();
+        const mover = getAFrameCameraMover();
+        if (!THREE_NS || !mover || !hitPoint) return;
+        const cameraWorld = new THREE_NS.Vector3();
+        mover.getWorldPosition(cameraWorld);
+        const shift = new THREE_NS.Vector3(
+          Math.max(-12, Math.min(12, hitPoint.x - cameraWorld.x)),
+          0,
+          Math.max(-12, Math.min(12, hitPoint.z - cameraWorld.z)),
+        );
+        if (shift.lengthSq() < 0.003) return;
+        aframeNav.animFrom = cameraWorld.clone();
+        aframeNav.animTo = cameraWorld.clone().add(shift);
+        aframeNav.animStart = performance.now();
+      }
+
+      function onAFramePointerUp(event) {
+        const THREE_NS = getAFrameThree();
+        const pointer = aframeNav.pointer;
+        const wasMultiTouch = aframeNav.hadMultiTouch || activeAFrameTouchCount() > 1;
+        clearAFramePointer(event);
+        if (!THREE_NS || !scene || !pointer || wasMultiTouch || pointer.button !== 0 || event.button !== 0 || pointer.moved) return;
+        const cameraObject = getAFrameCameraObject();
+        if (!cameraObject) return;
+        const rect = (pointerTarget || scene.canvas || scene).getBoundingClientRect();
+        const raycaster = new THREE_NS.Raycaster();
+        raycaster.setFromCamera(
+          new THREE_NS.Vector2(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1),
+          cameraObject,
+        );
+
+        let hitPoint = null;
+        const hits = raycaster.intersectObjects(scene.object3D?.children || [], true)
+          .filter((hit) => {
+            if (hit.object === cameraObject || cameraObject.children?.includes(hit.object)) return false;
+            const tagName = hit.object.el?.tagName?.toUpperCase?.() || '';
+            const name = (hit.object.name || hit.object.el?.id || '').toLowerCase();
+            if (tagName === 'A-SKY' || name.includes('sky') || name.includes('background') || name.includes('env')) return false;
+            return true;
+          });
+        if (hits.length > 0) {
+          hitPoint = hits[0].point;
+        } else {
+          const floorPlane = new THREE_NS.Plane(new THREE_NS.Vector3(0, 1, 0), 0);
+          const planeHit = new THREE_NS.Vector3();
+          if (raycaster.ray.intersectPlane(floorPlane, planeHit)) hitPoint = planeHit;
+        }
+        if (hitPoint) moveAFrameViewTo(hitPoint);
+      }
+
+      function animateAFramePointerNavigation() {
+        frameId = requestAnimationFrame(animateAFramePointerNavigation);
+        const THREE_NS = getAFrameThree();
+        const mover = getAFrameCameraMover();
+        if (!THREE_NS || !mover || !aframeNav.animFrom || !aframeNav.animTo) return;
+        const t = Math.min((performance.now() - aframeNav.animStart) / 350, 1);
+        const eased = 1 - (1 - t) ** 3;
+        const nextWorld = new THREE_NS.Vector3().lerpVectors(aframeNav.animFrom, aframeNav.animTo, eased);
+        if (mover.parent) {
+          mover.parent.worldToLocal(nextWorld);
+        }
+        mover.position.copy(nextWorld);
+        if (t >= 1) {
+          aframeNav.animFrom = aframeNav.animTo = null;
+        }
+      }
+
+      function bindAFramePointerControls() {
+        if (pointerTarget) return;
+        pointerTarget = scene.canvas || scene.querySelector('canvas') || scene;
+        pointerTarget.style.touchAction = 'none';
+        pointerTarget.addEventListener('pointerdown', onAFramePointerDown);
+        pointerTarget.addEventListener('pointermove', onAFramePointerMove);
+        pointerTarget.addEventListener('pointerup', onAFramePointerUp);
+        pointerTarget.addEventListener('pointercancel', clearAFramePointer);
+        pointerTarget.addEventListener('lostpointercapture', clearAFramePointer);
+      }
 
       function disableMotionTracking() {
         if (!pieceDisableMotion) return;
@@ -611,13 +886,17 @@ function bootAFrame() {
       }
 
       scene.addEventListener('renderstart', signalAFrameReadyOnce, { once: true });
+      scene.addEventListener('renderstart', bindAFramePointerControls, { once: true });
       scene.addEventListener('loaded', disableMotionTracking, { once: true });
       scene.addEventListener('loaded', () => {
         ready.noteInlineMedia(scene);
         disableMotionTracking();
+        bindAFramePointerControls();
         requestAnimationFrame(() => requestAnimationFrame(signalAFrameReadyOnce));
       }, { once: true });
+      frameId = requestAnimationFrame(animateAFramePointerNavigation);
       requestAnimationFrame(disableMotionTracking);
+      setTimeout(bindAFramePointerControls, 250);
       setTimeout(disableMotionTracking, 250);
       startFrame(() => signalAFrameReadyOnce());
       setTimeout(signalAFrameReadyOnce, 2500);
@@ -804,12 +1083,146 @@ async function bootThree() {
       controls = new OrbitControls(state.camera, canvas);
       controls.enableDamping = true;
       controls.enablePan = true;
+      const threeRaycaster = new mod.Raycaster();
+      const pointerState = new Map();
+      let hadMultiTouchGesture = false;
+      let threeNavLimit = 5;
+      let keyNav = null;
+      let animFromTarget = null;
+      let animToTarget = null;
+      let animFromCam = null;
+      let animToCam = null;
+      let animStart = 0;
+
+      function getThreeNavigationLimit() {
+        const box = new mod.Box3();
+        if (state.scene?.traverse) {
+          state.scene.traverse((obj) => {
+            if (obj.isHelper || obj.isLight || obj.isCamera) return;
+            if ((obj.isMesh || obj.isLine || obj.isPoints || obj.isSprite) && obj.geometry) {
+              obj.geometry.computeBoundingBox?.();
+              if (obj.geometry.boundingBox) box.union(obj.geometry.boundingBox.clone().applyMatrix4(obj.matrixWorld));
+            }
+          });
+        }
+        if (box.isEmpty()) {
+          try { box.setFromObject(state.scene); } catch (_) { return 5; }
+        }
+        if (box.isEmpty()) return 5;
+        const size = new mod.Vector3();
+        box.getSize(size);
+        return Math.max(size.x, size.z, 1) * 0.7;
+      }
+
+      function cancelThreeNavigationAnimation() {
+        animFromTarget = animToTarget = animFromCam = animToCam = null;
+        controls.enabled = true;
+      }
+
+      function moveThreeOrbitTo(hitPoint) {
+        if (!hitPoint) return;
+        const dx = hitPoint.x - controls.target.x;
+        const dz = hitPoint.z - controls.target.z;
+        const shift = new mod.Vector3(
+          Math.max(-threeNavLimit, Math.min(threeNavLimit, dx)),
+          0,
+          Math.max(-threeNavLimit, Math.min(threeNavLimit, dz)),
+        );
+        if (shift.lengthSq() < 0.003) return;
+        cancelThreeNavigationAnimation();
+        animFromTarget = controls.target.clone();
+        animToTarget = animFromTarget.clone().add(shift);
+        animFromCam = state.camera.position.clone();
+        animToCam = animFromCam.clone().add(shift);
+        animStart = performance.now();
+        controls.enabled = false;
+      }
+
+      function activeTouchPointerCount() {
+        let count = 0;
+        pointerState.forEach((pointer) => {
+          if (pointer.pointerType === 'touch') count += 1;
+        });
+        return count;
+      }
+
+      function onThreePointerDown(event) {
+        pointerState.set(event.pointerId, {
+          pointerType: event.pointerType || 'mouse',
+          button: event.button,
+          startX: event.clientX,
+          startY: event.clientY,
+          moved: false,
+        });
+        if ((event.pointerType || 'mouse') === 'touch' && activeTouchPointerCount() > 1) {
+          hadMultiTouchGesture = true;
+        }
+      }
+
+      function onThreePointerMove(event) {
+        const pointer = pointerState.get(event.pointerId);
+        if (!pointer) return;
+        if (Math.hypot(event.clientX - pointer.startX, event.clientY - pointer.startY) >= 6) {
+          pointer.moved = true;
+        }
+        if (pointer.pointerType === 'touch' && activeTouchPointerCount() > 1) {
+          hadMultiTouchGesture = true;
+        }
+      }
+
+      function clearThreePointer(event) {
+        const pointer = pointerState.get(event.pointerId);
+        pointerState.delete(event.pointerId);
+        if (pointer?.pointerType === 'touch' && activeTouchPointerCount() === 0) {
+          hadMultiTouchGesture = false;
+        }
+      }
+
+      function onThreePointerUp(event) {
+        const pointer = pointerState.get(event.pointerId);
+        const wasMultiTouch = hadMultiTouchGesture || activeTouchPointerCount() > 1;
+        clearThreePointer(event);
+        if (!pointer || wasMultiTouch || pointer.button !== 0 || event.button !== 0 || pointer.moved) return;
+
+        const rect = canvas.getBoundingClientRect();
+        threeRaycaster.setFromCamera(
+          new mod.Vector2(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1),
+          state.camera,
+        );
+
+        let hitPoint = null;
+        if (state.scene?.children?.length) {
+          const hits = threeRaycaster.intersectObjects(state.scene.children, true);
+          if (hits.length > 0) hitPoint = hits[0].point;
+        }
+        const floorPlane = new mod.Plane(new mod.Vector3(0, 1, 0), 0);
+        const planeHit = new mod.Vector3();
+        if (!hitPoint && threeRaycaster.ray.intersectPlane(floorPlane, planeHit)) {
+          hitPoint = planeHit;
+        }
+        if (hitPoint) moveThreeOrbitTo(hitPoint);
+      }
+
       const camDir = new mod.Vector3();
       state.camera.getWorldDirection(camDir);
       const camLen = state.camera.position.length();
       controls.target.copy(state.camera.position).addScaledVector(camDir, Math.max(camLen * 0.8, 3));
       autoFit();
       controls.update();
+      threeNavLimit = getThreeNavigationLimit();
+      keyNav = createKeyboardNavigation(controls, {
+        container: canvas,
+        speed: (act) => Math.max(0.05, act.target.distanceTo(act.object.position) * 0.03),
+        minX: -threeNavLimit,
+        maxX: threeNavLimit,
+        minZ: 0.5,
+        maxZ: threeNavLimit,
+      });
+      canvas.addEventListener('pointerdown', onThreePointerDown);
+      canvas.addEventListener('pointermove', onThreePointerMove);
+      canvas.addEventListener('pointerup', onThreePointerUp);
+      canvas.addEventListener('pointercancel', clearThreePointer);
+      canvas.addEventListener('lostpointercapture', clearThreePointer);
 
       let isOrbitActive = false;
       let userHasInteracted = false;
@@ -837,8 +1250,23 @@ async function bootThree() {
         rafIds.push(id);
         try {
           ensureFallbackLighting();
+          let externalMotion = false;
+          if (animToTarget && animFromTarget) {
+            const t = Math.min((performance.now() - animStart) / 350, 1);
+            const eased = 1 - (1 - t) ** 3;
+            controls.target.lerpVectors(animFromTarget, animToTarget, eased);
+            state.camera.position.lerpVectors(animFromCam, animToCam, eased);
+            externalMotion = true;
+            if (t >= 1) {
+              controls.enabled = true;
+              animFromTarget = animToTarget = animFromCam = animToCam = null;
+            }
+          }
+          if (keyNav?.update()) {
+            externalMotion = true;
+          }
           controls.update();
-          if (isOrbitActive) userHasInteracted = true;
+          if (isOrbitActive || externalMotion) userHasInteracted = true;
           if (!pieceDrivesOwnRender || userHasInteracted) {
             state.renderer.render(state.scene, state.camera);
             signalThreeReadyOnce('animateControls-tick-' + animateControlsTick);

@@ -403,6 +403,7 @@ function piece_export_immersive_document(array $piece, array $version, array $op
     $jsonEmbeddedOrbitControls = json_encode(piece_export_patched_orbitcontrols_source(), $jsonFlags);
     $jsonEmbeddedDeviceOrientation = json_encode(piece_export_patched_device_orientation_source(), $jsonFlags);
     $jsonEmbeddedImmersiveGallery = json_encode(piece_export_patched_immersive_gallery_source(), $jsonFlags);
+    $downloadBridgeScript = piece_export_download_bridge_script();
 
     // Shared top toolbar — identical placement/appearance to the live
     // immersive surfaces. Three/A-Frame pieces have no gallery full view, so
@@ -453,6 +454,9 @@ html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#
 function showPieceError(error){const el=document.getElementById('piece-error');if(!el)return;el.textContent=(error&&(error.stack||error.message))?(error.stack||error.message):String(error);el.style.display='block';}
 window.addEventListener('error',event=>showPieceError(event.error||event.message));
 window.addEventListener('unhandledrejection',event=>showPieceError(event.reason||'Unhandled promise rejection'));
+</script>
+<script>
+{$downloadBridgeScript}
 </script>
 <script type="module">
 const embeddedRuntimeSources = {
@@ -837,8 +841,14 @@ function piece_export_three_orbitcontrols_inline_source(): string
         "from '__CREATR_THREE_BLOB__';",
         $source
     ) ?? $source;
-    $source = preg_replace('/^\s*export\s*\{\s*OrbitControls\s*\};?\s*$/m', '', $source) ?? $source;
     return $source;
+}
+
+function piece_export_download_bridge_script(): string
+{
+    return piece_escape_inline_script(
+        piece_export_runtime_source_file('assets/js/public-piece-download.js')
+    );
 }
 
 function piece_export_bootstrap(string $engine, string $generationMode = '', string $runtimeMode = 'cdn'): string
@@ -932,16 +942,241 @@ try {
     const controls = new OrbitControls(state.camera, canvas);
     controls.enableDamping = true;
     controls.enablePan = true;
+    const threeRaycaster = new THREE.Raycaster();
+    const pointerState = new Map();
+    const keyboardKeys = new Set();
+    let hadMultiTouchGesture = false;
+    let lastKeyUpdateAt = null;
+    let threeNavLimit = 5;
+    let animFromTarget = null;
+    let animToTarget = null;
+    let animFromCam = null;
+    let animToCam = null;
+    let animStart = 0;
     let isOrbitActive = false;
     let userHasInteracted = false;
+
+    function getThreeNavigationLimit() {
+      const box = new THREE.Box3();
+      if (state.scene?.traverse) {
+        state.scene.traverse((obj) => {
+          if (obj.isHelper || obj.isLight || obj.isCamera) return;
+          if ((obj.isMesh || obj.isLine || obj.isPoints || obj.isSprite) && obj.geometry) {
+            obj.geometry.computeBoundingBox?.();
+            if (obj.geometry.boundingBox) box.union(obj.geometry.boundingBox.clone().applyMatrix4(obj.matrixWorld));
+          }
+        });
+      }
+      if (box.isEmpty()) {
+        try { box.setFromObject(state.scene); } catch (_) { return 5; }
+      }
+      if (box.isEmpty()) return 5;
+      const size = new THREE.Vector3();
+      box.getSize(size);
+      return Math.max(size.x, size.z, 1) * 0.7;
+    }
+
+    function mapMovementKey(event) {
+      if (event.code === 'KeyW') return 'ArrowUp';
+      if (event.code === 'KeyS') return 'ArrowDown';
+      if (event.code === 'KeyA') return 'ArrowLeft';
+      if (event.code === 'KeyD') return 'ArrowRight';
+      if (event.key === 'ArrowLeft' || event.key === 'ArrowRight' || event.key === 'ArrowUp' || event.key === 'ArrowDown') return event.key;
+      return null;
+    }
+
+    function shouldIgnoreKeyEventTarget(eventTarget) {
+      if (!(eventTarget instanceof Element)) return false;
+      if (eventTarget.tagName === 'IFRAME') return true;
+      if (eventTarget instanceof HTMLInputElement || eventTarget instanceof HTMLTextAreaElement || eventTarget instanceof HTMLSelectElement) return true;
+      if (eventTarget.isContentEditable) return true;
+      return Boolean(eventTarget.closest('[contenteditable="true"], [contenteditable=""], input, textarea, select'));
+    }
+
+    function computeOrbitKeyboardMotion(forward, keys, speed) {
+      let fwdScale = 0, rightScale = 0;
+      if (keys.has('ArrowUp')) fwdScale += speed;
+      if (keys.has('ArrowDown')) fwdScale -= speed;
+      if (keys.has('ArrowLeft')) rightScale -= speed;
+      if (keys.has('ArrowRight')) rightScale += speed;
+      if (fwdScale === 0 && rightScale === 0) return { dx: 0, dy: 0, dz: 0 };
+      const horizontalLength = Math.sqrt(forward.x ** 2 + forward.z ** 2);
+      const right = horizontalLength > 1e-6
+        ? { x: -forward.z / horizontalLength, y: 0, z: forward.x / horizontalLength }
+        : { x: 1, y: 0, z: 0 };
+      return {
+        dx: (forward.x * fwdScale) + (right.x * rightScale),
+        dy: forward.y * fwdScale,
+        dz: (forward.z * fwdScale) + (right.z * rightScale),
+      };
+    }
+
+    function activeTouchPointerCount() {
+      let count = 0;
+      pointerState.forEach((pointer) => {
+        if (pointer.pointerType === 'touch') count += 1;
+      });
+      return count;
+    }
+
+    function cancelThreeNavigationAnimation() {
+      animFromTarget = animToTarget = animFromCam = animToCam = null;
+      controls.enabled = true;
+    }
+
+    function moveThreeOrbitTo(hitPoint) {
+      if (!hitPoint) return;
+      const dx = hitPoint.x - controls.target.x;
+      const dz = hitPoint.z - controls.target.z;
+      const shift = new THREE.Vector3(
+        Math.max(-threeNavLimit, Math.min(threeNavLimit, dx)),
+        0,
+        Math.max(-threeNavLimit, Math.min(threeNavLimit, dz)),
+      );
+      if (shift.lengthSq() < 0.003) return;
+      cancelThreeNavigationAnimation();
+      animFromTarget = controls.target.clone();
+      animToTarget = animFromTarget.clone().add(shift);
+      animFromCam = state.camera.position.clone();
+      animToCam = animFromCam.clone().add(shift);
+      animStart = performance.now();
+      controls.enabled = false;
+    }
+
+    function onKeyDown(event) {
+      const mappedKey = mapMovementKey(event);
+      if (!mappedKey || shouldIgnoreKeyEventTarget(event.target)) return;
+      event.preventDefault();
+      keyboardKeys.add(mappedKey);
+    }
+
+    function onKeyUp(event) {
+      const mappedKey = mapMovementKey(event);
+      if (!mappedKey) return;
+      keyboardKeys.delete(mappedKey);
+      keyboardKeys.delete(event.key);
+    }
+
+    function onWindowBlur() {
+      keyboardKeys.clear();
+    }
+
+    function updateKeyboardNavigation() {
+      const now = performance.now();
+      const TARGET_FRAME_MS = 1000 / 60;
+      const MAX_FRAME_SCALE = 4;
+      const frameScale = lastKeyUpdateAt === null
+        ? 1
+        : Math.min(MAX_FRAME_SCALE, Math.max(0, (now - lastKeyUpdateAt) / TARGET_FRAME_MS));
+      lastKeyUpdateAt = now;
+      if (!controls.enabled || keyboardKeys.size === 0) return false;
+      const forward = new THREE.Vector3();
+      controls.object.getWorldDirection(forward);
+      const resolvedSpeed = Math.max(0.05, controls.target.distanceTo(controls.object.position) * 0.03) * frameScale;
+      const { dx, dy, dz } = computeOrbitKeyboardMotion(forward, keyboardKeys, resolvedSpeed);
+      const newCamX = Math.max(-threeNavLimit, Math.min(threeNavLimit, controls.object.position.x + dx));
+      const newCamY = controls.object.position.y + dy;
+      const newCamZ = Math.max(0.5, Math.min(threeNavLimit, controls.object.position.z + dz));
+      const actualDx = newCamX - controls.object.position.x;
+      const actualDy = newCamY - controls.object.position.y;
+      const actualDz = newCamZ - controls.object.position.z;
+      if (Math.abs(actualDx) < 1e-6 && Math.abs(actualDy) < 1e-6 && Math.abs(actualDz) < 1e-6) return false;
+      controls.object.position.x = newCamX;
+      controls.object.position.y = newCamY;
+      controls.object.position.z = newCamZ;
+      controls.target.x += actualDx;
+      controls.target.y += actualDy;
+      controls.target.z += actualDz;
+      return true;
+    }
+
+    function onThreePointerDown(event) {
+      pointerState.set(event.pointerId, {
+        pointerType: event.pointerType || 'mouse',
+        button: event.button,
+        startX: event.clientX,
+        startY: event.clientY,
+        moved: false,
+      });
+      if ((event.pointerType || 'mouse') === 'touch' && activeTouchPointerCount() > 1) {
+        hadMultiTouchGesture = true;
+      }
+    }
+
+    function onThreePointerMove(event) {
+      const pointer = pointerState.get(event.pointerId);
+      if (!pointer) return;
+      if (Math.hypot(event.clientX - pointer.startX, event.clientY - pointer.startY) >= 6) {
+        pointer.moved = true;
+      }
+      if (pointer.pointerType === 'touch' && activeTouchPointerCount() > 1) {
+        hadMultiTouchGesture = true;
+      }
+    }
+
+    function clearThreePointer(event) {
+      const pointer = pointerState.get(event.pointerId);
+      pointerState.delete(event.pointerId);
+      if (pointer?.pointerType === 'touch' && activeTouchPointerCount() === 0) {
+        hadMultiTouchGesture = false;
+      }
+    }
+
+    function onThreePointerUp(event) {
+      const pointer = pointerState.get(event.pointerId);
+      const wasMultiTouch = hadMultiTouchGesture || activeTouchPointerCount() > 1;
+      clearThreePointer(event);
+      if (!pointer || wasMultiTouch || pointer.button !== 0 || event.button !== 0 || pointer.moved) return;
+      const rect = canvas.getBoundingClientRect();
+      threeRaycaster.setFromCamera(
+        new THREE.Vector2(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1),
+        state.camera,
+      );
+      let hitPoint = null;
+      if (state.scene?.children?.length) {
+        const hits = threeRaycaster.intersectObjects(state.scene.children, true);
+        if (hits.length > 0) hitPoint = hits[0].point;
+      }
+      const floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+      const planeHit = new THREE.Vector3();
+      if (!hitPoint && threeRaycaster.ray.intersectPlane(floorPlane, planeHit)) {
+        hitPoint = planeHit;
+      }
+      if (hitPoint) moveThreeOrbitTo(hitPoint);
+    }
+
+    threeNavLimit = getThreeNavigationLimit();
+    canvas.tabIndex = 0;
+    canvas.addEventListener('click', () => canvas.focus(), { passive: true });
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', onWindowBlur);
+    canvas.addEventListener('pointerdown', onThreePointerDown);
+    canvas.addEventListener('pointermove', onThreePointerMove);
+    canvas.addEventListener('pointerup', onThreePointerUp);
+    canvas.addEventListener('pointercancel', clearThreePointer);
+    canvas.addEventListener('lostpointercapture', clearThreePointer);
     controls.addEventListener('start', () => { isOrbitActive = true; userHasInteracted = true; });
     controls.addEventListener('end', () => { isOrbitActive = false; });
     function animateControls() {
       const id = requestAnimationFrame(animateControls);
       rafIds.push(id);
       try {
+        let externalMotion = false;
+        if (animToTarget && animFromTarget) {
+          const t = Math.min((performance.now() - animStart) / 350, 1);
+          const eased = 1 - (1 - t) ** 3;
+          controls.target.lerpVectors(animFromTarget, animToTarget, eased);
+          state.camera.position.lerpVectors(animFromCam, animToCam, eased);
+          externalMotion = true;
+          if (t >= 1) {
+            controls.enabled = true;
+            animFromTarget = animToTarget = animFromCam = animToCam = null;
+          }
+        }
+        if (updateKeyboardNavigation()) externalMotion = true;
         controls.update();
-        if (isOrbitActive) userHasInteracted = true;
+        if (isOrbitActive || externalMotion) userHasInteracted = true;
         if (!pieceDrivesOwnRender || userHasInteracted) {
           state.renderer.render(state.scene, state.camera);
         }
@@ -1123,16 +1358,241 @@ try {
     const controls = new OrbitControls(state.camera, canvas);
     controls.enableDamping = true;
     controls.enablePan = true;
+    const threeRaycaster = new THREE.Raycaster();
+    const pointerState = new Map();
+    const keyboardKeys = new Set();
+    let hadMultiTouchGesture = false;
+    let lastKeyUpdateAt = null;
+    let threeNavLimit = 5;
+    let animFromTarget = null;
+    let animToTarget = null;
+    let animFromCam = null;
+    let animToCam = null;
+    let animStart = 0;
     let isOrbitActive = false;
     let userHasInteracted = false;
+
+    function getThreeNavigationLimit() {
+      const box = new THREE.Box3();
+      if (state.scene?.traverse) {
+        state.scene.traverse((obj) => {
+          if (obj.isHelper || obj.isLight || obj.isCamera) return;
+          if ((obj.isMesh || obj.isLine || obj.isPoints || obj.isSprite) && obj.geometry) {
+            obj.geometry.computeBoundingBox?.();
+            if (obj.geometry.boundingBox) box.union(obj.geometry.boundingBox.clone().applyMatrix4(obj.matrixWorld));
+          }
+        });
+      }
+      if (box.isEmpty()) {
+        try { box.setFromObject(state.scene); } catch (_) { return 5; }
+      }
+      if (box.isEmpty()) return 5;
+      const size = new THREE.Vector3();
+      box.getSize(size);
+      return Math.max(size.x, size.z, 1) * 0.7;
+    }
+
+    function mapMovementKey(event) {
+      if (event.code === 'KeyW') return 'ArrowUp';
+      if (event.code === 'KeyS') return 'ArrowDown';
+      if (event.code === 'KeyA') return 'ArrowLeft';
+      if (event.code === 'KeyD') return 'ArrowRight';
+      if (event.key === 'ArrowLeft' || event.key === 'ArrowRight' || event.key === 'ArrowUp' || event.key === 'ArrowDown') return event.key;
+      return null;
+    }
+
+    function shouldIgnoreKeyEventTarget(eventTarget) {
+      if (!(eventTarget instanceof Element)) return false;
+      if (eventTarget.tagName === 'IFRAME') return true;
+      if (eventTarget instanceof HTMLInputElement || eventTarget instanceof HTMLTextAreaElement || eventTarget instanceof HTMLSelectElement) return true;
+      if (eventTarget.isContentEditable) return true;
+      return Boolean(eventTarget.closest('[contenteditable="true"], [contenteditable=""], input, textarea, select'));
+    }
+
+    function computeOrbitKeyboardMotion(forward, keys, speed) {
+      let fwdScale = 0, rightScale = 0;
+      if (keys.has('ArrowUp')) fwdScale += speed;
+      if (keys.has('ArrowDown')) fwdScale -= speed;
+      if (keys.has('ArrowLeft')) rightScale -= speed;
+      if (keys.has('ArrowRight')) rightScale += speed;
+      if (fwdScale === 0 && rightScale === 0) return { dx: 0, dy: 0, dz: 0 };
+      const horizontalLength = Math.sqrt(forward.x ** 2 + forward.z ** 2);
+      const right = horizontalLength > 1e-6
+        ? { x: -forward.z / horizontalLength, y: 0, z: forward.x / horizontalLength }
+        : { x: 1, y: 0, z: 0 };
+      return {
+        dx: (forward.x * fwdScale) + (right.x * rightScale),
+        dy: forward.y * fwdScale,
+        dz: (forward.z * fwdScale) + (right.z * rightScale),
+      };
+    }
+
+    function activeTouchPointerCount() {
+      let count = 0;
+      pointerState.forEach((pointer) => {
+        if (pointer.pointerType === 'touch') count += 1;
+      });
+      return count;
+    }
+
+    function cancelThreeNavigationAnimation() {
+      animFromTarget = animToTarget = animFromCam = animToCam = null;
+      controls.enabled = true;
+    }
+
+    function moveThreeOrbitTo(hitPoint) {
+      if (!hitPoint) return;
+      const dx = hitPoint.x - controls.target.x;
+      const dz = hitPoint.z - controls.target.z;
+      const shift = new THREE.Vector3(
+        Math.max(-threeNavLimit, Math.min(threeNavLimit, dx)),
+        0,
+        Math.max(-threeNavLimit, Math.min(threeNavLimit, dz)),
+      );
+      if (shift.lengthSq() < 0.003) return;
+      cancelThreeNavigationAnimation();
+      animFromTarget = controls.target.clone();
+      animToTarget = animFromTarget.clone().add(shift);
+      animFromCam = state.camera.position.clone();
+      animToCam = animFromCam.clone().add(shift);
+      animStart = performance.now();
+      controls.enabled = false;
+    }
+
+    function onKeyDown(event) {
+      const mappedKey = mapMovementKey(event);
+      if (!mappedKey || shouldIgnoreKeyEventTarget(event.target)) return;
+      event.preventDefault();
+      keyboardKeys.add(mappedKey);
+    }
+
+    function onKeyUp(event) {
+      const mappedKey = mapMovementKey(event);
+      if (!mappedKey) return;
+      keyboardKeys.delete(mappedKey);
+      keyboardKeys.delete(event.key);
+    }
+
+    function onWindowBlur() {
+      keyboardKeys.clear();
+    }
+
+    function updateKeyboardNavigation() {
+      const now = performance.now();
+      const TARGET_FRAME_MS = 1000 / 60;
+      const MAX_FRAME_SCALE = 4;
+      const frameScale = lastKeyUpdateAt === null
+        ? 1
+        : Math.min(MAX_FRAME_SCALE, Math.max(0, (now - lastKeyUpdateAt) / TARGET_FRAME_MS));
+      lastKeyUpdateAt = now;
+      if (!controls.enabled || keyboardKeys.size === 0) return false;
+      const forward = new THREE.Vector3();
+      controls.object.getWorldDirection(forward);
+      const resolvedSpeed = Math.max(0.05, controls.target.distanceTo(controls.object.position) * 0.03) * frameScale;
+      const { dx, dy, dz } = computeOrbitKeyboardMotion(forward, keyboardKeys, resolvedSpeed);
+      const newCamX = Math.max(-threeNavLimit, Math.min(threeNavLimit, controls.object.position.x + dx));
+      const newCamY = controls.object.position.y + dy;
+      const newCamZ = Math.max(0.5, Math.min(threeNavLimit, controls.object.position.z + dz));
+      const actualDx = newCamX - controls.object.position.x;
+      const actualDy = newCamY - controls.object.position.y;
+      const actualDz = newCamZ - controls.object.position.z;
+      if (Math.abs(actualDx) < 1e-6 && Math.abs(actualDy) < 1e-6 && Math.abs(actualDz) < 1e-6) return false;
+      controls.object.position.x = newCamX;
+      controls.object.position.y = newCamY;
+      controls.object.position.z = newCamZ;
+      controls.target.x += actualDx;
+      controls.target.y += actualDy;
+      controls.target.z += actualDz;
+      return true;
+    }
+
+    function onThreePointerDown(event) {
+      pointerState.set(event.pointerId, {
+        pointerType: event.pointerType || 'mouse',
+        button: event.button,
+        startX: event.clientX,
+        startY: event.clientY,
+        moved: false,
+      });
+      if ((event.pointerType || 'mouse') === 'touch' && activeTouchPointerCount() > 1) {
+        hadMultiTouchGesture = true;
+      }
+    }
+
+    function onThreePointerMove(event) {
+      const pointer = pointerState.get(event.pointerId);
+      if (!pointer) return;
+      if (Math.hypot(event.clientX - pointer.startX, event.clientY - pointer.startY) >= 6) {
+        pointer.moved = true;
+      }
+      if (pointer.pointerType === 'touch' && activeTouchPointerCount() > 1) {
+        hadMultiTouchGesture = true;
+      }
+    }
+
+    function clearThreePointer(event) {
+      const pointer = pointerState.get(event.pointerId);
+      pointerState.delete(event.pointerId);
+      if (pointer?.pointerType === 'touch' && activeTouchPointerCount() === 0) {
+        hadMultiTouchGesture = false;
+      }
+    }
+
+    function onThreePointerUp(event) {
+      const pointer = pointerState.get(event.pointerId);
+      const wasMultiTouch = hadMultiTouchGesture || activeTouchPointerCount() > 1;
+      clearThreePointer(event);
+      if (!pointer || wasMultiTouch || pointer.button !== 0 || event.button !== 0 || pointer.moved) return;
+      const rect = canvas.getBoundingClientRect();
+      threeRaycaster.setFromCamera(
+        new THREE.Vector2(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1),
+        state.camera,
+      );
+      let hitPoint = null;
+      if (state.scene?.children?.length) {
+        const hits = threeRaycaster.intersectObjects(state.scene.children, true);
+        if (hits.length > 0) hitPoint = hits[0].point;
+      }
+      const floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+      const planeHit = new THREE.Vector3();
+      if (!hitPoint && threeRaycaster.ray.intersectPlane(floorPlane, planeHit)) {
+        hitPoint = planeHit;
+      }
+      if (hitPoint) moveThreeOrbitTo(hitPoint);
+    }
+
+    threeNavLimit = getThreeNavigationLimit();
+    canvas.tabIndex = 0;
+    canvas.addEventListener('click', () => canvas.focus(), { passive: true });
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', onWindowBlur);
+    canvas.addEventListener('pointerdown', onThreePointerDown);
+    canvas.addEventListener('pointermove', onThreePointerMove);
+    canvas.addEventListener('pointerup', onThreePointerUp);
+    canvas.addEventListener('pointercancel', clearThreePointer);
+    canvas.addEventListener('lostpointercapture', clearThreePointer);
     controls.addEventListener('start', () => { isOrbitActive = true; userHasInteracted = true; });
     controls.addEventListener('end', () => { isOrbitActive = false; });
     function animateControls() {
       const id = requestAnimationFrame(animateControls);
       rafIds.push(id);
       try {
+        let externalMotion = false;
+        if (animToTarget && animFromTarget) {
+          const t = Math.min((performance.now() - animStart) / 350, 1);
+          const eased = 1 - (1 - t) ** 3;
+          controls.target.lerpVectors(animFromTarget, animToTarget, eased);
+          state.camera.position.lerpVectors(animFromCam, animToCam, eased);
+          externalMotion = true;
+          if (t >= 1) {
+            controls.enabled = true;
+            animFromTarget = animToTarget = animFromCam = animToCam = null;
+          }
+        }
+        if (updateKeyboardNavigation()) externalMotion = true;
         controls.update();
-        if (isOrbitActive) userHasInteracted = true;
+        if (isOrbitActive || externalMotion) userHasInteracted = true;
         if (!pieceDrivesOwnRender || userHasInteracted) {
           state.renderer.render(state.scene, state.camera);
         }
@@ -1174,6 +1634,158 @@ try {
     requestAnimationFrame(tick);
   }
   if (scene && typeof window.sketch === 'function') window.sketch({ AFRAME: window.AFRAME, scene, startFrame });
+  if (scene) {
+    let pointerTarget = null;
+    let frameId = 0;
+    const aframeNav = {
+      animFrom: null,
+      animTo: null,
+      animStart: 0,
+      pointer: null,
+      hadMultiTouch: false,
+      activeTouches: new Set(),
+    };
+
+    function getAFrameThree() {
+      return window.AFRAME?.THREE || window.THREE;
+    }
+
+    function getAFrameCameraObject() {
+      if (scene.camera) return scene.camera;
+      const cameraEl = scene.querySelector('[camera]') || scene.querySelector('a-camera');
+      return cameraEl?.object3D || null;
+    }
+
+    function getAFrameCameraMover() {
+      const cameraObject = getAFrameCameraObject();
+      if (!cameraObject) return null;
+      const cameraEl = cameraObject.el || scene.querySelector('[camera]') || scene.querySelector('a-camera');
+      return cameraEl?.object3D || cameraObject;
+    }
+
+    function activeAFrameTouchCount() {
+      return aframeNav.activeTouches.size;
+    }
+
+    function onAFramePointerDown(event) {
+      if ((event.pointerType || 'mouse') === 'touch') {
+        aframeNav.activeTouches.add(event.pointerId);
+        if (activeAFrameTouchCount() > 1) aframeNav.hadMultiTouch = true;
+      }
+      aframeNav.pointer = {
+        id: event.pointerId,
+        pointerType: event.pointerType || 'mouse',
+        button: event.button,
+        startX: event.clientX,
+        startY: event.clientY,
+        moved: false,
+      };
+    }
+
+    function onAFramePointerMove(event) {
+      if (!aframeNav.pointer || aframeNav.pointer.id !== event.pointerId) return;
+      if (Math.hypot(event.clientX - aframeNav.pointer.startX, event.clientY - aframeNav.pointer.startY) >= 6) {
+        aframeNav.pointer.moved = true;
+      }
+      if ((event.pointerType || 'mouse') === 'touch' && activeAFrameTouchCount() > 1) {
+        aframeNav.hadMultiTouch = true;
+      }
+    }
+
+    function clearAFramePointer(event) {
+      if ((event.pointerType || 'mouse') === 'touch') {
+        aframeNav.activeTouches.delete(event.pointerId);
+        if (activeAFrameTouchCount() === 0) aframeNav.hadMultiTouch = false;
+      }
+      if (aframeNav.pointer?.id === event.pointerId) {
+        aframeNav.pointer = null;
+      }
+    }
+
+    function moveAFrameViewTo(hitPoint) {
+      const THREE_NS = getAFrameThree();
+      const mover = getAFrameCameraMover();
+      if (!THREE_NS || !mover || !hitPoint) return;
+      const cameraWorld = new THREE_NS.Vector3();
+      mover.getWorldPosition(cameraWorld);
+      const shift = new THREE_NS.Vector3(
+        Math.max(-12, Math.min(12, hitPoint.x - cameraWorld.x)),
+        0,
+        Math.max(-12, Math.min(12, hitPoint.z - cameraWorld.z)),
+      );
+      if (shift.lengthSq() < 0.003) return;
+      aframeNav.animFrom = cameraWorld.clone();
+      aframeNav.animTo = cameraWorld.clone().add(shift);
+      aframeNav.animStart = performance.now();
+    }
+
+    function onAFramePointerUp(event) {
+      const THREE_NS = getAFrameThree();
+      const pointer = aframeNav.pointer;
+      const wasMultiTouch = aframeNav.hadMultiTouch || activeAFrameTouchCount() > 1;
+      clearAFramePointer(event);
+      if (!THREE_NS || !pointer || wasMultiTouch || pointer.button !== 0 || event.button !== 0 || pointer.moved) return;
+      const cameraObject = getAFrameCameraObject();
+      if (!cameraObject) return;
+      const rect = (pointerTarget || scene.canvas || scene).getBoundingClientRect();
+      const raycaster = new THREE_NS.Raycaster();
+      raycaster.setFromCamera(
+        new THREE_NS.Vector2(((event.clientX - rect.left) / rect.width) * 2 - 1, -((event.clientY - rect.top) / rect.height) * 2 + 1),
+        cameraObject,
+      );
+
+      let hitPoint = null;
+      const hits = raycaster.intersectObjects(scene.object3D?.children || [], true)
+        .filter((hit) => {
+          if (hit.object === cameraObject || cameraObject.children?.includes(hit.object)) return false;
+          const tagName = hit.object.el?.tagName?.toUpperCase?.() || '';
+          const name = (hit.object.name || hit.object.el?.id || '').toLowerCase();
+          if (tagName === 'A-SKY' || name.includes('sky') || name.includes('background') || name.includes('env')) return false;
+          return true;
+        });
+      if (hits.length > 0) {
+        hitPoint = hits[0].point;
+      } else {
+        const floorPlane = new THREE_NS.Plane(new THREE_NS.Vector3(0, 1, 0), 0);
+        const planeHit = new THREE_NS.Vector3();
+        if (raycaster.ray.intersectPlane(floorPlane, planeHit)) hitPoint = planeHit;
+      }
+      if (hitPoint) moveAFrameViewTo(hitPoint);
+    }
+
+    function animateAFramePointerNavigation() {
+      frameId = requestAnimationFrame(animateAFramePointerNavigation);
+      const THREE_NS = getAFrameThree();
+      const mover = getAFrameCameraMover();
+      if (!THREE_NS || !mover || !aframeNav.animFrom || !aframeNav.animTo) return;
+      const t = Math.min((performance.now() - aframeNav.animStart) / 350, 1);
+      const eased = 1 - (1 - t) ** 3;
+      const nextWorld = new THREE_NS.Vector3().lerpVectors(aframeNav.animFrom, aframeNav.animTo, eased);
+      if (mover.parent) {
+        mover.parent.worldToLocal(nextWorld);
+      }
+      mover.position.copy(nextWorld);
+      if (t >= 1) {
+        aframeNav.animFrom = aframeNav.animTo = null;
+      }
+    }
+
+    function bindAFramePointerControls() {
+      if (pointerTarget) return;
+      pointerTarget = scene.canvas || scene.querySelector('canvas') || scene;
+      pointerTarget.style.touchAction = 'none';
+      pointerTarget.addEventListener('pointerdown', onAFramePointerDown);
+      pointerTarget.addEventListener('pointermove', onAFramePointerMove);
+      pointerTarget.addEventListener('pointerup', onAFramePointerUp);
+      pointerTarget.addEventListener('pointercancel', clearAFramePointer);
+      pointerTarget.addEventListener('lostpointercapture', clearAFramePointer);
+    }
+
+    scene.addEventListener('loaded', bindAFramePointerControls, { once: true });
+    scene.addEventListener('renderstart', bindAFramePointerControls, { once: true });
+    frameId = requestAnimationFrame(animateAFramePointerNavigation);
+    setTimeout(bindAFramePointerControls, 250);
+  }
 } catch (error) { showPieceError(error); }
 </script>
 HTML,
@@ -1263,7 +1875,12 @@ function collection_export_bundle(array $collection, array $items, array $option
     $zip->addFromString('index.html', $manifest['document']);
 
     foreach ($manifest['bundle_files'] as $bundleFile) {
-        if (!$zip->addFromString($bundleFile['zip_path'], $bundleFile['data'])) {
+        if (isset($bundleFile['data'])) {
+            $added = $zip->addFromString($bundleFile['zip_path'], (string) $bundleFile['data']);
+        } else {
+            $added = $zip->addFile($bundleFile['source_path'], $bundleFile['zip_path']);
+        }
+        if (!$added) {
             $zip->close();
             @unlink($tempPath);
             throw new RuntimeException('Could not package collection bundle file: ' . $bundleFile['zip_path']);
@@ -1306,14 +1923,66 @@ function collection_export_filename(array $collection): string
 
 function collection_export_build_manifest(array $collection, array $items, array $options = []): array
 {
+    $bundleFiles = [
+        [
+            'zip_path' => 'README.txt',
+            'data' => collection_export_readme($collection),
+        ],
+    ];
+
+    foreach ($items as $item) {
+        if (($item['type'] ?? '') === 'art_piece' && !empty($item['piece']) && !empty($item['version'])) {
+            $piece = $item['piece'];
+            $version = $item['version'];
+
+            $pieceManifest = piece_export_build_manifest($piece, $version, ['surface' => '']);
+            $folder = pathinfo(piece_export_filename($piece), PATHINFO_FILENAME);
+            if ($folder === '') {
+                $folder = 'piece-' . (int) ($piece['id'] ?? 0);
+            }
+
+            // Add index.html
+            $bundleFiles[] = [
+                'zip_path' => 'pieces/' . $folder . '/index.html',
+                'data' => $pieceManifest['document'],
+            ];
+
+            // Add bundle files
+            foreach ($pieceManifest['bundle_files'] as $bf) {
+                $bundleFiles[] = [
+                    'zip_path' => 'pieces/' . $folder . '/' . $bf['zip_path'],
+                    'data' => $bf['data'],
+                ];
+            }
+
+            // Add runtime files
+            foreach ($pieceManifest['runtime_files'] as $rf) {
+                if (isset($rf['data'])) {
+                    $bundleFiles[] = [
+                        'zip_path' => 'pieces/' . $folder . '/' . $rf['zip_path'],
+                        'data' => $rf['data'],
+                    ];
+                } else {
+                    $bundleFiles[] = [
+                        'zip_path' => 'pieces/' . $folder . '/' . $rf['zip_path'],
+                        'source_path' => $rf['source_path'],
+                    ];
+                }
+            }
+
+            // Add media files
+            foreach ($pieceManifest['media_files'] as $mf) {
+                $bundleFiles[] = [
+                    'zip_path' => 'pieces/' . $folder . '/' . $mf['zip_path'],
+                    'data' => $mf['data'],
+                ];
+            }
+        }
+    }
+
     return [
         'document' => collection_export_document($collection, $items, $options),
-        'bundle_files' => [
-            [
-                'zip_path' => 'README.txt',
-                'data' => collection_export_readme($collection),
-            ],
-        ],
+        'bundle_files' => $bundleFiles,
         'runtime_files' => collection_export_runtime_files(),
     ];
 }
@@ -1368,6 +2037,7 @@ function collection_export_document(array $collection, array $items, array $opti
     $jsonEmbeddedOrbitControls = json_encode(piece_export_patched_orbitcontrols_source(), $jsonFlags);
     $jsonEmbeddedDeviceOrientation = json_encode(piece_export_patched_device_orientation_source(), $jsonFlags);
     $jsonEmbeddedImmersiveGallery = json_encode(piece_export_patched_immersive_gallery_source(), $jsonFlags);
+    $downloadBridgeScript = piece_export_download_bridge_script();
 
     // Shared top toolbar — same placement/appearance as the live collection
     // surface; the download menu is PNG-only because a standalone export
@@ -1415,6 +2085,9 @@ html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#
 function showCollectionError(error){const el=document.getElementById('collection-error');if(!el)return;el.textContent=(error&&(error.stack||error.message))?(error.stack||error.message):String(error);el.style.display='block';}
 window.addEventListener('error',event=>showCollectionError(event.error||event.message));
 window.addEventListener('unhandledrejection',event=>showCollectionError(event.reason||'Unhandled promise rejection'));
+</script>
+<script>
+{$downloadBridgeScript}
 </script>
 <script type="module">
 const embeddedRuntimeSources = {
@@ -2203,8 +2876,6 @@ function piece_export_screenshot_overlay_script(array $piece, string $generation
     });
   }
 
-  if (!supportsScreenshot || !button) return;
-
   function isVisibleSurface(node) {
     if (!node || node.nodeType !== 1 || typeof node.getBoundingClientRect !== 'function') return false;
     const style = window.getComputedStyle(node);
@@ -2217,7 +2888,7 @@ function piece_export_screenshot_overlay_script(array $piece, string $generation
     if (generationMode === 'aframe') {
       const scene = document.querySelector('a-scene#scene') || document.querySelector('a-scene');
       if (scene && scene.canvas && isVisibleSurface(scene.canvas)) {
-        return scene.canvas;
+        return { type: 'canvas', node: scene.canvas };
       }
     }
 
@@ -2226,8 +2897,16 @@ function piece_export_screenshot_overlay_script(array $piece, string $generation
       : ['canvas'];
     for (const selector of selectors) {
       const matches = Array.from(document.querySelectorAll(selector)).filter(isVisibleSurface);
-      if (matches.length > 0) return matches[matches.length - 1];
+      if (matches.length > 0) {
+        return { type: 'canvas', node: matches[matches.length - 1] };
+      }
     }
+
+    const svgs = Array.from(document.querySelectorAll('svg')).filter(isVisibleSurface);
+    if (svgs.length > 0) {
+      return { type: 'svg', node: svgs[0] };
+    }
+
     return null;
   }
 
@@ -2292,6 +2971,14 @@ function piece_export_screenshot_overlay_script(array $piece, string $generation
     return findCaptureSurface();
   }
 
+  async function getCaptureSurface() {
+    const surface = await waitForCaptureReady();
+    if (!surface) {
+      throw new Error('No live screenshot surface is available yet.');
+    }
+    return surface;
+  }
+
   function canvasToBlob(canvas) {
     return new Promise((resolve, reject) => {
       if (typeof canvas.toBlob === 'function') {
@@ -2320,7 +3007,7 @@ function piece_export_screenshot_overlay_script(array $piece, string $generation
     });
   }
 
-  function exportSurface(surface) {
+  function exportCanvasSurface(surface) {
     const rect = surface.getBoundingClientRect();
     const width = Math.max(1, surface.width || Math.round(rect.width) || 1);
     const height = Math.max(1, surface.height || Math.round(rect.height) || 1);
@@ -2335,9 +3022,50 @@ function piece_export_screenshot_overlay_script(array $piece, string $generation
     return exportCanvas;
   }
 
+  async function exportSvgSurface(svg) {
+    const rect = svg.getBoundingClientRect();
+    const width = Math.max(1, Math.round(rect.width) || svg.viewBox?.baseVal?.width || 1);
+    const height = Math.max(1, Math.round(rect.height) || svg.viewBox?.baseVal?.height || 1);
+    const clone = svg.cloneNode(true);
+    clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    clone.setAttribute('width', String(width));
+    clone.setAttribute('height', String(height));
+    if (!clone.getAttribute('viewBox')) {
+      clone.setAttribute('viewBox', '0 0 ' + width + ' ' + height);
+    }
+
+    const svgBlob = new Blob([new XMLSerializer().serializeToString(clone)], { type: 'image/svg+xml;charset=utf-8' });
+    const svgUrl = URL.createObjectURL(svgBlob);
+    try {
+      const image = new Image();
+      const imageReady = new Promise((resolve, reject) => {
+        image.onload = function () {
+          resolve(image);
+        };
+        image.onerror = function () {
+          reject(new Error('Could not prepare the SVG export.'));
+        };
+      });
+      image.src = svgUrl;
+      await imageReady;
+
+      const exportCanvas = document.createElement('canvas');
+      exportCanvas.width = width;
+      exportCanvas.height = height;
+      const context = exportCanvas.getContext('2d');
+      if (!context) {
+        throw new Error('Screenshot export is unavailable in this browser.');
+      }
+      context.drawImage(image, 0, 0, width, height);
+      return exportCanvas;
+    } finally {
+      URL.revokeObjectURL(svgUrl);
+    }
+  }
+
   async function exportSurfaceWithValidation(surface) {
     tryForceAframeRender(surface);
-    const first = exportSurface(surface);
+    const first = exportCanvasSurface(surface);
     if (generationMode !== 'aframe' || hasVisiblePixels(first)) {
       return first;
     }
@@ -2345,13 +3073,25 @@ function piece_export_screenshot_overlay_script(array $piece, string $generation
     await wait(32);
     tryForceAframeRender(surface);
     await wait(32);
-    const retry = exportSurface(surface);
+    const retry = exportCanvasSurface(surface);
     if (hasVisiblePixels(retry)) {
       return retry;
     }
 
     throw new Error('A-Frame could not produce a nonblank screenshot right now.');
   }
+
+  window.__creatrExportCapture = {
+    generationMode,
+    requiresCanvasValidation: generationMode === 'aframe',
+    getSurface: getCaptureSurface,
+    captureCanvas: async function () {
+      const surface = await getCaptureSurface();
+      return surface.type === 'svg'
+        ? exportSvgSurface(surface.node)
+        : exportSurfaceWithValidation(surface.node);
+    }
+  };
 
   function downloadBlob(blob) {
     const objectUrl = URL.createObjectURL(blob);
@@ -2365,31 +3105,32 @@ function piece_export_screenshot_overlay_script(array $piece, string $generation
     window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
   }
 
-  button.addEventListener('click', async function () {
-    if (button.disabled) return;
-    const originalLabel = button.getAttribute('aria-label') || 'Take screenshot';
-    button.disabled = true;
-    button.setAttribute('aria-busy', 'true');
-    setStatus('');
+  if (supportsScreenshot && button) {
+    button.addEventListener('click', async function () {
+      if (button.disabled) return;
+      const originalLabel = button.getAttribute('aria-label') || 'Take screenshot';
+      button.disabled = true;
+      button.setAttribute('aria-busy', 'true');
+      setStatus('');
 
-    try {
-      const surface = await waitForCaptureReady();
-      if (!surface) {
-        throw new Error('No live screenshot surface is available yet.');
+      try {
+        const surface = await getCaptureSurface();
+        const blob = await canvasToBlob(surface.type === 'svg'
+          ? await exportSvgSurface(surface.node)
+          : await exportSurfaceWithValidation(surface.node));
+        downloadBlob(blob);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Could not take a screenshot right now.';
+        setStatus(/tainted canvases/i.test(message)
+          ? 'This piece still contains an image or texture the browser will not export safely.'
+          : message);
+      } finally {
+        button.disabled = false;
+        button.removeAttribute('aria-busy');
+        button.setAttribute('aria-label', originalLabel);
       }
-      const blob = await canvasToBlob(await exportSurfaceWithValidation(surface));
-      downloadBlob(blob);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Could not take a screenshot right now.';
-      setStatus(/tainted canvases/i.test(message)
-        ? 'This piece still contains an image or texture the browser will not export safely.'
-        : message);
-    } finally {
-      button.disabled = false;
-      button.removeAttribute('aria-busy');
-      button.setAttribute('aria-label', originalLabel);
-    }
-  });
+    });
+  }
 })();
 </script>
 HTML;

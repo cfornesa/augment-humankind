@@ -1039,10 +1039,17 @@ export function createReadOnlyFullViewOverlay(stageEl, items, options = {}) {
     const viewport = contentWrap.querySelector("[data-full-view-viewport]");
     const iframe = viewport?.querySelector("iframe");
     if (iframe?.contentDocument) {
-      const surface = await dl.waitForCaptureReady(iframe.contentDocument);
+      const iframeDoc = iframe.contentDocument;
+      const exportCapture = iframe.contentWindow?.__creatrExportCapture;
+      const surface = exportCapture && typeof exportCapture.getSurface === "function"
+        ? await exportCapture.getSurface()
+        : await dl.waitForCaptureReady(iframeDoc);
       return surface.type === "svg"
         ? dl.exportSvg(surface.node)
-        : dl.exportCanvasWithValidation(iframe.contentDocument, surface.node);
+        : (((exportCapture && exportCapture.requiresCanvasValidation === true)
+            || (iframeDoc.querySelector("a-scene#scene, a-scene") && surface.node instanceof HTMLCanvasElement))
+          ? dl.exportCanvasWithValidation(iframeDoc, surface.node)
+          : dl.exportCanvas(surface.node));
     }
     const image = viewport?.querySelector("img");
     if (image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0) {

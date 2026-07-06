@@ -250,6 +250,11 @@ Bundled exports preserve engine-native interactivity: A-Frame receives its
 live `<a-scene>`, C2 receives the real canvas plus safe media helpers, and
 Three.js exports attach OrbitControls to the exported scene/camera/renderer so
 drag/touch orbiting works even when the piece code itself only animates.
+Those regular standalone exports also mirror the live regular `/pieces/[id]`
+movement contract for supported 3D engines: Three.js exports keep elapsed-
+time-scaled WASD/arrow movement plus click/tap-to-move teleport without
+showing the immersive viewer HUD, and A-Frame exports keep the same regular-
+view keyboard/tap movement behavior offline.
 Interactive standalone exports for `c2_interactive`, `three`, and `aframe`
 also include the lower-left screenshot icon overlay inside `index.html`.
 Supported CMS media used by the piece are embedded in a file-open-safe way so
@@ -326,8 +331,15 @@ Compatibility embed and immersive routes return content rather than redirects:
   collection-gallery export via `/collections/[slug]/download`; that ZIP
   contains the full gallery wall, not only the selected item. The wall
   `Download PNG` captures the currently rendered collection wall. The slideshow
-  overlay keeps active-slide PNG behavior for capturable iframe/image slides
-  and routes `Download Piece` to the same full collection export.
+  overlay keeps active-slide PNG behavior for capturable iframe/image slides.
+  Downloaded immersive exports also ship a local `window.CreatrPieceDownload`
+  bridge before `runtime/immersive-gallery.js` boots, and downloaded slideshow
+  iframes expose an export-only `window.__creatrExportCapture` hook instead of
+  the live runtime readiness markers. Ordinary canvas slides capture the
+  currently visible exported slide directly, SVG slides export from the
+  visible SVG surface, and A-Frame slides still reserve the stricter nonblank
+  validation path. `Download Piece` still routes to the same full collection
+  export.
 - `GET /immersive/images/[encoded-ref]` — full-page presentation for a
   base64url-encoded image reference, retained for legacy platform image
   gallery embeds. Query parameters `title`, `alt`, and `caption` are optional

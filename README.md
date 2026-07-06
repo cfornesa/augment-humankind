@@ -198,6 +198,11 @@ exports use the same ZIP route with `surface=immersive`; those bundles open
 directly into the immersive viewer, include fullscreen and PNG controls, and
 embed a fallback copy of the immersive runtime graph so the page can still
 mount when browser `file://` module loading rejects sibling runtime imports.
+Regular standalone piece exports now mirror the live regular `/pieces/[id]`
+viewer for native movement behavior too: Three.js downloads keep elapsed-time-
+scaled WASD/arrow movement plus click/tap-to-move teleport without adding the
+immersive viewer HUD, and A-Frame downloads keep authored scene interaction
+while restoring the same regular-view keyboard/tap movement contract offline.
 
 The export bootstrap preserves interaction semantics for the engines that need
 runtime help:
@@ -213,7 +218,16 @@ runtime help:
   work.
 - Regular interactive `c2_interactive`, `three`, and `aframe` downloads include
   fullscreen plus the local screenshot control directly inside `index.html`.
-  Immersive piece and collection exports render the same shared top stage
+- Local collection-gallery slideshow PNG capture now uses a downloaded-bundle
+  bridge plus a narrow export-only slide hook instead of assuming the live
+  runtime helper contract is already present. Downloaded immersive piece and
+  collection exports ship a local `CreatrPieceDownload` helper before the
+  overlay runtime boots, then exported iframe slides expose
+  `window.__creatrExportCapture` so the overlay can capture the visible
+  surface directly. Ordinary exported canvas slides capture the currently
+  visible slide, SVG slides export from their visible SVG surface, and
+  A-Frame slides still keep the stricter nonblank validation path they need.
+- Immersive piece and collection exports render the same shared top stage
   toolbar as the live surfaces: the engine-gated view/slideshow button, a
   download menu containing only `Download PNG` (a standalone export cannot
   re-download itself offline), and fullscreen.

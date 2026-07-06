@@ -81,6 +81,27 @@ test('OrbitControls loop creates OrbitControls bound to state.camera/canvas', fu
     assert_contains($runtime, 'new OrbitControls(state.camera, canvas)');
 });
 
+test('regular piece runtime uses elapsed-time-scaled keyboard navigation instead of OrbitControls key panning', function () use ($runtime) {
+    assert_contains($runtime, 'function createKeyboardNavigation');
+    assert_contains($runtime, 'const TARGET_FRAME_MS = 1000 / 60;');
+    assert_contains($runtime, 'if (keyNav?.update())');
+    assert_not_contains($runtime, 'controls.listenToKeyEvents(window);');
+});
+
+test('regular piece runtime restores click-to-move teleport for Three.js without immersive chrome', function () use ($runtime) {
+    assert_contains($runtime, 'function moveThreeOrbitTo(hitPoint)');
+    assert_contains($runtime, 'threeRaycaster.setFromCamera(');
+    assert_contains($runtime, 'animToTarget = animFromTarget.clone().add(shift)');
+    assert_contains($runtime, "canvas.addEventListener('pointerup', onThreePointerUp)");
+    assert_not_contains($runtime, 'immersive-zoom-slider');
+});
+
+test('regular piece runtime restores click-to-move teleport for A-Frame pieces', function () use ($runtime) {
+    assert_contains($runtime, 'function moveAFrameViewTo(hitPoint)');
+    assert_contains($runtime, 'raycaster.intersectObjects(scene.object3D?.children || [], true)');
+    assert_contains($runtime, "pointerTarget.addEventListener('pointerup', onAFramePointerUp)");
+});
+
 test('animateControls does not double-render when the piece drives its own loop', function () use ($runtime) {
     assert_contains($runtime, 'pieceDrivesOwnRender = true');
     assert_contains($runtime, 'if (!pieceDrivesOwnRender || userHasInteracted) {');
@@ -110,6 +131,22 @@ test('Three.js/OrbitControls load from absolute https:// CDN URLs, not relative/
     // import('three') would silently reintroduce the blank-on-iPhone bug.
     assert_contains($runtime, "import('https://cdn.jsdelivr.net/npm/three@");
     assert_contains($runtime, "import('https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js')");
+});
+
+test('regular export bootstrap mirrors the live regular-view Three.js movement contract', function () {
+    $render = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
+    assert_contains($render, 'function updateKeyboardNavigation()');
+    assert_contains($render, 'const TARGET_FRAME_MS = 1000 / 60;');
+    assert_contains($render, 'function moveThreeOrbitTo(hitPoint)');
+    assert_contains($render, "canvas.addEventListener('pointerup', onThreePointerUp)");
+    assert_not_contains($render, "controls.listenToKeyEvents(window);");
+});
+
+test('regular export bootstrap mirrors the live regular-view A-Frame teleport contract', function () {
+    $render = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
+    assert_contains($render, "scene.addEventListener('renderstart', bindAFramePointerControls, { once: true });");
+    assert_contains($render, 'function moveAFrameViewTo(hitPoint)');
+    assert_contains($render, 'raycaster.intersectObjects(scene.object3D?.children || [], true)');
 });
 
 echo "\n=== PHP views load the shared runtime (not an inline copy) ===\n";
@@ -304,6 +341,44 @@ test('A-Frame immersive pieces expose viewer zoom and tap-to-move controls witho
     assert_contains($immersive, 'onFloatUp: () => applyAFrameFloatMove(1)');
     assert_contains($immersive, 'onFloatDown: () => applyAFrameFloatMove(-1)');
     assert_not_contains($immersive, 'import("/assets/js/aframe');
+});
+
+test('full-view overlay PNG capture uses strict validation only for A-Frame iframe slides, not every exported canvas slide', function () use ($immersive) {
+    assert_contains($immersive, 'const iframeDoc = iframe.contentDocument;');
+    assert_contains($immersive, 'const exportCapture = iframe.contentWindow?.__creatrExportCapture;');
+    assert_contains($immersive, 'exportCapture && typeof exportCapture.getSurface === "function"');
+    assert_contains($immersive, 'await exportCapture.getSurface()');
+    assert_contains($immersive, 'iframeDoc.querySelector("a-scene#scene, a-scene")');
+    assert_contains($immersive, 'exportCapture.requiresCanvasValidation === true');
+    assert_contains($immersive, 'dl.exportCanvasWithValidation(iframeDoc, surface.node)');
+    assert_contains($immersive, 'dl.exportCanvas(surface.node)');
+});
+
+test('exported slideshow slides expose a narrow capture hook without depending on live creatrReady markers', function () {
+    $render = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
+    assert_contains($render, 'window.__creatrExportCapture = {');
+    assert_contains($render, 'getSurface: getCaptureSurface');
+    assert_contains($render, 'requiresCanvasValidation: generationMode === \'aframe\'');
+    assert_contains($render, 'captureCanvas: async function () {');
+    assert_contains($render, 'if (supportsScreenshot && button) {');
+    assert_contains($render, "return { type: 'svg', node: svgs[0] };");
+    assert_not_contains($render, 'if (!supportsScreenshot || !button) return;');
+    assert_not_contains($render, "dataset.creatrReady === '1'");
+    assert_not_contains($render, "dataset.creatrSettled === '1'");
+});
+
+test('downloaded immersive exports ship the local CreatrPieceDownload bridge before overlay runtime bootstrap', function () {
+    $render = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
+    assert_contains($render, 'function piece_export_download_bridge_script(): string');
+    assert_contains($render, "piece_export_runtime_source_file('assets/js/public-piece-download.js')");
+    assert_contains($render, '$downloadBridgeScript = piece_export_download_bridge_script();');
+    assert_contains($render, '{$downloadBridgeScript}');
+    if (substr_count($render, '{$downloadBridgeScript}') < 2) {
+        throw new RuntimeException('Expected both downloaded immersive export entry points to inline the bridge script.');
+    }
+    if (strpos($render, '{$downloadBridgeScript}') >= strpos($render, "await import('./runtime/immersive-gallery.js')")) {
+        throw new RuntimeException('Expected the bridge script to load before the immersive runtime bootstrap.');
+    }
 });
 
 test('A-Frame immersive view suppresses the duplicate built-in VR fullscreen control', function () use ($immersive) {

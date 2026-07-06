@@ -1049,6 +1049,9 @@ test('piece export document creates standalone download HTML without presentatio
     assert_contains($document, 'https://example.test/media/example.png');
     assert_contains($document, 'https://example.test/api/media-assets/83');
     assert_contains($document, 'window.sketch = (p)');
+    assert_contains($document, 'window.__creatrExportCapture = {');
+    assert_not_contains($document, 'window.CreatrPieceDownload = {');
+    assert_not_contains($document, 'if (!supportsScreenshot || !button) return;');
     assert_not_contains($document, 'Immersive View');
     assert_not_contains($document, 'copyEmbed');
     assert_eq(piece_export_filename($piece), 'portable-test-piece.zip');
@@ -1262,6 +1265,8 @@ test('immersive bundle export keeps index.html as the immersive manual entry poi
     assert_contains($index, 'data-immersive-download-png');
     assert_contains($index, 'setupImmersiveStageChrome');
     assert_contains($index, '"camera":{"x":1,"y":2,"z":3}');
+    assert_contains($index, 'window.CreatrPieceDownload = {');
+    assert_true(strpos($index, 'window.CreatrPieceDownload = {') < strpos($index, 'await import(\'./runtime/immersive-gallery.js\')'));
     assert_contains($runtime, "from './three/three.module.js'");
     assert_contains($runtime, 'runtime/p5/p5.min.js');
     assert_contains($orbitControls, "from '../../three.module.js';");
@@ -1334,6 +1339,8 @@ test('collection bundle export keeps all pieces in one immersive gallery entry p
     assert_contains($index, 'immersive-stage-toolbar');
     assert_contains($index, 'data-immersive-download-png');
     assert_contains($index, 'setupImmersiveStageChrome');
+    assert_contains($index, 'window.CreatrPieceDownload = {');
+    assert_true(strpos($index, 'window.CreatrPieceDownload = {') < strpos($index, 'await import(\'./runtime/immersive-gallery.js\')'));
     assert_contains($runtime, "from './three/three.module.js'");
     assert_contains($readme, 'This is a collection-wall export, not a single-piece export.');
 });
