@@ -42,6 +42,7 @@ jobs:
         run: |
           md-to-pdf ALGORITHMS.md \
             --md-file-encoding utf-8 \
+            --launch-options '{"args": ["--no-sandbox", "--disable-setuid-sandbox"]}' \
             --pdf-options '{"format": "A4", "margin": {"top": "20mm", "right": "20mm", "bottom": "20mm", "left": "20mm"}, "printBackground": true}'
 
       - name: Verify PDF was created
