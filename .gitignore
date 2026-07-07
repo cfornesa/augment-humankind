@@ -4,3 +4,8 @@ public/.ftp-deploy-sync-state*.json
 public/uploads/
 codedart/
 platform/*
+
+# ALGORITHMS.md and its diagrams/ are tracked (human-readable source).
+# The rendered ALGORITHMS.pdf is a ~25MB build artifact published via GitHub
+# Release / git-LFS instead of committed into the tree — keep it ignored here.
+ALGORITHMS.pdf

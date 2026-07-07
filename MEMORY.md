@@ -10,7 +10,7 @@ were folded into their final entries — see "Closed Investigations". -->
 
 2026-06-11 STACK Augment Humankind v1 is a no-framework PHP site with durable routes at `/`, `/services`, `/notes`, and `/contact`.
 
-2026-06-20 CONSTRAINT augmenthumankind.com production runs on Hostinger/PHP; the platform/Replit app is reference-only and must not be treated as the runtime target.
+2026-06-20 CONSTRAINT augmenthumankind.com production runs on Hostinger/PHP. The legacy platform/Replit app has since been removed from the repo (folder deleted 2026-07-03); only its exported database survives — read/export-only via `PLATFORM_*`, never written.
 
 2026-06-14 DECISION Platform assimilation uses the current PHP MySQL database as the only writable target; the live platform database is read/export-only via `PLATFORM_*`; canonical feed route is `/blog`.
 

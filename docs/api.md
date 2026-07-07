@@ -554,7 +554,7 @@ later.
 - `GET /api/profile-photos/[filename]` — streams a `profile_photo_assets` binary blob by filename (public, unauthenticated)
 - `GET /api/runtimes/[runtime-path]` — compatibility redirect for legacy
   platform embed/runtime URLs (`p5`, `c2`, and `three` runtime paths). The PHP
-  app does not require `platform/` runtime assets; this route redirects old
+  app ships no platform-era runtime assets of its own; this route redirects old
   clients to the documented public CDN runtimes.
 
 These routes are read-only in the PHP app. Owner/admin mutations use the

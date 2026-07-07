@@ -64,10 +64,15 @@ Fill in `.env`. The file is annotated section by section; the short version:
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_ENCRYPTION`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL`, `SMTP_FROM_NAME`, `CONTACT_TO_EMAIL` | Optional | Outbound contact-form email. Missing → submission fails with "configuration incomplete". |
 | `CRON_SECRET` | Optional | Auth for scheduled-publish / feed-refresh cron endpoints. Generate: `openssl rand -hex 32`. |
 | `SITE_TITLE` | Optional | OpenRouter dashboard attribution only. |
-| `PLATFORM_*` (Section 3 of env.example) | **Omit on new sites** | Legacy one-time migration tooling only; not read at runtime. |
+| `PLATFORM_*` (Section 3 of env.example) | **Omit on new sites** | Legacy one-time migration tooling. Exception: `PLATFORM_AI_SETTINGS_ENCRYPTION_KEY` is still read at runtime as a fallback for `AI_SETTINGS_ENCRYPTION_KEY` — see [docs/dependencies.md](docs/dependencies.md). |
 
 Process environment variables always win over `.env`, so any value can be
-overridden per-invocation without editing the file.
+overridden per-invocation without editing the file — for example, to target a
+different database:
+
+```sh
+DB_HOST=127.0.0.1 DB_NAME=my_new_site DB_USER=root DB_PASS=... php scripts/setup-database.php
+```
 
 **Expected outcome:** `.env` exists at the repo root with at least the `DB_*`
 values and one complete OAuth provider + allowlist.
@@ -201,3 +206,26 @@ To keep any deployment aligned after pulling code updates:
 ```sh
 git pull && php scripts/setup-database.php --yes
 ```
+
+## Adding a schema change (maintainers)
+
+> Not part of deploying a site — this is for developers changing the database
+> schema. It is the convention that keeps
+> `git pull && php scripts/setup-database.php --yes` sufficient to align every
+> deployment.
+
+Every schema change must ship as **both**:
+
+1. A new dated file `docs/migrations/YYYY-MM-DD-name.sql` — the documentation
+   of record.
+2. One probe-guarded step appended to the manifest in
+   `scripts/setup-database.php` — the mechanism that applies it everywhere.
+
+`schema.sql` is **frozen** — do not roll new changes into it. It remains the
+bootstrap for the core tables only; everything after it is a manifest step.
+
+The other `scripts/*.sql` files (`add-wrapper-class-column.sql`,
+`add-exhibit-content-slide.sql`) and `scripts/migrate-home-nav-label.sql` are
+**not** part of fresh-install setup — their columns already live in
+`schema.sql` for new installs, and the nav-label script is a one-off content
+fixup for this instance's pre-existing data.

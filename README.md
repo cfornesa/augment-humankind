@@ -19,8 +19,33 @@ This particular checkout is currently configured for `augmenthumankind.com`,
 a small AI-consulting practice. That business identity lives in the
 database (`site_settings`, managed `pages`) and `.env` — not in application
 code — so a fresh deployment of this same codebase starts from generic
-placeholder content (see "Setting up a fresh database" below) rather than
+placeholder content (see [SETUP.md](SETUP.md)) rather than
 this instance's content.
+
+## Documentation Map
+
+Start here to find the right document. Each concept has one authoritative
+home; other files link to it rather than repeat it.
+
+| Document | What it covers | Read it when |
+|---|---|---|
+| **README.md** (this file) | What the system is, its architecture, the full route map, and how the docs fit together. | Getting oriented, or looking up a route or feature. |
+| **[SETUP.md](SETUP.md)** | The canonical step-by-step procedure to install, verify, upgrade, and duplicate a deployment — including installer flags and the schema-change convention. | Standing up or updating a site. |
+| **[docs/api.md](docs/api.md)** | The request/response contract for every public and admin route, plus feature-flag mechanics, forms, comments, syndication, and cron. | Integrating with, or changing, an endpoint. |
+| **[docs/dependencies.md](docs/dependencies.md)** | Every external dependency: what data leaves the domain, failure modes, config keys, and self-hosting alternatives. | Adding a dependency or auditing privacy/risk. |
+| **[ALGORITHMS.md](ALGORITHMS.md)** | The algorithms behind each feature, as pseudocode "recipes" with plain-English instructions and complexity analysis. | Understanding *how* a pipeline works internally. |
+
+### Project memory & history
+
+These files track the project's evolution and standing rules. They are
+maintained alongside the code and are not needed to run the site:
+
+- **CONSTRAINTS.md** — permanent, non-negotiable rules.
+- **DECISIONS.md** — the full, dated session-by-session change log (older
+  sessions archived in **docs/decisions-archive.md**).
+- **MEMORY.md** — a distilled, topical index of standing decisions, each
+  pointing back to its `DECISIONS.md` source.
+- **DESIGN.md** — the site's aesthetic identity and design-system intent.
 
 ## Routes
 
@@ -180,6 +205,11 @@ supported pieces and images, not only the selected or active slide.
 
 ## Art Piece Downloads And Templates
 
+> Route contracts (download endpoints, the AI generation/refine request and
+> response shapes, and the CMS-media prompt rules) are specified in
+> [docs/api.md](docs/api.md#admin-piece-generation-routes); this section is the
+> feature overview.
+
 Art pieces store CMS-runtime-compatible HTML/CSS/JS, but public piece pages
 also expose `Download Piece`. The download is a ZIP bundle with `index.html`
 as the single manual entry point: recipients should only need to open that
@@ -307,11 +337,11 @@ Required values:
 
 Do not commit real secret values.
 
-The installer seeds both Contact Form and Newsletter Signup. Contact and other
-ordinary forms email the configured recipient and do not store payloads.
-Newsletter Signup stores email/consent rows in `newsletter_subscribers`,
-defaults consent to true, does not require a recipient email, and does not send
-email by default.
+The installer seeds both Contact Form and Newsletter Signup. Ordinary forms
+email the configured recipient and don't store payloads; Newsletter Signup is
+the storage exception (it persists email/consent to `newsletter_subscribers`
+and doesn't send by default). Full form behavior and the database-vs-`.env`
+settings model: [docs/api.md § Forms CMS](docs/api.md#forms-cms).
 
 For reCAPTCHA, create a Google reCAPTCHA v3 property for the public domain.
 Use the generated site key for `RECAPTCHA_SITE_KEY` and the generated secret
@@ -363,93 +393,41 @@ Collections hides new creation/import actions, but existing records and related
 management surfaces remain reachable while there is content to manage. Turning
 off AI runtime toggles hides matching AI buttons and blocks the endpoints, but
 does not remove AI profiles, keys, personas, or preferred profile settings.
+Full flag semantics and the admin toggle contract:
+[docs/api.md § Feature Flags](docs/api.md#feature-flags-content-safe-module-toggles).
 
 ### Setting up a fresh database
 
-> **Full walkthrough:** [SETUP.md](SETUP.md) is the step-by-step setup
-> procedure (prerequisites → env → installer → readiness check → first
-> admin login → configuration), written to be followed by a human or an
-> agent. The section below is the installer reference.
-
-One command handles everything — a completely empty database or an existing
-one that needs to catch up:
-
-```sh
-php scripts/setup-database.php
-```
-
-The installer is **idempotent and probe-based**: every table, column, and
-index is checked against `INFORMATION_SCHEMA` before being created, so the
-same command works on an empty database, resumes after a partial failure,
-and safely no-ops on a database that is already up to date. It never
-destroys data. Flags:
-
-- `--dry-run` — report which schema changes are applied/missing without
-  writing anything. Safe to run against production.
-- `--with-example-content` — additionally seed example `/`, `/services`, and
-  `/notes` pages and the Celestial theme code. Each seed is skipped when the
-  target content already exists, so it can never overwrite a customized
-  site. Without this flag those routes fall back to generic placeholder
-  copy until you create real pages from the admin Pages screen.
-- `--yes` — skip the existing-data confirmation prompt. Before applying
-  anything, the installer scans the target database and, if it finds
-  existing entries (admins, pages, posts, media, …), prints a summary and —
-  when run interactively — asks for confirmation. Non-interactive runs
-  (CI/cron) proceed automatically after printing the summary, so
-  `git pull && php scripts/setup-database.php` stays unattended-safe.
-
-Process environment variables always win over `.env`, so a different
-database can be targeted without editing config:
+Setup, verification, upgrade, and duplication are one procedure, documented
+step by step in **[SETUP.md](SETUP.md)** (prerequisites → env → installer →
+readiness check → first admin login → configuration). The short version: fill
+out `.env`, create an empty MySQL database, then run the idempotent installer —
+it probes `INFORMATION_SCHEMA` before every change, never destroys data, and is
+safe to re-run:
 
 ```sh
-DB_HOST=127.0.0.1 DB_NAME=my_new_site DB_USER=root DB_PASS=... php scripts/setup-database.php
+php scripts/setup-database.php                     # apply (add --dry-run to preview)
+php scripts/check-portable-launch-readiness.php    # verify
 ```
 
-After setup, run the read-only readiness checker:
-
-```sh
-php scripts/check-portable-launch-readiness.php
-```
-
-It reports blocking database/schema issues as failures and feature-gated
-configuration gaps as warnings.
-
-The installer supersedes the old manual `mysql < file.sql` sequence, which
-(a) fails on MySQL 9.x local auth, (b) breaks on a fresh database because
-`schema.sql` was rolled forward and now overlaps two later migrations, and
-(c) omitted `docs/migrations/2026-06-21-art-piece-version-draft-attempts.sql`
-and `docs/migrations/2026-07-02-system-page-identity.sql`. The dated files in
-`migrations/` and `docs/migrations/` remain the documentation of record for
-each change; the installer is the mechanism that applies them.
+See [SETUP.md](SETUP.md) for the installer flags (`--dry-run`,
+`--with-example-content`, `--yes`), targeting a different database with process
+env vars, the first-login flow, and post-install configuration.
 
 ### Multi-site deployments
 
-This codebase is designed to be copied as-is into any number of independent
-site deployments. Each deployment gets its own database, `.env`, and OAuth
-apps — no code changes. To stand up a new site: copy the code, fill out
-`.env`, run `php scripts/setup-database.php`, then sign in at `/admin` to
-complete first-run setup. To keep an existing deployment aligned after
-pulling code updates: run `php scripts/setup-database.php` again.
+This codebase is copied as-is into any number of independent site deployments;
+each gets its own MySQL database, `.env`, and OAuth apps, with **no code
+changes**. The step-by-step duplication procedure is
+[SETUP.md § 10](SETUP.md#10-duplicating-to-another-site).
 
 ### Adding a schema change
 
-Every future schema change must ship as **both**:
-
-1. A new dated file in `docs/migrations/YYYY-MM-DD-name.sql` — the
-   documentation of record.
-2. One probe-guarded step appended to the manifest in
-   `scripts/setup-database.php` — the mechanism that applies it everywhere.
-
-`schema.sql` is **frozen** — do not roll new changes into it. It remains the
-bootstrap for the twelve core tables only; everything after it is a manifest
-step. This keeps `git pull && php scripts/setup-database.php` sufficient to
-align every deployment.
-
-The remaining files in `scripts/*.sql` (`add-wrapper-class-column.sql`,
-`add-exhibit-content-slide.sql`) and `scripts/migrate-home-nav-label.sql` are
-**not** part of fresh-install setup — their columns already live in
-`schema.sql` for new installs, and the nav-label script is a one-off content
-fixup for this instance's pre-existing data.
+Every schema change ships as **both** a dated `docs/migrations/YYYY-MM-DD-*.sql`
+file (the record) and a probe-guarded step in `scripts/setup-database.php` (the
+mechanism); `schema.sql` stays frozen. The full convention — including the
+`scripts/*.sql` files that are **not** part of fresh-install setup — lives in
+**[SETUP.md](SETUP.md#adding-a-schema-change-maintainers)**.
 
 ## Media Uploads
 

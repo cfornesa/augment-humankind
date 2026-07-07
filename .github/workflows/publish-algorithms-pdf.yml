@@ -1,0 +1,75 @@
+# Converts ALGORITHMS.md → PDF and publishes it as a GitHub Release asset.
+#
+# Triggers on pushes to main that touch the markdown source or its diagrams.
+# Uses a rolling release tagged `algorithms-latest` so there is always exactly
+# one current PDF. The tag moves forward with each rebuild.
+#
+# Dependency: md-to-pdf (npm) — runs Puppeteer/headless Chromium, same engine
+# as the VS Code "Markdown PDF" extension. Installed ephemerally in the runner;
+# not added to the project. If it breaks, fall back to the VS Code extension +
+# manual upload via the GitHub Releases UI.
+
+name: Publish ALGORITHMS.pdf
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ALGORITHMS.md'
+      - 'diagrams/**'
+  workflow_dispatch: # Allow manual trigger from the Actions tab
+
+permissions:
+  contents: write # Needed to create/update releases and tags
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install md-to-pdf
+        run: npm install --global md-to-pdf
+
+      - name: Convert ALGORITHMS.md to PDF
+        run: |
+          md-to-pdf ALGORITHMS.md \
+            --md-file-encoding utf-8 \
+            --pdf-options '{"format": "A4", "margin": {"top": "20mm", "right": "20mm", "bottom": "20mm", "left": "20mm"}, "printBackground": true}'
+
+      - name: Verify PDF was created
+        run: |
+          if [ ! -f ALGORITHMS.pdf ]; then
+            echo "::error::ALGORITHMS.pdf was not generated"
+            exit 1
+          fi
+          ls -lh ALGORITHMS.pdf
+
+      - name: Delete existing release (if any)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete algorithms-latest --yes 2>/dev/null || true
+          git push origin :refs/tags/algorithms-latest 2>/dev/null || true
+
+      - name: Create release and upload PDF
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create algorithms-latest ALGORITHMS.pdf \
+            --title "ALGORITHMS.pdf (latest)" \
+            --notes "Auto-generated PDF of ALGORITHMS.md.
+
+          **Rebuilt:** $(date -u '+%Y-%m-%d %H:%M UTC') from commit \`${GITHUB_SHA::7}\`.
+
+          This is a rolling release — the PDF is rebuilt automatically whenever
+          the markdown source or its diagrams change on \`main\`. Download the
+          PDF below under **Assets**." \
+            --latest=false

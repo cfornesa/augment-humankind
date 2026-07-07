@@ -277,10 +277,10 @@ and supported CMS-owned media forms needed for direct local execution.
      plain-language questions. If this section is empty, ask before
      writing any code. See AGENTS.md → Detect the Framework. -->
 
-- **Stack:** No-framework PHP site with shared route handling in `public/index.php`.
-- **Deployment:** PHP-capable static/shared hosting or PHP built-in server for local preview.
-- **Database:** None.
-- **Version pins:** None.
+- **Stack:** No-framework PHP CMS with shared route handling in `public/index.php`; MVC layer under `public/app/`.
+- **Deployment:** PHP ≥ 8.1 on shared/managed hosting (production runs on Hostinger); PHP built-in server for local preview. The codebase is copied as-is per deployment — only the MySQL database and `.env` differ.
+- **Database:** MySQL 8+ (required). Schema is applied by `scripts/setup-database.php`; `schema.sql` bootstraps the core tables and dated migrations follow.
+- **Version pins:** PHP ≥ 8.1, MySQL 8+. Dependency versions tracked in `composer.lock` and `docs/dependencies.md`.
 - **Framework AGENTS.md:** No framework-specific AGENTS.md exists — sessions follow root AGENTS.md only.
 - **Profile switch rule:** Stop before touching existing files. Record
   current state and reason here. Confirm new profile explicitly. Flag
@@ -1298,3 +1298,37 @@ When downloading a platform collection, clicking on a Three.js piece in the slid
 ### 2026-07-05 Follow-Up — OrbitControls Keyboard Controls & Collection ZIP Packaging
 1. **OrbitControls Keyboard Controls**: Called `controls.listenToKeyEvents(window)` after instantiating `OrbitControls` in `piece-runtime.js` and in both the bundle-mode and CDN-mode `piece-render.php` bootstrap templates. This enables keyboard navigation (WASD/arrows) for focused regular views and downloaded index files.
 2. **Collection ZIP Packaging**: Updated `collection_export_build_manifest()` to compile and write each item in the collection inside its own standalone directory under `pieces/{slug}/` (containing its own standalone `index.html`, assets, styles, scripts, and runtime files). Updated the packaging loop in `collection_export_bundle()` to support files using `source_path` as well as raw string `data`.
+
+## 2026-07-07 — Automated ALGORITHMS.pdf Publishing via GitHub Actions
+
+### Decision
+`ALGORITHMS.pdf` is now built and published automatically by a new GitHub
+Actions workflow (`.github/workflows/publish-algorithms-pdf.yml`). The
+workflow triggers on pushes to `main` that touch `ALGORITHMS.md` or
+`diagrams/**`, plus manual dispatch from the Actions tab.
+
+### Publishing strategy
+A **rolling GitHub Release** tagged `algorithms-latest` — the tag moves
+forward on each rebuild, so there is always exactly one current PDF. The
+PDF is a release asset, not committed to the tree (`.gitignore` keeps
+`ALGORITHMS.pdf` ignored). `--latest=false` prevents the rolling release
+from appearing as the repo's "latest release" in the sidebar.
+
+### Dependency: md-to-pdf
+`md-to-pdf` (npm) is installed ephemerally in the GitHub Actions runner.
+It uses Puppeteer/headless Chromium — the same rendering engine as the
+VS Code "Markdown PDF" extension the owner uses locally. No project
+dependency is added. If `md-to-pdf` breaks or is abandoned, the fallback
+is the VS Code extension + manual upload via the Releases UI.
+Documented in `docs/dependencies.md`.
+
+### Caveat
+CI-generated PDF may differ slightly from the VS Code extension output
+(Ubuntu runner fonts vs. macOS fonts, page break placement). Review the
+first automated build output and add custom CSS to the workflow if
+adjustments are needed.
+
+### Files
+- `.github/workflows/publish-algorithms-pdf.yml` — new workflow
+- `docs/dependencies.md` — new `md-to-pdf` entry
+- `docs/README.md` — updated to reference the automated workflow

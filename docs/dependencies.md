@@ -63,10 +63,10 @@
 - **Self-hosting alternative:** N/A — this is already self-hosted MySQL or an
   equivalent MySQL-compatible database. No third-party SaaS is introduced.
 - **Required config:** `DB_HOST`, `DB_NAME`, `DB_USER`, `DB_PASS`
-- **Schema:** Use `php scripts/setup-database.php` as the single setup and
-  alignment mechanism. The SQL files are documentation/seed inputs; the
-  installer is the idempotent probe-guarded path for empty and existing
-  databases.
+- **Schema:** `php scripts/setup-database.php` is the single setup and
+  alignment mechanism (idempotent, probe-guarded, for empty and existing
+  databases); the dated SQL files are the documentation of record. Full
+  procedure: [SETUP.md](../SETUP.md).
 - **Media storage:** Uploaded/imported admin media is stored in `media_files`
   blobs and served publicly through `/media/[id]` and `/image/[id]`.
 - **Upload limits:** `.htaccess` requests `upload_max_filesize=64M`,
@@ -333,3 +333,24 @@
 - **What breaks if unavailable or changed:** AI piece generation and version repair via affected profiles will fail (already-saved pieces/versions are stored locally and are unaffected).
 - **Self-hosting alternative:** Configure a local proxy endpoint (e.g. Ollama) running self-hosted models as a custom vendor profile in the database.
 - **Required config:** API keys are stored in `user_ai_vendor_keys.encrypted_api_key`, encrypted/decrypted via AES-256-GCM using `AI_SETTINGS_ENCRYPTION_KEY`. Vendor settings are configured in `user_ai_vendor_settings`.
+
+## md-to-pdf (CI Only — ALGORITHMS.pdf Publishing)
+
+- **Purpose:** Converts `ALGORITHMS.md` to a formatted PDF and publishes it as
+  a GitHub Release asset. Runs only in the
+  `.github/workflows/publish-algorithms-pdf.yml` GitHub Actions workflow — not
+  installed in the project or on developer machines.
+- **Package:** `md-to-pdf` (npm), which uses Puppeteer (headless Chromium) —
+  the same rendering engine as the VS Code "Markdown PDF" extension.
+- **Data sent off-domain:** None. The conversion runs entirely inside the
+  GitHub Actions runner. The resulting PDF is uploaded to GitHub Releases via
+  the `gh` CLI using the workflow's `GITHUB_TOKEN`.
+- **What breaks if unavailable or changed:** Automated PDF publishing stops.
+  `ALGORITHMS.md` (the source of truth) and the rest of the site are
+  unaffected. The PDF can still be generated locally using the VS Code
+  "Markdown PDF" extension and uploaded manually via the GitHub Releases UI.
+- **Self-hosting alternative:** Generate the PDF locally with the VS Code
+  extension (or any markdown-to-PDF tool) and upload it manually to the
+  `algorithms-latest` release on GitHub.
+- **Required config:** None — the workflow uses the built-in `GITHUB_TOKEN`
+  secret, which requires no manual setup.
