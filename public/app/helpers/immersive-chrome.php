@@ -160,6 +160,8 @@ function immersive_stage_toolbar_icon_svg(string $icon): string
             return '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v11"></path><path d="m7 10 5 5 5-5"></path><path d="M5 20h14"></path></svg>';
         case 'png':
             return '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M8 13h8"></path><path d="M8 9h8"></path><path d="M8 17h5"></path></svg>';
+        case 'screenshot':
+            return '<svg viewBox="0 0 24 24" width="19" height="19" fill="currentColor" aria-hidden="true"><path d="M9 4.5 7.8 6H5.5A2.5 2.5 0 0 0 3 8.5v9A2.5 2.5 0 0 0 5.5 20h13a2.5 2.5 0 0 0 2.5-2.5v-9A2.5 2.5 0 0 0 18.5 6h-2.3L15 4.5H9Zm3 4a4.75 4.75 0 1 1 0 9.5 4.75 4.75 0 0 1 0-9.5Zm0 1.75a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"/></svg>';
         case 'fullscreen':
             return '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>';
         case 'sound-off':
@@ -194,6 +196,10 @@ function immersive_stage_toolbar_attrs(array $attrs): string
  *                   'attrs' => array] — renders the view/slideshow trigger.
  * - download_items: null (no download menu) | list of
  *                   ['tag' => 'a'|'button', 'label' => string, 'icon' => string, 'attrs' => array].
+ * - screenshot_action:  null (no button) | ['attrs' => array] — renders a standalone
+ *   camera-icon "Take screenshot" button in the left toolbar group, next to the
+ *   download menu trigger (not folded into it), matching the always-visible
+ *   screenshot button pattern used by the regular (non-immersive) piece view.
  * - show_fullscreen:    bool (default true).
  * - fullscreen_onclick: string|null — inline handler; exports pass null and bind in JS.
  * - gyro_slot:          bool (default true) — reserves the slot the gyro ⟲ toggle mounts into.
@@ -206,6 +212,7 @@ function immersive_stage_toolbar_markup(array $opts = []): string
 {
     $viewAction = $opts['view_action'] ?? null;
     $downloadItems = $opts['download_items'] ?? null;
+    $screenshotAction = $opts['screenshot_action'] ?? null;
     $showFullscreen = $opts['show_fullscreen'] ?? true;
     $fullscreenOnclick = $opts['fullscreen_onclick'] ?? null;
     $gyroSlot = $opts['gyro_slot'] ?? true;
@@ -226,7 +233,26 @@ function immersive_stage_toolbar_markup(array $opts = []): string
             . '</button>';
     }
 
-    if (is_array($downloadItems) && $downloadItems !== []) {
+    if (is_array($screenshotAction)) {
+        $attrs = immersive_stage_toolbar_attrs($screenshotAction['attrs'] ?? []);
+        $html .= '<button type="button" class="immersive-stage-icon-btn" aria-label="Take screenshot"' . $attrs . '>'
+            . immersive_stage_toolbar_icon_svg('screenshot')
+            . '</button>';
+    }
+
+    if (is_array($downloadItems) && count($downloadItems) === 1) {
+        // A one-item menu is just an extra click for no reason — render the
+        // single download directly as an icon button, matching view/
+        // screenshot. Only worth a dropdown once there's an actual choice.
+        $item = $downloadItems[0];
+        $tag = ($item['tag'] ?? 'button') === 'a' ? 'a' : 'button';
+        $label = htmlspecialchars((string) ($item['label'] ?? 'Download'), ENT_QUOTES, 'UTF-8');
+        $attrs = immersive_stage_toolbar_attrs($item['attrs'] ?? []);
+        $typeAttr = $tag === 'button' ? ' type="button"' : '';
+        $html .= '<' . $tag . $typeAttr . ' class="immersive-stage-icon-btn" aria-label="' . $label . '"' . $attrs . '>'
+            . immersive_stage_toolbar_icon_svg((string) ($item['icon'] ?? 'download-small'))
+            . '</' . $tag . '>';
+    } elseif (is_array($downloadItems) && $downloadItems !== []) {
         $html .= '<div class="immersive-stage-download-wrap">';
         $html .= '<button type="button" class="immersive-stage-icon-btn" data-immersive-download-trigger aria-haspopup="true" aria-expanded="false" aria-controls="immersive-download-menu" aria-label="Open download menu">'
             . immersive_stage_toolbar_icon_svg('download')

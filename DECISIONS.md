@@ -10,6 +10,152 @@
 
 None.
 
+## 2026-07-09 — Immersive screenshot button, single-item download simplification, ZIP label, fullscreen click-through fix
+
+### Decision
+
+Follow-up UX fixes to the immersive VR views and regular piece view, prompted
+by a user review of the just-shipped GLTFLoader export fix on `/pieces/113`:
+
+- **Immersive screenshot button (web + offline export)**: the "Download PNG"
+  action was previously folded into the immersive toolbar's "Open download
+  menu" dropdown, requiring an extra click and not matching the regular
+  view's own always-visible screenshot button. Added a `screenshot_action`
+  option to the shared `immersive_stage_toolbar_markup()` helper
+  (`public/app/helpers/immersive-chrome.php`) that renders a standalone
+  camera-icon button in the toolbar's left group, next to (not inside) the
+  download control. Wired into all 4 call sites: live single-piece
+  (`public/app/views/immersive/piece.php`), live collection
+  (`public/app/views/immersive/collection.php`), and both offline export
+  documents (`piece_export_immersive_document()` and
+  `collection_export_document()` in `public/app/helpers/piece-render.php`).
+- **Single-item download menu → direct button**: once PNG moved out, the
+  remaining download dropdown in the live views only ever holds one item
+  ("Download ZIP"). A one-item menu is an unnecessary extra click, so
+  `immersive_stage_toolbar_markup()` now renders a single `download_items`
+  entry as a plain icon button/link directly, only falling back to the
+  dropdown+menu pattern when there are 2+ items. (Offline exports never had
+  a ZIP item in the first place — a standalone export can't re-download
+  itself — so their download control is just the screenshot button now, no
+  dropdown at all.)
+- **"Download Piece" → "Download ZIP"**: renamed for clarity across
+  `public/app/helpers/public-copy.php` (`download_piece_label` default +
+  admin field label) and the JS-built gallery full-view overlay
+  (`public/assets/js/immersive-gallery.js`).
+- **Fullscreen click-through bug (regular `/pieces/{id}` view)**: entering
+  the CSS-fallback fullscreen overlay (`piece-fullscreen.js`, used when the
+  native Fullscreen API is unavailable/blocked) left the site header nav and
+  footer both visibly and functionally on top of/reachable through the
+  piece. Root cause, found via direct DOM hit-testing
+  (`document.elementFromPoint`) rather than trusting screenshots (a
+  screenshot-tool artifact initially pointed at the wrong fix): `<header>`
+  (z-index:30), `<main>` (z-index:1), and `<footer>` (z-index:1) are sibling
+  stacking contexts under `<body>`; `<footer>` wins the DOM-order tiebreak
+  against `<main>`, and `<header>` beats it outright — no z-index raise
+  *inside* `<main>` (where `.piece-stage-fullscreen` lives) could ever
+  escape that. Fixed in `public/assets/styles.css` by raising `<main>`'s own
+  z-index to 9600 while `body.piece-fullscreen-locked`, so its entire
+  subtree (including the fullscreen overlay) paints above both siblings;
+  also hides the floating `.theme-toggle` button (z-index:9000, a
+  `<body>`-level sibling that isn't inside any stacking-context-forming
+  ancestor) outright during fullscreen as a belt-and-suspenders measure.
+  Verified live: footer/header link coordinates now hit the fullscreen
+  overlay instead of the underlying page elements.
+- **Reverted**: a same-session attempt to also add a standalone screenshot
+  button to the regular view's *live* canvas (top-left, mirroring the
+  top-right sound/fullscreen icons) was reverted after user review — the
+  regular view already has a working "Download PNG" button
+  (`.piece-fullscreen-bar` / `.piece-action-row` in
+  `public/app/views/pieces/show.php`), making the new button redundant. The
+  regular view's *downloaded/exported* bundle keeps its existing screenshot
+  button (`piece_export_screenshot_overlay_*()`, unchanged) — only the live
+  iframe addition (`piece_render_document()`) was removed, along with the
+  now-unused `$position`/`$includeFullscreenButton` parameters those
+  functions had gained to support it.
+
+### Verification
+
+- `php tests/art-piece-generation.php` — **Passed: 136, Failed: 0**.
+- `php tests/three-runtime-consistency.php` — **Passed: 105, Failed: 0**.
+- Verified live via browser automation on the local PHP dev server
+  (`127.0.0.1:8080`): immersive standalone screenshot button renders and
+  responds to clicks (web + offline export markup checked directly); the
+  single-item download control is a plain button with no dropdown; the
+  regular view's fullscreen overlay now blocks clicks to header/footer
+  (confirmed via `elementFromPoint`, not just visually); the regular view's
+  live canvas screenshot button was confirmed removed while the export
+  bundle's own screenshot button was confirmed still present.
+
+## 2026-07-09 — Fixed broken GLTFLoader in direct-open Three.js exports; added export syntax guard
+
+### Decision
+
+A user reported that downloading the Three.js piece at `/pieces/113` (both the
+regular and immersive VR view downloads) and opening the exported `index.html`
+via `file://` threw `Uncaught SyntaxError: Unexpected token 'export'` in
+`GLTFLoader.global.js`, followed by `TypeError: THREE.GLTFLoader is not a
+constructor`. This affected only the download/export path — the live CDN
+rendering path (`piece_render_document()` / CDN-mode `piece_export_document()`)
+was never affected.
+
+Root cause: `piece_export_gltfloader_global_source()` in `piece-render.php`
+(added in the "GLB/GLTF asset fidelity" decision above) converts the vendored
+ES-module `GLTFLoader.js`/`BufferGeometryUtils.js` into a classic global
+script, but only rewrote each file's *leading* `import` and *trailing*
+`export { ... };` block. It missed three **mid-file** `export function`
+declarations in `BufferGeometryUtils.js`, which leaked through verbatim and
+crashed the whole classic script at parse time — so `window.THREE.GLTFLoader`
+never got assigned.
+
+Fixing that surfaced a second, previously-masked bug: once the SyntaxError was
+gone, the same file threw `Identifier 'BufferAttribute' has already been
+declared`, because `BufferGeometryUtils.js` and `GLTFLoader.js` both
+destructure overlapping THREE symbols into the same shared script scope via
+`const`.
+
+Fix (in `public/app/helpers/piece-render.php`):
+
+- Added `piece_export_strip_module_syntax()` — strips mid-file
+  `export function`/`export const`/`export class` generically, reused across
+  all three `*_global_source()` conversion functions (three.js, OrbitControls,
+  GLTFLoader), not just the specific gap found today.
+- Added `piece_export_assert_no_module_syntax()` — a fail-loud guard run after
+  conversion in each of those three functions that throws `RuntimeException`
+  if any bare `export`/`import` keyword survives, so a future upstream
+  Three.js file-shape change fails at generation time (server-side) instead of
+  shipping a silently-broken download.
+- Changed the `const {...} = window.THREE;` leading-import rewrites in
+  `piece_export_gltfloader_global_source()` to `var`, since
+  `BufferGeometryUtils.js`'s and `GLTFLoader.js`'s converted sources share one
+  function scope and both declare overlapping identifiers (e.g.
+  `BufferAttribute`, `toTrianglesDrawMode`) — `var` tolerates the harmless
+  redundant re-declaration where `const` does not.
+- Added `<link rel="icon" href="data:,">` to all three export document
+  templates (regular, immersive, collection) as a low-confidence mitigation
+  attempt for a second, separately-reported console warning (`Unsafe attempt
+  to load URL file:///.../index.html from frame with URL
+  file:///.../index.html`) — no application code path was found to explain
+  that warning after exhaustive static search; this is a cheap, safe,
+  testable guess (implicit favicon-fetch under `file://`), not a confirmed
+  fix. Needs live-browser confirmation.
+
+### Verification
+
+- `php tests/art-piece-generation.php` — **Passed: 136, Failed: 0** (added a
+  new execution-level test: extracts the generated `*.global.js` files from a
+  real export bundle and runs `node --check` on each — the existing tests only
+  asserted on generated PHP text and never executed the JS, which is why this
+  shipped undetected. Also added a direct unit test for the new guard
+  function.)
+- `php tests/three-runtime-consistency.php` — **Passed: 105, Failed: 0**
+  (no regressions).
+- Reproduced the original bug against the pre-fix code (confirmed it throws
+  the exact reported `SyntaxError`), then confirmed the fix resolves it: ran
+  the actual generated `three.global.js`/`GLTFLoader.global.js`/
+  `OrbitControls.global.js` from a real export bundle in a Node `vm` sandbox —
+  `THREE.GLTFLoader` is a function and `new THREE.GLTFLoader()` succeeds.
+  Repeated for the immersive VR view bundle with the same result.
+
 ## 2026-07-09 — GLB/GLTF asset fidelity and offline GLTFLoader export support
 
 ### Decision

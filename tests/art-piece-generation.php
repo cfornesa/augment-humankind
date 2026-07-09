@@ -1356,6 +1356,76 @@ test('bundle export keeps index.html as the only manual entry point', function (
     assert_contains($orbitGlobal, 'window.OrbitControls = OrbitControls;');
     assert_contains($index, 'piece-export-fullscreen-btn');
     assert_contains($index, 'aria-label="Enter fullscreen"');
+    assert_contains($index, '<link rel="icon" href="data:,">');
+});
+
+test('GLTFLoader/three/OrbitControls global bundle scripts are valid classic-script JavaScript', function () {
+    $piece = ['id' => 197, 'title' => 'Global Script Syntax Piece', 'engine' => 'three'];
+    $version = [
+        'engine' => 'three',
+        'html_code' => '<div id="container"></div>',
+        'css_code' => '#container{width:100%;height:100%;}',
+        'generated_code' => 'window.sketch = ({ THREE, canvas }) => { const scene = new THREE.Scene(); const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 100); const renderer = new THREE.WebGLRenderer({ canvas }); renderer.render(scene, camera); };',
+    ];
+
+    $bundle = piece_export_bundle($piece, $version);
+    $zip = new ZipArchive();
+    $zip->open($bundle['path']);
+    $globals = [
+        'runtime/three/three.global.js' => $zip->getFromName('runtime/three/three.global.js'),
+        'runtime/three/GLTFLoader.global.js' => $zip->getFromName('runtime/three/GLTFLoader.global.js'),
+        'runtime/three/OrbitControls.global.js' => $zip->getFromName('runtime/three/OrbitControls.global.js'),
+    ];
+    $zip->close();
+    unlink($bundle['path']);
+
+    $gltfGlobal = $globals['runtime/three/GLTFLoader.global.js'];
+
+    // Fast, no-Node fallback signal: the specific gap this test guards
+    // against (BufferGeometryUtils.js's mid-file `export function`
+    // declarations leaking into the classic-script bundle verbatim).
+    assert_not_contains($gltfGlobal, "\nexport function ");
+    assert_contains($gltfGlobal, 'function deepCloneAttribute(');
+    assert_not_contains($gltfGlobal, 'export function deepCloneAttribute(');
+    assert_contains($gltfGlobal, 'function deinterleaveAttribute(');
+    assert_contains($gltfGlobal, 'function deinterleaveGeometry(');
+
+    // Execution-level check: `node --check` is a pure syntax parse (no DOM
+    // globals needed), catching exactly the class of SyntaxError that plain
+    // string assertions can't (a stray `export`/`import` anywhere else in a
+    // future upstream vendor file shape).
+    $nodeAvailable = trim((string) shell_exec('command -v node 2>/dev/null')) !== '';
+    if (!$nodeAvailable) {
+        return;
+    }
+
+    foreach ($globals as $zipPath => $source) {
+        assert_true(is_string($source) && $source !== '', "Expected non-empty {$zipPath} in bundle.");
+        $descriptors = [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+        $process = proc_open('node --check -', $descriptors, $pipes);
+        assert_true(is_resource($process), "Could not start node --check for {$zipPath}.");
+        fwrite($pipes[0], $source);
+        fclose($pipes[0]);
+        $stderr = stream_get_contents($pipes[2]);
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        $exitCode = proc_close($process);
+        assert_eq($exitCode, 0, "node --check failed for {$zipPath}: {$stderr}");
+    }
+});
+
+test('piece_export_assert_no_module_syntax throws on stray export/import syntax', function () {
+    assert_throws(function () {
+        piece_export_assert_no_module_syntax("function ok() {}\nexport function leaky() {}\n", 'test.global.js');
+    }, 'still contains ES module syntax');
+
+    assert_throws(function () {
+        piece_export_assert_no_module_syntax("import { THREE } from 'three';\n", 'test.global.js');
+    }, 'still contains ES module syntax');
+
+    // Must not false-positive on identifiers that merely contain the words
+    // "export"/"import" as a substring, or property access like `.export`.
+    piece_export_assert_no_module_syntax("const exportSomething = 1;\nconsole.log(foo.export);\n", 'test.global.js');
 });
 
 test('sound-bearing C2 interactive bundle export loads Tone.js from the ZIP and avoids worklet-backed PluckSynth', function () {

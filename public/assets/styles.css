@@ -1784,9 +1784,14 @@ h3 {
 }
 
 .piece-stage-fullscreen {
+    /* Above every other fixed/floating chrome on the page (e.g. .theme-toggle
+       at z-index: 9000) so the CSS-fallback fullscreen overlay (used when the
+       Fullscreen API is unavailable/blocked, e.g. iPhone Safari) truly blocks
+       interaction with anything underneath — matching what native
+       requestFullscreen() already guarantees via the browser's top layer. */
     position: fixed;
     inset: 0;
-    z-index: 1000;
+    z-index: 9500;
     background: #0d0d0f;
 }
 
@@ -1818,7 +1823,7 @@ h3 {
     left: 0;
     right: 0;
     bottom: 0;
-    z-index: 1001;
+    z-index: 9501;
     display: flex;
     flex-wrap: wrap;
     align-items: center;
@@ -1839,8 +1844,28 @@ h3 {
     left: 1.25rem;
     right: 1.25rem;
     bottom: calc(4rem + env(safe-area-inset-bottom));
-    z-index: 1001;
+    z-index: 9501;
     color: #f8f5ee;
+}
+
+/* Belt-and-suspenders alongside the z-index bump above: also hide the
+   floating theme toggle outright while the CSS-fallback fullscreen overlay
+   is active, so it can't visually float over the piece even if some other
+   future element ever out-ranks 9500. */
+body.piece-fullscreen-locked .theme-toggle {
+    display: none;
+}
+
+/* .piece-stage-fullscreen's own z-index only wins within the stacking
+   context of its nearest positioned ancestor (<main>, position:relative;
+   z-index:1) — it can never escape above <header> (z-index:30) or <footer>
+   (z-index:1, but painted after <main> in DOM order so it still wins the
+   tie) just by raising its own z-index further, since those are separate
+   sibling stacking contexts under <body>. Raise <main>'s z-index above both
+   while locked so its entire subtree (including the fullscreen overlay)
+   actually paints on top of the whole page, not just within <main>. */
+body.piece-fullscreen-locked main {
+    z-index: 9600;
 }
 
 body.piece-fullscreen-locked {

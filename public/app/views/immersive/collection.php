@@ -712,14 +712,11 @@ html, body {
                             'download' => true,
                         ],
                     ],
-                    [
-                        'tag' => 'button',
-                        'label' => public_copy_value('public_art_copy.shared_ui.download_png_label'),
-                        'icon' => 'png',
-                        'attrs' => [
-                            'data-collection-download-png' => true,
-                            'data-download-filename' => 'collection-view.png',
-                        ],
+                ],
+                'screenshot_action' => [
+                    'attrs' => [
+                        'data-collection-download-png' => true,
+                        'data-download-filename' => 'collection-view.png',
                     ],
                 ],
                 'sound_action' => $hasAnySonic ? ['enabled' => true] : null,

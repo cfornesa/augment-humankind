@@ -123,7 +123,7 @@ function public_copy_defaults(): array
                 'comments_heading' => 'Comments',
                 'comments_empty' => 'No comments yet. Be the first.',
                 'view_immersive_label' => 'View in Immersive / VR Mode',
-                'download_piece_label' => 'Download Piece',
+                'download_piece_label' => 'Download ZIP',
                 'download_png_label' => 'Download PNG',
             ],
             'not_found' => [
@@ -242,7 +242,7 @@ function public_copy_admin_sections(): array
                 ['path' => 'public_art_copy.shared_ui.comments_heading', 'label' => 'Comments heading'],
                 ['path' => 'public_art_copy.shared_ui.comments_empty', 'label' => 'Comments empty state', 'rows' => 2],
                 ['path' => 'public_art_copy.shared_ui.view_immersive_label', 'label' => 'Immersive action label'],
-                ['path' => 'public_art_copy.shared_ui.download_piece_label', 'label' => 'Download piece label'],
+                ['path' => 'public_art_copy.shared_ui.download_piece_label', 'label' => 'Download ZIP label'],
                 ['path' => 'public_art_copy.shared_ui.download_png_label', 'label' => 'Download PNG label'],
                 ['path' => 'public_art_copy.not_found.eyebrow', 'label' => '404 eyebrow'],
                 ['path' => 'public_art_copy.not_found.title', 'label' => '404 heading'],

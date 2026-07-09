@@ -79,8 +79,8 @@ maintained alongside the code and are not needed to run the site:
 - `/collections/[slug]/download` — downloadable ZIP export for the full platform collection gallery wall, with all supported pieces/images in one local immersive `index.html`
 - `/embed/pieces/[id]` — public embeddable HTML of a generative art piece
 - `/embed/pieces/[id]/data` — public JSON feed of art piece parameters and source code
-- `/immersive/pieces/[id]` — public 3D full-immersion stage or gallery room framing with viewer zoom, movement, keyboard, pointer, touch, fullscreen, `Download Piece`, and `Download PNG` controls where supported
-- `/immersive/collections/[slug]` — public progressive rendering collection wall with full-gallery `Download Piece` export and wall/slideshow PNG capture (`/immersive/exhibits/[slug]` 301-redirects here for legacy links)
+- `/immersive/pieces/[id]` — public 3D full-immersion stage or gallery room framing with viewer zoom, movement, keyboard, pointer, touch, fullscreen, `Download ZIP`, and `Download PNG` controls where supported
+- `/immersive/collections/[slug]` — public progressive rendering collection wall with full-gallery `Download ZIP` export and wall/slideshow PNG capture (`/immersive/exhibits/[slug]` 301-redirects here for legacy links)
 - `/feeds/mf2` — mf2 JSON format feed export
 
 Admin routes are flat and protected by OAuth login:
@@ -167,10 +167,14 @@ wired by `setupImmersiveStageChrome()` in `immersive-gallery.js`). Top
 placement keeps the toolbar clear of the bottom-center "Enable Motion
 Controls" iOS permission button; once motion is granted, the gyroscope toggle
 mounts into a reserved slot inside the toolbar instead of floating over it.
-The left group holds the view/slideshow button and the download menu (which
-opens downward); the right side holds the fullscreen toggle. The download
-menu supports mouse, touch, and keyboard: Escape closes it and outside
-clicks dismiss it.
+The left group holds the view/slideshow button, a standalone `Download PNG`
+screenshot button, and the download control for `Download ZIP` (a standalone
+button when it's the only download option, as it is on every immersive
+surface today — the dropdown-menu form only appears once a surface offers
+2+ download choices); the right side holds the sound toggle (where
+applicable) and the fullscreen toggle. Whenever the download control does
+render as a menu, it supports mouse, touch, and keyboard: Escape closes it
+and outside clicks dismiss it.
 
 The view button differs per surface, and is otherwise identical everywhere:
 
@@ -192,13 +196,14 @@ the Three.js gallery renderer, not the hidden source canvas. If the full-view
 overlay is open (including interactive C2), PNG capture uses that overlay
 iframe instead.
 
-`Download Piece` from immersive piece pages calls the existing
+`Download ZIP` from immersive piece pages calls the existing
 `/pieces/[id]/download` route with `surface=immersive` and a serialized
 viewer-state payload. The resulting ZIP still opens through `index.html`, but
 that file mounts the local immersive renderer, restores camera/target state
 when provided, renders the shared top stage toolbar (view/slideshow button
-where applicable, PNG-only download menu, fullscreen), and preserves C2
-interactive full-size behavior through the shared full-view overlay. `Download Piece` from immersive
+where applicable, a standalone screenshot button since a standalone export
+can't re-download itself, fullscreen), and preserves C2
+interactive full-size behavior through the shared full-view overlay. `Download ZIP` from immersive
 collection walls and their slideshow overlays calls `/collections/[slug]/download`
 instead; that ZIP exports the full local collection gallery wall with all
 supported pieces and images, not only the selected or active slide.
@@ -211,7 +216,7 @@ supported pieces and images, not only the selected or active slide.
 > feature overview.
 
 Art pieces store CMS-runtime-compatible HTML/CSS/JS, but public piece pages
-also expose `Download Piece`. The download is a ZIP bundle with `index.html`
+also expose `Download ZIP`. The download is a ZIP bundle with `index.html`
 as the single manual entry point: recipients should only need to open that
 file to run the piece locally. Supporting files such as `styles/piece.css`,
 `scripts/piece.js`, `runtime/`, and `media/` are still included so the bundle
@@ -261,8 +266,9 @@ runtime help:
   A-Frame slides still keep the stricter nonblank validation path they need.
 - Immersive piece and collection exports render the same shared top stage
   toolbar as the live surfaces: the engine-gated view/slideshow button, a
-  download menu containing only `Download PNG` (a standalone export cannot
-  re-download itself offline), and fullscreen.
+  standalone `Download PNG` screenshot button (a standalone export cannot
+  re-download itself offline, so there's no download menu at all here),
+  and fullscreen.
 
 Starter templates are database-owned and seeded by `scripts/setup-database.php`.
 In `/admin/pieces`, the `Art Pieces` subtab holds the current piece list and

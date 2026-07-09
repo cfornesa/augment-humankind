@@ -239,7 +239,8 @@ base64url-encoded JSON object with viewer state such as camera and target
 coordinates and, for collection walls, `activeIndex`; malformed state is
 ignored. Immersive-origin exports include a local immersive renderer, the same
 shared top stage toolbar as the live immersive surfaces (engine-gated
-view/slideshow button, a download menu containing only `Download PNG`, and
+view/slideshow button, a standalone `Download PNG` screenshot button — no
+download menu, since a standalone export can't re-download itself — and
 fullscreen), interactive C2 support through the shared full-view overlay,
 patched local Three.js/OrbitControls imports, and an embedded Blob-module fallback so
 `index.html` can still mount if direct local opening blocks sibling module
@@ -305,9 +306,10 @@ surfaces. In a collection/exhibit wall (live or exported), only the item
 nearest the current camera focus sonifies — the controller is torn down and
 rebuilt as focus moves between pieces.
 
-Immersive `/pieces/[id]` pages expose `Download Piece` and `Download PNG` in
-a download menu inside the shared top stage toolbar (see the immersive route
-notes below). PNG capture reflects the visible immersive view from the
+Immersive `/pieces/[id]` pages expose `Download ZIP` (a standalone button,
+since it's the only item) and a standalone `Download PNG` screenshot button
+in the shared top stage toolbar (see the immersive route notes below). PNG
+capture reflects the visible immersive view from the
 current camera; for gallery-room engines this is the rendered Three.js
 gallery canvas, not the off-screen source canvas, unless the full-view
 overlay (including interactive C2) is open — then capture uses the overlay
@@ -347,9 +349,11 @@ Compatibility embed and immersive routes return content rather than redirects:
   `setupImmersiveStageChrome()` in `immersive-gallery.js`. Top placement
   keeps it clear of the bottom-center iOS "Enable Motion Controls" button;
   after permission is granted the gyro toggle mounts into a reserved toolbar
-  slot. The left group holds an engine-gated view button and a
-  downward-opening download menu; the right side holds fullscreen. View
-  button gating: collections get a slideshow button; P5/SVG/non-interactive
+  slot. The left group holds an engine-gated view button, a standalone
+  screenshot button, and the download control (a plain button when there's
+  only one download option, only becoming a dropdown menu once a surface
+  offers 2+); the right side holds sound (where applicable) and fullscreen.
+  View button gating: collections get a slideshow button; P5/SVG/non-interactive
   C2 pieces get a full-size button opening the slideshow-style overlay
   without Prev/Next or overlay download controls; interactive C2 pieces open
   the same overlay with a fully interactive iframe; Three.js and A-Frame
@@ -357,7 +361,7 @@ Compatibility embed and immersive routes return content rather than redirects:
 - `GET /immersive/exhibits/[slug]` — full-page presentation for one platform
   exhibit and its migrated art/media items.
 - `GET /immersive/collections/[slug]` — full-page progressive collection wall
-  for migrated art/media items. The wall exposes `Download Piece` as a
+  for migrated art/media items. The wall exposes `Download ZIP` as a
   collection-gallery export via `/collections/[slug]/download`; that ZIP
   contains the full gallery wall, not only the selected item. The wall
   `Download PNG` captures the currently rendered collection wall. The slideshow
@@ -368,7 +372,7 @@ Compatibility embed and immersive routes return content rather than redirects:
   the live runtime readiness markers. Ordinary canvas slides capture the
   currently visible exported slide directly, SVG slides export from the
   visible SVG surface, and A-Frame slides still reserve the stricter nonblank
-  validation path. `Download Piece` still routes to the same full collection
+  validation path. `Download ZIP` still routes to the same full collection
   export.
 - `GET /immersive/images/[encoded-ref]` — full-page presentation for a
   base64url-encoded image reference, retained for legacy platform image

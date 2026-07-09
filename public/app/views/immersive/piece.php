@@ -588,15 +588,12 @@ canvas[aria-hidden="true"] {
                         'download' => true,
                     ],
                 ],
-                [
-                    'tag' => 'button',
-                    'label' => public_copy_value('public_art_copy.shared_ui.download_png_label'),
-                    'icon' => 'png',
-                    'attrs' => [
-                        'id' => 'immersive-download-png-btn',
-                        'data-immersive-download-png' => true,
-                        'data-download-filename' => $pngFilename,
-                    ],
+            ] : null,
+            'screenshot_action' => !$isStaticEmbed ? [
+                'attrs' => [
+                    'id' => 'immersive-download-png-btn',
+                    'data-immersive-download-png' => true,
+                    'data-download-filename' => $pngFilename,
                 ],
             ] : null,
             'sound_action' => !$isStaticEmbed

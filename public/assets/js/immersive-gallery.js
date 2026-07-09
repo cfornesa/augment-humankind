@@ -989,7 +989,7 @@ export function createReadOnlyFullViewOverlay(stageEl, items, options = {}) {
   topBar.appendChild(controlsWrap);
 
   const downloadPieceLink = document.createElement("a");
-  downloadPieceLink.textContent = "Download Piece";
+  downloadPieceLink.textContent = "Download ZIP";
   downloadPieceLink.setAttribute("download", "");
   downloadPieceLink.style.cssText = "display:none;align-items:center;justify-content:center;min-height:2.75rem;padding:0 0.85rem;border:1px solid rgba(255,255,255,0.16);border-radius:9999px;background:rgba(255,255,255,0.06);color:#fff;font-size:0.9rem;font-weight:600;text-decoration:none;";
   controlsWrap.appendChild(downloadPieceLink);

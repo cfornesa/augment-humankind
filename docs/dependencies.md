@@ -280,7 +280,16 @@
   are served. Downloaded piece ZIP exports depend on the vendored runtime files
   checked into this repo; if those pinned files are missing or replaced
   incompatibly, regular and immersive exported bundles may stop working until
-  the owner updates the packaged runtime set.
+  the owner updates the packaged runtime set. The three ES-module-to-classic-
+  global conversions (`piece_export_three_global_source()`,
+  `piece_export_gltfloader_global_source()`,
+  `piece_export_orbitcontrols_global_source()` in `piece-render.php`) now
+  fail loudly with a `RuntimeException` at export-generation time if a
+  vendored file's `export`/`import` syntax shape doesn't match what the
+  conversion expects, rather than silently shipping a download that throws
+  in the user's browser — a real instance of this (a missed mid-file
+  `export function` in `BufferGeometryUtils.js`) previously broke GLTFLoader
+  in every direct-open Three.js export undetected.
 - **Self-hosting alternative:** Store p5.js, c2.min.js, three.module.js,
   OrbitControls.js, GLTFLoader.js, BufferGeometryUtils.js, and aframe.min.js
   under a repo-owned runtime/vendor path and bundle them into offline piece

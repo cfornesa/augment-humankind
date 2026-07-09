@@ -263,6 +263,7 @@ function piece_export_document(array $piece, array $version, array $options = []
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{$title}</title>
+<link rel="icon" href="data:,">
 {$bundleMeta}
 {$aframeCaptureShim}
 {$imports}
@@ -605,15 +606,13 @@ function piece_export_immersive_document(array $piece, array $version, array $op
             'label' => $isInteractiveC2 ? 'Open interactive view' : 'View piece full size',
             'icon' => $isInteractiveC2 ? 'interactive' : 'view',
         ] : null,
-        'download_items' => [[
-            'tag' => 'button',
-            'label' => public_copy_value('public_art_copy.shared_ui.download_png_label'),
-            'icon' => 'png',
+        'download_items' => null,
+        'screenshot_action' => [
             'attrs' => [
                 'data-immersive-download-png' => true,
                 'data-download-filename' => piece_export_png_filename($piece),
             ],
-        ]],
+        ],
         'sound_action' => $hasSonic ? ['enabled' => true] : null,
         'show_fullscreen' => true,
         'fullscreen_onclick' => null,
@@ -627,6 +626,7 @@ function piece_export_immersive_document(array $piece, array $version, array $op
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="creatr-piece-export" content="portable-immersive-bundle">
 <title>{$title}</title>
+<link rel="icon" href="data:,">
 {$aframeCaptureShim}
 <style>
 html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#05070f;color:#f8f5ee;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}
@@ -1009,6 +1009,40 @@ function piece_export_runtime_source_file(string $relativePath): string
     return $source;
 }
 
+/**
+ * Strips mid-file `export function`/`export const`/`export class`
+ * declarations down to their bare form. This only handles exports that
+ * appear *inside* a file (not the leading `import` or trailing
+ * `export { ... };` block, which each *_global_source() function rewrites
+ * itself into a different target shape). Missing one of these left a
+ * literal `export` keyword in a generated classic script, which throws a
+ * SyntaxError that aborts the whole file at parse time in the browser
+ * (the original GLTFLoader.global.js bug) — this is the shared, generic
+ * fix so any future upstream Three.js file shape change is covered too.
+ */
+function piece_export_strip_module_syntax(string $source): string
+{
+    $source = preg_replace('/^export\s+function\s+/m', 'function ', $source) ?? $source;
+    $source = preg_replace('/^export\s+const\s+/m', 'const ', $source) ?? $source;
+    $source = preg_replace('/^export\s+class\s+/m', 'class ', $source) ?? $source;
+
+    return $source;
+}
+
+/**
+ * Fails loudly (server-side, at export-generation time) if any literal
+ * export/import keyword survived conversion to a classic script — rather
+ * than silently shipping a broken download that throws in the user's
+ * browser. Anchored so it doesn't false-positive on things like `.export`
+ * property access or an identifier named `exportSomething`.
+ */
+function piece_export_assert_no_module_syntax(string $source, string $context): void
+{
+    if (preg_match('/(^|[^.\w$])(export|import)\s*[{*]|(^|[^.\w$])(export|import)\s+(function|const|class|default|let|var)\b/m', $source)) {
+        throw new RuntimeException("Generated global script for {$context} still contains ES module syntax (export/import) after conversion — upstream vendor file shape may have changed.");
+    }
+}
+
 function piece_export_three_orbitcontrols_inline_source(): string
 {
     $source = piece_export_runtime_source_file('assets/vendor/piece-runtime/three/OrbitControls.js');
@@ -1023,6 +1057,7 @@ function piece_export_three_orbitcontrols_inline_source(): string
 function piece_export_three_global_source(): string
 {
     $source = piece_export_runtime_source_file('assets/vendor/piece-runtime/three/three.module.js');
+    $source = piece_export_strip_module_syntax($source);
     $source = preg_replace_callback('/\nexport\s*\{([^}]+)\};\s*$/s', static function (array $matches): string {
         $exports = array_filter(array_map('trim', explode(',', $matches[1])));
         $assignments = [];
@@ -1040,6 +1075,7 @@ function piece_export_three_global_source(): string
     if (!is_string($source) || strpos($source, 'window.THREE = {') === false) {
         throw new RuntimeException('Could not convert Three.js module source for direct-open export.');
     }
+    piece_export_assert_no_module_syntax($source, 'three.global.js');
 
     return "(function(){\n'use strict';\n" . $source . "\n})();\n";
 }
@@ -1047,6 +1083,7 @@ function piece_export_three_global_source(): string
 function piece_export_orbitcontrols_global_source(): string
 {
     $source = piece_export_runtime_source_file('assets/vendor/piece-runtime/three/OrbitControls.js');
+    $source = piece_export_strip_module_syntax($source);
     $source = preg_replace(
         '/^import\s*\{([^}]+)\}\s*from\s*[\'"]three[\'"];\s*/s',
         "const {\$1} = window.THREE;\n",
@@ -1057,6 +1094,7 @@ function piece_export_orbitcontrols_global_source(): string
     if (strpos($source, 'window.OrbitControls = OrbitControls;') === false) {
         throw new RuntimeException('Could not convert OrbitControls module source for direct-open export.');
     }
+    piece_export_assert_no_module_syntax($source, 'OrbitControls.global.js');
 
     return "(function(){\n'use strict';\n" . $source . "\n})();\n";
 }
@@ -1064,9 +1102,15 @@ function piece_export_orbitcontrols_global_source(): string
 function piece_export_gltfloader_global_source(): string
 {
     $utilsSource = piece_export_runtime_source_file('assets/vendor/piece-runtime/three/utils/BufferGeometryUtils.js');
+    $utilsSource = piece_export_strip_module_syntax($utilsSource);
+    // var, not const: $utilsSource and $loaderSource are concatenated into
+    // the SAME function scope below, and both files import overlapping THREE
+    // symbols (e.g. BufferAttribute) from 'three' — two `const` destructures
+    // of the same identifier in one scope is itself a SyntaxError. `var`
+    // tolerates the redundant re-declaration (each assigns the same value).
     $utilsSource = preg_replace(
         '/^import\s*\{([^}]+)\}\s*from\s*[\'"]three[\'"];\s*/s',
-        "const {\$1} = window.THREE;\n",
+        "var {\$1} = window.THREE;\n",
         $utilsSource
     ) ?? $utilsSource;
     $utilsSource = preg_replace_callback('/\nexport\s*\{([^}]+)\};\s*$/s', static function (array $matches): string {
@@ -1075,14 +1119,20 @@ function piece_export_gltfloader_global_source(): string
     }, $utilsSource) ?? $utilsSource;
 
     $loaderSource = piece_export_runtime_source_file('assets/vendor/piece-runtime/three/GLTFLoader.js');
+    $loaderSource = piece_export_strip_module_syntax($loaderSource);
+    // var, not const — see matching note above $utilsSource's import rewrite.
     $loaderSource = preg_replace(
         '/^import\s*\{([^}]+)\}\s*from\s*[\'"]three[\'"];\s*/s',
-        "const {\$1} = window.THREE;\n",
+        "var {\$1} = window.THREE;\n",
         $loaderSource
     ) ?? $loaderSource;
+    // var, not const — toTrianglesDrawMode is also declared as a plain
+    // function by $utilsSource itself (after stripping its own `export`)
+    // in this same shared scope; see the note on $utilsSource's import
+    // rewrite above.
     $loaderSource = preg_replace(
         '/^import\s*\{\s*toTrianglesDrawMode\s*\}\s*from\s*[\'"]\.\/utils\/BufferGeometryUtils\.js[\'"];\s*/m',
-        "const { toTrianglesDrawMode } = __CreatrBufferGeometryUtils;\n",
+        "var toTrianglesDrawMode = __CreatrBufferGeometryUtils.toTrianglesDrawMode;\n",
         $loaderSource
     ) ?? $loaderSource;
     $loaderSource = preg_replace(
@@ -1094,6 +1144,8 @@ function piece_export_gltfloader_global_source(): string
     if (strpos($utilsSource, '__CreatrBufferGeometryUtils') === false || strpos($loaderSource, 'window.THREE.GLTFLoader = GLTFLoader;') === false) {
         throw new RuntimeException('Could not convert GLTFLoader module source for direct-open export.');
     }
+    piece_export_assert_no_module_syntax($utilsSource, 'GLTFLoader.global.js (BufferGeometryUtils)');
+    piece_export_assert_no_module_syntax($loaderSource, 'GLTFLoader.global.js');
 
     return "(function(){\n'use strict';\n" . $utilsSource . "\n" . $loaderSource . "\n})();\n";
 }
@@ -2392,15 +2444,13 @@ function collection_export_document(array $collection, array $items, array $opti
             'label' => 'View slideshow',
             'icon' => 'slideshow',
         ],
-        'download_items' => [[
-            'tag' => 'button',
-            'label' => public_copy_value('public_art_copy.shared_ui.download_png_label'),
-            'icon' => 'png',
+        'download_items' => null,
+        'screenshot_action' => [
             'attrs' => [
                 'data-immersive-download-png' => true,
                 'data-download-filename' => ((function_exists('slugify') ? slugify($titleText) : '') ?: 'collection-gallery') . '.png',
             ],
-        ]],
+        ],
         'sound_action' => $hasAnySonic ? ['enabled' => true] : null,
         'show_fullscreen' => true,
         'fullscreen_onclick' => null,
@@ -2414,6 +2464,7 @@ function collection_export_document(array $collection, array $items, array $opti
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="creatr-collection-export" content="portable-immersive-collection">
 <title>{$title}</title>
+<link rel="icon" href="data:,">
 <style>
 html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#05070f;color:#f8f5ee;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;}
 #immersive-stage{position:fixed;inset:0;width:100vw;height:100dvh;background:#000;overflow:hidden;}
