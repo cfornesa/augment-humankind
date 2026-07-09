@@ -773,6 +773,14 @@ test('generation prompts document same-origin CMS media for each engine', functi
     assert_contains(art_piece_generation_system_prompt('aframe'), '<img id="asset-id" src="/api/media-assets/{id}">');
 });
 
+test('Three.js model capability prompt preserves uploaded model materials', function () {
+    $prompt = art_piece_model_capability_prompt('three');
+    assert_contains($prompt, 'Preserve the loaded model');
+    assert_contains($prompt, 'embedded materials');
+    assert_contains($prompt, 'textures');
+    assert_contains($prompt, 'do NOT replace loaded meshes');
+});
+
 test('prompt media intent parser accepts loose image and photo ID phrasing', function () {
     assert_eq(art_piece_extract_prompt_media_refs('integrate image ID 94 as the background'), ['/image/94']);
     assert_eq(art_piece_extract_prompt_media_refs('integrate image with an ID of 94 as the background'), ['/image/94']);
@@ -787,6 +795,12 @@ test('prompt media intent parser accepts media asset ID phrasing', function () {
     assert_eq(art_piece_extract_prompt_media_refs('use media asset with an ID of 77 as the background'), ['/api/media-assets/77']);
     assert_eq(art_piece_extract_prompt_media_refs('apply media asset 77 as the texture'), ['/api/media-assets/77']);
     assert_eq(art_piece_extract_prompt_media_refs('use image ID 3 and media asset ID 4'), ['/image/3', '/api/media-assets/4']);
+});
+
+test('prompt media intent parser accepts native uploaded media ID phrasing', function () {
+    assert_eq(art_piece_extract_prompt_media_refs('use media ID 194'), ['/media/194']);
+    assert_eq(art_piece_extract_prompt_media_refs('load media 194 as the GLB model'), ['/media/194']);
+    assert_eq(art_piece_extract_prompt_media_refs('use /media/194 as the 3D model'), ['/media/194']);
 });
 
 test('prompt media policy rejects unprompted CMS media', function () {
@@ -809,6 +823,18 @@ test('prompt media policy accepts image with an ID phrasing', function () {
 test('prompt media policy accepts media asset with an ID phrasing', function () {
     $allowed = art_piece_extract_prompt_media_refs('apply media asset ID 94 as the texture');
     validate_art_piece_prompted_media_refs($allowed, '<div id="canvas-container"></div>', '', "window.sketch = (p) => { p.preload = () => { p.loadImage('/api/media-assets/94'); }; };", [], true);
+});
+
+test('prompt media policy accepts native uploaded media model paths', function () {
+    $allowed = art_piece_extract_prompt_media_refs('use media ID 194 as the GLB model');
+    validate_art_piece_prompted_media_refs(
+        $allowed,
+        '<div id="container"></div>',
+        '',
+        "window.sketch = ({ THREE }) => { new THREE.GLTFLoader().load('/media/194', gltf => {}); };",
+        [],
+        true
+    );
 });
 
 test('prompt media policy rejects a different image than the one requested', function () {
@@ -881,6 +907,20 @@ test('Three.js preflight accepts same-origin CMS texture loading', function () {
     $js = "window.sketch = (runtime) => { const { THREE, canvas } = runtime; const texture = new THREE.TextureLoader().load('/image/2'); texture.colorSpace = THREE.SRGBColorSpace; const material = new THREE.MeshBasicMaterial({ map: texture }); };";
     $result = art_piece_preflight_document('three', $html, '#container{width:100%;height:100%;}', $js);
     assert_contains($result['js'], "TextureLoader");
+});
+
+test('Three.js preflight accepts GLB model loading while preserving materials', function () {
+    $html = '<div id="container"></div>';
+    $js = "window.sketch = ({ THREE }) => { const scene = new THREE.Scene(); new THREE.GLTFLoader().load('/media/194', gltf => { gltf.scene.traverse(child => { if (child.isMesh) { child.castShadow = true; child.receiveShadow = true; } }); scene.add(gltf.scene); }); };";
+    $result = art_piece_preflight_document('three', $html, '#container{width:100%;height:100%;}', $js);
+    assert_contains($result['js'], "GLTFLoader");
+});
+
+test('Three.js preflight rejects GLB model material replacement', function () {
+    assert_throws(
+        fn() => art_piece_preflight_document('three', '<div id="container"></div>', '', "window.sketch = ({ THREE }) => { const loader = new THREE.GLTFLoader(); loader.load('/media/194', gltf => { gltf.scene.traverse(child => { if (child.isMesh) { child.material = new THREE.MeshStandardMaterial({ color: 0xffffff }); } }); }); };"),
+        'model materials must be preserved'
+    );
 });
 
 test('Three.js preflight accepts camera-frame cover texture helper', function () {
@@ -989,6 +1029,19 @@ test('A-Frame preflight accepts same-origin CMS image assets', function () {
     $html = '<a-scene id="scene" embedded><a-assets><img id="my-logo" src="/image/2"></a-assets><a-plane src="#my-logo" rotation="-90 0 0" width="9" height="9"></a-plane></a-scene>';
     $result = art_piece_preflight_document('aframe', $html, '', 'window.sketch = ({ scene }) => {};');
     assert_eq($result['html'], $html);
+});
+
+test('A-Frame preflight accepts same-origin uploaded model assets', function () {
+    $html = '<a-scene id="scene" embedded><a-assets><a-asset-item id="model" src="/media/194"></a-asset-item></a-assets><a-entity gltf-model="#model" position="0 1 -3"></a-entity></a-scene>';
+    $result = art_piece_preflight_document('aframe', $html, '', 'window.sketch = ({ scene }) => {};');
+    assert_eq($result['html'], $html);
+});
+
+test('A-Frame preflight rejects remote model assets', function () {
+    assert_throws(
+        fn() => art_piece_preflight_document('aframe', '<a-scene id="scene" embedded><a-assets><a-asset-item id="model" src="https://example.com/model.glb"></a-asset-item></a-assets><a-entity gltf-model="#model"></a-entity></a-scene>', '', 'window.sketch = ({ scene }) => {};'),
+        'same-origin uploaded GLTF/GLB'
+    );
 });
 
 test('A-Frame preflight rejects undefined asset references', function () {
@@ -1281,14 +1334,56 @@ test('bundle export keeps index.html as the only manual entry point', function (
     $zip = new ZipArchive();
     $zip->open($bundle['path']);
     $index = $zip->getFromName('index.html');
+    $threeGlobal = $zip->getFromName('runtime/three/three.global.js');
+    $gltfGlobal = $zip->getFromName('runtime/three/GLTFLoader.global.js');
+    $orbitGlobal = $zip->getFromName('runtime/three/OrbitControls.global.js');
     $zip->close();
     unlink($bundle['path']);
 
     assert_contains($index, 'creatr-piece-export');
     assert_not_contains($index, 'preview/');
-    assert_contains($index, 'URL.createObjectURL');
+    assert_contains($index, '<script src="runtime/three/three.global.js"></script>');
+    assert_contains($index, '<script src="runtime/three/GLTFLoader.global.js"></script>');
+    assert_contains($index, '<script src="runtime/three/OrbitControls.global.js"></script>');
+    assert_not_contains($index, 'creatrThreeUrl');
+    assert_not_contains($index, 'new Blob([creatrThreeSource]');
+    assert_contains($threeGlobal, "(function(){\n'use strict';");
+    assert_contains($threeGlobal, 'window.THREE = {');
+    assert_contains($gltfGlobal, "(function(){\n'use strict';");
+    assert_contains($gltfGlobal, 'window.GLTFLoader = GLTFLoader;');
+    assert_contains($gltfGlobal, 'window.THREE.GLTFLoader = GLTFLoader;');
+    assert_contains($orbitGlobal, "(function(){\n'use strict';");
+    assert_contains($orbitGlobal, 'window.OrbitControls = OrbitControls;');
     assert_contains($index, 'piece-export-fullscreen-btn');
     assert_contains($index, 'aria-label="Enter fullscreen"');
+});
+
+test('sound-bearing C2 interactive bundle export loads Tone.js from the ZIP and avoids worklet-backed PluckSynth', function () {
+    $piece = ['id' => 197, 'title' => 'Sound C2 Bundle Piece', 'engine' => 'c2'];
+    $version = [
+        'engine' => 'c2',
+        'generation_mode' => 'c2_interactive',
+        'html_code' => '<canvas id="piece-canvas"></canvas>',
+        'css_code' => '#piece-canvas{width:100%;height:100%;}',
+        'generated_code' => 'window.sketch = ({ canvas, startFrame }) => { canvas.addEventListener("pointermove", () => {}); startFrame(() => {}); };',
+        'sonic_params' => '{"tempo":90,"scale":"minor","instrument":"plucksynth","enabled":true}',
+    ];
+
+    $bundle = piece_export_bundle($piece, $version);
+    $zip = new ZipArchive();
+    $zip->open($bundle['path']);
+    $index = $zip->getFromName('index.html');
+    $tone = $zip->getFromName('runtime/tone/Tone.js');
+    $zip->close();
+    unlink($bundle['path']);
+
+    assert_contains($index, 'runtime\/tone\/Tone.js');
+    assert_not_contains($index, '__creatrToneInlineSource');
+    assert_not_contains($index, 'new Blob([window.__creatrToneInlineSource]');
+    assert_contains($index, "plucksynth: 'FMSynth'");
+    assert_not_contains($index, "plucksynth: 'PluckSynth'");
+    assert_contains($index, '__creatrSonicSetMover');
+    assert_true(is_string($tone) && strlen($tone) > 1000, 'Expected bundled Tone.js runtime file.');
 });
 
 test('immersive bundle export keeps index.html as the immersive manual entry point', function () {
@@ -1311,15 +1406,24 @@ test('immersive bundle export keeps index.html as the immersive manual entry poi
     $zip->open($bundle['path']);
     $index = $zip->getFromName('index.html');
     $runtime = $zip->getFromName('runtime/immersive-gallery.js');
+    $globalRuntime = $zip->getFromName('runtime/immersive-gallery.global.js');
+    $gltfLoader = $zip->getFromName('runtime/three/GLTFLoader.js');
+    $gltfUtils = $zip->getFromName('runtime/three/utils/BufferGeometryUtils.js');
+    $gltfGlobal = $zip->getFromName('runtime/three/GLTFLoader.global.js');
     $orbitControls = $zip->getFromName('runtime/three/addons/controls/OrbitControls.js');
+    $orbitGlobal = $zip->getFromName('runtime/three/OrbitControls.global.js');
+    $deviceGlobal = $zip->getFromName('runtime/three-device-orientation-controls.global.js');
     $regularScript = $zip->getFromName('scripts/piece.js');
     $zip->close();
     unlink($bundle['path']);
 
     assert_contains($index, 'portable-immersive-bundle');
-    assert_contains($index, "await import('./runtime/immersive-gallery.js')");
-    assert_contains($index, 'embeddedRuntimeSources');
-    assert_contains($index, 'createRuntimeModuleUrl');
+    assert_contains($index, '<script src="runtime/three/GLTFLoader.global.js"></script>');
+    assert_contains($index, '<script src="runtime/immersive-gallery.global.js"></script>');
+    assert_contains($index, 'window.CreatrImmersiveGallery');
+    assert_not_contains($index, "await import('./runtime/immersive-gallery.js')");
+    assert_not_contains($index, 'embeddedRuntimeSources');
+    assert_not_contains($index, 'createRuntimeModuleUrl');
     assert_contains($index, 'mountThreeImmersivePiece');
     assert_contains($index, 'fullscreen-toggle-btn');
     assert_contains($index, 'immersive-stage-toolbar');
@@ -1327,11 +1431,26 @@ test('immersive bundle export keeps index.html as the immersive manual entry poi
     assert_contains($index, 'setupImmersiveStageChrome');
     assert_contains($index, '"camera":{"x":1,"y":2,"z":3}');
     assert_contains($index, 'window.CreatrPieceDownload = {');
-    assert_true(strpos($index, 'window.CreatrPieceDownload = {') < strpos($index, 'await import(\'./runtime/immersive-gallery.js\')'));
+    assert_true(strpos($index, 'window.CreatrPieceDownload = {') < strpos($index, '<script src="runtime/immersive-gallery.global.js"></script>'));
     assert_contains($runtime, "from './three/three.module.js'");
+    assert_contains($runtime, "await import('./three/GLTFLoader.js')");
+    assert_contains($globalRuntime, "(function(){\n'use strict';");
+    assert_contains($globalRuntime, 'window.CreatrImmersiveGallery = {');
+    assert_contains($globalRuntime, 'const THREE = window.THREE;');
+    assert_contains($globalRuntime, 'let _GLTFLoaderCtor = window.GLTFLoader || null;');
+    assert_contains($globalRuntime, 'const DeviceOrientationControls = window.DeviceOrientationControls;');
+    assert_contains($globalRuntime, 'plucksynth: "FMSynth"');
+    assert_not_contains($globalRuntime, 'plucksynth: "PluckSynth"');
     assert_contains($runtime, 'runtime/p5/p5.min.js');
+    assert_contains($gltfLoader, "from './utils/BufferGeometryUtils.js';");
+    assert_contains($gltfUtils, 'toTrianglesDrawMode');
+    assert_contains($gltfGlobal, 'window.THREE.GLTFLoader = GLTFLoader;');
     assert_contains($orbitControls, "from '../../three.module.js';");
     assert_not_contains($orbitControls, "from 'three';");
+    assert_contains($orbitGlobal, "(function(){\n'use strict';");
+    assert_contains($orbitGlobal, 'window.OrbitControls = OrbitControls;');
+    assert_contains($deviceGlobal, "(function(){\n'use strict';");
+    assert_contains($deviceGlobal, 'window.DeviceOrientationControls = DeviceOrientationControls;');
     assert_contains($regularScript, 'window.sketch');
 });
 
@@ -1387,6 +1506,9 @@ test('collection bundle export keeps all pieces in one immersive gallery entry p
     $zip->open($bundle['path']);
     $index = $zip->getFromName('index.html');
     $runtime = $zip->getFromName('runtime/immersive-gallery.js');
+    $globalRuntime = $zip->getFromName('runtime/immersive-gallery.global.js');
+    $gltfLoader = $zip->getFromName('runtime/three/GLTFLoader.js');
+    $gltfGlobal = $zip->getFromName('runtime/three/GLTFLoader.global.js');
     $readme = $zip->getFromName('README.txt');
     $zip->close();
     unlink($bundle['path']);
@@ -1400,9 +1522,16 @@ test('collection bundle export keeps all pieces in one immersive gallery entry p
     assert_contains($index, 'immersive-stage-toolbar');
     assert_contains($index, 'data-immersive-download-png');
     assert_contains($index, 'setupImmersiveStageChrome');
+    assert_contains($index, '<script src="runtime/three/GLTFLoader.global.js"></script>');
     assert_contains($index, 'window.CreatrPieceDownload = {');
-    assert_true(strpos($index, 'window.CreatrPieceDownload = {') < strpos($index, 'await import(\'./runtime/immersive-gallery.js\')'));
+    assert_true(strpos($index, 'window.CreatrPieceDownload = {') < strpos($index, '<script src="runtime/immersive-gallery.global.js"></script>'));
     assert_contains($runtime, "from './three/three.module.js'");
+    assert_contains($runtime, "await import('./three/GLTFLoader.js')");
+    assert_contains($globalRuntime, "(function(){\n'use strict';");
+    assert_contains($globalRuntime, 'window.CreatrImmersiveGallery = {');
+    assert_contains($globalRuntime, 'let _GLTFLoaderCtor = window.GLTFLoader || null;');
+    assert_contains($gltfLoader, "from './utils/BufferGeometryUtils.js';");
+    assert_contains($gltfGlobal, 'window.THREE.GLTFLoader = GLTFLoader;');
     assert_contains($readme, 'This is a collection-wall export, not a single-piece export.');
 });
 

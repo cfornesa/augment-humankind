@@ -1300,12 +1300,19 @@ function initMediaPicker() {
     }
 
     if (currentMode === 'media') {
+      // media_models (gated server-side via layout.php's data-media-models
+      // attribute on this same input) adds GLTF/GLB — self-contained
+      // single-file formats. OBJ is intentionally not offered: it typically
+      // needs companion .mtl/texture files this single-file upload flow
+      // doesn't support.
+      const modelsEnabled = fileInput?.dataset.mediaModels === '1'
       return {
-        accept: 'image/*,video/mp4,video/webm,video/quicktime',
-        types: ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/avif', 'video/mp4', 'video/webm', 'video/quicktime'],
+        accept: 'image/*,video/mp4,video/webm,video/quicktime' + (modelsEnabled ? ',.glb,.gltf,model/gltf-binary,model/gltf+json' : ''),
+        types: ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/avif', 'video/mp4', 'video/webm', 'video/quicktime'].concat(modelsEnabled ? ['model/gltf-binary', 'model/gltf+json'] : []),
         limit: 64 * 1024 * 1024,
-        hint: 'Images max 8 MB · videos max 64 MB',
+        hint: 'Images max 8 MB · videos max 64 MB' + (modelsEnabled ? ' · GLB · GLTF' : ''),
         empty: 'No media yet. Use Upload or Import to add some.',
+        extraExtensions: modelsEnabled ? ['.glb', '.gltf'] : [],
       }
     }
 
@@ -1657,7 +1664,10 @@ function initMediaPicker() {
   function showFileInfo(file) {
     const config = pickerModeConfig()
     const over = file.size > config.limit
-    const bad = !config.types.includes(file.type)
+    // Browsers unreliably sniff MIME type for .glb/.gltf (often empty
+    // string), so accept those by extension too, not just file.type.
+    const extMatch = (config.extraExtensions || []).some(ext => file.name.toLowerCase().endsWith(ext))
+    const bad = !config.types.includes(file.type) && !extMatch
     if (fileName) fileName.textContent = file.name
     if (fileSize) { fileSize.textContent = formatBytes(file.size); fileSize.classList.toggle('size-over', over) }
     if (fileType) fileType.textContent = file.type || 'unknown'

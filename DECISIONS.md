@@ -10,6 +10,57 @@
 
 None.
 
+## 2026-07-09 — GLB/GLTF asset fidelity and offline GLTFLoader export support
+
+### Decision
+
+Model uploads are treated as authored visual assets, not just geometry. A
+generated Three.js piece that loads a GLB/GLTF from `/media/{id}` must preserve
+the loaded model's embedded materials, textures, UVs, transparency, vertex
+colors, and material color data by default. Generated code may transform,
+scale, rotate, animate, frame, light, and set shadow flags on the loaded model,
+but it must not replace loaded mesh materials with new `THREE.Mesh*Material`
+instances unless a future explicit restyling workflow is designed.
+
+Implementation:
+
+- Updated `art_piece_model_capability_prompt('three')` with the material
+  preservation contract.
+- Added a narrow Three.js preflight guard that rejects GLB/GLTF loader code
+  which traverses a loaded `/media/{id}` model and assigns replacement
+  `THREE.MeshBasicMaterial`, `MeshStandardMaterial`, `MeshPhongMaterial`,
+  `MeshLambertMaterial`, `MeshPhysicalMaterial`, `ShaderMaterial`, or
+  `RawShaderMaterial` instances to loaded mesh `.material`.
+- Vendored Three `0.160.0` `GLTFLoader.js` plus its required
+  `BufferGeometryUtils.js` helper under `public/assets/vendor/piece-runtime/three/`.
+- Regular ZIP exports now load `runtime/three/three.global.js`,
+  `runtime/three/GLTFLoader.global.js`, and
+  `runtime/three/OrbitControls.global.js` as local classic scripts, with
+  `window.THREE.GLTFLoader` attached before generated code runs.
+- Immersive and collection ZIP exports include both module and classic-global
+  GLTFLoader runtime files. The classic immersive runtime uses
+  `window.GLTFLoader` instead of a dynamic `import()`/Blob fallback so
+  direct-open `file://` exports avoid unique-origin failures.
+- CDN-backed standalone Three exports import `GLTFLoader` from the existing
+  `three/addons/` import map and expose it on the instrumented `THREE` object.
+
+Existing data repair:
+
+- Repaired art piece `113`, version `257`, only because the stored code still
+  matched the known bad pattern: it loaded `/media/194`, traversed
+  `gltf.scene`, and replaced each mesh material with a new gray/white
+  `MeshStandardMaterial`.
+- The repair removed only that destructive replacement block and kept the
+  model's embedded material intact, while preserving scene setup, background
+  objects, animation, camera, scale, and all unrelated generated code.
+
+### Verification
+
+- `php tests/art-piece-generation.php` — **Passed: 134, Failed: 0**
+- `php tests/three-runtime-consistency.php` — **Passed: 105, Failed: 0**
+- Temporary local PHP server on `127.0.0.1:8081` returned `HTTP/1.1 200 OK`
+  for `/pieces/113`; server was stopped after verification.
+
 ## 2026-07-09 — Unmute preview button, metadata sound toggle, and refinement prompt requirement fix
 
 ### Decision
@@ -1835,3 +1886,81 @@ client audio code.
 - User confirmed in the browser: the metadata sound-playback checkbox fix
   unblocked piece 18's sound; the exhibit-wall persistent-listener fix is
   pending the user's own browser re-verification.
+
+## 2026-07-09 — PluckSynth file:// worklet failure (root-caused, not patched) + GLTF/GLB-only model uploads
+
+### Decision
+
+**PluckSynth's AudioWorklet dependency, precisely diagnosed via a real
+browser console trace** (not speculation — two rounds of static analysis
+first wrongly concluded no instrument touches AudioWorklet at all): a
+downloaded c2_interactive piece opened via `file://` showed `"Unable to load
+a worklet's module."` only on unmute. The actual console trace named the
+minified call stack; decoding it in the vendor bundle confirmed
+`Qr` = `PluckSynth`, which constructs `Gr` = `LowpassCombFilter` internally,
+which builds `Br` = `FeedbackCombFilter extends zr` where `zr` =
+`ToneAudioWorklet`. Karplus-Strong plucked-string synthesis needs a real
+feedback delay line, which Tone.js implements as an AudioWorkletProcessor —
+a deliberate upstream design choice, not a Tone.js bug. Checked all 6 other
+selectable instruments' constructors (`Synth`, `AMSynth`, `FMSynth`,
+`MembraneSynth`, `MetalSynth`, `DuoSynth`) for the same pattern — **zero
+reference the comb-filter/worklet classes or `AudioWorklet`/`addModule` at
+all.** `PluckSynth` is the sole exception among the 7.
+
+Under `file://`'s opaque/null origin, Chrome refuses to load that worklet's
+blob-URL module ("Not allowed to load local resource"), producing an
+unhandled `AbortError` fired asynchronously from inside `PluckSynth`'s own
+constructor — unrelated to and unreachable from this app's own unmute-click
+code. Patching the vendored Tone.js bundle to reimplement
+`FeedbackCombFilter` without a worklet was considered and rejected as
+disproportionate (real vendor surgery, ongoing re-verification burden on
+every future Tone.js update, and it would change how `PluckSynth` actually
+sounds even outside this one narrow scenario). Fixed instead by recognizing
+this specific, known-benign rejection shape (`AbortError` + message matching
+`/worklet/i`) via `unhandledrejection` filters and suppressing it from the
+red error banner in all three sonification runtimes —
+`immersive-gallery.js`, `piece-runtime.js`, and both inline error-handler
+scripts in `piece-render.php` (single-piece and collection exports) — since
+it isn't a real piece-rendering failure. No vendor file touched. The piece
+still plays; only the comb filter's pitched resonance is affected under this
+one narrow condition (`plucksynth` + `file://`).
+
+**3D model uploads (GLTF/GLB/OBJ) didn't actually work in the Media Library
+UI**, despite the PHP upload layer being fully implemented since 2026-07-08.
+Root cause: a second, independent client-side gate —
+`pickerModeConfig()` in `public/assets/js/tiptap-editor.js` — was never
+updated for the `media_models` feature. Its `'media'` mode branch hardcoded
+an image/video-only `accept`/`types` allowlist that silently overwrote the
+already-correct server-rendered `accept`/hint in `layout.php` every time the
+picker opened, and separately blocked the Upload button via a MIME-type
+check even if a model file was selected. Fixed by adding a
+`data-media-models` attribute (set server-side from `feature_enabled()`) to
+the file input, which `pickerModeConfig()` now reads to conditionally add
+`.gltf`/`.glb` to `accept`/`types`/hint, plus an extension-based fallback in
+`showFileInfo()`'s type check (browsers unreliably sniff GLTF/GLB MIME
+types, often reporting an empty string).
+
+Per explicit user confirmation, nothing has been uploaded in any of these
+formats yet, so this was purely forward-looking: **narrowed to GLTF and GLB
+only, OBJ dropped entirely** (self-contained single-file formats vs. OBJ's
+typical dependency on companion `.mtl`/texture files this app's
+single-file upload flow doesn't support). Removed `'obj'` from
+`ALLOWED_MODEL_EXT` (`upload.php`), the upload error message, `layout.php`'s
+accept/hint strings, both Three.js/A-Frame "3D MODEL CAPABILITY" AI
+system-prompt sections (`art-piece-generation.php`), and the `OBJLoader`
+dynamic imports/attachments in both `immersive-gallery.js` and
+`piece-runtime.js`. Left `art_piece_out_of_scope_media_extensions()`'s
+`'obj'` entry untouched — confirmed that's an unrelated defensive
+prompt-sanitization list (elides stray file-name references during
+sound-only refines), not a format-support declaration; removing it would
+have been the wrong direction.
+
+### Verification
+- `php -l`/`node --check` clean on every changed file.
+- Confirmed via a synthetic `piece_export_document()` call with
+  `instrument: "plucksynth"` that the assembled offline-export document
+  contains the worklet/AbortError filter.
+- Live-server served `immersive-gallery.js` byte-diffed identical to source.
+- Grepped all touched files post-edit for `OBJLoader`/`.obj`/`'obj'` —
+  zero remaining references outside unrelated identifier usage (e.g.
+  `obj-model`, `Object3D`).

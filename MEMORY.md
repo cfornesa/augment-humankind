@@ -75,6 +75,11 @@ Source: DECISIONS.md 2026-07-06 Public Copy Subtabs, Footer Consolidation, Widen
 
 # Standing Decisions — Art Pieces, AI Generation & Immersive
 
+2026-07-09 DECISION GLB/GLTF uploads loaded from `/media/{id}` are authored visual assets: generated Three.js code must preserve embedded materials, textures, UVs, transparency, vertex colors, and material color data by default.
+Generated code may transform, light, animate, and set shadows on loaded models, but material replacement requires an explicit future restyling workflow.
+
+2026-07-09 DECISION Direct-open Three.js exports bundle local classic globals for Three.js, OrbitControls, and GLTFLoader; immersive/collection exports also bundle GLTFLoader module/global files so GLB/GLTF pieces do not rely on Blob module URLs or CDN loader imports offline.
+
 2026-07-09 CONSTRAINT Refine and regenerate partition scope by "purpose domain": when ONE refinement direction is filled, ONLY that direction is in scope — the other domain's content is context that must not change; BOTH directions may change only when both are filled.
 The original creative prompt is always labeled ### CONTEXT (never the goal — the directive is the ### PURPOSE OF THIS REFINEMENT header); out-of-scope asset refs (`image.png`, `/image/N`) are elided to `[(visual asset reference elided; out of scope for this audio-only refine)]` in audio-only mode only.
 
@@ -182,6 +187,10 @@ Source: DECISIONS.md 2026-07-05 Shared Top Stage Toolbar session.
 2026-07-09 DECISION A per-item controller must never own a DOM listener when its own lifecycle is shorter than the DOM element's — `mountExhibitWall`'s per-focus-change `createAudioController()` instances each attached/detached the shared sound button's click listener, so any focused item with no sonicParams left the button silently unwired. Fixed by having the longer-lived owner (the wall) hold one persistent listener and drive whichever controller is currently bound via exposed methods.
 
 2026-07-09 CORRECTION Other AI tools (Opencode Go, Antigravity) have been editing this same codebase concurrently with Claude Code sessions — always re-check current file state via fresh reads/Explore before trusting session memory, and scan DECISIONS.md for entries not yet seen this session before assuming a reported bug is unaddressed.
+
+2026-07-09 CORRECTION Don't trust static code-reading alone to rule out a runtime dependency (e.g. "no instrument uses AudioWorklet") — a real browser console stack trace decoded against the minified vendor bundle found PluckSynth's hidden FeedbackCombFilter/AudioWorklet dependency that two prior static-analysis passes missed entirely.
+
+2026-07-09 DECISION Client-side upload gating for the Media Library has two independent layers that must both be updated together — the PHP-rendered accept/hint in layout.php, AND tiptap-editor.js's `pickerModeConfig()`, which unconditionally overwrites the DOM's accept/hint/type-check on every picker open. Check both whenever a new upload type is added.
 
 # Closed Investigations — do not re-litigate
 

@@ -17,13 +17,14 @@ const ALLOWED_VIDEO_MIME = [
 ];
 
 // 3D model formats are routed by file extension (finfo is unreliable for these:
-// .glb sniffs as application/octet-stream, .obj as text/plain, .gltf as JSON/text),
-// then stored under a canonical model/* MIME so downstream classification and
-// serving stay reliable. Geometry-only for v1 — no bundled .mtl/textures.
+// .glb sniffs as application/octet-stream, .gltf as JSON/text), then stored
+// under a canonical model/* MIME so downstream classification and serving
+// stay reliable. GLTF/GLB only — both are self-contained single files; OBJ
+// is intentionally not supported since it typically needs companion
+// .mtl/texture files this single-file upload flow doesn't handle.
 const ALLOWED_MODEL_EXT = [
     'glb'  => 'model/gltf-binary',
     'gltf' => 'model/gltf+json',
-    'obj'  => 'model/obj',
 ];
 
 // Kept ≤ the session max_allowed_packet raised in upload_media() so the blob
@@ -108,7 +109,7 @@ function upload_file_extension(array $file): string
 }
 
 /**
- * Stores an uploaded 3D model (OBJ/GLTF/GLB). Routed by extension rather than
+ * Stores an uploaded 3D model (GLTF/GLB). Routed by extension rather than
  * by finfo MIME, then persisted under a canonical model/* MIME so the media
  * grid, picker, and /media/{id} serving all classify it correctly.
  */
@@ -121,7 +122,7 @@ function upload_model_media(array $file, array $attributes = []): array
 
     $ext = upload_file_extension($file);
     if (!isset(ALLOWED_MODEL_EXT[$ext])) {
-        throw new RuntimeException('3D model type not permitted. Allowed formats: OBJ, GLTF, GLB.');
+        throw new RuntimeException('3D model type not permitted. Allowed formats: GLTF, GLB.');
     }
     $canonicalMime = ALLOWED_MODEL_EXT[$ext];
 

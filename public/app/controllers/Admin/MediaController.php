@@ -25,11 +25,12 @@ class MediaAdminController
         $mime = (string) ($file['mime_type'] ?? '');
         $isVideo = str_starts_with($mime, 'video/');
         $isHtml = $mime === 'text/html' || str_starts_with($mime, 'iframe');
+        $isModel = str_starts_with($mime, 'model/');
         $posterUrl = $isVideo ? self::nativePosterUrl($file) : null;
 
         return $file + [
             'source' => 'file',
-            'preview' => $isVideo ? $posterUrl : ($isHtml ? '/media/' . $id : '/image/' . $id),
+            'preview' => $isVideo ? $posterUrl : ($isHtml || $isModel ? null : '/image/' . $id),
             'direct_url' => '/media/' . $id,
             'label' => trim((string) ($file['title'] ?? '')) !== '' ? (string) $file['title'] : ('Asset #' . $id),
             'alt_text_supported' => MediaFile::supportsAltText(),
@@ -47,6 +48,8 @@ class MediaAdminController
             $kind = 'video';
         } elseif ($mime === 'text/html' || str_starts_with($mime, 'iframe')) {
             $kind = 'iframe';
+        } elseif (str_starts_with($mime, 'model/')) {
+            $kind = 'model';
         } else {
             $kind = 'image';
         }

@@ -289,7 +289,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function clearPreview() {
-        previewHost.querySelectorAll('video.dynamic-media-preview, iframe.dynamic-media-preview, .media-thumb-video-empty').forEach(node => node.remove());
+        previewHost.querySelectorAll('video.dynamic-media-preview, iframe.dynamic-media-preview, .media-thumb-video-empty, .media-thumb-model').forEach(node => node.remove());
         previewImg.classList.add('is-hidden');
         previewImg.removeAttribute('src');
         previewImg.alt = '';
@@ -300,6 +300,13 @@ document.addEventListener('DOMContentLoaded', () => {
         empty.className = 'media-thumb-video-empty';
         empty.textContent = 'No poster';
         return empty;
+    }
+
+    function createModelThumb() {
+        const label = document.createElement('span');
+        label.className = 'media-thumb-model';
+        label.textContent = '3D Model';
+        return label;
     }
 
     function updatePosterField(card) {
@@ -318,7 +325,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!card) return;
         const thumb = card.querySelector('.media-card-thumb');
         if (!thumb) return;
-        thumb.querySelectorAll('img, video, .media-thumb-iframe, .media-thumb-video-empty').forEach(node => node.remove());
+        thumb.querySelectorAll('img, video, .media-thumb-iframe, .media-thumb-video-empty, .media-thumb-model').forEach(node => node.remove());
         thumb.classList.remove('media-thumb-missing');
 
         const mime = card.dataset.mime || '';
@@ -351,6 +358,11 @@ document.addEventListener('DOMContentLoaded', () => {
             label.className = 'media-thumb-iframe';
             label.textContent = '</> Embed';
             thumb.appendChild(label);
+            return;
+        }
+
+        if (mime.startsWith('model/')) {
+            thumb.appendChild(createModelThumb());
             return;
         }
 
@@ -466,6 +478,11 @@ document.addEventListener('DOMContentLoaded', () => {
             iframe.style.height = '100%';
             iframe.style.border = '0';
             previewHost.appendChild(iframe);
+            return;
+        }
+
+        if (mime.startsWith('model/')) {
+            previewHost.appendChild(createModelThumb());
             return;
         }
 

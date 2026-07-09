@@ -642,11 +642,11 @@ function art_piece_model_capability_prompt(string $engine): string
 {
     return match ($engine) {
         'three' => implode(' ', [
-            "3D MODEL CAPABILITY: If the user's prompt references an uploaded 3D model at an allowed /media/{id} path (OBJ/GLTF/GLB), load it with the runtime-provided loaders — `new THREE.GLTFLoader().load('/media/{id}', gltf => scene.add(gltf.scene))` for GLTF/GLB, or `new THREE.OBJLoader().load('/media/{id}', obj => scene.add(obj))` for OBJ.",
-            "Do NOT use fetch, XMLHttpRequest, or import statements; THREE.GLTFLoader and THREE.OBJLoader are already provided on the THREE object. Add lights (models with standard materials are invisible without them) and frame the camera to the loaded model.",
+            "3D MODEL CAPABILITY: If the user's prompt references an uploaded 3D model at an allowed /media/{id} path (GLTF/GLB), load it with the runtime-provided loader — `new THREE.GLTFLoader().load('/media/{id}', gltf => scene.add(gltf.scene))`.",
+            "Do NOT use fetch, XMLHttpRequest, or import statements; THREE.GLTFLoader is already provided on the THREE object. Preserve the loaded model's embedded materials, textures, UVs, transparency, vertex colors, and color data; do NOT replace loaded meshes with new MeshBasicMaterial, MeshStandardMaterial, MeshPhongMaterial, or similar materials unless the user explicitly asks to restyle the model. You may set castShadow/receiveShadow, transform, scale, rotate, animate, add lights, and frame the camera around the loaded model.",
         ]),
         'aframe' => implode(' ', [
-            "3D MODEL CAPABILITY: If the user's prompt references an uploaded 3D model at an allowed /media/{id} path (OBJ/GLTF/GLB), you MAY — as a specific exception to the no-<a-asset-item> rule — include a single `<a-assets>` block containing one `<a-asset-item id=\"model\" src=\"/media/{id}\">`, then place `<a-entity gltf-model=\"#model\">` (GLTF/GLB) or `<a-entity obj-model=\"obj: #model\">` (OBJ) in the scene.",
+            "3D MODEL CAPABILITY: If the user's prompt references an uploaded 3D model at an allowed /media/{id} path (GLTF/GLB), you MAY — as a specific exception to the no-<a-asset-item> rule — include a single `<a-assets>` block containing one `<a-asset-item id=\"model\" src=\"/media/{id}\">`, then place `<a-entity gltf-model=\"#model\">` in the scene.",
             "This exception applies ONLY to an allowed /media/{id} 3D-model reference — do NOT load any other external URL or remote asset, and keep all other A-Frame safety rules.",
         ]),
         default => '',
@@ -915,7 +915,7 @@ function art_piece_preflight_document(string $engine, ?string $html, ?string $cs
             throw new RuntimeException('A-Frame HTML must contain exactly one <a-scene> root.');
         }
         $aframeHtmlRules = [
-            ['pattern' => '/<\/?(?:script|link|base|html|head|body|iframe|audio|video|a-asset-item)\b/i', 'message' => 'A-Frame HTML cannot contain document, script, iframe, audio, video, or arbitrary asset-loading tags.'],
+            ['pattern' => '/<\/?(?:script|link|base|html|head|body|iframe|audio|video)\b/i', 'message' => 'A-Frame HTML cannot contain document, script, iframe, audio, video, or arbitrary asset-loading tags.'],
             ['pattern' => '/\burl\s*\(/i', 'message' => 'A-Frame CSS/HTML cannot reference external URL assets.'],
         ];
         foreach ($aframeHtmlRules as $rule) {
@@ -993,10 +993,28 @@ function validate_art_piece_media_references(string $engine, ?string $html, ?str
     if ($engine === 'three' && $js !== null) {
         validate_literal_media_call_urls($js, '/\bTextureLoader\s*\(\s*\)\s*\.\s*load\s*\(\s*(["\'])([^"\']+)\1/i', 'Three.js TextureLoader.load()');
         validate_literal_media_call_urls($js, '/\.\s*load\s*\(\s*(["\'])([^"\']+)\1/i', 'Three.js asset loader calls');
+        validate_three_gltf_material_preservation($js);
     }
 
     if ($engine === 'c2' && $js !== null) {
         validate_literal_media_call_urls($js, '/\bruntime\s*\.\s*loadImage\s*\(\s*(["\'])([^"\']+)\1/i', 'C2 runtime.loadImage()');
+    }
+}
+
+function validate_three_gltf_material_preservation(string $js): void
+{
+    if (!preg_match('/GLTFLoader\s*\([^)]*\)\s*\.\s*load\s*\(\s*["\']\/media\/[0-9]+["\']/i', $js)
+        && !preg_match('/\b[a-zA-Z_$][A-Za-z0-9_$]*\s*\.\s*load\s*\(\s*["\']\/media\/[0-9]+["\']/i', $js)
+    ) {
+        return;
+    }
+
+    if (!preg_match('/\.traverse\s*\(/i', $js)) {
+        return;
+    }
+
+    if (preg_match('/\.\s*material\s*=\s*new\s+THREE\.(?:MeshBasicMaterial|MeshStandardMaterial|MeshPhongMaterial|MeshLambertMaterial|MeshPhysicalMaterial|ShaderMaterial|RawShaderMaterial)\s*\(/i', $js)) {
+        throw new RuntimeException('Uploaded GLB/GLTF model materials must be preserved. Do not replace loaded model mesh materials; keep embedded textures, UVs, transparency, vertex colors, and material data unless the user explicitly asks to restyle the model.');
     }
 }
 
@@ -1016,6 +1034,7 @@ function validate_literal_media_call_urls(string $code, string $pattern, string 
 function validate_aframe_media_references(string $html): void
 {
     $allowedAssetIds = [];
+    $allowedModelAssetIds = [];
     if (preg_match_all('/<img\b([^>]*)>/i', $html, $imgMatches, PREG_SET_ORDER)) {
         foreach ($imgMatches as $match) {
             $attrs = $match[1] ?? '';
@@ -1030,6 +1049,23 @@ function validate_aframe_media_references(string $html): void
                 throw new RuntimeException('A-Frame image assets must use same-origin CMS media paths such as /image/2, /media/..., or /api/media-assets/2.');
             }
             $allowedAssetIds[] = preg_quote((string) $idMatch[2], '/');
+        }
+    }
+
+    if (preg_match_all('/<a-asset-item\b([^>]*)>/i', $html, $assetMatches, PREG_SET_ORDER)) {
+        foreach ($assetMatches as $match) {
+            $attrs = $match[1] ?? '';
+            if (!preg_match('/\bid\s*=\s*(["\'])([^"\']+)\1/i', $attrs, $idMatch)) {
+                throw new RuntimeException('A-Frame model assets must have an id so gltf-model can reference them.');
+            }
+            if (!preg_match('/\bsrc\s*=\s*(["\'])([^"\']+)\1/i', $attrs, $srcMatch)) {
+                throw new RuntimeException('A-Frame model assets must include a same-origin CMS model src.');
+            }
+            $src = art_piece_normalize_cms_media_ref((string) $srcMatch[2]);
+            if ($src === null || !preg_match('#^/media/[0-9]+$#', $src)) {
+                throw new RuntimeException('A-Frame model assets must use same-origin uploaded GLTF/GLB paths such as /media/2.');
+            }
+            $allowedModelAssetIds[] = preg_quote((string) $idMatch[2], '/');
         }
     }
 
@@ -1059,6 +1095,22 @@ function validate_aframe_media_references(string $html): void
             }
             if (!is_allowed_art_piece_media_src($src)) {
                 throw new RuntimeException('A-Frame material texture src may only reference same-origin CMS media or #asset ids.');
+            }
+        }
+    }
+
+    if (preg_match_all('/\bgltf-model\s*=\s*(["\'])([^"\']+)\1/i', $html, $modelMatches, PREG_SET_ORDER)) {
+        foreach ($modelMatches as $match) {
+            $src = trim((string) $match[2]);
+            if (str_starts_with($src, '#')) {
+                if ($allowedModelAssetIds === [] || !preg_match('/^#(?:' . implode('|', $allowedModelAssetIds) . ')$/', $src)) {
+                    throw new RuntimeException('A-Frame gltf-model references must point to an <a-asset-item> id defined in <a-assets>.');
+                }
+                continue;
+            }
+            $normalized = art_piece_normalize_cms_media_ref($src);
+            if ($normalized === null || !preg_match('#^/media/[0-9]+$#', $normalized)) {
+                throw new RuntimeException('A-Frame gltf-model may only reference same-origin uploaded GLTF/GLB paths such as /media/2 or #model ids.');
             }
         }
     }

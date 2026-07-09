@@ -276,7 +276,7 @@ function piece_export_document(array $piece, array $version, array $options = []
 <script>
 function showPieceError(error){const el=document.getElementById('piece-error');if(!el)return;el.textContent=(error&&(error.stack||error.message))?(error.stack||error.message):String(error);el.style.display='block';}
 window.addEventListener('error',event=>showPieceError(event.error||event.message));
-window.addEventListener('unhandledrejection',event=>showPieceError(event.reason||'Unhandled promise rejection'));
+window.addEventListener('unhandledrejection',event=>{const r=event.reason;const m=typeof r?.message==='string'?r.message:String(r||'');if(r?.name==='AbortError'&&/worklet/i.test(m)){event.preventDefault();return;}showPieceError(r||'Unhandled promise rejection');});
 </script>
 {$sonicScript}
 {$pieceScriptTag}
@@ -293,10 +293,9 @@ HTML;
  * (piece-runtime.js, controlled via postMessage from a host page's button),
  * an export has no host page, so this owns and creates its own toggle
  * button directly, mirroring piece-runtime.js's own standalone fallback
- * button. In bundle mode Tone.js is inlined as a Blob URL (same trick
- * piece_export_bootstrap already uses for OrbitControls) so the exported
- * bundle needs no network; in cdn mode it's loaded from the same
- * self-hosted path the live view uses.
+ * button. In bundle mode Tone.js is loaded from the ZIP-local runtime file
+ * so direct-open file:// exports do not depend on blob:null script origins;
+ * in cdn mode it's loaded from the same self-hosted path the live view uses.
  */
 function piece_export_sonic_script(string $engine, string $sonicParamsJson, string $runtimeMode): string
 {
@@ -316,15 +315,15 @@ function piece_export_sonic_script(string $engine, string $sonicParamsJson, stri
     }
 
     $sonicJson = json_encode($decoded, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-    $toneSourceJson = $runtimeMode === 'bundle'
-        ? json_encode(piece_export_runtime_source_file('assets/vendor/tone/Tone.js'), JSON_UNESCAPED_UNICODE)
-        : 'null';
-    $toneSrcJson = json_encode(rtrim(piece_request_origin(), '/') . '/assets/vendor/tone/Tone.js');
+    $toneSrc = $runtimeMode === 'bundle'
+        ? 'runtime/tone/Tone.js'
+        : rtrim(piece_request_origin(), '/') . '/assets/vendor/tone/Tone.js';
+    $toneSrcJson = json_encode($toneSrc);
+    $pluckSynthCtor = $runtimeMode === 'bundle' ? 'FMSynth' : 'PluckSynth';
 
     return <<<HTML
 <script>
 window.__creatrSonicParams = {$sonicJson};
-window.__creatrToneInlineSource = {$toneSourceJson};
 window.__creatrToneSrc = {$toneSrcJson};
 (function () {
   var sonicParams = window.__creatrSonicParams;
@@ -339,7 +338,7 @@ window.__creatrToneSrc = {$toneSrcJson};
   var INSTRUMENTS = {
     synth: 'Synth', amsynth: 'AMSynth', fmsynth: 'FMSynth',
     membranesynth: 'MembraneSynth', metalsynth: 'MetalSynth',
-    plucksynth: 'PluckSynth', duosynth: 'DuoSynth',
+    plucksynth: '{$pluckSynthCtor}', duosynth: 'DuoSynth',
   };
   var scale = SCALES[sonicParams.scale] || SCALES.major;
   var instrumentKey = INSTRUMENTS[sonicParams.instrument] ? sonicParams.instrument : 'synth';
@@ -361,12 +360,7 @@ window.__creatrToneSrc = {$toneSrcJson};
       var s = document.createElement('script');
       s.onload = function () { window.Tone ? resolve(window.Tone) : reject(new Error('Tone.js loaded but window.Tone missing')); };
       s.onerror = function () { reject(new Error('Tone.js failed to load')); };
-      if (window.__creatrToneInlineSource) {
-        var blob = new Blob([window.__creatrToneInlineSource], { type: 'text/javascript' });
-        s.src = URL.createObjectURL(blob);
-      } else {
-        s.src = window.__creatrToneSrc;
-      }
+      s.src = window.__creatrToneSrc;
       document.head.appendChild(s);
     });
   }
@@ -649,39 +643,18 @@ html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#
 <script>
 function showPieceError(error){const el=document.getElementById('piece-error');if(!el)return;el.textContent=(error&&(error.stack||error.message))?(error.stack||error.message):String(error);el.style.display='block';}
 window.addEventListener('error',event=>showPieceError(event.error||event.message));
-window.addEventListener('unhandledrejection',event=>showPieceError(event.reason||'Unhandled promise rejection'));
+window.addEventListener('unhandledrejection',event=>{const r=event.reason;const m=typeof r?.message==='string'?r.message:String(r||'');if(r?.name==='AbortError'&&/worklet/i.test(m)){event.preventDefault();return;}showPieceError(r||'Unhandled promise rejection');});
 </script>
 <script>
 {$downloadBridgeScript}
 </script>
-<script type="module">
-const embeddedRuntimeSources = {
-  three: {$jsonEmbeddedThree},
-  orbitControls: {$jsonEmbeddedOrbitControls},
-  deviceOrientation: {$jsonEmbeddedDeviceOrientation},
-  immersiveGallery: {$jsonEmbeddedImmersiveGallery}
-};
-
-function createRuntimeModuleUrl(source) {
-  return URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
-}
-
-async function loadImmersiveRuntime() {
-  try {
-    return await import('./runtime/immersive-gallery.js');
-  } catch (error) {
-    const threeUrl = createRuntimeModuleUrl(embeddedRuntimeSources.three);
-    const orbitUrl = createRuntimeModuleUrl(embeddedRuntimeSources.orbitControls.replace("from '../../three.module.js';", `from '\${threeUrl}';`));
-    const deviceUrl = createRuntimeModuleUrl(embeddedRuntimeSources.deviceOrientation.replace("'./three/three.module.js'", `'\${threeUrl}'`));
-    const gallerySource = embeddedRuntimeSources.immersiveGallery
-      .replace("from './three/three.module.js';", `from '\${threeUrl}';`)
-      .replace("from './three/addons/controls/OrbitControls.js';", `from '\${orbitUrl}';`)
-      .replace('await import("./three-device-orientation-controls.js")', `await import('\${deviceUrl}')`);
-    return await import(createRuntimeModuleUrl(gallerySource));
-  }
-}
-
-const { mountAFrameImmersivePiece, mountGalleryPiece, mountThreeImmersivePiece, setupImmersiveStageChrome } = await loadImmersiveRuntime();
+<script src="runtime/three/three.global.js"></script>
+<script src="runtime/three/GLTFLoader.global.js"></script>
+<script src="runtime/three/OrbitControls.global.js"></script>
+<script src="runtime/three-device-orientation-controls.global.js"></script>
+<script src="runtime/immersive-gallery.global.js"></script>
+<script>
+const { mountAFrameImmersivePiece, mountGalleryPiece, mountThreeImmersivePiece, setupImmersiveStageChrome } = window.CreatrImmersiveGallery || {};
 
 const piece = {
   engine: {$jsonEngine},
@@ -982,8 +955,14 @@ function piece_export_imports(string $engine, string $runtimeMode = 'cdn'): stri
 function piece_export_inline_runtime_markup(string $engine): string
 {
     $engine = strtolower($engine);
-    if ($engine === 'three' || $engine === 'svg') {
+    if ($engine === 'svg') {
         return '';
+    }
+
+    if ($engine === 'three') {
+        return '<script src="runtime/three/three.global.js"></script>' . "\n"
+            . '<script src="runtime/three/GLTFLoader.global.js"></script>' . "\n"
+            . '<script src="runtime/three/OrbitControls.global.js"></script>';
     }
 
     $source = piece_export_runtime_inline_source($engine);
@@ -1039,6 +1018,144 @@ function piece_export_three_orbitcontrols_inline_source(): string
         $source
     ) ?? $source;
     return $source;
+}
+
+function piece_export_three_global_source(): string
+{
+    $source = piece_export_runtime_source_file('assets/vendor/piece-runtime/three/three.module.js');
+    $source = preg_replace_callback('/\nexport\s*\{([^}]+)\};\s*$/s', static function (array $matches): string {
+        $exports = array_filter(array_map('trim', explode(',', $matches[1])));
+        $assignments = [];
+        foreach ($exports as $export) {
+            if (preg_match('/^(.+)\s+as\s+(.+)$/', $export, $aliasMatch)) {
+                $assignments[] = trim($aliasMatch[2]) . ': ' . trim($aliasMatch[1]);
+            } else {
+                $assignments[] = $export;
+            }
+        }
+
+        return "\nwindow.THREE = {\n  " . implode(",\n  ", $assignments) . "\n};\n";
+    }, $source);
+
+    if (!is_string($source) || strpos($source, 'window.THREE = {') === false) {
+        throw new RuntimeException('Could not convert Three.js module source for direct-open export.');
+    }
+
+    return "(function(){\n'use strict';\n" . $source . "\n})();\n";
+}
+
+function piece_export_orbitcontrols_global_source(): string
+{
+    $source = piece_export_runtime_source_file('assets/vendor/piece-runtime/three/OrbitControls.js');
+    $source = preg_replace(
+        '/^import\s*\{([^}]+)\}\s*from\s*[\'"]three[\'"];\s*/s',
+        "const {\$1} = window.THREE;\n",
+        $source
+    ) ?? $source;
+    $source = preg_replace('/\nexport\s*\{\s*OrbitControls\s*\};\s*$/s', "\nwindow.OrbitControls = OrbitControls;\n", $source) ?? $source;
+
+    if (strpos($source, 'window.OrbitControls = OrbitControls;') === false) {
+        throw new RuntimeException('Could not convert OrbitControls module source for direct-open export.');
+    }
+
+    return "(function(){\n'use strict';\n" . $source . "\n})();\n";
+}
+
+function piece_export_gltfloader_global_source(): string
+{
+    $utilsSource = piece_export_runtime_source_file('assets/vendor/piece-runtime/three/utils/BufferGeometryUtils.js');
+    $utilsSource = preg_replace(
+        '/^import\s*\{([^}]+)\}\s*from\s*[\'"]three[\'"];\s*/s',
+        "const {\$1} = window.THREE;\n",
+        $utilsSource
+    ) ?? $utilsSource;
+    $utilsSource = preg_replace_callback('/\nexport\s*\{([^}]+)\};\s*$/s', static function (array $matches): string {
+        $exports = array_filter(array_map('trim', explode(',', $matches[1])));
+        return "\nconst __CreatrBufferGeometryUtils = {\n  " . implode(",\n  ", $exports) . "\n};\n";
+    }, $utilsSource) ?? $utilsSource;
+
+    $loaderSource = piece_export_runtime_source_file('assets/vendor/piece-runtime/three/GLTFLoader.js');
+    $loaderSource = preg_replace(
+        '/^import\s*\{([^}]+)\}\s*from\s*[\'"]three[\'"];\s*/s',
+        "const {\$1} = window.THREE;\n",
+        $loaderSource
+    ) ?? $loaderSource;
+    $loaderSource = preg_replace(
+        '/^import\s*\{\s*toTrianglesDrawMode\s*\}\s*from\s*[\'"]\.\/utils\/BufferGeometryUtils\.js[\'"];\s*/m',
+        "const { toTrianglesDrawMode } = __CreatrBufferGeometryUtils;\n",
+        $loaderSource
+    ) ?? $loaderSource;
+    $loaderSource = preg_replace(
+        '/\nexport\s*\{\s*GLTFLoader\s*\};\s*$/s',
+        "\nwindow.GLTFLoader = GLTFLoader;\nwindow.THREE.GLTFLoader = GLTFLoader;\n",
+        $loaderSource
+    ) ?? $loaderSource;
+
+    if (strpos($utilsSource, '__CreatrBufferGeometryUtils') === false || strpos($loaderSource, 'window.THREE.GLTFLoader = GLTFLoader;') === false) {
+        throw new RuntimeException('Could not convert GLTFLoader module source for direct-open export.');
+    }
+
+    return "(function(){\n'use strict';\n" . $utilsSource . "\n" . $loaderSource . "\n})();\n";
+}
+
+function piece_export_device_orientation_global_source(): string
+{
+    $source = piece_export_runtime_source_file('assets/js/three-device-orientation-controls.js');
+    $source = preg_replace(
+        '/^\/\/ Vendored(.+?)import\s*\{([^}]+)\}\s*from\s*[\'"]https:\/\/cdn\.jsdelivr\.net\/npm\/three@0\.160\.0\/build\/three\.module\.js[\'"];\s*/s',
+        "// Vendored\$1const {\$2} = window.THREE;\n",
+        $source
+    ) ?? $source;
+    $source = preg_replace('/\nexport\s*\{\s*DeviceOrientationControls\s*\};\s*$/s', "\nwindow.DeviceOrientationControls = DeviceOrientationControls;\n", $source) ?? $source;
+
+    if (strpos($source, 'window.DeviceOrientationControls = DeviceOrientationControls;') === false) {
+        throw new RuntimeException('Could not convert DeviceOrientationControls module source for direct-open export.');
+    }
+
+    return "(function(){\n'use strict';\n" . $source . "\n})();\n";
+}
+
+function piece_export_immersive_gallery_global_source(): string
+{
+    $source = piece_export_patched_immersive_gallery_source();
+    $exportNames = [];
+    if (preg_match_all('/^export\s+const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=/m', $source, $matches)) {
+        $exportNames = array_merge($exportNames, $matches[1]);
+    }
+    if (preg_match_all('/^export\s+function\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/m', $source, $matches)) {
+        $exportNames = array_merge($exportNames, $matches[1]);
+    }
+
+    $source = preg_replace(
+        "/^import \* as THREE from '\\.\/three\/three\\.module\\.js';\nimport \\{ OrbitControls \\} from '\\.\/three\/addons\/controls\/OrbitControls\\.js';\n/s",
+        "const THREE = window.THREE;\nconst OrbitControls = window.OrbitControls;\n",
+        $source
+    ) ?? $source;
+    $source = preg_replace(
+        "/let _GLTFLoaderCtor = null;\ntry \\{\n  \\(\\{ GLTFLoader: _GLTFLoaderCtor \\} = await import\\('https:\\/\\/cdn\\.jsdelivr\\.net\\/npm\\/three@0\\.160\\.0\\/examples\\/jsm\\/loaders\\/GLTFLoader\\.js'\\)\\);\n\\} catch \\(_e\\) \\{\n  \\/\/ 3D model loader unavailable; model-free pieces are unaffected\\.\n\\}\n/s",
+        "let _GLTFLoaderCtor = window.GLTFLoader || null;\n",
+        $source
+    ) ?? $source;
+    $source = preg_replace(
+        "/let _GLTFLoaderCtor = null;\ntry \\{\n  \\(\\{ GLTFLoader: _GLTFLoaderCtor \\} = await import\\('\\.\\/three\\/GLTFLoader\\.js'\\)\\);\n\\} catch \\(_e\\) \\{\n  \\/\/ 3D model loader unavailable; model-free pieces are unaffected\\.\n\\}\n/s",
+        "let _GLTFLoaderCtor = window.GLTFLoader || null;\n",
+        $source
+    ) ?? $source;
+    $source = str_replace(
+        'const { DeviceOrientationControls } = await import("./three-device-orientation-controls.js");',
+        'const DeviceOrientationControls = window.DeviceOrientationControls;',
+        $source
+    );
+    $source = str_replace('plucksynth: "PluckSynth"', 'plucksynth: "FMSynth"', $source);
+    $source = preg_replace('/^export\s+const\s+/m', 'const ', $source) ?? $source;
+    $source = preg_replace('/^export\s+function\s+/m', 'function ', $source) ?? $source;
+
+    $exports = array_values(array_unique($exportNames));
+    if ($exports === []) {
+        throw new RuntimeException('Could not find immersive gallery exports for direct-open export.');
+    }
+
+    return "(function(){\n'use strict';\n" . $source . "\nwindow.CreatrImmersiveGallery = {\n  " . implode(",\n  ", $exports) . "\n};\n})();\n";
 }
 
 function piece_export_download_bridge_script(): string
@@ -1155,25 +1272,12 @@ HTML;
 function piece_export_bootstrap(string $engine, string $generationMode = '', string $runtimeMode = 'cdn'): string
 {
     if ($engine === 'three' && $runtimeMode === 'bundle') {
-        $threeSource = json_encode(
-            piece_export_runtime_source_file('assets/vendor/piece-runtime/three/three.module.js'),
-            JSON_UNESCAPED_UNICODE
-        );
-        $orbitSource = json_encode(
-            piece_export_three_orbitcontrols_inline_source(),
-            JSON_UNESCAPED_UNICODE
-        );
-
         return <<<HTML
-<script type="module">
-const creatrThreeSource = {$threeSource};
-const creatrOrbitSource = {$orbitSource};
-const creatrThreeUrl = URL.createObjectURL(new Blob([creatrThreeSource], { type: 'text/javascript' }));
-const creatrOrbitPatched = creatrOrbitSource.replace(/__CREATR_THREE_BLOB__/g, creatrThreeUrl);
-const creatrOrbitUrl = URL.createObjectURL(new Blob([creatrOrbitPatched], { type: 'text/javascript' }));
+<script>
 try {
-  const THREE = await import(creatrThreeUrl);
-  const { OrbitControls } = await import(creatrOrbitUrl);
+  const THREE = window.THREE;
+  const OrbitControls = window.OrbitControls;
+  if (!THREE || !OrbitControls) throw new Error('Three.js export runtime did not load.');
   const canvas = document.getElementById('scene') || document.querySelector('canvas') || (() => {
     const created = document.createElement('canvas');
     created.id = 'scene';
@@ -1497,12 +1601,6 @@ try {
     }
   });
 } catch (error) { showPieceError(error); }
-finally {
-  window.addEventListener('unload', () => {
-    URL.revokeObjectURL(creatrThreeUrl);
-    URL.revokeObjectURL(creatrOrbitUrl);
-  }, { once: true });
-}
 </script>
 HTML;
     }
@@ -1521,6 +1619,7 @@ HTML,
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 try {
   const canvas = document.getElementById('scene') || document.querySelector('canvas') || (() => {
     const created = document.createElement('canvas');
@@ -1543,6 +1642,7 @@ try {
   }
   const state = { scene: null, camera: null, renderer: null };
   const instrumentedThree = { ...THREE };
+  instrumentedThree.GLTFLoader = GLTFLoader;
   instrumentedThree.Scene = class extends THREE.Scene {
     constructor(...args) { super(...args); state.scene = this; }
   };
@@ -2329,36 +2429,18 @@ html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#
 <script>
 function showCollectionError(error){const el=document.getElementById('collection-error');if(!el)return;el.textContent=(error&&(error.stack||error.message))?(error.stack||error.message):String(error);el.style.display='block';}
 window.addEventListener('error',event=>showCollectionError(event.error||event.message));
-window.addEventListener('unhandledrejection',event=>showCollectionError(event.reason||'Unhandled promise rejection'));
+window.addEventListener('unhandledrejection',event=>{const r=event.reason;const m=typeof r?.message==='string'?r.message:String(r||'');if(r?.name==='AbortError'&&/worklet/i.test(m)){event.preventDefault();return;}showCollectionError(r||'Unhandled promise rejection');});
 </script>
 <script>
 {$downloadBridgeScript}
 </script>
-<script type="module">
-const embeddedRuntimeSources = {
-  three: {$jsonEmbeddedThree},
-  orbitControls: {$jsonEmbeddedOrbitControls},
-  deviceOrientation: {$jsonEmbeddedDeviceOrientation},
-  immersiveGallery: {$jsonEmbeddedImmersiveGallery}
-};
-function createRuntimeModuleUrl(source) {
-  return URL.createObjectURL(new Blob([source], { type: 'text/javascript' }));
-}
-async function loadImmersiveRuntime() {
-  try {
-    return await import('./runtime/immersive-gallery.js');
-  } catch (error) {
-    const threeUrl = createRuntimeModuleUrl(embeddedRuntimeSources.three);
-    const orbitUrl = createRuntimeModuleUrl(embeddedRuntimeSources.orbitControls.replace("from '../../three.module.js';", `from '\${threeUrl}';`));
-    const deviceUrl = createRuntimeModuleUrl(embeddedRuntimeSources.deviceOrientation.replace("'./three/three.module.js'", `'\${threeUrl}'`));
-    const gallerySource = embeddedRuntimeSources.immersiveGallery
-      .replace("from './three/three.module.js';", `from '\${threeUrl}';`)
-      .replace("from './three/addons/controls/OrbitControls.js';", `from '\${orbitUrl}';`)
-      .replace('await import("./three-device-orientation-controls.js")', `await import('\${deviceUrl}')`);
-    return await import(createRuntimeModuleUrl(gallerySource));
-  }
-}
-const { mountExhibitWall, setupImmersiveStageChrome } = await loadImmersiveRuntime();
+<script src="runtime/three/three.global.js"></script>
+<script src="runtime/three/GLTFLoader.global.js"></script>
+<script src="runtime/three/OrbitControls.global.js"></script>
+<script src="runtime/three-device-orientation-controls.global.js"></script>
+<script src="runtime/immersive-gallery.global.js"></script>
+<script>
+const { mountExhibitWall, setupImmersiveStageChrome } = window.CreatrImmersiveGallery || {};
 const stage = document.getElementById('immersive-stage');
 const rows = {$jsonRows};
 const cols = {$jsonCols};
@@ -2618,6 +2700,16 @@ function piece_export_build_manifest(array $piece, array $version, array $option
     $surface = strtolower(trim((string) ($options['surface'] ?? '')));
     $immersive = $surface === 'immersive';
     $viewState = $immersive ? piece_export_decode_view_state((string) ($options['view_state'] ?? '')) : [];
+    $runtimeFiles = $immersive
+        ? piece_export_immersive_runtime_files((string) ($version['engine'] ?? $piece['engine'] ?? 'p5'))
+        : piece_export_runtime_files((string) ($version['engine'] ?? $piece['engine'] ?? 'p5'));
+
+    if (!$immersive && piece_export_version_has_enabled_sonic($version)) {
+        $runtimeFiles[] = [
+            'source_path' => dirname(__DIR__, 2) . '/assets/vendor/tone/Tone.js',
+            'zip_path' => 'runtime/tone/Tone.js',
+        ];
+    }
 
     return [
         'document' => $immersive
@@ -2634,11 +2726,20 @@ function piece_export_build_manifest(array $piece, array $version, array $option
                 'script_src' => 'scripts/piece.js',
             ]),
         'bundle_files' => $bundleFiles,
-        'runtime_files' => $immersive
-            ? piece_export_immersive_runtime_files((string) ($version['engine'] ?? $piece['engine'] ?? 'p5'))
-            : piece_export_runtime_files((string) ($version['engine'] ?? $piece['engine'] ?? 'p5')),
+        'runtime_files' => $runtimeFiles,
         'media_files' => $mediaFiles,
     ];
+}
+
+function piece_export_version_has_enabled_sonic(array $version): bool
+{
+    $raw = trim((string) ($version['sonic_params'] ?? ''));
+    if ($raw === '') {
+        return false;
+    }
+
+    $decoded = json_decode($raw, true);
+    return is_array($decoded) && ($decoded['enabled'] ?? true) !== false;
 }
 
 function piece_export_bundle_files(array $piece, array $version, array $mediaMap): array
@@ -2892,8 +2993,9 @@ function piece_export_runtime_files(string $engine): array
             ['source_path' => $vendorRoot . '/c2/c2.min.js', 'zip_path' => 'runtime/c2/c2.min.js'],
         ],
         'three' => [
-            ['source_path' => $vendorRoot . '/three/three.module.js', 'zip_path' => 'runtime/three/three.module.js'],
-            ['source_path' => $vendorRoot . '/three/OrbitControls.js', 'zip_path' => 'runtime/three/addons/controls/OrbitControls.js'],
+            ['zip_path' => 'runtime/three/three.global.js', 'data' => piece_export_three_global_source()],
+            ['zip_path' => 'runtime/three/GLTFLoader.global.js', 'data' => piece_export_gltfloader_global_source()],
+            ['zip_path' => 'runtime/three/OrbitControls.global.js', 'data' => piece_export_orbitcontrols_global_source()],
         ],
         'aframe' => [
             ['source_path' => $publicRoot . '/assets/js/aframe.min.js', 'zip_path' => 'runtime/aframe/aframe.min.js'],
@@ -2902,7 +3004,7 @@ function piece_export_runtime_files(string $engine): array
     };
 
     foreach ($runtimeFiles as $runtimeFile) {
-        if (!is_file($runtimeFile['source_path'])) {
+        if (isset($runtimeFile['source_path']) && !is_file($runtimeFile['source_path'])) {
             throw new RuntimeException('Missing vendored runtime file for piece export: ' . $runtimeFile['source_path']);
         }
     }
@@ -2921,13 +3023,29 @@ function piece_export_immersive_runtime_files(string $engine): array
             'data' => piece_export_patched_immersive_gallery_source(),
         ],
         [
+            'zip_path' => 'runtime/immersive-gallery.global.js',
+            'data' => piece_export_immersive_gallery_global_source(),
+        ],
+        [
             'zip_path' => 'runtime/three-device-orientation-controls.js',
             'data' => piece_export_patched_device_orientation_source(),
         ],
+        [
+            'zip_path' => 'runtime/three-device-orientation-controls.global.js',
+            'data' => piece_export_device_orientation_global_source(),
+        ],
         ['source_path' => $vendorRoot . '/three/three.module.js', 'zip_path' => 'runtime/three/three.module.js'],
+        ['zip_path' => 'runtime/three/three.global.js', 'data' => piece_export_three_global_source()],
+        ['source_path' => $vendorRoot . '/three/GLTFLoader.js', 'zip_path' => 'runtime/three/GLTFLoader.js'],
+        ['source_path' => $vendorRoot . '/three/utils/BufferGeometryUtils.js', 'zip_path' => 'runtime/three/utils/BufferGeometryUtils.js'],
+        ['zip_path' => 'runtime/three/GLTFLoader.global.js', 'data' => piece_export_gltfloader_global_source()],
         [
             'zip_path' => 'runtime/three/addons/controls/OrbitControls.js',
             'data' => piece_export_patched_orbitcontrols_source(),
+        ],
+        [
+            'zip_path' => 'runtime/three/OrbitControls.global.js',
+            'data' => piece_export_orbitcontrols_global_source(),
         ],
         // Sonification applies to every engine in the immersive view (not
         // just three/aframe), so Tone.js is bundled unconditionally here,
@@ -2958,6 +3076,7 @@ function piece_export_patched_immersive_gallery_source(): string
     $replacements = [
         "import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';" => "import * as THREE from './three/three.module.js';",
         "import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js';" => "import { OrbitControls } from './three/addons/controls/OrbitControls.js';",
+        "({ GLTFLoader: _GLTFLoaderCtor } = await import('https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js'));" => "({ GLTFLoader: _GLTFLoaderCtor } = await import('./three/GLTFLoader.js'));",
         'await import("/assets/js/three-device-orientation-controls.js")' => 'await import("./three-device-orientation-controls.js")',
         'script.src = "/assets/js/aframe.min.js";' => 'script.src = "runtime/aframe/aframe.min.js";',
         'script.src = "https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js";' => 'script.src = "runtime/p5/p5.min.js";',

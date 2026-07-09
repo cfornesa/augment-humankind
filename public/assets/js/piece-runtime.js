@@ -20,7 +20,28 @@ function showPieceError(error) {
   try { window.parent.postMessage({ type: 'sketch-status', valid: false, error: el.textContent }, '*'); } catch (_) {}
 }
 window.addEventListener('error', (event) => showPieceError(event.error || event.message));
-window.addEventListener('unhandledrejection', (event) => showPieceError(event.reason || 'Unhandled promise rejection'));
+// Tone.js's PluckSynth builds a LowpassCombFilter -> FeedbackCombFilter
+// internally, backed by a real AudioWorkletProcessor (Karplus-Strong
+// plucked-string synthesis needs a feedback delay line) — the only one of
+// the 7 selectable instruments that touches a worklet at all. That
+// registration is fire-and-forget deep inside PluckSynth's own constructor,
+// so it can't be caught by this file's own try/catch around synth creation.
+// Under file:// (e.g. a downloaded piece opened by double-clicking
+// index.html instead of being served), the browser refuses to load the
+// worklet's blob-URL module, producing an unhandled `AbortError: Unable to
+// load a worklet's module.` that has nothing to do with a real piece
+// failure — the piece still plays (only the comb filter's pitched
+// resonance is missing). Filtered out here instead of surfacing the error
+// banner for something that isn't one.
+window.addEventListener('unhandledrejection', (event) => {
+  const reason = event.reason;
+  const message = typeof reason?.message === 'string' ? reason.message : String(reason || '');
+  if (reason?.name === 'AbortError' && /worklet/i.test(message)) {
+    event.preventDefault();
+    return;
+  }
+  showPieceError(reason || 'Unhandled promise rejection');
+});
 const pieceContext = window.CREATR_PIECE_CONTEXT || {};
 const pieceDisableMotion = pieceContext.disableMotion === true;
 
@@ -1300,20 +1321,19 @@ async function bootThree() {
       rafIds.push(id);
       return () => { rafIds.forEach((rafId) => cancelAnimationFrame(rafId)); rafIds = []; };
     }
-    // Attach 3D-model loaders so generated code can call THREE.GLTFLoader /
-    // THREE.OBJLoader (no import/fetch token → passes preflight). Loaded in a
-    // separate catch-wrapped step so a loader CDN hiccup only disables model
-    // loading, never the rest of the piece (same philosophy as the gyro/
-    // DeviceOrientationControls handling).
+    // Attach the 3D-model loader so generated code can call
+    // THREE.GLTFLoader (no import/fetch token → passes preflight). Loaded in
+    // a separate catch-wrapped step so a loader CDN hiccup only disables
+    // model loading, never the rest of the piece (same philosophy as the
+    // gyro/DeviceOrientationControls handling). OBJ is not a supported
+    // upload/generation format (dropped in favor of GLTF/GLB, which are
+    // self-contained single files; OBJ typically needs companion
+    // .mtl/texture files this app's upload flow doesn't support).
     try {
-      const [{ GLTFLoader }, { OBJLoader }] = await Promise.all([
-        import('https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js'),
-        import('https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/OBJLoader.js'),
-      ]);
+      const { GLTFLoader } = await import('https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js');
       instrumentedThree.GLTFLoader = GLTFLoader;
-      instrumentedThree.OBJLoader = OBJLoader;
     } catch (_e) {
-      // 3D model loaders unavailable; model-free pieces are unaffected.
+      // 3D model loader unavailable; model-free pieces are unaffected.
     }
     window.THREE = instrumentedThree;
     window.sketch({ THREE: instrumentedThree, canvas, startFrame, width, height, size: { width, height }, OrbitControls });

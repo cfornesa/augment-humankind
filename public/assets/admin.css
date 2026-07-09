@@ -1076,7 +1076,8 @@ button.admin-btn-danger:hover {
     text-transform: uppercase;
 }
 
-.media-thumb-iframe {
+.media-thumb-iframe,
+.media-thumb-model {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1085,6 +1086,11 @@ button.admin-btn-danger:hover {
     background: var(--paper);
     color: var(--orange);
     font-weight: 950;
+}
+
+.media-thumb-model::before {
+    content: "◇";
+    margin-right: 0.45rem;
 }
 
 .media-thumb-video-empty {

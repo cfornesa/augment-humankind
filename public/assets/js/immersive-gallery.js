@@ -1,19 +1,20 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
 import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js';
 
-// GLTFLoader/OBJLoader for uploaded 3D models are loaded via a CONTAINED dynamic
+// GLTFLoader for uploaded 3D models is loaded via a CONTAINED dynamic
 // import() (never a static top-level import), so a broken/missing loader source
 // only disables model loading and never aborts this whole module — the same
 // rule the gyro DeviceOrientationControls handling follows. Attached to each
 // piece's instrumented THREE so generated code can call `new THREE.GLTFLoader()`
 // without a forbidden import/fetch token. Loaded once, module-wide.
+// OBJ is not a supported upload/generation format (dropped in favor of
+// GLTF/GLB, which are self-contained single files; OBJ typically needs
+// companion .mtl/texture files this app's upload flow doesn't support).
 let _GLTFLoaderCtor = null;
-let _OBJLoaderCtor = null;
 try {
   ({ GLTFLoader: _GLTFLoaderCtor } = await import('https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js'));
-  ({ OBJLoader: _OBJLoaderCtor } = await import('https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/OBJLoader.js'));
 } catch (_e) {
-  // 3D model loaders unavailable; model-free pieces are unaffected.
+  // 3D model loader unavailable; model-free pieces are unaffected.
 }
 // DeviceOrientationControls was removed from three.js's own examples/jsm
 // bundle as of 0.160.0 (confirmed: that path 404s on the CDN). A static
@@ -22,6 +23,27 @@ try {
 // they're all exported from here. Loaded lazily inside setupGyroControls()
 // instead, wrapped in try/catch, so a missing/broken source only disables
 // the gyro feature itself and never the rest of this module.
+
+// Tone.js's PluckSynth builds a LowpassCombFilter -> FeedbackCombFilter
+// internally, and FeedbackCombFilter is the one Tone building block this app
+// uses that's backed by a real AudioWorkletProcessor (Karplus-Strong plucked-
+// string synthesis needs a feedback delay line) — none of the other 6
+// instruments touch a worklet at all. That worklet registration is
+// fire-and-forget deep inside PluckSynth's own constructor, so it can't be
+// caught by our own try/catch around synth creation. Under file:// (opaque/
+// null origin, e.g. a downloaded piece opened by double-clicking index.html
+// instead of being served), the browser refuses to load the worklet's
+// blob-URL module, producing an unhandled `AbortError: Unable to load a
+// worklet's module.` that has nothing to do with — and shouldn't be
+// mistaken for — a real piece-rendering failure. The piece still plays (the
+// comb filter's pitched resonance is what's missing, not all audio).
+window.addEventListener("unhandledrejection", (event) => {
+  const reason = event?.reason;
+  const message = typeof reason?.message === "string" ? reason.message : String(reason || "");
+  if (reason?.name === "AbortError" && /worklet/i.test(message)) {
+    event.preventDefault();
+  }
+});
 
 // Constants
 const WALL_CENTER = new THREE.Vector3(0, 1.35, -1.08);
@@ -2088,12 +2110,11 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
     }
   };
 
-  // Loaders for uploaded 3D models (module-level, contained dynamic import).
-  // Generated code references them as THREE.GLTFLoader / THREE.OBJLoader (no
-  // import/fetch tokens → passes preflight); they load the model by its
-  // /media/{id} URL at runtime. Absent only if their source failed to load.
+  // Loader for uploaded 3D models (module-level, contained dynamic import).
+  // Generated code references it as THREE.GLTFLoader (no import/fetch tokens
+  // → passes preflight); it loads the model by its /media/{id} URL at
+  // runtime. Absent only if its source failed to load.
   if (_GLTFLoaderCtor) instrumentedThree.GLTFLoader = _GLTFLoaderCtor;
-  if (_OBJLoaderCtor) instrumentedThree.OBJLoader = _OBJLoaderCtor;
 
   window.THREE = instrumentedThree;
 

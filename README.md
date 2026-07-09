@@ -93,7 +93,7 @@ Admin routes are flat and protected by OAuth login:
 - `/admin/art-media` — piece taxonomy CRUD
 - `/admin/exhibits` — portfolio exhibits CRUD
 - `/admin/exhibit-collections` — native exhibit collections CRUD
-- `/admin/media` — media library uploads and migrated media assets (with AI alt-text generation for images; OBJ/GLTF/GLB 3D models up to 64 MB when the `media_models` feature is enabled, loadable into AI-generated Three.js/A-Frame pieces by referencing their `/media/{id}` path in the prompt)
+- `/admin/media` — media library uploads and migrated media assets (with AI alt-text generation for images; GLTF/GLB 3D models up to 64 MB when the `media_models` feature is enabled, loadable into AI-generated Three.js/A-Frame pieces by referencing their `/media/{id}` path in the prompt)
 - `/admin/feed-sources` — RSS/Atom feed ingestion sources and approval queue
 - `/admin/site-identity` — site settings and assets management
 - `/admin/user-profiles` — public user account and profile photo management
@@ -226,8 +226,8 @@ interactive pieces can still export screenshots when opened from a local file.
 Regular exports keep the regular standalone piece surface. Immersive-origin
 exports use the same ZIP route with `surface=immersive`; those bundles open
 directly into the immersive viewer, include fullscreen and PNG controls, and
-embed a fallback copy of the immersive runtime graph so the page can still
-mount when browser `file://` module loading rejects sibling runtime imports.
+load local classic-runtime equivalents of the immersive runtime graph so the
+page can still mount when opened directly from `file://`.
 Regular standalone piece exports now mirror the live regular `/pieces/[id]`
 viewer for native movement behavior too: Three.js downloads keep elapsed-time-
 scaled WASD/arrow movement plus click/tap-to-move teleport without adding the
@@ -239,8 +239,10 @@ runtime help:
 
 - Three.js downloads attach OrbitControls to the exported scene, camera, and
   renderer so drag/touch orbiting works even when the authored piece only
-  animates. The standalone export bootstraps Three.js from vendored local
-  sources in a way that can still run from `index.html`.
+  animates. The standalone export bootstraps Three.js, OrbitControls, and
+  GLTFLoader from vendored local sources in a way that can still run from
+  `index.html`; GLTF/GLB model materials and embedded textures are preserved
+  by default when loaded from `/media/{id}`.
 - A-Frame downloads receive the live `<a-scene>` and can use authored scene
   events.
 - C2.js interactive downloads receive the real canvas, `startFrame`, and safe
@@ -275,6 +277,8 @@ now treats image-style IDs and media-asset IDs as parallel inputs rather than
 implicitly interchangeable aliases:
 
 - `image ID 3`, `photo ID 3`, and `picture ID 3` authorize `/image/3`
+- `media ID 4` or `/media/4` authorizes native uploaded media, including
+  GLTF/GLB model files served through `/media/4`
 - `media asset ID 4` authorizes `/api/media-assets/4`
 - Mixed prompts such as `use image ID 3 and media asset ID 4` authorize both
   route families in the same generated piece

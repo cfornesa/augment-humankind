@@ -155,7 +155,8 @@ test('mountExhibitWall sonifies only the camera-focused item, rebinding as focus
     $immersiveSrc = file_get_contents(__DIR__ . '/../public/assets/js/immersive-gallery.js');
     assert_contains($immersiveSrc, 'function computeFocusedSlotIndex');
     assert_contains($immersiveSrc, 'if (focusedIndex !== audioControllerIndex');
-    assert_contains($immersiveSrc, 'audioController = createAudioController(focusedItem?.sonicParams, stageEl)');
+    assert_contains($immersiveSrc, 'audioController = createAudioController(focusedItem?.sonicParams, stageEl, { attachListener: false })');
+    assert_contains($immersiveSrc, 'wallSoundToggleBtn.addEventListener("click", onWallSoundToggleClick)');
     // Old controller must be disposed on every rebind, and again on wall
     // teardown, or a stale synth instance leaks.
     assert_contains($immersiveSrc, 'audioController?.dispose();');
@@ -206,8 +207,9 @@ test('piece_export_document (non-immersive export) inlines a self-contained soun
     $render = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
     assert_contains($render, 'function piece_export_sonic_script(string $engine, string $sonicParamsJson, string $runtimeMode): string');
     assert_contains($render, "trim(\$sonicParamsJson) === ''");
-    // Bundle mode must embed Tone.js as a Blob so the export needs no network.
-    assert_contains($render, "piece_export_runtime_source_file('assets/vendor/tone/Tone.js')");
+    // Bundle mode must load Tone.js from the ZIP, not from a blob:null script URL.
+    assert_contains($render, "'runtime/tone/Tone.js'");
+    assert_not_contains($render, '__creatrToneInlineSource');
     assert_contains($render, '__creatrSonicSetMover');
 });
 
@@ -457,7 +459,7 @@ test('downloaded immersive exports ship the local CreatrPieceDownload bridge bef
     if (substr_count($render, '{$downloadBridgeScript}') < 2) {
         throw new RuntimeException('Expected both downloaded immersive export entry points to inline the bridge script.');
     }
-    if (strpos($render, '{$downloadBridgeScript}') >= strpos($render, "await import('./runtime/immersive-gallery.js')")) {
+    if (strpos($render, '{$downloadBridgeScript}') >= strpos($render, '<script src="runtime/immersive-gallery.global.js"></script>')) {
         throw new RuntimeException('Expected the bridge script to load before the immersive runtime bootstrap.');
     }
 });

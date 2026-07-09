@@ -244,16 +244,19 @@
   - C2.js: `https://cdn.jsdelivr.net/npm/c2.js@1.0.9/dist/c2.min.js`
   - Three.js Core: `https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js`
   - Three.js OrbitControls: `https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js`
+  - Three.js GLTFLoader: `https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js`
+  - Three.js BufferGeometryUtils: `https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/utils/BufferGeometryUtils.js`
   - A-Frame export runtime source: `https://aframe.io/releases/1.6.0/aframe.min.js`
 - **Data sent off-domain:** The browser requests the runtime script from the CDN for CMS-hosted piece pages and embeds. Piece content and database data are not sent by the PHP server. Downloaded ZIP exports send nothing off-domain when rehosted or opened directly from their bundled local files.
 - **Direct-open export note:** The exported bundle still ships ordinary runtime
   files for editing/rehosting, but the single-entry-point `index.html` path
-  also embeds vendored runtime/media-safe equivalents where needed so supported
+  also loads vendored runtime/media-safe equivalents where needed so supported
   interactive pieces can render and take screenshots when opened directly from
-  a local file. Immersive-origin exports additionally embed the patched
-  immersive renderer, local Three.js/OrbitControls/DeviceOrientationControls
-  sources, and a Blob-module fallback so a downloaded `index.html` can mount
-  even when a browser refuses sibling ES-module imports from `file://`.
+  a local file. Three.js direct-open exports use classic local global scripts
+  for Three.js, OrbitControls, and GLTFLoader rather than Blob-module URLs.
+  Immersive-origin exports additionally load the patched immersive renderer,
+  local Three.js/OrbitControls/GLTFLoader/DeviceOrientationControls globals,
+  and ZIP-local ES module sources for editable/rehosted runtime paths.
 - **Immersive export note:** `surface=immersive` downloads are piece ZIP
   exports for individual immersive piece pages. Platform collection walls and
   collection slideshow overlays use `/collections/{slug}/download` instead;
@@ -279,9 +282,10 @@
   incompatibly, regular and immersive exported bundles may stop working until
   the owner updates the packaged runtime set.
 - **Self-hosting alternative:** Store p5.js, c2.min.js, three.module.js,
-  OrbitControls.js, and aframe.min.js under a repo-owned runtime/vendor path
-  and bundle them into offline piece ZIP exports. This is the chosen export
-  strategy. Maintenance of pinned runtime files is an owner responsibility.
+  OrbitControls.js, GLTFLoader.js, BufferGeometryUtils.js, and aframe.min.js
+  under a repo-owned runtime/vendor path and bundle them into offline piece
+  ZIP exports. This is the chosen export strategy. Maintenance of pinned
+  runtime files is an owner responsibility.
 
 
 ## Three.js DeviceOrientationControls (Self-Hosted)
@@ -370,8 +374,9 @@
   lazy-loaded only when a user enables sound (immersive toolbar button, or the
   regular-view sound toggle), so it never affects pages that don't use it. In
   bundle-mode exports (standalone, immersive, and collection ZIPs) the same
-  source is inlined as a Blob URL instead of fetched, so a sound-bearing
-  export needs no network at all.
+  source is packaged as `runtime/tone/Tone.js` and loaded as a local classic
+  script, so a sound-bearing export needs no network and avoids `blob:null`
+  direct-open origin failures.
 - **Data sent off-domain:** None. Vendored locally; no runtime CDN call.
 - **What breaks if unavailable or changed:** Only movement sonification. The
   runtime loads it inside a try/catch; if the file is missing or fails to
