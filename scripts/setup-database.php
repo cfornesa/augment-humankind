@@ -163,6 +163,35 @@ function ensureIndex(Ctx $ctx, string $table, string $index, string $definition)
     $ctx->apply("ALTER TABLE `{$table}` ADD {$definition}", "index {$table}.{$index}");
 }
 
+/**
+ * Idempotently ensures an ENUM column includes every value in $values by
+ * reading the current COLUMN_TYPE and only running MODIFY when one is missing.
+ * $fullDefinition is the complete target column definition (the full desired
+ * ENUM list plus trailing modifiers, e.g. "NOT NULL").
+ */
+function ensureEnumValue(Ctx $ctx, string $table, string $column, array $values, string $fullDefinition): void
+{
+    if (!columnExists($ctx->pdo, $table, $column)) {
+        return;
+    }
+    $stmt = $ctx->pdo->prepare(
+        'SELECT COLUMN_TYPE FROM INFORMATION_SCHEMA.COLUMNS
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ? LIMIT 1'
+    );
+    $stmt->execute([$table, $column]);
+    $columnType = (string) ($stmt->fetchColumn() ?: '');
+
+    foreach ($values as $value) {
+        if (!str_contains($columnType, "'" . $value . "'")) {
+            $ctx->apply(
+                "ALTER TABLE `{$table}` MODIFY `{$column}` {$fullDefinition}",
+                "enum {$table}.{$column} += " . implode(',', $values)
+            );
+            return;
+        }
+    }
+}
+
 /** Backfills run only when the guarding schema change was just applied (never
  *  against a live table that has since accumulated real edits). Skipped in
  *  dry-run because the schema change itself hasn't happened. */
@@ -407,6 +436,20 @@ function manifest(): array
 
         ['art piece version generation mode (2026-07-03)', function (Ctx $ctx): void {
             ensureColumn($ctx, 'art_piece_versions', 'generation_mode', 'VARCHAR(32) NULL AFTER generation_model');
+        }],
+
+        ['art piece version sonic params (2026-07-08)', function (Ctx $ctx): void {
+            ensureColumn($ctx, 'art_piece_versions', 'sonic_params', 'LONGTEXT NULL AFTER notes');
+        }],
+
+        ['exhibit media kind model (2026-07-08)', function (Ctx $ctx): void {
+            ensureEnumValue(
+                $ctx,
+                'exhibit_media_items',
+                'media_kind',
+                ['model'],
+                "ENUM('image', 'video', 'iframe', 'content', 'model') NOT NULL"
+            );
         }],
 
         ['art piece version c2 interactive backfill (2026-07-03)', function (Ctx $ctx): void {

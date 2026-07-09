@@ -108,7 +108,7 @@ $version = $version ?? [];
             <textarea id="structured_spec" name="structured_spec" rows="6"><?= e($version['structured_spec'] ?? '') ?></textarea>
         </div>
 
-<?php
+        <?php
 $htmlCodeVal = $version['html_code'] ?? '';
 $engineVal = $version['engine'] ?? 'p5';
 if ($engineVal === 'p5') {

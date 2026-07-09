@@ -10,6 +10,145 @@
 
 None.
 
+## 2026-07-08 — Sound continuation: regular-view + offline export parity, fixed toggle bug, exhibit-wall sonification
+
+### Decision
+Picked up a prior sound-feature plan that had run out of tokens mid-implementation.
+Audited the working tree against the plan first rather than re-deriving it, then
+finished the outstanding pieces:
+
+- **A-Frame regular-view audio** (`piece-runtime.js`): wired
+  `createPieceRuntimeAudioController` into `bootAFrame`'s scene `loaded` event,
+  mirroring the existing Three.js wiring.
+- **`/pieces/[id]` sound toggle**: added the missing parent-page button
+  (`pieces/show.php`, styled to match the existing fullscreen toggle) and its
+  postMessage wiring (`piece-fullscreen.js`), gated on `engine ∈ {three, aframe}`
+  and `sonic_params` present. The iframe side (`piece-runtime.js`) already had a
+  controller waiting for exactly this message but nothing was sending it.
+- **Bug found and fixed**: `piece-runtime.js`'s audio controller unconditionally
+  ran `toggleBtn.disabled = true` on first unmute even when `toggleBtn` is `null`
+  (the normal case when a host page owns the button) — this threw and silently
+  aborted the Tone.js load before it started. Now guarded like its `finally`
+  counterpart already was.
+- **Second, more consequential bug found and fixed**: `createAudioController`'s
+  toggle-button lookup (`stageEl.querySelector('[data-immersive-sound-toggle]')`)
+  could never succeed — `immersive_stage_toolbar_markup()` renders the toolbar as
+  a *sibling* of `#immersive-stage`, not a descendant, so `querySelector` always
+  returned nothing, no click listener was ever attached, and sound silently never
+  worked in the immersive view *or* any export — despite the prior session's
+  DECISIONS entries describing Phase 2 as "fully wired." Fixed by looking up the
+  button from `document` instead (there is exactly one immersive stage per page).
+  This one regression fix is what actually makes every surface below audible.
+- **Offline export parity**: added a new `piece_export_sonic_script()` inlining a
+  self-contained Tone.js controller + toggle button directly into
+  `piece_export_document()` (bundle mode embeds Tone.js as a Blob URL — same
+  technique already used for OrbitControls — so a sound-bearing standalone
+  export needs no network). Immersive single-piece exports bundle
+  `runtime/tone/Tone.js` and pass `sonicParams`/`sound_action` through to the
+  mount calls and toolbar, reusing the live `createAudioController` path.
+- **Exhibit-wall sonification (new — the inherited plan wrongly assumed this
+  already existed)**: `mountExhibitWall` (the collection/exhibit thumbnail-grid
+  view, live and exported) had zero audio wiring at all. Built it: only the item
+  nearest the current camera focus sonifies; the controller is disposed and
+  rebuilt via a new `computeFocusedSlotIndex()` helper whenever focus moves to a
+  different item. Wired per-item `sonicParams` through
+  `immersive/collection.php` (live) and `collection_export_piece_item_payload()`
+  (export), with the sound toggle gated on any item in the collection having
+  `sonic_params`.
+- **Dead-code cleanup**: removed orphaned `sound_enabled`/`sound_feel` JS
+  variable references in `form.php`/`version-form.php` left over from the
+  already-completed removal of the manual per-version toggle, and simplified
+  `PiecesAdminController::resolveSonicParamsFromPost()` to just preserve the
+  current version's value, since no form can submit those fields anymore.
+- **Volume boost (follow-up, after user testing reported "no audio at all")**:
+  synth output was `-14dB` in all three implementations
+  (`immersive-gallery.js`, `piece-runtime.js`, `piece_export_sonic_script()`).
+  Verified with a real Web Audio `AnalyserNode` tapped onto `Tone.Destination`
+  while driving synthetic keyboard movement (see Verification below) that this
+  produced genuine but very quiet signal (~0.034 peak amplitude, ≈ -30 dBFS) —
+  plausible under actual "no audio at all" over normal laptop speakers even
+  though the trigger→signal pipeline was working correctly end to end. Raised
+  to `-6dB` (≈2.5x amplitude) in all three call sites; re-measured under the
+  same method at ~0.085 peak, matching the expected +8dB gain exactly.
+
+### Scope corrections vs. the inherited plan
+- Regular-view sound is Three.js/A-Frame only (other engines have no camera
+  motion on that surface) — this was already correctly scoped in the working
+  tree; the immersive view remains all-engines.
+- The two DECISIONS entries below this one describing per-version manual sound
+  toggles as current UI are superseded — that UI was already removed before
+  this session started; generation and AI Refine are the only creation paths.
+
+### Verification
+- `php -l` on all touched PHP; `node --check` on `piece-runtime.js` and
+  `immersive-gallery.js`.
+- `php tests/art-piece-generation.php` — 126/126 passing (fixed the 2 stale
+  assertions expecting the removed per-version toggle markup).
+- `php tests/three-runtime-consistency.php` — 102/103 excluding 3 pre-existing
+  gyro-function-rename failures unrelated to this work (confirmed failing on
+  unmodified HEAD too); added assertions for A-Frame audio wiring, the
+  `/pieces/[id]` toggle, the toggle-button scoping regression, export bundling,
+  and exhibit-wall sonification.
+- Browser (piece 112, a Three.js piece with real `sonic_params`): confirmed
+  mute/unmute cycles correctly on `/pieces/112`, `/immersive/pieces/112`, the
+  downloaded standalone bundle (`file://`-equivalent local server, zero network
+  requests for Tone.js), and the downloaded immersive bundle. Exhibit-wall
+  sonification verified via a standalone harness importing `mountExhibitWall`
+  directly with fabricated multi-item data (no real collection with a
+  sound-bearing piece was available to test against directly).
+- Audibility (not just "did the code run"): monkey-patched the active
+  synth's `triggerAttackRelease` to confirm real trigger calls fire while the
+  camera moves (dispatched synthetic held-key events into the piece iframe),
+  and tapped a Web Audio `AnalyserNode` onto `Tone.Destination.output` to
+  confirm non-zero PCM samples actually reach the output graph — this is what
+  caught the volume being too quiet after the toggle-wiring bugs above were
+  already fixed and passing every state-flag check.
+
+### Follow-ups (not fixed this session, out of scope)
+- A brand-new (not-yet-saved) piece where AI Refine adds sound before the first
+  "Save Changes" submit still loses that sound on save — the manual-toggle
+  removal left no conduit for that specific edge case. Narrow enough that it
+  wasn't fixed here; generation and refine-on-an-existing-piece are unaffected.
+
+## 2026-07-08 — Tone.js Instrumentation Is Version-Level Piece Metadata
+
+### Decision
+Tone.js movement sonification for art pieces is stored on
+`art_piece_versions.sonic_params`, not on the piece row. Generation,
+manual editing, per-version editing, and AI Refine can all create or update
+this metadata when `ai_pieces_sound` is enabled and the schema column exists.
+A sound-only change creates a new current version with unchanged visual code;
+turning instrumentation off stores `NULL` for the new version.
+
+The authored "Describe the feel" / "Tone Feel" text is preserved in
+`sonic_params.feel` and is shown as Sound Feel in both regular and immersive
+piece documentation. Piece 111 was aligned by creating version 231 from version
+230 with identical visual code and `{"tempo":90,"scale":"minor","instrument":"fmsynth","feel":"Ethereal, minor scale theremin sound."}`.
+
+### Scope
+- `public/app/helpers/art-piece-generation.php`: added Tone Feel
+  normalization helpers, support checks, and stable sonic comparison; fixed
+  setup's C2 regex backfill pattern so schema alignment can complete.
+- `public/app/controllers/Admin/PiecesAdminController.php`: saves
+  `sonic_params` through generation, manual edits, version forms, draft
+  attempts, AI Refine, and refine accept; sound-only edits create versions.
+- `public/app/views/admin/pieces/form.php` and
+  `public/app/views/admin/pieces/version-form.php`: expose gated Add
+  instrumentation / Tone Feel controls.
+- `docs/api.md`, `README.md`, `ALGORITHMS.md`, and `docs/dependencies.md`:
+  document admin fields, refine payloads, Sound Feel display, and the
+  self-hosted Tone.js dependency boundary.
+- `tests/art-piece-generation.php`: covers Tone Feel normalization, form
+  exposure, and source-level save/refine contracts.
+
+### Verification
+- `php scripts/setup-database.php --yes`
+- `php -l` on touched PHP files
+- `php tests/art-piece-generation.php` — 126 passed
+- `git diff --check`
+- `php tests/three-runtime-consistency.php` — Tone/runtime checks passed; the
+  two existing gyro assertions still fail unchanged.
+
 ## 2026-07-06 — About/Bio System Page Navigation Respects Pages Visibility
 
 ### Decision
@@ -1332,3 +1471,89 @@ adjustments are needed.
 - `.github/workflows/publish-algorithms-pdf.yml` — new workflow
 - `docs/dependencies.md` — new `md-to-pdf` entry
 - `docs/README.md` — updated to reference the automated workflow
+
+## 2026-07-08 — 3D model uploads (OBJ/GLTF/GLB) + Tone.js movement sonification
+
+### Decision
+Two immersive-gallery features, built together (plan:
+`~/.claude/plans/can-you-gauge-the-compressed-cocoa.md`).
+
+**3D model uploads.** OBJ/GLTF/GLB accepted into the media library and
+auto-wired into AI-generated Three.js/A-Frame pieces.
+- Cap: **64 MB** (matches the video cap and the hard-coded
+  `SET SESSION max_allowed_packet = 67108864` in `upload.php`; no infra change).
+- Routed **by file extension**, not finfo MIME (`.glb`→octet-stream,
+  `.obj`→text/plain, `.gltf`→json are unreliable), then stored under a
+  **canonical `model/*` MIME** so the grid/picker/serve classify reliably.
+  New `upload_model_media()` + `ALLOWED_MODEL_EXT`; gated on `media_models`.
+- Consumption: no new ref syntax — an uploaded model's `/media/{id}` already
+  matches the cms-media allowlist. `GLTFLoader`/`OBJLoader` are attached to each
+  piece's instrumented `THREE` in **both live runtimes** (immersive-gallery.js
+  via a contained dynamic `import()`, piece-runtime.js likewise) so generated
+  code calls `new THREE.GLTFLoader().load('/media/{id}', …)` with no
+  preflight-forbidden `import`/`fetch` token. A-Frame uses `<a-asset-item>` +
+  `gltf-model`/`obj-model` via an explicit, model-only exception to the base
+  prompt's `<a-asset-item>` ban. OBJ is geometry-only for v1.
+
+**Movement sonification (Tone.js).** Optional, prompt-driven.
+- Tone.js is **self-hosted** at `public/assets/vendor/tone/Tone.js` (Rule 6 /
+  vendor rule; documented in `docs/dependencies.md`), lazy-loaded only on the
+  "Tap to enable sound" gesture (browser autoplay policy).
+- Params are **data, not code**: the AI emits a 4th ```sonic``` JSON block
+  ({tempo, scale, instrument, feel}); generated code never touches audio. Stored
+  in a new optional `art_piece_versions.sonic_params` column. The immersive
+  runtime owns Tone.js and drives it from the same per-frame camera motion the
+  navigation legs produce (a new "audio leg"). Only the focused/active piece
+  sonifies. Gated on `ai_pieces_sound`.
+- `validate_art_piece_sonic_params()` **soft-fails** (coerce to nearest
+  supported instrument/scale, clamp tempo; malformed/missing → null "no sound")
+  and is **decoupled** from code validation so it never blocks valid code.
+
+### Schema (dual-shipped; schema.sql is frozen — NOT edited)
+- `docs/migrations/2026-07-08-art-piece-version-sonic-params.sql` +
+  `ensureColumn` step in `setup-database.php`.
+- `docs/migrations/2026-07-08-exhibit-media-kind-model.sql` (adds `'model'` to
+  `exhibit_media_items.media_kind`) + a new idempotent `ensureEnumValue()`
+  helper + step. NOTE: the ENUM value is only needed for placing models into
+  exhibits via the picker; the AI-auto-wire-into-pieces path does not use it.
+
+### Corrections vs. the approved plan
+- The plan mentioned editing `schema.sql` for both changes; that was wrong —
+  `schema.sql` is frozen. Both ship as migration record + setup-database probe
+  only, per the Project Rules.
+- Optional-column plumbing uses the existing `hasGenerationModeColumn()` /
+  `ah_column_exists` pattern (`hasSonicParamsColumn()`), which is safer than the
+  plan's fixed-column-list approach on unmigrated deployments.
+
+### Verification status / follow-ups
+- All changed PHP/JS lint clean; `three-runtime-consistency.php` passes for the
+  runtime changes (static-import guard green; select/storage-column assertions
+  updated for the new `sonic_params` signature). **2 pre-existing failures** in
+  that test (`setupGyroControls`/`requestGyroCalibration`) are unrelated —
+  they reference gyro function names refactored to `createSharedGyroController`
+  in a prior commit and fail on unmodified HEAD too. Worth a separate cleanup.
+- End-to-end browser + DB verification (upload/render/sound, and running
+  `setup-database.php --yes` twice for idempotence) still to be done in a
+  configured environment.
+- **Offline export** of a model-bearing piece is a tracked follow-up: the
+  export bootstraps in `piece-render.php` don't yet embed the loaders, so a
+  model piece won't render in a downloaded bundle. Non-model pieces and all
+  existing exports are unaffected (no regression).
+
+## 2026-07-08 — Sonification scope correction + toggle UI fix
+
+Follow-up to the same-day 3D/sonification entry, per user correction:
+- **Sonification now applies to ALL piece types, immersive-view only** (not the
+  original three/aframe restriction). The immersive gallery room gives p5/c2/svg
+  pieces camera movement too, so sound is a property of the immersive view, not
+  the engine. Removed the engine guard in `art_piece_sonic_capability_prompt()`
+  and wired the audio leg into `mountGalleryPiece` as well (it was already in the
+  three/aframe mounts). It remains absent from `piece-runtime.js`, so sound is
+  never heard in the regular (non-immersive) piece view.
+- **3D-model inclusion stays Three.js/A-Frame ONLY** (unchanged —
+  `art_piece_model_capability_prompt()` returns '' for other engines).
+- **Generate-form toggle** rebuilt as a proper switch (`.sound-toggle`). The old
+  bare checkbox rendered as an oversized square with detached label because the
+  admin form's `input { width:100% }` rule stretched it; the switch absolutely-
+  positions the (transparent) input inside a fixed 42px control so that rule
+  can't distort it, with the label text adjacent.

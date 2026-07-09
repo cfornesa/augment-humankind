@@ -189,8 +189,9 @@ if (function_exists('ah_table_exists') && ah_table_exists('ai_personas')) {
             <div class="media-picker-dropzone" id="mp-dropzone" tabindex="0" role="button"
                  aria-label="Click or drag to select a media file">
                 <p class="mp-dropzone-label">Drag a file here or click to choose one</p>
-                <input type="file" class="media-picker-file-input" accept="image/*,video/mp4,video/webm,video/quicktime">
-                <p class="media-picker-hint" id="mp-upload-hint">JPEG &middot; PNG &middot; GIF &middot; WebP &middot; AVIF &middot; MP4 &middot; WebM &middot; MOV &middot; max 64 MB</p>
+                <?php $mpModels = function_exists('feature_enabled') && feature_enabled('media_models'); ?>
+                <input type="file" class="media-picker-file-input" accept="image/*,video/mp4,video/webm,video/quicktime<?= $mpModels ? ',.glb,.gltf,.obj,model/gltf-binary,model/gltf+json' : '' ?>">
+                <p class="media-picker-hint" id="mp-upload-hint">JPEG &middot; PNG &middot; GIF &middot; WebP &middot; AVIF &middot; MP4 &middot; WebM &middot; MOV<?= $mpModels ? ' &middot; GLB &middot; GLTF &middot; OBJ' : '' ?> &middot; max 64 MB</p>
             </div>
             <!-- File preview shown after selection -->
             <div class="mp-file-info" id="mp-file-info" hidden>

@@ -162,6 +162,10 @@ function immersive_stage_toolbar_icon_svg(string $icon): string
             return '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M8 13h8"></path><path d="M8 9h8"></path><path d="M8 17h5"></path></svg>';
         case 'fullscreen':
             return '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>';
+        case 'sound-off':
+            return '<svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4z"/><line x1="22" y1="9" x2="16" y2="15"/><line x1="16" y1="9" x2="22" y2="15"/></svg>';
+        case 'sound-on':
+            return '<svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M16 9a4 4 0 0 1 0 6"/><path d="M19 6a8 8 0 0 1 0 12"/></svg>';
         case 'view':
         default:
             return '<svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="m7 15 3-3 2 2 3-4 2 3"></path></svg>';
@@ -193,6 +197,10 @@ function immersive_stage_toolbar_attrs(array $attrs): string
  * - show_fullscreen:    bool (default true).
  * - fullscreen_onclick: string|null — inline handler; exports pass null and bind in JS.
  * - gyro_slot:          bool (default true) — reserves the slot the gyro ⟲ toggle mounts into.
+ * - sound_action:        null (no sound button) | ['enabled' => bool] — renders the
+ *   mute/unmute sound toggle. Only present when the piece carries sonification
+ *   metadata. The button mounts into the right toolbar group, immediately left of
+ *   fullscreen. `setupImmersiveStageChrome` wires its click handler.
  */
 function immersive_stage_toolbar_markup(array $opts = []): string
 {
@@ -201,6 +209,7 @@ function immersive_stage_toolbar_markup(array $opts = []): string
     $showFullscreen = $opts['show_fullscreen'] ?? true;
     $fullscreenOnclick = $opts['fullscreen_onclick'] ?? null;
     $gyroSlot = $opts['gyro_slot'] ?? true;
+    $soundAction = $opts['sound_action'] ?? null;
 
     $html = '<div class="immersive-stage-toolbar" aria-label="Immersive piece controls">';
     $html .= '<div class="immersive-stage-toolbar-group immersive-stage-toolbar-group-left" role="toolbar" aria-label="Piece view and download controls">';
@@ -238,14 +247,25 @@ function immersive_stage_toolbar_markup(array $opts = []): string
 
     $html .= '</div>';
 
-    if ($showFullscreen) {
-        $onclick = $fullscreenOnclick !== null
-            ? ' onclick="' . htmlspecialchars($fullscreenOnclick, ENT_QUOTES, 'UTF-8') . '"'
-            : '';
-        $html .= '<div class="immersive-stage-toolbar-group immersive-stage-toolbar-right">'
-            . '<button id="fullscreen-toggle-btn" class="fullscreen-toggle-btn"' . $onclick . ' aria-label="Expand immersive view">'
-            . immersive_stage_toolbar_icon_svg('fullscreen')
-            . '</button></div>';
+    if ($showFullscreen || is_array($soundAction)) {
+        $html .= '<div class="immersive-stage-toolbar-group immersive-stage-toolbar-right">';
+
+        if (is_array($soundAction) && !empty($soundAction['enabled'])) {
+            $html .= '<button type="button" id="immersive-sound-toggle" class="immersive-stage-icon-btn" data-immersive-sound-toggle aria-pressed="false" aria-label="Unmute sound">'
+                . immersive_stage_toolbar_icon_svg('sound-off')
+                . '</button>';
+        }
+
+        if ($showFullscreen) {
+            $onclick = $fullscreenOnclick !== null
+                ? ' onclick="' . htmlspecialchars($fullscreenOnclick, ENT_QUOTES, 'UTF-8') . '"'
+                : '';
+            $html .= '<button id="fullscreen-toggle-btn" class="fullscreen-toggle-btn"' . $onclick . ' aria-label="Expand immersive view">'
+                . immersive_stage_toolbar_icon_svg('fullscreen')
+                . '</button>';
+        }
+
+        $html .= '</div>';
     }
 
     $html .= '</div>';

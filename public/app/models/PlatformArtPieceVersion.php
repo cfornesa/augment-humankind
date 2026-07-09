@@ -115,14 +115,23 @@ class PlatformArtPieceVersion
             'ai_profile_id = ?',
             'ai_persona_id = ?',
         ]);
-        $values = array_merge($values, [
+        $tailValues = [
             $data['validation_status'] ?? 'validated',
             $data['generation_attempt_count'] ?? 1,
             $data['notes'] ?? null,
             isset($data['ai_profile_id']) ? ($data['ai_profile_id'] ?: null) : null,
             isset($data['ai_persona_id']) ? ($data['ai_persona_id'] ?: null) : null,
-            $id,
-        ]);
+        ];
+
+        // Only update sonic_params when the caller supplied it, so hand-edits
+        // that don't touch sound never clobber a stored value.
+        if (self::hasSonicParamsColumn() && array_key_exists('sonic_params', $data)) {
+            $assignments[] = 'sonic_params = ?';
+            $tailValues[] = $data['sonic_params'];
+        }
+
+        $tailValues[] = $id;
+        $values = array_merge($values, $tailValues);
 
         $stmt = db()->prepare(
             'UPDATE art_piece_versions SET
@@ -194,12 +203,12 @@ class PlatformArtPieceVersion
 
     private static function selectColumns(): string
     {
-        return art_piece_version_select_columns(self::hasGenerationModeColumn(), true, true);
+        return art_piece_version_select_columns(self::hasGenerationModeColumn(), true, true, self::hasSonicParamsColumn());
     }
 
     private static function storageColumns(): array
     {
-        return art_piece_version_storage_columns(self::hasGenerationModeColumn());
+        return art_piece_version_storage_columns(self::hasGenerationModeColumn(), self::hasSonicParamsColumn());
     }
 
     private static function storageValues(array $data): array
@@ -221,7 +230,7 @@ class PlatformArtPieceVersion
             $values[] = $data['generation_mode'] ?? null;
         }
 
-        return array_merge($values, [
+        $values = array_merge($values, [
             $data['validation_status'] ?? 'validated',
             $data['generation_attempt_count'] ?? 1,
             $data['notes'] ?? null,
@@ -230,10 +239,22 @@ class PlatformArtPieceVersion
             isset($data['is_draft_attempt']) ? (int)(bool) $data['is_draft_attempt'] : 0,
             $data['attempt_sequence_token'] ?? null,
         ]);
+
+        // Appended last to match storageColumns() ordering when the column exists.
+        if (self::hasSonicParamsColumn()) {
+            $values[] = $data['sonic_params'] ?? null;
+        }
+
+        return $values;
     }
 
     private static function hasGenerationModeColumn(): bool
     {
         return ah_column_exists('art_piece_versions', 'generation_mode');
+    }
+
+    private static function hasSonicParamsColumn(): bool
+    {
+        return ah_column_exists('art_piece_versions', 'sonic_params');
     }
 }

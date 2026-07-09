@@ -16,6 +16,20 @@ const ALLOWED_VIDEO_MIME = [
     'video/quicktime' => 'mov',
 ];
 
+// 3D model formats are routed by file extension (finfo is unreliable for these:
+// .glb sniffs as application/octet-stream, .obj as text/plain, .gltf as JSON/text),
+// then stored under a canonical model/* MIME so downstream classification and
+// serving stay reliable. Geometry-only for v1 — no bundled .mtl/textures.
+const ALLOWED_MODEL_EXT = [
+    'glb'  => 'model/gltf-binary',
+    'gltf' => 'model/gltf+json',
+    'obj'  => 'model/obj',
+];
+
+// Kept ≤ the session max_allowed_packet raised in upload_media() so the blob
+// insert cannot exceed what the DB will accept in one packet.
+const MODEL_MAX_BYTES = 64 * 1024 * 1024;
+
 function upload_ini_limit_message(): string
 {
     $uploadMax = ini_get('upload_max_filesize') ?: 'unknown';
@@ -84,10 +98,71 @@ function upload_media(array $file, array $allowedMimeMap, int $maxBytes, string 
     ];
 }
 
+/**
+ * Returns the lowercased extension for an uploaded file, or '' if none.
+ */
+function upload_file_extension(array $file): string
+{
+    $name = (string) ($file['name'] ?? '');
+    return strtolower((string) pathinfo($name, PATHINFO_EXTENSION));
+}
+
+/**
+ * Stores an uploaded 3D model (OBJ/GLTF/GLB). Routed by extension rather than
+ * by finfo MIME, then persisted under a canonical model/* MIME so the media
+ * grid, picker, and /media/{id} serving all classify it correctly.
+ */
+function upload_model_media(array $file, array $attributes = []): array
+{
+    if (($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+        // Reuse upload_media()'s error triage for a specific message.
+        return upload_media($file, ALLOWED_MODEL_EXT, MODEL_MAX_BYTES, '3D model', $attributes);
+    }
+
+    $ext = upload_file_extension($file);
+    if (!isset(ALLOWED_MODEL_EXT[$ext])) {
+        throw new RuntimeException('3D model type not permitted. Allowed formats: OBJ, GLTF, GLB.');
+    }
+    $canonicalMime = ALLOWED_MODEL_EXT[$ext];
+
+    // Sanity-check the bytes are inspectable (throws with a clear message otherwise).
+    upload_resolve_mime($file, '3D model');
+
+    $blob = file_get_contents((string) $file['tmp_name']);
+    if ($blob === false) {
+        throw new RuntimeException('Could not read uploaded 3D model.');
+    }
+    if (mb_strlen($blob, '8bit') > MODEL_MAX_BYTES) {
+        throw new RuntimeException('3D model exceeds the upload limit.');
+    }
+
+    try {
+        db()->exec('SET SESSION max_allowed_packet = 67108864');
+    } catch (\Exception) {
+    }
+
+    $id = MediaFile::create($blob, $canonicalMime, basename((string) ($file['name'] ?? '')), $attributes);
+
+    return [
+        'id' => $id,
+        'mime_type' => $canonicalMime,
+        'url' => '/media/' . $id,
+        'legacy_url' => null,
+    ];
+}
+
 function upload_media_auto(array $file, array $attributes = []): array
 {
     if (($file['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
         return upload_media($file, ALLOWED_IMAGE_MIME, 8 * 1024 * 1024, 'File', $attributes);
+    }
+
+    // 3D models are identified by extension (finfo can't distinguish them reliably)
+    // and only when the feature is enabled; otherwise they fall through and are
+    // rejected by the image/video allowlists below.
+    $modelsEnabled = !function_exists('feature_enabled') || feature_enabled('media_models');
+    if ($modelsEnabled && isset(ALLOWED_MODEL_EXT[upload_file_extension($file)])) {
+        return upload_model_media($file, $attributes);
     }
 
     $mime = upload_resolve_mime($file);

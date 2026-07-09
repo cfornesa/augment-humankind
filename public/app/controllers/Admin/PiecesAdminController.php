@@ -201,6 +201,7 @@ class PiecesAdminController
                     'validation_status' => null,
                     'generation_attempt_count' => 0,
                     'notes' => null,
+                    'sonic_params' => $data['sonic_params'] ?? null,
                 ]);
                 PlatformArtPiece::updateCurrentVersion($pieceId, $versionId);
             }
@@ -268,22 +269,31 @@ class PiecesAdminController
             $code = self::resolveVersionCodeFromPost();
             if (self::hasAnyVersionCode($code)) {
                 $currentVersion = $existing['current_version'] ?? null;
+                $nextSonicParams = self::resolveSonicParamsFromPost($currentVersion['sonic_params'] ?? null);
                 $codeChanged = !$currentVersion
                     || self::normalizeCode($code['html_code']) !== self::normalizeCode($currentVersion['html_code'] ?? null)
                     || self::normalizeCode($code['css_code']) !== self::normalizeCode($currentVersion['css_code'] ?? null)
                     || self::normalizeCode($code['generated_code']) !== self::normalizeCode($currentVersion['generated_code'] ?? null);
+                $sonicChanged = $currentVersion
+                    && art_piece_sonic_params_supported()
+                    && !art_piece_sonic_params_equal($nextSonicParams, $currentVersion['sonic_params'] ?? null);
 
-                if ($currentVersion && !$codeChanged) {
+                if ($currentVersion && !$codeChanged && !$sonicChanged) {
                     // Code is unchanged (a metadata-only save) — leave the
                     // current version's row and its AI attribution alone.
                 } else {
                     $generationMode = self::resolveVersionGenerationModeForUpdate($data['engine'], $currentVersion);
-                    art_piece_preflight_document($data['engine'], $code['html_code'], $code['css_code'], $code['generated_code'], $generationMode);
+                    $versionCode = $codeChanged || !$currentVersion ? $code : [
+                        'html_code' => $currentVersion['html_code'] ?? null,
+                        'css_code' => $currentVersion['css_code'] ?? null,
+                        'generated_code' => $currentVersion['generated_code'] ?? '',
+                    ];
+                    art_piece_preflight_document($data['engine'], $versionCode['html_code'], $versionCode['css_code'], $versionCode['generated_code'], $generationMode);
                     // Every code-changing save creates a new version rather
                     // than overwriting the current one in place, so version
                     // history is meaningful and "Revert" has something to
-                    // revert to — this applies to manual edits and AI Refine
-                    // saves alike.
+                    // revert to. Tone-only saves also create versions because
+                    // sound is authored per version.
                     $versionId = PlatformArtPieceVersion::create([
                         'art_piece_id' => (int) $id,
                         'version_number' => PlatformArtPieceVersion::nextVersionNumber((int) $id),
@@ -291,9 +301,9 @@ class PiecesAdminController
                             ? $data['prompt']
                             : ($currentVersion['prompt'] ?? $data['title']),
                         'structured_spec' => $currentVersion['structured_spec'] ?? null,
-                        'html_code' => self::normalizeCode($code['html_code']),
-                        'css_code' => self::normalizeCode($code['css_code']),
-                        'generated_code' => self::normalizeCode($code['generated_code'] ?? ($currentVersion['generated_code'] ?? '')),
+                        'html_code' => self::normalizeCode($versionCode['html_code']),
+                        'css_code' => self::normalizeCode($versionCode['css_code']),
+                        'generated_code' => self::normalizeCode($versionCode['generated_code'] ?? ($currentVersion['generated_code'] ?? '')),
                         'engine' => $data['engine'],
                         'generation_vendor' => $currentVersion['generation_vendor'] ?? null,
                         'generation_model' => $currentVersion['generation_model'] ?? null,
@@ -303,6 +313,7 @@ class PiecesAdminController
                         'notes' => null,
                         'ai_profile_id' => $data['ai_profile_id'] ?? null,
                         'ai_persona_id' => $data['ai_persona_id'] ?? null,
+                        'sonic_params' => $nextSonicParams,
                     ]);
                     PlatformArtPiece::updateCurrentVersion((int) $id, $versionId);
                 }
@@ -564,6 +575,7 @@ class PiecesAdminController
             // code change creates a new art_piece_versions row.
             'ai_profile_id' => isset($_POST['ai_profile_id']) ? ((int) $_POST['ai_profile_id'] ?: null) : null,
             'ai_persona_id' => isset($_POST['ai_persona_id']) ? ((int) $_POST['ai_persona_id'] ?: null) : null,
+            'sonic_params' => self::resolveSonicParamsFromPost(),
         ];
     }
 
@@ -584,7 +596,8 @@ class PiecesAdminController
         ];
         $draft['current_version'] = array_merge(
             $existing['current_version'] ?? [],
-            self::resolveVersionCodeFromPost()
+            self::resolveVersionCodeFromPost(),
+            ['sonic_params' => self::resolveSonicParamsFromPost($existing['current_version']['sonic_params'] ?? null)]
         );
         return $draft;
     }
@@ -639,6 +652,7 @@ class PiecesAdminController
             'notes' => trim($_POST['notes'] ?? '') ?: null,
             'ai_profile_id' => (int) ($_POST['ai_profile_id'] ?? 0) ?: null,
             'ai_persona_id' => (int) ($_POST['ai_persona_id'] ?? 0) ?: null,
+            'sonic_params' => self::resolveSonicParamsFromPost(),
         ];
     }
 
@@ -659,7 +673,31 @@ class PiecesAdminController
             'notes' => trim((string) ($_POST['notes'] ?? '')),
             'ai_profile_id' => (int) ($_POST['ai_profile_id'] ?? 0) ?: null,
             'ai_persona_id' => (int) ($_POST['ai_persona_id'] ?? 0) ?: null,
+            'sonic_params' => self::resolveSonicParamsFromPost(),
         ];
+    }
+
+    // The manual Metadata-tab sound toggle was removed (generation and AI
+    // Refine are the only paths that create/update sonic_params now), so the
+    // main Save Changes form never submits sound_enabled/sound_feel — this
+    // just preserves whatever the version already had.
+    private static function resolveSonicParamsFromPost(?string $fallback = null): ?string
+    {
+        return art_piece_sonic_params_supported() ? $fallback : null;
+    }
+
+    private static function normalizeSonicParamsInput(mixed $value, ?string $fallback = null): ?string
+    {
+        if (!art_piece_sonic_params_supported()) {
+            return $fallback;
+        }
+        if ($value === null) {
+            return null;
+        }
+        if (is_array($value)) {
+            $value = json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        }
+        return validate_art_piece_sonic_params(is_string($value) ? $value : null);
     }
 
     private static function normalizeCode(?string $code): string
@@ -890,6 +928,11 @@ class PiecesAdminController
         $lastError = trim((string) ($_POST['last_error'] ?? ''));
         $sequenceToken = trim((string) ($_POST['sequence_token'] ?? ''));
 
+        // Optional Tone.js sonification request (piece-sound feature). Carried on
+        // every attempt so retries keep asking for the sonic block.
+        $soundEnabled = art_piece_sonic_params_supported() && !empty($_POST['sound_enabled']);
+        $soundFeel = trim((string) ($_POST['sound_feel'] ?? ''));
+
         $actorId = (int) (admin_identity()['id'] ?? 0);
 
         $limit = rate_limit_consume('ai_generate_piece', rate_limit_subject_for_scope('ai_generate_piece', $actorId > 0 ? $actorId : null));
@@ -951,6 +994,20 @@ class PiecesAdminController
             $aiClient = new \App\Lib\Ai\AiProviderClient($profile['vendor'], $profile['model'], $profile['endpoint_kind'], $apiKey);
 
             $systemPrompt = art_piece_generation_system_prompt($generationMode);
+            // Append optional capability guidance (3D model loading + sonification)
+            // without touching the engine base prompts.
+            if (feature_enabled('media_models')) {
+                $modelCapability = art_piece_model_capability_prompt($engine);
+                if ($modelCapability !== '') {
+                    $systemPrompt .= "\n\n" . $modelCapability;
+                }
+            }
+            if ($soundEnabled) {
+                $sonicCapability = art_piece_sonic_capability_prompt($engine, $soundFeel);
+                if ($sonicCapability !== '') {
+                    $systemPrompt .= "\n\n" . $sonicCapability;
+                }
+            }
             $userPromptForApi = $attemptNumber === 1
                 ? $basePrompt . "\n\n" . art_piece_media_policy_prompt($allowedMediaRefs)
                 : art_piece_repair_prompt($engine, $basePrompt, $previousRawResponse, $lastError !== '' ? $lastError : 'Unknown failure', $allowedMediaRefs);
@@ -967,6 +1024,9 @@ class PiecesAdminController
             $html = $blocks['htmlCode'] ?? '';
             $css = $blocks['cssCode'] ?? '';
             $js = $blocks['generatedCode'] ?? '';
+            // Soft-validated: a bad/missing sonic block yields null (no sound) and
+            // never blocks the code from validating below.
+            $sonic = $soundEnabled ? validate_art_piece_sonic_params($blocks['sonicParams'] ?? null) : null;
 
             art_piece_preflight_document($engine, $html, $css, $js, $generationMode);
             validate_art_piece_prompted_media_refs($allowedMediaRefs, $html, $css, $js, [], true);
@@ -993,6 +1053,7 @@ class PiecesAdminController
                 'html_code' => $html,
                 'css_code' => $css,
                 'generated_code' => $js,
+                'sonic_params' => $sonic,
                 'vendor' => $profile['vendor'] ?? '',
                 'model' => $profile['model'] ?? '',
                 'endpoint_kind' => $profile['endpoint_kind'] ?? '',
@@ -1050,6 +1111,7 @@ class PiecesAdminController
         }
         $cssCode = (string) ($current['css_code'] ?? $pending['css_code'] ?? '');
         $generatedCode = (string) ($current['generated_code'] ?? $pending['generated_code'] ?? '');
+        $sonicParams = $current['sonic_params'] ?? ($pending['sonic_params'] ?? null);
         $profile = [
             'vendor' => (string) ($original['vendor'] ?? $pending['vendor'] ?? ''),
             'model' => (string) ($original['model'] ?? $pending['model'] ?? ''),
@@ -1093,6 +1155,8 @@ class PiecesAdminController
             }
             $cssCode = trim($_POST['css_code'] ?? '') ?: null;
             $generatedCode = trim($_POST['generated_code'] ?? '') ?: null;
+            // Re-validated on save so a tampered hidden field can't store junk.
+            $sonicParams = validate_art_piece_sonic_params($_POST['sonic_params'] ?? null);
             art_piece_preflight_document($engine, $htmlCode, $cssCode, $generatedCode, $generationMode);
 
             $owner = PlatformUser::owner();
@@ -1152,6 +1216,7 @@ class PiecesAdminController
                 'notes' => 'Generated via AI',
                 'ai_profile_id' => (int) ($_POST['profile_id'] ?? 0) ?: null,
                 'ai_persona_id' => (int) ($_POST['persona_id'] ?? 0) ?: null,
+                'sonic_params' => $sonicParams,
             ]);
 
             PlatformArtPiece::updateCurrentVersion($pieceId, $versionId);
@@ -1222,6 +1287,12 @@ class PiecesAdminController
 
             $generationMode = trim((string) ($input['generation_mode'] ?? $input['engine'] ?? $engine));
             $systemPrompt = art_piece_refine_system_prompt($generationMode);
+            if (feature_enabled('media_models')) {
+                $modelCapability = art_piece_model_capability_prompt($engine);
+                if ($modelCapability !== '') {
+                    $systemPrompt .= "\n\n" . $modelCapability;
+                }
+            }
             if ($persona) {
                 $systemPrompt .= "\n\nPersona guidance:\n" . trim((string) $persona['system_prompt']) . "\n\nUse the persona to influence style and creative direction, but still obey all engine, safety, and output-format requirements.";
             }
@@ -1637,6 +1708,8 @@ class PiecesAdminController
             $css = (string) ($input['css_code'] ?? '');
             $js = (string) ($input['generated_code'] ?? '');
             $originalPrompt = trim((string) ($input['original_prompt'] ?? ''));
+            $soundEnabled = art_piece_sonic_params_supported() && !empty($input['sound_enabled']);
+            $soundFeel = trim((string) ($input['sound_feel'] ?? ''));
             $allowedMediaRefs = art_piece_extract_prompt_media_refs($prompt);
             $existingMediaRefs = art_piece_collect_cms_media_refs($html, $css, $js);
             $pieceId = (int) ($input['piece_id'] ?? 0);
@@ -1651,6 +1724,16 @@ class PiecesAdminController
             $clientLastError = trim((string) ($input['last_error'] ?? ''));
             $sequenceToken = trim((string) ($input['sequence_token'] ?? ''));
 
+            // Sound-only refine: no visual instructions were given, but a
+            // sonic "feel" was. $soundOnly is threaded into both prompt
+            // builders below (which omit visual code from the model
+            // entirely) and used again after the response comes back to
+            // force-clear any stray html/css/js patches — a model that
+            // ignores the prompt still can't leak a visual change through.
+            $soundOnly = $prompt === '' && $soundEnabled && $soundFeel !== '';
+            if ($soundOnly) {
+                $prompt = 'Keep the existing visuals exactly as they are — only update the sound design/instrumentation per the sonic instructions.';
+            }
             if ($prompt === '') {
                 throw new InvalidArgumentException('Prompt is required.');
             }
@@ -1685,14 +1768,26 @@ class PiecesAdminController
             $persona = self::findPersonaById($personaId);
 
             $systemPrompt = art_piece_refine_system_prompt($persistedGenerationMode);
+            if (feature_enabled('media_models')) {
+                $modelCapability = art_piece_model_capability_prompt($engine);
+                if ($modelCapability !== '') {
+                    $systemPrompt .= "\n\n" . $modelCapability;
+                }
+            }
+            if ($soundEnabled) {
+                $sonicCapability = art_piece_sonic_capability_prompt($engine, $soundFeel);
+                if ($sonicCapability !== '') {
+                    $systemPrompt .= "\n\n" . $sonicCapability;
+                }
+            }
             if ($persona) {
                 $systemPrompt .= "\n\nPersona guidance:\n" . trim((string) $persona['system_prompt']) . "\n\nUse the persona to influence style and creative direction, but still obey all engine, safety, and output-format requirements.";
             }
 
             if ($attemptNumber === 1) {
-                $userPromptForApi = art_piece_refine_user_prompt($engine, $prompt, $html, $css, $js, $originalPrompt ?: null, $allowedMediaRefs);
+                $userPromptForApi = art_piece_refine_user_prompt($engine, $prompt, $html, $css, $js, $originalPrompt ?: null, $allowedMediaRefs, $soundOnly);
             } else {
-                $userPromptForApi = art_piece_refine_repair_prompt($engine, $prompt, $clientPreviousRawResponse, $clientLastError !== '' ? $clientLastError : 'Unknown failure', $html, $css, $js, $allowedMediaRefs);
+                $userPromptForApi = art_piece_refine_repair_prompt($engine, $prompt, $clientPreviousRawResponse, $clientLastError !== '' ? $clientLastError : 'Unknown failure', $html, $css, $js, $allowedMediaRefs, $soundOnly);
             }
 
             // suppressPlanningPreamble=false: the PLAN+PATCH protocol
@@ -1721,6 +1816,22 @@ class PiecesAdminController
             // that an unscoped refinement can't quietly rewrite the rest
             // of the piece.
             $patches = art_piece_extract_refine_patches($rawText);
+            if ($soundOnly) {
+                // Backstop: visual code was never even shown to the model
+                // (see art_piece_refine_user_prompt()'s $soundOnly branch),
+                // but if it hallucinates a patch anyway, discard it here —
+                // a sound-only request must never be able to change html/
+                // css/js, regardless of what the model returns.
+                $patches['html'] = [];
+                $patches['css'] = [];
+                $patches['js'] = [];
+            }
+            $blocks = art_piece_extract_code_blocks($rawText);
+            $sonicParams = $soundEnabled
+                ? (validate_art_piece_sonic_params($blocks['sonicParams'] ?? null) ?? art_piece_sonic_params_from_feel($soundFeel))
+                : ($piece['current_version']['sonic_params'] ?? null);
+            $sonicChanged = $soundEnabled
+                && !art_piece_sonic_params_equal($sonicParams, $piece['current_version']['sonic_params'] ?? null);
 
             // A response with zero patches across every file is not
             // a legitimate "nothing needed changing" outcome here —
@@ -1728,7 +1839,7 @@ class PiecesAdminController
             // unchecked this silently "succeeds" by returning the
             // original code untouched, which is indistinguishable
             // from the refinement never having happened at all.
-            if (!$patches['html'] && !$patches['css'] && !$patches['js']) {
+            if (!$patches['html'] && !$patches['css'] && !$patches['js'] && !$sonicChanged) {
                 // Confirmed in production (audit log events #141, #147): the
                 // model sometimes ignores the PLAN/PATCH protocol entirely
                 // and dumps full-file fenced code blocks instead of a diff.
@@ -1757,7 +1868,7 @@ class PiecesAdminController
             // success path.
             $draftVersionId = self::persistDraftAttempt(
                 $pieceId, $engine, $persistedGenerationMode, $prompt, $extractedHtml, $extractedCss, $extractedJs,
-                $profileId, $personaId, $sequenceToken, $attemptNumber, 'pending'
+                $profileId, $personaId, $sequenceToken, $attemptNumber, 'pending', $sonicParams
             );
 
             art_piece_preflight_document($engine, $extractedHtml, $extractedCss, $extractedJs, $persistedGenerationMode);
@@ -1791,6 +1902,7 @@ class PiecesAdminController
                 // version that gets created when the accepted code is saved.
                 'profile_id' => $profileId,
                 'persona_id' => $personaId > 0 ? $personaId : null,
+                'sonic_params' => $sonicParams,
                 'draft_version_id' => $draftVersionId,
                 'sequence_token' => $sequenceToken,
                 'attempt_number' => $attemptNumber,
@@ -1873,7 +1985,8 @@ class PiecesAdminController
         int $personaId,
         string $sequenceToken,
         int $attemptNumber,
-        string $validationStatus
+        string $validationStatus,
+        ?string $sonicParams = null
     ): ?int {
         if ($pieceId <= 0 || !PlatformArtPiece::find($pieceId)) {
             return null;
@@ -1891,6 +2004,7 @@ class PiecesAdminController
             'generation_attempt_count' => $attemptNumber,
             'ai_profile_id' => $profileId ?: null,
             'ai_persona_id' => $personaId ?: null,
+            'sonic_params' => $sonicParams,
             'is_draft_attempt' => true,
             'attempt_sequence_token' => $sequenceToken ?: null,
         ]);
@@ -1951,6 +2065,10 @@ class PiecesAdminController
             $refinementPrompt = trim((string) ($input['refinement_prompt'] ?? ''));
             $profileId = (int) ($input['profile_id'] ?? 0) ?: null;
             $personaId = (int) ($input['persona_id'] ?? 0) ?: null;
+            $hasSubmittedSonic = array_key_exists('sonic_params', $input);
+            $sonicParams = $hasSubmittedSonic
+                ? self::normalizeSonicParamsInput($input['sonic_params'] ?? null, $currentVersion['sonic_params'] ?? null)
+                : ($currentVersion['sonic_params'] ?? null);
             // The successful attempt that produced this code already
             // persisted itself as a draft version (refineAi()) — accepting
             // it should promote that exact row to current rather than
@@ -1968,8 +2086,11 @@ class PiecesAdminController
             $codeChanged = self::normalizeCode($html) !== self::normalizeCode($currentVersion['html_code'] ?? null)
                 || self::normalizeCode($css) !== self::normalizeCode($currentVersion['css_code'] ?? null)
                 || self::normalizeCode($js) !== self::normalizeCode($currentVersion['generated_code'] ?? null);
+            $sonicChanged = $hasSubmittedSonic
+                && art_piece_sonic_params_supported()
+                && !art_piece_sonic_params_equal($sonicParams, $currentVersion['sonic_params'] ?? null);
 
-            if (!$codeChanged) {
+            if (!$codeChanged && !$sonicChanged) {
                 echo json_encode([
                     'success' => true,
                     'changed' => false,
@@ -2006,6 +2127,7 @@ class PiecesAdminController
                     'notes' => 'Saved via AI Refine accept.',
                     'ai_profile_id' => $profileId,
                     'ai_persona_id' => $personaId,
+                    'sonic_params' => $sonicParams,
                 ]);
                 PlatformArtPieceVersion::promoteDraftToCurrent($draftVersionId, $refinementPrompt);
                 PlatformArtPiece::updateCurrentVersion((int) $id, $draftVersionId);
@@ -2030,6 +2152,7 @@ class PiecesAdminController
                     'notes' => 'Saved via AI Refine accept.',
                     'ai_profile_id' => $profileId,
                     'ai_persona_id' => $personaId,
+                    'sonic_params' => $sonicParams,
                 ]);
                 PlatformArtPiece::updateCurrentVersion((int) $id, $versionId);
             }
@@ -2103,6 +2226,7 @@ class PiecesAdminController
                 'html_code' => (string) ($pending['html_code'] ?? ''),
                 'css_code' => (string) ($pending['css_code'] ?? ''),
                 'generated_code' => (string) ($pending['generated_code'] ?? ''),
+                'sonic_params' => isset($pending['sonic_params']) ? (string) $pending['sonic_params'] : null,
             ],
         ];
         session_write_close();

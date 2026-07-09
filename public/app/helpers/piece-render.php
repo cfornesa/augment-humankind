@@ -52,6 +52,20 @@ function piece_render_document(array $piece, array $version, array $options = []
         'viewerMode' => (string) ($options['viewer_mode'] ?? 'default'),
         'interactive' => !empty($options['interactive']),
         'disableMotion' => !empty($options['disable_motion']),
+        // c2_interactive pieces attach their own pointer handlers regardless
+        // of viewer_mode/interactive above (that option controls unrelated
+        // chrome), so the runtime needs this separately to know whether
+        // pointer movement is a meaningful sonification signal for a c2 piece.
+        'c2Interactive' => art_piece_version_generation_mode($version, $piece) === 'c2_interactive',
+        // Sound is gated per-piece (no master switch), not per-engine — every
+        // engine can carry sonic_params now. Three.js/A-Frame sonify camera
+        // motion, c2_interactive sonifies pointer motion, everything else
+        // (p5, plain c2, svg) has no motion signal on this view and plays a
+        // random idle note pattern instead.
+        'sonic' => !empty($version['sonic_params'])
+            ? json_decode((string) $version['sonic_params'], true)
+            : null,
+        'toneSource' => !empty($options['tone_source']) ? (string) $options['tone_source'] : null,
     ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     $aframeCaptureShim = $engine === 'aframe' ? piece_aframe_capture_context_shim() : '';
     $aframeCss = $engine === 'aframe'
@@ -225,6 +239,7 @@ function piece_export_document(array $piece, array $version, array $options = []
     $imports = piece_export_imports($engine, $runtimeMode);
     $inlineRuntime = $runtimeMode === 'bundle' ? piece_export_inline_runtime_markup($engine) : '';
     $aframeCaptureShim = $engine === 'aframe' ? piece_aframe_capture_context_shim() : '';
+    $sonicScript = piece_export_sonic_script($engine, (string) ($version['sonic_params'] ?? ''), $runtimeMode);
     $bootstrap = piece_export_bootstrap($engine, $generationMode, $runtimeMode);
     $exportOverlayCss = piece_export_screenshot_overlay_css($generationMode);
     $exportOverlayMarkup = piece_export_screenshot_overlay_markup($generationMode);
@@ -263,11 +278,185 @@ function showPieceError(error){const el=document.getElementById('piece-error');i
 window.addEventListener('error',event=>showPieceError(event.error||event.message));
 window.addEventListener('unhandledrejection',event=>showPieceError(event.reason||'Unhandled promise rejection'));
 </script>
+{$sonicScript}
 {$pieceScriptTag}
 {$bootstrap}
 {$exportOverlayScript}
 </body>
 </html>
+HTML;
+}
+
+/**
+ * Movement sonification for standalone/bundle exports (Three.js/A-Frame
+ * only) — muted by default, no master switch. Unlike the live regular view
+ * (piece-runtime.js, controlled via postMessage from a host page's button),
+ * an export has no host page, so this owns and creates its own toggle
+ * button directly, mirroring piece-runtime.js's own standalone fallback
+ * button. In bundle mode Tone.js is inlined as a Blob URL (same trick
+ * piece_export_bootstrap already uses for OrbitControls) so the exported
+ * bundle needs no network; in cdn mode it's loaded from the same
+ * self-hosted path the live view uses.
+ */
+function piece_export_sonic_script(string $engine, string $sonicParamsJson, string $runtimeMode): string
+{
+    // Every engine can carry sonic_params (matches the live regular-view
+    // gate in piece_render_document()). three/aframe get camera-driven
+    // sonification via __creatrSonicSetMover (wired in piece_export_bootstrap);
+    // p5/c2/svg have no motion signal in this export and get the idle
+    // random-note pattern only (see motionTick's getMover-optional handling
+    // below).
+    if (trim($sonicParamsJson) === '') {
+        return '';
+    }
+
+    $decoded = json_decode($sonicParamsJson, true);
+    if (!is_array($decoded)) {
+        return '';
+    }
+
+    $sonicJson = json_encode($decoded, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    $toneSourceJson = $runtimeMode === 'bundle'
+        ? json_encode(piece_export_runtime_source_file('assets/vendor/tone/Tone.js'), JSON_UNESCAPED_UNICODE)
+        : 'null';
+    $toneSrcJson = json_encode(rtrim(piece_request_origin(), '/') . '/assets/vendor/tone/Tone.js');
+
+    return <<<HTML
+<script>
+window.__creatrSonicParams = {$sonicJson};
+window.__creatrToneInlineSource = {$toneSourceJson};
+window.__creatrToneSrc = {$toneSrcJson};
+(function () {
+  var sonicParams = window.__creatrSonicParams;
+  if (!sonicParams) return;
+  var SCALES = {
+    major: [0, 2, 4, 5, 7, 9, 11], minor: [0, 2, 3, 5, 7, 8, 10],
+    pentatonic: [0, 2, 4, 7, 9], chromatic: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+    dorian: [0, 2, 3, 5, 7, 9, 10], phrygian: [0, 1, 3, 5, 7, 8, 10],
+    lydian: [0, 2, 4, 6, 7, 9, 11], mixolydian: [0, 2, 4, 5, 7, 9, 10],
+    wholetone: [0, 2, 4, 6, 8, 10],
+  };
+  var INSTRUMENTS = {
+    synth: 'Synth', amsynth: 'AMSynth', fmsynth: 'FMSynth',
+    membranesynth: 'MembraneSynth', metalsynth: 'MetalSynth',
+    plucksynth: 'PluckSynth', duosynth: 'DuoSynth',
+  };
+  var scale = SCALES[sonicParams.scale] || SCALES.major;
+  var instrumentKey = INSTRUMENTS[sonicParams.instrument] ? sonicParams.instrument : 'synth';
+  var tempo = Math.max(40, Math.min(220, Number(sonicParams.tempo) || 90));
+  var minInterval = ((60 / tempo) * 1000) / 2;
+  var baseMidi = 48;
+  var enabled = false, synth = null, lastNoteAt = 0, walk = 0;
+  var prevX = null, prevY = null, prevZ = null;
+  var lastMotionAt = 0;
+  var IDLE_GAP_MS = 2000;
+  var getMover = null;
+  window.__creatrSonicSetMover = function (fn) { getMover = fn; };
+
+  function midiToFreq(m) { return 440 * Math.pow(2, (m - 69) / 12); }
+
+  function loadToneOnce() {
+    if (window.Tone) return Promise.resolve(window.Tone);
+    return new Promise(function (resolve, reject) {
+      var s = document.createElement('script');
+      s.onload = function () { window.Tone ? resolve(window.Tone) : reject(new Error('Tone.js loaded but window.Tone missing')); };
+      s.onerror = function () { reject(new Error('Tone.js failed to load')); };
+      if (window.__creatrToneInlineSource) {
+        var blob = new Blob([window.__creatrToneInlineSource], { type: 'text/javascript' });
+        s.src = URL.createObjectURL(blob);
+      } else {
+        s.src = window.__creatrToneSrc;
+      }
+      document.head.appendChild(s);
+    });
+  }
+
+  function motionTick() {
+    requestAnimationFrame(motionTick);
+    if (!enabled || !synth) return;
+    var now = performance.now();
+    var mover = getMover ? getMover() : null;
+    if (mover && mover.position) {
+      var x = mover.position.x, y = mover.position.y, z = mover.position.z;
+      if (prevX !== null) {
+        var dx = x - prevX, dy = y - prevY, dz = z - prevZ;
+        var speed = Math.hypot(dx, dy, dz);
+        if (speed >= 0.002) {
+          lastMotionAt = now;
+          if (now - lastNoteAt >= minInterval) {
+            lastNoteAt = now;
+            var degree = walk++ % scale.length;
+            var octave = Math.min(2, Math.floor(Math.abs(dy) * 25));
+            var midi = baseMidi + scale[degree] + 12 * octave;
+            try { synth.triggerAttackRelease(midiToFreq(midi), '16n'); } catch (_e) {}
+          }
+        }
+      }
+      prevX = x; prevY = y; prevZ = z;
+    }
+    // Idle pattern: plain scale-walk notes once the mover (if any) has been
+    // still for a beat — or always, for engines with no motion signal at
+    // all — so toggled-on sound never sits in dead silence.
+    if (now - lastMotionAt >= IDLE_GAP_MS && now - lastNoteAt >= minInterval) {
+      lastNoteAt = now;
+      var idleDegree = walk++ % scale.length;
+      var idleMidi = baseMidi + scale[idleDegree];
+      try { synth.triggerAttackRelease(midiToFreq(idleMidi), '16n'); } catch (_e) {}
+    }
+  }
+  requestAnimationFrame(motionTick);
+
+  var ICON_OFF = '<svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4z"></path><line x1="22" y1="9" x2="16" y2="15"></line><line x1="16" y1="9" x2="22" y2="15"></line></svg>';
+  var ICON_ON = '<svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4z"></path><path d="M16 9a4 4 0 0 1 0 6"></path><path d="M19 6a8 8 0 0 1 0 12"></path></svg>';
+
+  function mountButton() {
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.setAttribute('aria-pressed', 'false');
+    btn.setAttribute('aria-label', 'Unmute sound');
+    Object.assign(btn.style, {
+      position: 'fixed', top: 'calc(0.75rem + env(safe-area-inset-top))',
+      right: 'calc(0.75rem + env(safe-area-inset-right))',
+      zIndex: '200', width: '2.75rem', height: '2.75rem',
+      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+      borderRadius: '0.75rem', border: '1px solid rgba(255,255,255,0.15)',
+      background: 'rgba(0,0,0,0.55)', color: '#fff', cursor: 'pointer',
+      boxShadow: '0 4px 12px rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)',
+    });
+    btn.innerHTML = ICON_OFF;
+    document.body.appendChild(btn);
+    btn.addEventListener('click', function () {
+      var nextEnabled = !enabled;
+      if (nextEnabled && !synth) {
+        btn.disabled = true;
+        loadToneOnce().then(function (Tone) { return Tone.start(); }).then(function () {
+          var Ctor = window.Tone[INSTRUMENTS[instrumentKey]] || window.Tone.Synth;
+          synth = new Ctor().toDestination();
+          if (synth.volume) synth.volume.value = -6;
+          enabled = true;
+          lastMotionAt = 0; // let idle notes start immediately on unmute
+          btn.setAttribute('aria-pressed', 'true');
+          btn.setAttribute('aria-label', 'Mute sound');
+          btn.innerHTML = ICON_ON;
+        }).catch(function () {
+          enabled = false;
+        }).finally(function () {
+          btn.disabled = false;
+        });
+        return;
+      }
+      enabled = nextEnabled;
+      if (enabled) lastMotionAt = 0; // let idle notes start immediately on unmute
+      btn.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+      btn.setAttribute('aria-label', enabled ? 'Mute sound' : 'Unmute sound');
+      btn.innerHTML = enabled ? ICON_ON : ICON_OFF;
+    });
+  }
+
+  if (document.body) mountButton();
+  else document.addEventListener('DOMContentLoaded', mountButton, { once: true });
+})();
+</script>
 HTML;
 }
 
@@ -407,6 +596,8 @@ function piece_export_immersive_document(array $piece, array $version, array $op
     $jsonEmbeddedDeviceOrientation = json_encode(piece_export_patched_device_orientation_source(), $jsonFlags);
     $jsonEmbeddedImmersiveGallery = json_encode(piece_export_patched_immersive_gallery_source(), $jsonFlags);
     $downloadBridgeScript = piece_export_download_bridge_script();
+    $hasSonic = !empty($version['sonic_params']);
+    $jsonSonic = json_encode($hasSonic ? json_decode((string) $version['sonic_params'], true) : null, $jsonFlags);
 
     // Shared top toolbar — identical placement/appearance to the live
     // immersive surfaces. Three/A-Frame pieces have no gallery full view, so
@@ -428,6 +619,7 @@ function piece_export_immersive_document(array $piece, array $version, array $op
                 'data-download-filename' => piece_export_png_filename($piece),
             ],
         ]],
+        'sound_action' => $hasSonic ? ['enabled' => true] : null,
         'show_fullscreen' => true,
         'fullscreen_onclick' => null,
     ]);
@@ -499,7 +691,8 @@ const piece = {
   code: {$jsonCode},
   fullViewSrcdoc: {$jsonFullView},
   initialViewState: {$jsonViewState},
-  pngFilename: {$pngFilename}
+  pngFilename: {$pngFilename},
+  sonicParams: {$jsonSonic}
 };
 const stage = document.getElementById('immersive-stage');
 const fullscreenBtn = document.getElementById('fullscreen-toggle-btn');
@@ -507,7 +700,7 @@ const pngBtn = document.querySelector('[data-immersive-download-png]');
 let viewer = null;
 
 try {
-  const controls = { showViewerControls: true, initialViewState: piece.initialViewState };
+  const controls = { showViewerControls: true, initialViewState: piece.initialViewState, sonicParams: piece.sonicParams };
   if (piece.engine === 'three') {
     viewer = mountThreeImmersivePiece(stage, piece.code, piece.html, piece.css, showPieceError, controls);
   } else if (piece.engine === 'aframe') {
@@ -854,6 +1047,110 @@ function piece_export_download_bridge_script(): string
     );
 }
 
+/**
+ * c2/c2_interactive bootstrap for the standalone export. Mirrors
+ * piece-runtime.js's bootCanvasRuntime(): c2_interactive pieces get a
+ * pointer-position mover normalized to ~0..1 (same order of magnitude as
+ * the three/aframe camera-position deltas createPieceRuntimeAudioController
+ * was tuned against) wired to window.__creatrSonicSetMover, so a downloaded
+ * c2_interactive piece with sound enabled gets pointer-modulated pitch
+ * offline, not just the idle random-note pattern. Plain c2 has no motion
+ * signal and is left exactly as before.
+ */
+function piece_export_c2_bootstrap_script(bool $interactive): string
+{
+    $pointerWiring = $interactive ? <<<'JS'
+  if (window.__creatrSonicSetMover) {
+    const c2Mover = { position: { x: 0, y: 0, z: 0 } };
+    const updateC2Mover = (clientX, clientY) => {
+      const rect = canvas.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      c2Mover.position.x = (clientX - rect.left) / rect.width;
+      c2Mover.position.y = (clientY - rect.top) / rect.height;
+    };
+    canvas.addEventListener('pointermove', (e) => updateC2Mover(e.clientX, e.clientY));
+    canvas.addEventListener('touchmove', (e) => {
+      const t = e.touches && e.touches[0];
+      if (t) updateC2Mover(t.clientX, t.clientY);
+    }, { passive: true });
+    window.__creatrSonicSetMover(() => c2Mover);
+  }
+
+JS
+        : '';
+
+    return <<<HTML
+<script>
+try {
+  const canvas = document.getElementById('piece-canvas') || document.querySelector('canvas');
+  const context = canvas.getContext('2d');
+  const imageCache = new Map();
+  function sizeCanvas() {
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = Math.max(1, Math.floor(rect.width || window.innerWidth || 1280));
+    canvas.height = Math.max(1, Math.floor(rect.height || window.innerHeight || 720));
+  }
+  function startFrame(callback) {
+    let count = 0;
+    function tick() {
+      count++;
+      try { callback(count); } catch (error) { showPieceError(error); return; }
+      requestAnimationFrame(tick);
+    }
+    requestAnimationFrame(tick);
+  }
+  function loadImage(src) {
+    if (imageCache.has(src)) return imageCache.get(src);
+    const image = new Image();
+    image.decoding = 'async';
+    image.loading = 'eager';
+    image.dataset.creatrLoaded = '0';
+    const loaded = new Promise((resolve, reject) => {
+      image.onload = () => { image.dataset.creatrLoaded = '1'; resolve(image); };
+      image.onerror = () => {
+        const message = 'Could not load image asset: ' + src;
+        showPieceError(message);
+        reject(new Error(message));
+      };
+    });
+    loaded.catch(() => {});
+    loaded.__creatrImage = image;
+    image.src = src;
+    imageCache.set(src, loaded);
+    return loaded;
+  }
+  function resolveImageRef(image) {
+    return image && image.__creatrImage ? image.__creatrImage : image;
+  }
+  function drawImage(image, x, y, width, height) {
+    image = resolveImageRef(image);
+    if (!image || image.dataset?.creatrLoaded !== '1') return false;
+    context.drawImage(image, x, y, width, height);
+    return true;
+  }
+  function drawImageCover(image, x, y, width, height) {
+    image = resolveImageRef(image);
+    if (!image || image.dataset?.creatrLoaded !== '1') return false;
+    const sourceWidth = image.naturalWidth || image.width;
+    const sourceHeight = image.naturalHeight || image.height;
+    if (!sourceWidth || !sourceHeight || !width || !height) return false;
+    const sourceAspect = sourceWidth / sourceHeight;
+    const targetAspect = width / height;
+    let sx = 0, sy = 0, sw = sourceWidth, sh = sourceHeight;
+    if (sourceAspect > targetAspect) { sw = sourceHeight * targetAspect; sx = (sourceWidth - sw) / 2; }
+    else { sh = sourceWidth / targetAspect; sy = (sourceHeight - sh) / 2; }
+    context.drawImage(image, sx, sy, sw, sh, x, y, width, height);
+    return true;
+  }
+  canvas.style.touchAction = 'none';
+  sizeCanvas();
+  window.addEventListener('resize', sizeCanvas);
+{$pointerWiring}  if (typeof window.sketch === 'function') window.sketch({ c2: window.c2, canvas, startFrame, loadImage, drawImage, drawImageCover });
+} catch (error) { showPieceError(error); }
+</script>
+HTML;
+}
+
 function piece_export_bootstrap(string $engine, string $generationMode = '', string $runtimeMode = 'cdn'): string
 {
     if ($engine === 'three' && $runtimeMode === 'bundle') {
@@ -1188,6 +1485,7 @@ try {
       }
     }
     animateControls();
+    if (window.__creatrSonicSetMover) window.__creatrSonicSetMover(() => state.camera);
   }
   window.addEventListener('resize', () => {
     sizeCanvas();
@@ -1217,76 +1515,7 @@ try {
 } catch (error) { showPieceError(error); }
 </script>
 HTML,
-        'c2' => <<<'HTML'
-<script>
-try {
-  const canvas = document.getElementById('piece-canvas') || document.querySelector('canvas');
-  const context = canvas.getContext('2d');
-  const imageCache = new Map();
-  function sizeCanvas() {
-    const rect = canvas.getBoundingClientRect();
-    canvas.width = Math.max(1, Math.floor(rect.width || window.innerWidth || 1280));
-    canvas.height = Math.max(1, Math.floor(rect.height || window.innerHeight || 720));
-  }
-  function startFrame(callback) {
-    let count = 0;
-    function tick() {
-      count++;
-      try { callback(count); } catch (error) { showPieceError(error); return; }
-      requestAnimationFrame(tick);
-    }
-    requestAnimationFrame(tick);
-  }
-  function loadImage(src) {
-    if (imageCache.has(src)) return imageCache.get(src);
-    const image = new Image();
-    image.decoding = 'async';
-    image.loading = 'eager';
-    image.dataset.creatrLoaded = '0';
-    const loaded = new Promise((resolve, reject) => {
-      image.onload = () => { image.dataset.creatrLoaded = '1'; resolve(image); };
-      image.onerror = () => {
-        const message = 'Could not load image asset: ' + src;
-        showPieceError(message);
-        reject(new Error(message));
-      };
-    });
-    loaded.catch(() => {});
-    loaded.__creatrImage = image;
-    image.src = src;
-    imageCache.set(src, loaded);
-    return loaded;
-  }
-  function resolveImageRef(image) {
-    return image && image.__creatrImage ? image.__creatrImage : image;
-  }
-  function drawImage(image, x, y, width, height) {
-    image = resolveImageRef(image);
-    if (!image || image.dataset?.creatrLoaded !== '1') return false;
-    context.drawImage(image, x, y, width, height);
-    return true;
-  }
-  function drawImageCover(image, x, y, width, height) {
-    image = resolveImageRef(image);
-    if (!image || image.dataset?.creatrLoaded !== '1') return false;
-    const sourceWidth = image.naturalWidth || image.width;
-    const sourceHeight = image.naturalHeight || image.height;
-    if (!sourceWidth || !sourceHeight || !width || !height) return false;
-    const sourceAspect = sourceWidth / sourceHeight;
-    const targetAspect = width / height;
-    let sx = 0, sy = 0, sw = sourceWidth, sh = sourceHeight;
-    if (sourceAspect > targetAspect) { sw = sourceHeight * targetAspect; sx = (sourceWidth - sw) / 2; }
-    else { sh = sourceWidth / targetAspect; sy = (sourceHeight - sh) / 2; }
-    context.drawImage(image, sx, sy, sw, sh, x, y, width, height);
-    return true;
-  }
-  canvas.style.touchAction = 'none';
-  sizeCanvas();
-  window.addEventListener('resize', sizeCanvas);
-  if (typeof window.sketch === 'function') window.sketch({ c2: window.c2, canvas, startFrame, loadImage, drawImage, drawImageCover });
-} catch (error) { showPieceError(error); }
-</script>
-HTML,
+        'c2' => piece_export_c2_bootstrap_script($generationMode === 'c2_interactive'),
         'three' => <<<'HTML'
 <script type="module">
 import * as THREE from 'three';
@@ -1604,6 +1833,7 @@ try {
       }
     }
     animateControls();
+    if (window.__creatrSonicSetMover) window.__creatrSonicSetMover(() => state.camera);
   }
   window.addEventListener('resize', () => {
     sizeCanvas();
@@ -1785,6 +2015,9 @@ try {
     }
 
     scene.addEventListener('loaded', bindAFramePointerControls, { once: true });
+    scene.addEventListener('loaded', () => {
+      if (window.__creatrSonicSetMover) window.__creatrSonicSetMover(getAFrameCameraMover);
+    }, { once: true });
     scene.addEventListener('renderstart', bindAFramePointerControls, { once: true });
     frameId = requestAnimationFrame(animateAFramePointerNavigation);
     setTimeout(bindAFramePointerControls, 250);
@@ -2041,6 +2274,13 @@ function collection_export_document(array $collection, array $items, array $opti
     $jsonEmbeddedDeviceOrientation = json_encode(piece_export_patched_device_orientation_source(), $jsonFlags);
     $jsonEmbeddedImmersiveGallery = json_encode(piece_export_patched_immersive_gallery_source(), $jsonFlags);
     $downloadBridgeScript = piece_export_download_bridge_script();
+    $hasAnySonic = false;
+    foreach ($jsItems as $jsItem) {
+        if (!empty($jsItem['sonicParams'])) {
+            $hasAnySonic = true;
+            break;
+        }
+    }
 
     // Shared top toolbar — same placement/appearance as the live collection
     // surface; the download menu is PNG-only because a standalone export
@@ -2060,6 +2300,7 @@ function collection_export_document(array $collection, array $items, array $opti
                 'data-download-filename' => ((function_exists('slugify') ? slugify($titleText) : '') ?: 'collection-gallery') . '.png',
             ],
         ]],
+        'sound_action' => $hasAnySonic ? ['enabled' => true] : null,
         'show_fullscreen' => true,
         'fullscreen_onclick' => null,
     ]);
@@ -2305,6 +2546,7 @@ function collection_export_piece_item_payload(array $piece, array $version): arr
             'subtitle' => $itemEngineLabel,
             'png_filename' => $piecePngFilename,
         ],
+        'sonicParams' => !empty($version['sonic_params']) ? json_decode((string) $version['sonic_params'], true) : null,
     ];
 }
 
@@ -2476,10 +2718,6 @@ function piece_export_readme(array $piece, string $generationMode): string
         $title = 'Art piece';
     }
 
-    $interactiveNote = piece_export_supports_screenshot_overlay($generationMode)
-        ? "This export includes lower-left fullscreen and screenshot controls directly inside index.html.\n"
-        : "This export includes a lower-left fullscreen control directly inside index.html. It does not include the screenshot control because this piece is not one of the interactive export modes.\n";
-
     return "EXPORT: {$title}\n"
         . "\n"
         . "Open index.html to run this piece.\n"
@@ -2491,7 +2729,7 @@ function piece_export_readme(array $piece, string $generationMode): string
         . "- scripts/piece.js for editable piece logic\n"
         . "- runtime/ and media/ as portable supporting assets for rehosting\n"
         . "\n"
-        . $interactiveNote
+        . "This export includes lower-left fullscreen and screenshot controls directly inside index.html.\n"
         . "\n"
         . "Open index.html after editing those files if you want to create a revised version of the piece.\n";
 }
@@ -2690,6 +2928,10 @@ function piece_export_immersive_runtime_files(string $engine): array
             'zip_path' => 'runtime/three/addons/controls/OrbitControls.js',
             'data' => piece_export_patched_orbitcontrols_source(),
         ],
+        // Sonification applies to every engine in the immersive view (not
+        // just three/aframe), so Tone.js is bundled unconditionally here,
+        // same as three.module.js above.
+        ['source_path' => $publicRoot . '/assets/vendor/tone/Tone.js', 'zip_path' => 'runtime/tone/Tone.js'],
     ];
 
     if ($engine === 'p5') {
@@ -2720,6 +2962,7 @@ function piece_export_patched_immersive_gallery_source(): string
         'script.src = "https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js";' => 'script.src = "runtime/p5/p5.min.js";',
         'script.src = "https://cdn.jsdelivr.net/npm/c2.js@1.0.9/dist/c2.min.js";' => 'script.src = "runtime/c2/c2.min.js";',
         'script.src && script.src.endsWith("/assets/js/aframe.min.js")' => 'script.src && script.src.endsWith("runtime/aframe/aframe.min.js")',
+        's.src = "/assets/vendor/tone/Tone.js";' => 's.src = "runtime/tone/Tone.js";',
     ];
 
     return strtr($source, $replacements);
@@ -2750,9 +2993,14 @@ function piece_export_png_filename(array $piece): string
     return piece_export_basename($piece) . '.png';
 }
 
+// Every generation mode renders to a <canvas> or <svg>, and
+// piece_export_screenshot_overlay_script() already finds either generically
+// (document.querySelectorAll('canvas'/'svg')) and captures with plain
+// canvas.toDataURL()/toBlob() — there's no engine-specific capture
+// requirement beyond aframe's additive-only preserveDrawingBuffer shim.
 function piece_export_supports_screenshot_overlay(string $generationMode): bool
 {
-    return in_array($generationMode, ['c2_interactive', 'three', 'aframe'], true);
+    return in_array($generationMode, art_piece_supported_generation_modes(), true);
 }
 
 function piece_aframe_capture_context_shim(): string

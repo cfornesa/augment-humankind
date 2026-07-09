@@ -1,5 +1,20 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
 import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js';
+
+// GLTFLoader/OBJLoader for uploaded 3D models are loaded via a CONTAINED dynamic
+// import() (never a static top-level import), so a broken/missing loader source
+// only disables model loading and never aborts this whole module — the same
+// rule the gyro DeviceOrientationControls handling follows. Attached to each
+// piece's instrumented THREE so generated code can call `new THREE.GLTFLoader()`
+// without a forbidden import/fetch token. Loaded once, module-wide.
+let _GLTFLoaderCtor = null;
+let _OBJLoaderCtor = null;
+try {
+  ({ GLTFLoader: _GLTFLoaderCtor } = await import('https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js'));
+  ({ OBJLoader: _OBJLoaderCtor } = await import('https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/OBJLoader.js'));
+} catch (_e) {
+  // 3D model loaders unavailable; model-free pieces are unaffected.
+}
 // DeviceOrientationControls was removed from three.js's own examples/jsm
 // bundle as of 0.160.0 (confirmed: that path 404s on the CDN). A static
 // top-level import of a 404'ing module aborts loading this ENTIRE file —
@@ -1133,6 +1148,18 @@ export function createReadOnlyFullViewOverlay(stageEl, items, options = {}) {
 
   let blockCloseUntil = 0;
 
+  // The shared stage toolbar's sound button lives outside this overlay (a
+  // sibling in the persistent stage chrome), so it stays in the DOM and
+  // clickable behind the read-only modal unless we hide it explicitly here.
+  // It belongs to the live interactive scene, not this static/read-only
+  // slide view — sound stays exactly as the user set it, just not exposed
+  // as a control while this overlay is up.
+  function setSharedSoundToggleHidden(hide) {
+    const toggleBtn = document.querySelector("[data-immersive-sound-toggle]");
+    if (!toggleBtn) return;
+    toggleBtn.style.display = hide ? "none" : "";
+  }
+
   function openAt(index = 0) {
     currentStartIndex = normalizeIndex(index);
     priorKeyboardDisabled = stageEl.dataset.keyboardNavigationDisabled === "true";
@@ -1142,6 +1169,7 @@ export function createReadOnlyFullViewOverlay(stageEl, items, options = {}) {
     root.hidden = false;
     root.setAttribute("aria-hidden", "false");
     root.style.display = "flex";
+    setSharedSoundToggleHidden(true);
     // Absorb any ghost/synthetic click events the browser fires after a
     // touch/pointerup. Must be set BEFORE the close handlers can fire.
     blockCloseUntil = Date.now() + 600;
@@ -1153,6 +1181,7 @@ export function createReadOnlyFullViewOverlay(stageEl, items, options = {}) {
     root.hidden = true;
     root.setAttribute("aria-hidden", "true");
     root.style.display = "none";
+    setSharedSoundToggleHidden(false);
     clearViewport();
     if (priorKeyboardDisabled) {
       stageEl.dataset.keyboardNavigationDisabled = "true";
@@ -1788,6 +1817,187 @@ export function fitMultiFrameExhibitCamera(shell, stage, resetCamera = true) {
   shell.controls.update();
 }
 
+// --- Movement sonification (Tone.js) ---------------------------------------
+// Self-hosted Tone.js is lazy-loaded only when a user enables sound, so pieces
+// without sonification never pay for it. Sonic params ({tempo, scale,
+// instrument, feel}) come from the piece's stored AI-generated sonic block; the
+// generated piece code never touches audio.
+const SONIC_SCALES = {
+  major: [0, 2, 4, 5, 7, 9, 11], minor: [0, 2, 3, 5, 7, 8, 10],
+  pentatonic: [0, 2, 4, 7, 9], chromatic: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+  dorian: [0, 2, 3, 5, 7, 9, 10], phrygian: [0, 1, 3, 5, 7, 8, 10],
+  lydian: [0, 2, 4, 6, 7, 9, 11], mixolydian: [0, 2, 4, 5, 7, 9, 10],
+  wholetone: [0, 2, 4, 6, 8, 10],
+};
+const SONIC_INSTRUMENTS = {
+  synth: "Synth", amsynth: "AMSynth", fmsynth: "FMSynth",
+  membranesynth: "MembraneSynth", metalsynth: "MetalSynth",
+  plucksynth: "PluckSynth", duosynth: "DuoSynth",
+};
+
+let _toneLoadPromise = null;
+function loadToneOnce() {
+  if (window.Tone) return Promise.resolve(window.Tone);
+  if (_toneLoadPromise) return _toneLoadPromise;
+  _toneLoadPromise = new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = "/assets/vendor/tone/Tone.js";
+    s.onload = () => (window.Tone ? resolve(window.Tone) : reject(new Error("Tone.js loaded but window.Tone missing")));
+    s.onerror = () => reject(new Error("Tone.js failed to load"));
+    document.head.appendChild(s);
+  });
+  return _toneLoadPromise;
+}
+
+function _sonicMidiToFreq(m) { return 440 * Math.pow(2, (m - 69) / 12); }
+
+// Returns a controller with update(motionVector)/dispose(), bound to the
+// shared toolbar's mute/unmute toggle (`[data-immersive-sound-toggle]`).
+// Browsers block audio autoplay until a user gesture — tapping the unmute
+// button IS that gesture (Tone.start() runs on the click). Mute stops
+// triggering notes but keeps the synth instantiated for instant re-unmute.
+// While enabled, an idle ticker plays a plain scale-walk pattern at rest;
+// camera motion (via update()) modulates pitch/octave and resets the idle
+// clock, so sound settles back to the idle pattern ~2s after motion stops.
+// Returns null when there are no usable sonic params — callers no-op safely.
+function createAudioController(sonicParams, stageEl) {
+  if (!sonicParams || typeof sonicParams !== "object") return null;
+
+  const scaleName = SONIC_SCALES[sonicParams.scale] ? sonicParams.scale : "major";
+  const scale = SONIC_SCALES[scaleName];
+  const instrumentKey = SONIC_INSTRUMENTS[sonicParams.instrument] ? sonicParams.instrument : "synth";
+  const tempo = Math.max(40, Math.min(220, Number(sonicParams.tempo) || 90));
+  const minInterval = ((60 / tempo) * 1000) / 2; // ~eighth-note spacing
+  const baseMidi = 48; // C3
+
+  let enabled = false, synth = null, disposed = false, lastNoteAt = 0, walk = 0;
+  let lastMotionAt = 0, idleTimer = null;
+  const IDLE_GAP_MS = 2000; // how long the camera must sit still before idle notes resume
+  // The toolbar (immersive_stage_toolbar_markup) renders as a SIBLING of
+  // stageEl, not a descendant — stageEl.querySelector can never find it, so
+  // this looks it up from the document instead. One immersive stage per page.
+  const toggleBtn = document.querySelector("[data-immersive-sound-toggle]") || null;
+
+  function playIdleNote() {
+    if (!enabled || !synth || disposed) return;
+    const degree = walk++ % scale.length;
+    const midi = baseMidi + scale[degree];
+    try { synth.triggerAttackRelease(_sonicMidiToFreq(midi), "16n"); } catch (_e) {}
+  }
+
+  function idleTick() {
+    if (disposed) { idleTimer = null; return; }
+    idleTimer = setTimeout(idleTick, minInterval);
+    if (!enabled || !synth) return;
+    const now = performance.now();
+    if (now - lastMotionAt >= IDLE_GAP_MS && now - lastNoteAt >= minInterval) {
+      lastNoteAt = now;
+      playIdleNote();
+    }
+  }
+
+  function setBtnState(muted) {
+    if (!toggleBtn) return;
+    toggleBtn.setAttribute("aria-pressed", muted ? "false" : "true");
+    toggleBtn.setAttribute("aria-label", muted ? "Unmute sound" : "Mute sound");
+    const iconEl = toggleBtn.querySelector("svg, [aria-hidden='true']") || toggleBtn;
+    // Render muted (off) state: bar-with-slash. Unmuted (on): waves.
+    if (toggleBtn.replaceChildren) {
+      const svgNS = "http://www.w3.org/2000/svg";
+      const svg = document.createElementNS(svgNS, "svg");
+      svg.setAttribute("viewBox", "0 0 24 24");
+      svg.setAttribute("width", "19");
+      svg.setAttribute("height", "19");
+      svg.setAttribute("fill", "none");
+      svg.setAttribute("stroke", "currentColor");
+      svg.setAttribute("stroke-width", "1.9");
+      svg.setAttribute("stroke-linecap", "round");
+      svg.setAttribute("stroke-linejoin", "round");
+      svg.setAttribute("aria-hidden", "true");
+      const speaker = document.createElementNS(svgNS, "path");
+      speaker.setAttribute("d", "M11 5 6 9H3v6h3l5 4z");
+      svg.appendChild(speaker);
+      if (muted) {
+        const l1 = document.createElementNS(svgNS, "line");
+        l1.setAttribute("x1", "22"); l1.setAttribute("y1", "9");
+        l1.setAttribute("x2", "16"); l1.setAttribute("y2", "15");
+        const l2 = document.createElementNS(svgNS, "line");
+        l2.setAttribute("x1", "16"); l2.setAttribute("y1", "9");
+        l2.setAttribute("x2", "22"); l2.setAttribute("y2", "15");
+        svg.appendChild(l1); svg.appendChild(l2);
+      } else {
+        const w1 = document.createElementNS(svgNS, "path");
+        w1.setAttribute("d", "M16 9a4 4 0 0 1 0 6");
+        const w2 = document.createElementNS(svgNS, "path");
+        w2.setAttribute("d", "M19 6a8 8 0 0 1 0 12");
+        svg.appendChild(w1); svg.appendChild(w2);
+      }
+      toggleBtn.replaceChildren(svg);
+    }
+  }
+
+  async function onToggleClick() {
+    if (disposed) return;
+    // Mute path: synth already exists, just turn off triggering.
+    if (enabled && synth) {
+      enabled = false;
+      setBtnState(true);
+      return;
+    }
+    // Unmute path: lazily load Tone.js on the first unmute (this click is
+    // the autoplay-unlocking gesture Tone.start() requires).
+    try {
+      toggleBtn.disabled = true;
+      const Tone = await loadToneOnce();
+      await Tone.start();
+      if (disposed) return;
+      if (!synth) {
+        const Ctor = Tone[SONIC_INSTRUMENTS[instrumentKey]] || Tone.Synth;
+        synth = new Ctor().toDestination();
+        if (synth.volume) synth.volume.value = -6;
+      }
+      enabled = true;
+      setBtnState(false);
+      lastMotionAt = 0; // let idle notes start immediately on unmute
+      if (!idleTimer) idleTick();
+    } catch (_e) {
+      if (toggleBtn) {
+        toggleBtn.setAttribute("aria-label", "Sound unavailable");
+      }
+    } finally {
+      if (toggleBtn) toggleBtn.disabled = false;
+    }
+  }
+
+  if (toggleBtn) {
+    setBtnState(true);
+    toggleBtn.addEventListener("click", onToggleClick);
+  }
+
+  return {
+    update(motion) {
+      if (!enabled || !synth || disposed) return;
+      const dx = motion?.dx || 0, dy = motion?.dy || 0, dz = motion?.dz || 0;
+      const speed = Math.hypot(dx, dy, dz);
+      if (speed < 0.002) return; // near-still → let the idle ticker handle it
+      lastMotionAt = performance.now();
+      const now = lastMotionAt;
+      if (now - lastNoteAt < minInterval) return; // rate-limit to tempo
+      lastNoteAt = now;
+      const degree = walk++ % scale.length;
+      const octave = Math.min(2, Math.floor(Math.abs(dy) * 25));
+      const midi = baseMidi + scale[degree] + 12 * octave;
+      try { synth.triggerAttackRelease(_sonicMidiToFreq(midi), "16n"); } catch (_e) {}
+    },
+    dispose() {
+      disposed = true; enabled = false;
+      if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+      if (toggleBtn) toggleBtn.removeEventListener("click", onToggleClick);
+      try { synth?.dispose?.(); } catch (_e) {}
+    },
+  };
+}
+
 // Phase 1 Entry Point: mountThreeImmersivePiece
 export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onError = console.error, options = {}) {
   const runtimeSize = { width: 1280, height: 720 };
@@ -1862,6 +2072,13 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
       };
     }
   };
+
+  // Loaders for uploaded 3D models (module-level, contained dynamic import).
+  // Generated code references them as THREE.GLTFLoader / THREE.OBJLoader (no
+  // import/fetch tokens → passes preflight); they load the model by its
+  // /media/{id} URL at runtime. Absent only if their source failed to load.
+  if (_GLTFLoaderCtor) instrumentedThree.GLTFLoader = _GLTFLoaderCtor;
+  if (_OBJLoaderCtor) instrumentedThree.OBJLoader = _OBJLoaderCtor;
 
   window.THREE = instrumentedThree;
 
@@ -1961,6 +2178,9 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
   let userHasInteracted = false;
   let gyroController = null;
   let viewerControls = null;
+  const audioController = createAudioController(options.sonicParams, stageEl);
+  const _audioPrevPos = new THREE.Vector3();
+  let _audioPrevInit = false;
   const _orbitCamPos = new THREE.Vector3();
   const _orbitTarget = new THREE.Vector3();
   const _buttonForward = new THREE.Vector3();
@@ -2257,6 +2477,20 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
         // so there's no fight over rotation between the two.
         gyroController?.update();
 
+        // Sonification leg: drive Tone.js from the same per-frame camera motion
+        // the navigation legs above produced. No-ops until the user enables sound.
+        if (audioController && state.camera) {
+          if (_audioPrevInit) {
+            audioController.update({
+              dx: state.camera.position.x - _audioPrevPos.x,
+              dy: state.camera.position.y - _audioPrevPos.y,
+              dz: state.camera.position.z - _audioPrevPos.z,
+            });
+          }
+          _audioPrevPos.copy(state.camera.position);
+          _audioPrevInit = true;
+        }
+
         // Many pieces script their own ambient camera motion every frame
         // (e.g. a slow sway via camera.position.x = ... ; camera.lookAt(...)),
         // and since only the piece's own render call paints pixels when
@@ -2480,6 +2714,7 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
       controls.dispose();
       viewerControls?.remove();
       gyroController?.dispose();
+      audioController?.dispose();
       canvas.removeEventListener("pointerdown", onThreePointerDown);
       canvas.removeEventListener("pointermove", onThreePointerMove);
       canvas.removeEventListener("pointerup", onThreePointerUp);
@@ -2551,6 +2786,8 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
   let viewerControls = null;
   let pointerTarget = null;
   let frameId = 0;
+  const audioController = createAudioController(options.sonicParams, stageEl);
+  let _aframeAudioPrev = null;
   const stopFrameHandles = [];
   const aframeNav = {
     animFrom: null,
@@ -2794,6 +3031,15 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
     frameId = requestAnimationFrame(animateAFrameViewerControls);
     const THREE_NS = getAFrameThree();
     const mover = getAFrameCameraMover();
+    // Sonification: sample camera world motion every frame (this runs even when
+    // no click-to-walk animation is active). No-op until sound is enabled.
+    if (audioController && THREE_NS && mover) {
+      const wp = mover.getWorldPosition(new THREE_NS.Vector3());
+      if (_aframeAudioPrev) {
+        audioController.update({ dx: wp.x - _aframeAudioPrev.x, dy: wp.y - _aframeAudioPrev.y, dz: wp.z - _aframeAudioPrev.z });
+      }
+      _aframeAudioPrev = { x: wp.x, y: wp.y, z: wp.z };
+    }
     if (!THREE_NS || !mover || !aframeNav.animFrom || !aframeNav.animTo) return;
     const t = Math.min((performance.now() - aframeNav.animStart) / 350, 1);
     const eased = 1 - (1 - t) ** 3;
@@ -2891,6 +3137,7 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
       pointerTarget.removeEventListener("lostpointercapture", clearAFramePointer);
     }
     stopFrameHandles.forEach((stop) => stop());
+    audioController?.dispose();
     try {
       scene?.pause?.();
     } catch (e) {}
@@ -2947,6 +3194,9 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
   let viewerControls = null;
   let readOnlyOverlay = null;
   let gyroController = null;
+  const audioController = createAudioController(options.sonicParams, stageEl);
+  const _galleryAudioPrevPos = new THREE.Vector3();
+  let _galleryAudioPrevInit = false;
   const galleryButtonForward = new THREE.Vector3();
   const galleryButtonRight = new THREE.Vector3();
 
@@ -3314,6 +3564,20 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
     }
     shell.controls.update();
     gyroController?.update();
+    // Sonification leg: drive Tone.js from the gallery-room camera motion, so
+    // ANY piece type (p5/c2/svg shown as a wall, or three/aframe) sonifies in
+    // the immersive view. No-op until the user enables sound.
+    if (audioController && shell.camera) {
+      if (_galleryAudioPrevInit) {
+        audioController.update({
+          dx: shell.camera.position.x - _galleryAudioPrevPos.x,
+          dy: shell.camera.position.y - _galleryAudioPrevPos.y,
+          dz: shell.camera.position.z - _galleryAudioPrevPos.z,
+        });
+      }
+      _galleryAudioPrevPos.copy(shell.camera.position);
+      _galleryAudioPrevInit = true;
+    }
     syncViewerControlZoom();
     shell.renderer.render(shell.scene, shell.camera);
   }
@@ -3350,6 +3614,7 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
     floorNav.dispose();
     keyNav.dispose();
     gyroController?.dispose();
+    audioController?.dispose();
     viewerControls?.remove();
     readOnlyOverlay?.remove();
     disposeInteractiveClick?.();
@@ -3454,7 +3719,55 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
   const exhibitButtonForward = new THREE.Vector3();
   const exhibitButtonRight = new THREE.Vector3();
   gyroController = createSharedGyroController(stageEl, shell.camera);
-  
+
+  // Sonification: only the item nearest the current camera target sonifies
+  // (mirrors the single-piece mounts, which have exactly one item to pick).
+  // The controller is torn down and rebuilt whenever focus moves to a
+  // different item, since createAudioController binds one fixed sonicParams
+  // for its lifetime.
+  let audioController = null;
+  let audioControllerIndex = -1;
+  let lastAudioRebindAt = 0;
+  // Belt-and-suspenders alongside the distance margin below: a click's
+  // unmute path awaits Tone.start(), which takes at least one more
+  // animation frame to resolve — without a floor on how often the
+  // controller can actually be rebuilt, a focus flip in that window can
+  // dispose the very controller the click just enabled before it's audible.
+  const AUDIO_REBIND_COOLDOWN_MS = 500;
+  const exhibitAudioPrevPos = new THREE.Vector3();
+  let exhibitAudioPrevInit = false;
+
+  // A margin (not just raw nearest-wins) so OrbitControls damping near a
+  // boundary between two similarly-distant slots doesn't flip the focused
+  // index — and therefore the audio controller — every animation frame.
+  // The current slot has to be measurably beaten before focus moves on.
+  const FOCUS_SWITCH_MARGIN = 0.85;
+
+  function computeFocusedSlotIndex(currentIndex = -1) {
+    let closestIndex = -1;
+    let minDistance = Infinity;
+    let currentDistance = Infinity;
+    const target = shell.controls.target;
+    items.forEach((item, index) => {
+      if (item.kind !== "piece" && item.kind !== "image") return;
+      const slot = shell.slots[index];
+      const center = slot?.center;
+      if (!center) return;
+      const dx = center.x - target.x;
+      const dy = center.y - target.y;
+      const dz = center.z - target.z;
+      const dist = dx * dx + dy * dy + dz * dz * 0.35;
+      if (dist < minDistance) { minDistance = dist; closestIndex = index; }
+      if (index === currentIndex) currentDistance = dist;
+    });
+    if (currentIndex >= 0 && Number.isFinite(currentDistance) && closestIndex !== currentIndex) {
+      // Require the new candidate to beat the current focus by a margin,
+      // not just edge it out — otherwise stick with the current focus.
+      if (minDistance >= currentDistance * FOCUS_SWITCH_MARGIN) return currentIndex;
+    }
+    return closestIndex;
+  }
+
   function getLiveSlots() {
     const budget = getProgressiveExhibitLiveBudget(window.innerWidth);
     return selectProgressiveExhibitSlots(items, shell.slots.map(s => s.center), shell.controls.target, budget);
@@ -3983,7 +4296,32 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
     shell.controls.update();
     gyroController?.update();
     syncExhibitViewerZoom();
-    
+
+    // Sonification: rebind the controller whenever focus moves to a
+    // different item, then drive it from wall-camera motion like the
+    // single-piece mounts do.
+    const focusedIndex = computeFocusedSlotIndex(audioControllerIndex);
+    const nowTs = performance.now();
+    if (focusedIndex !== audioControllerIndex && nowTs - lastAudioRebindAt >= AUDIO_REBIND_COOLDOWN_MS) {
+      audioController?.dispose();
+      const focusedItem = focusedIndex >= 0 ? items[focusedIndex] : null;
+      audioController = createAudioController(focusedItem?.sonicParams, stageEl);
+      audioControllerIndex = focusedIndex;
+      lastAudioRebindAt = nowTs;
+      exhibitAudioPrevInit = false;
+    }
+    if (audioController && shell.camera) {
+      if (exhibitAudioPrevInit) {
+        audioController.update({
+          dx: shell.camera.position.x - exhibitAudioPrevPos.x,
+          dy: shell.camera.position.y - exhibitAudioPrevPos.y,
+          dz: shell.camera.position.z - exhibitAudioPrevPos.z,
+        });
+      }
+      exhibitAudioPrevPos.copy(shell.camera.position);
+      exhibitAudioPrevInit = true;
+    }
+
     // Update live textures
     activeRuntimes.forEach((runtime) => {
       if (runtime.sourceCanvas && runtime.texture) {
@@ -4014,6 +4352,7 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
     disposed = true;
     resizeObserver.disconnect();
     cancelAnimationFrame(frameId);
+    audioController?.dispose();
     activeRuntimes.forEach(runtime => {
       runtime.stop?.();
       runtime.texture?.dispose();
@@ -4055,20 +4394,7 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
     getActiveIndex() {
       // Return the index of the wall slot closest to the camera's look-at target.
       // Used by the slideshow button to open at the piece the user is focused on.
-      let closestIndex = -1;
-      let minDistance = Infinity;
-      const target = shell.controls.target;
-      items.forEach((item, index) => {
-        if (item.kind !== "piece" && item.kind !== "image") return;
-        const slot = shell.slots[index];
-        const center = slot?.center;
-        if (!center) return;
-        const dx = center.x - target.x;
-        const dy = center.y - target.y;
-        const dz = center.z - target.z;
-        const dist = dx * dx + dy * dy + dz * dz * 0.35;
-        if (dist < minDistance) { minDistance = dist; closestIndex = index; }
-      });
+      const closestIndex = computeFocusedSlotIndex();
       return closestIndex >= 0 ? closestIndex : selectedSourceIndex;
     },
     getViewState() {

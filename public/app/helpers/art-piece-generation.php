@@ -56,7 +56,7 @@ function art_piece_c2_interactive_pattern(): string
 
 function art_piece_c2_interactive_sql_pattern(): string
 {
-    return "(?:addEventListener[[:space:]]*\\([[:space:]]*['\"](?:pointerdown|pointerup|pointermove|mousedown|mouseup|mousemove|touchstart|touchmove|touchend|click)|on(?:click|mousedown|mouseup|mousemove|touchstart|touchmove|touchend|pointerdown|pointermove|pointerup)[[:space:]]*=)";
+    return "(addEventListener[[:space:]]*[(][[:space:]]*['\"](pointerdown|pointerup|pointermove|mousedown|mouseup|mousemove|touchstart|touchmove|touchend|click)|on(click|mousedown|mouseup|mousemove|touchstart|touchmove|touchend|pointerdown|pointermove|pointerup)[[:space:]]*=)";
 }
 
 function art_piece_c2_interactive_backfill_sql(): string
@@ -100,7 +100,7 @@ function art_piece_is_c2_interactive_code(string $code, ?string $html = null): b
     ) === 1;
 }
 
-function art_piece_version_base_columns(bool $includeGenerationMode = true): array
+function art_piece_version_base_columns(bool $includeGenerationMode = true, bool $includeSonic = false): array
 {
     $columns = [
         'v.id',
@@ -124,12 +124,16 @@ function art_piece_version_base_columns(bool $includeGenerationMode = true): arr
     $columns[] = 'v.generation_attempt_count';
     $columns[] = 'v.notes';
 
+    if ($includeSonic) {
+        $columns[] = 'v.sonic_params';
+    }
+
     return $columns;
 }
 
-function art_piece_version_select_columns(bool $includeGenerationMode = true, bool $includeCreatedAt = false, bool $includeDraftMeta = false): string
+function art_piece_version_select_columns(bool $includeGenerationMode = true, bool $includeCreatedAt = false, bool $includeDraftMeta = false, bool $includeSonic = false): string
 {
-    $columns = art_piece_version_base_columns($includeGenerationMode);
+    $columns = art_piece_version_base_columns($includeGenerationMode, $includeSonic);
 
     if ($includeCreatedAt) {
         $columns[] = 'v.created_at';
@@ -149,7 +153,7 @@ function art_piece_version_select_columns(bool $includeGenerationMode = true, bo
     return implode(",\n                    ", $columns);
 }
 
-function art_piece_version_storage_columns(bool $includeGenerationMode = true): array
+function art_piece_version_storage_columns(bool $includeGenerationMode = true, bool $includeSonic = false): array
 {
     $columns = [
         'art_piece_id',
@@ -168,7 +172,7 @@ function art_piece_version_storage_columns(bool $includeGenerationMode = true): 
         $columns[] = 'generation_mode';
     }
 
-    return array_merge($columns, [
+    $columns = array_merge($columns, [
         'validation_status',
         'generation_attempt_count',
         'notes',
@@ -177,6 +181,14 @@ function art_piece_version_storage_columns(bool $includeGenerationMode = true): 
         'is_draft_attempt',
         'attempt_sequence_token',
     ]);
+
+    // sonic_params is appended last so storage values stay aligned; only
+    // included when the (optional) column exists on this deployment.
+    if ($includeSonic) {
+        $columns[] = 'sonic_params';
+    }
+
+    return $columns;
 }
 
 function art_piece_normalize_cms_media_ref(string $src): ?string
@@ -433,14 +445,18 @@ function art_piece_extract_code_blocks(string $raw): array
     $htmlCode      = $extract(['html']);
     $cssCode       = $extract(['css']);
     $generatedCode = $extract(['javascript', 'js', 'typescript', 'ts', 'jsx', 'tsx', 'ecmascript']);
+    // Optional Tone.js sonification parameters (piece-sound feature). Extracted
+    // before the JS fallback below so a ```sonic``` block is never mistaken for
+    // the JS code block.
+    $sonicParams   = $extract(['sonic']);
 
-    // Fallback: any fenced block whose language tag is not html or css
+    // Fallback: any fenced block whose language tag is not html, css, or sonic
     if ($generatedCode === null) {
         preg_match_all('/```([a-zA-Z]*)\s*\n([\s\S]*?)```/', $raw, $allBlocks, PREG_SET_ORDER);
         foreach ($allBlocks as $block) {
             $lang    = strtolower($block[1]);
             $content = trim($block[2]);
-            if (!in_array($lang, ['html', 'css'], true) && $content !== '') {
+            if (!in_array($lang, ['html', 'css', 'sonic'], true) && $content !== '') {
                 $generatedCode = $content;
                 break;
             }
@@ -462,7 +478,199 @@ function art_piece_extract_code_blocks(string $raw): array
         'htmlCode'      => $htmlCode,
         'cssCode'       => $cssCode,
         'generatedCode' => $generatedCode,
+        'sonicParams'   => $sonicParams,
     ];
+}
+
+/**
+ * Validates and normalizes the optional Tone.js sonic-parameter JSON emitted by
+ * generation/refine. Deliberately SOFT-FAILING and decoupled from code
+ * validation: a malformed, empty, or missing block returns null ("no sound")
+ * and must NEVER block otherwise-valid piece code from saving. Unknown
+ * instrument/scale values are coerced to the nearest supported option and tempo
+ * is clamped, honoring the "approximate rather than fail" intent.
+ *
+ * Returns a canonical JSON string ({tempo, scale, instrument, feel}) to store,
+ * or null when there is nothing usable.
+ */
+function validate_art_piece_sonic_params(?string $sonicJson): ?string
+{
+    if ($sonicJson === null || trim($sonicJson) === '') {
+        return null;
+    }
+
+    $decoded = json_decode(trim($sonicJson), true);
+    if (!is_array($decoded)) {
+        return null; // not usable → no sound, never an error
+    }
+
+    // Supported Tone.js instrument families and musical scales the runtime maps.
+    $instruments = ['synth', 'amsynth', 'fmsynth', 'membranesynth', 'metalsynth', 'plucksynth', 'duosynth'];
+    $scales = ['major', 'minor', 'pentatonic', 'chromatic', 'dorian', 'phrygian', 'lydian', 'mixolydian', 'wholetone'];
+
+    $nearest = static function (string $value, array $allowed, string $default): string {
+        $value = strtolower(preg_replace('/[^a-z0-9]/i', '', $value) ?? '');
+        if ($value === '') {
+            return $default;
+        }
+        foreach ($allowed as $option) {
+            if ($option === $value) {
+                return $option;
+            }
+        }
+        foreach ($allowed as $option) {
+            if (str_contains($option, $value) || str_contains($value, $option)) {
+                return $option;
+            }
+        }
+        return $default;
+    };
+
+    $instrument = $nearest((string) ($decoded['instrument'] ?? ''), $instruments, 'synth');
+    $scale = $nearest((string) ($decoded['scale'] ?? ''), $scales, 'major');
+
+    $tempo = $decoded['tempo'] ?? 90;
+    $tempo = is_numeric($tempo) ? (int) round((float) $tempo) : 90;
+    $tempo = max(40, min(220, $tempo)); // clamp to a sane BPM range
+
+    $feel = trim((string) ($decoded['feel'] ?? ''));
+    if (mb_strlen($feel) > 400) {
+        $feel = mb_substr($feel, 0, 400);
+    }
+
+    return json_encode([
+        'tempo' => $tempo,
+        'scale' => $scale,
+        'instrument' => $instrument,
+        'feel' => $feel,
+    ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+}
+
+function art_piece_sonic_params_from_feel(?string $feel): ?string
+{
+    $feel = trim((string) $feel);
+    if ($feel === '') {
+        return null;
+    }
+    if (mb_strlen($feel) > 400) {
+        $feel = mb_substr($feel, 0, 400);
+    }
+
+    $lower = mb_strtolower($feel);
+    $scale = 'major';
+    foreach (['wholetone', 'mixolydian', 'lydian', 'phrygian', 'dorian', 'chromatic', 'pentatonic', 'minor', 'major'] as $candidate) {
+        if (str_contains($lower, $candidate)) {
+            $scale = $candidate;
+            break;
+        }
+    }
+
+    $instrument = 'synth';
+    if (str_contains($lower, 'theremin') || str_contains($lower, 'fm synth') || str_contains($lower, 'fmsynth')) {
+        $instrument = 'fmsynth';
+    } elseif (str_contains($lower, 'pluck')) {
+        $instrument = 'plucksynth';
+    } elseif (str_contains($lower, 'metal') || str_contains($lower, 'bell')) {
+        $instrument = 'metalsynth';
+    } elseif (str_contains($lower, 'membrane') || str_contains($lower, 'drum')) {
+        $instrument = 'membranesynth';
+    } elseif (str_contains($lower, 'duo')) {
+        $instrument = 'duosynth';
+    } elseif (str_contains($lower, 'am synth') || str_contains($lower, 'amsynth')) {
+        $instrument = 'amsynth';
+    }
+
+    $tempo = 90;
+    if (preg_match('/\b([4-9][0-9]|1[0-9]{2}|2[01][0-9]|220)\s*(?:bpm|beats?\s+per\s+minute)?\b/i', $feel, $m)) {
+        $tempo = (int) $m[1];
+    } elseif (preg_match('/\b(slow|ambient|drone|hushed)\b/i', $feel)) {
+        $tempo = 72;
+    } elseif (preg_match('/\b(fast|quick|rapid|urgent|bright|energetic)\b/i', $feel)) {
+        $tempo = 128;
+    }
+
+    return validate_art_piece_sonic_params(json_encode([
+        'tempo' => $tempo,
+        'scale' => $scale,
+        'instrument' => $instrument,
+        'feel' => $feel,
+    ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+}
+
+function art_piece_sonic_feel(?string $sonicJson): string
+{
+    if ($sonicJson === null || trim($sonicJson) === '') {
+        return '';
+    }
+
+    $decoded = json_decode($sonicJson, true);
+    if (!is_array($decoded)) {
+        return '';
+    }
+
+    return trim((string) ($decoded['feel'] ?? ''));
+}
+
+function art_piece_sonic_params_equal(?string $a, ?string $b): bool
+{
+    return (validate_art_piece_sonic_params($a) ?? '') === (validate_art_piece_sonic_params($b) ?? '');
+}
+
+function art_piece_sonic_params_supported(): bool
+{
+    if (!function_exists('ah_column_exists')) {
+        return true;
+    }
+    try {
+        return ah_column_exists('art_piece_versions', 'sonic_params');
+    } catch (Throwable) {
+        return false;
+    }
+}
+
+/**
+ * Appendable guidance telling the model how to load an uploaded 3D model that
+ * the user referenced by an allowed /media/{id} path. Returned only for the
+ * Three.js and A-Frame engines (empty string otherwise) and only meant to be
+ * appended when the media_models feature is enabled. For A-Frame this grants a
+ * narrow, explicit exception to the base prompt's <a-asset-item> ban.
+ */
+function art_piece_model_capability_prompt(string $engine): string
+{
+    return match ($engine) {
+        'three' => implode(' ', [
+            "3D MODEL CAPABILITY: If the user's prompt references an uploaded 3D model at an allowed /media/{id} path (OBJ/GLTF/GLB), load it with the runtime-provided loaders — `new THREE.GLTFLoader().load('/media/{id}', gltf => scene.add(gltf.scene))` for GLTF/GLB, or `new THREE.OBJLoader().load('/media/{id}', obj => scene.add(obj))` for OBJ.",
+            "Do NOT use fetch, XMLHttpRequest, or import statements; THREE.GLTFLoader and THREE.OBJLoader are already provided on the THREE object. Add lights (models with standard materials are invisible without them) and frame the camera to the loaded model.",
+        ]),
+        'aframe' => implode(' ', [
+            "3D MODEL CAPABILITY: If the user's prompt references an uploaded 3D model at an allowed /media/{id} path (OBJ/GLTF/GLB), you MAY — as a specific exception to the no-<a-asset-item> rule — include a single `<a-assets>` block containing one `<a-asset-item id=\"model\" src=\"/media/{id}\">`, then place `<a-entity gltf-model=\"#model\">` (GLTF/GLB) or `<a-entity obj-model=\"obj: #model\">` (OBJ) in the scene.",
+            "This exception applies ONLY to an allowed /media/{id} 3D-model reference — do NOT load any other external URL or remote asset, and keep all other A-Frame safety rules.",
+        ]),
+        default => '',
+    };
+}
+
+/**
+ * Appendable guidance asking the model to emit a fourth ```sonic``` JSON block
+ * describing Tone.js sonification parameters. Applies to EVERY engine: the
+ * immersive view sonifies camera movement (in the gallery room for p5/c2/svg
+ * pieces, and directly for three/aframe), so sound is a property of the
+ * immersive view, not the engine. $feel carries the user's optional free-text
+ * "describe the feel" input.
+ */
+function art_piece_sonic_capability_prompt(string $engine, string $feel = ''): string
+{
+    $feel = trim($feel);
+    $feelLine = $feel !== ''
+        ? "The user describes the desired feel as: \"" . str_replace('"', "'", $feel) . "\". Honor any scale/instrument/tempo they name; if something they ask for is not available, approximate it as closely as possible rather than omitting sound."
+        : "Infer the mood from the piece prompt.";
+
+    return implode(' ', [
+        "SONIFICATION: In addition to the three code blocks, emit a FOURTH Markdown block ```sonic``` containing a single JSON object describing how movement in the immersive view should sound:",
+        '`{"tempo": <BPM 40-220>, "scale": "major|minor|pentatonic|chromatic|dorian|phrygian|lydian|mixolydian|wholetone", "instrument": "synth|amsynth|fmsynth|membranesynth|metalsynth|plucksynth|duosynth", "feel": "<short mood phrase>"}`.',
+        $feelLine,
+        "The sonic block is DATA only — do NOT add any audio code, Tone.js, or Web Audio to the JS block; the runtime owns audio. If you cannot produce meaningful values, omit the sonic block entirely.",
+    ]);
 }
 
 /**
@@ -972,7 +1180,7 @@ function art_piece_refine_patch_format_example(): string
  * now) — without it, the AI only sees the code and the new instruction, with
  * no sense of the original intent it's supposed to stay true to.
  */
-function art_piece_refine_user_prompt(string $engine, string $refinementPrompt, ?string $html, ?string $css, ?string $js, ?string $originalPrompt = null, array $allowedMediaRefs = []): string
+function art_piece_refine_user_prompt(string $engine, string $refinementPrompt, ?string $html, ?string $css, ?string $js, ?string $originalPrompt = null, array $allowedMediaRefs = [], bool $soundOnly = false): string
 {
     $sections = [];
     if ($originalPrompt !== null && trim($originalPrompt) !== '') {
@@ -982,20 +1190,28 @@ function art_piece_refine_user_prompt(string $engine, string $refinementPrompt, 
     $sections[] = "### REFINEMENT INSTRUCTION";
     $sections[] = $refinementPrompt;
     $sections[] = "### REMINDER";
-    if ($engine === 'svg' || $engine === 'aframe') {
+    if ($soundOnly) {
+        // No visual code is included below at all — there is nothing to
+        // patch, and nothing should be. Only the ```sonic``` JSON block
+        // (per the sonic capability instructions already in the system
+        // prompt) is expected in the response.
+        $sections[] = "This is a SOUND-ONLY refinement. Do NOT emit any PATCH block for html, css, or js under any circumstance — the current visual code is deliberately not included below because it must not change. Only emit the ```sonic``` JSON block described in the system prompt.";
+    } elseif ($engine === 'svg' || $engine === 'aframe') {
         $sections[] = "Apply ONLY the change named above, as PATCH blocks against the exact current code below — never as a rewritten file. Every color, shape, decoration, and detail not mentioned in the instruction must not appear in any SEARCH/REPLACE pair at all.";
     } else {
         $sections[] = "Apply ONLY the change named above, as PATCH blocks against the exact current code below — never as a rewritten file. Every color, shape, decoration, and detail not mentioned in the instruction must not appear in any SEARCH/REPLACE pair at all. You are STRICTLY FORBIDDEN from editing or adding HTML patches. Focus your edits solely on JS or CSS.";
     }
     $sections[] = art_piece_media_policy_prompt($allowedMediaRefs, true);
-    if ($engine === 'svg' || $engine === 'aframe') {
-        $sections[] = "### CURRENT HTML CODE";
-        $sections[] = "```html\n" . ($html ?? '') . "\n```";
+    if (!$soundOnly) {
+        if ($engine === 'svg' || $engine === 'aframe') {
+            $sections[] = "### CURRENT HTML CODE";
+            $sections[] = "```html\n" . ($html ?? '') . "\n```";
+        }
+        $sections[] = "### CURRENT CSS CODE";
+        $sections[] = "```css\n" . ($css ?? '') . "\n```";
+        $sections[] = "### CURRENT JAVASCRIPT CODE";
+        $sections[] = "```javascript\n" . ($js ?? '') . "\n```";
     }
-    $sections[] = "### CURRENT CSS CODE";
-    $sections[] = "```css\n" . ($css ?? '') . "\n```";
-    $sections[] = "### CURRENT JAVASCRIPT CODE";
-    $sections[] = "```javascript\n" . ($js ?? '') . "\n```";
 
     return implode("\n\n", $sections);
 }
@@ -1156,7 +1372,7 @@ function art_piece_find_patch_match(string $code, string $search): array|string|
  * blind from memory of its own previous (wrong) response, with no way to
  * actually re-derive a correct verbatim SEARCH block from the real source.
  */
-function art_piece_refine_repair_prompt(string $engine, string $refinementPrompt, ?string $previousRawResponse, string $failureMessage, ?string $html = null, ?string $css = null, ?string $js = null, array $allowedMediaRefs = []): string
+function art_piece_refine_repair_prompt(string $engine, string $refinementPrompt, ?string $previousRawResponse, string $failureMessage, ?string $html = null, ?string $css = null, ?string $js = null, array $allowedMediaRefs = [], bool $soundOnly = false): string
 {
     $segments = [
         "Target engine: {$engine}",
@@ -1164,19 +1380,26 @@ function art_piece_refine_repair_prompt(string $engine, string $refinementPrompt
         "CRITICAL — your previous attempt failed: \"{$failureMessage}\" You MUST directly address this specific problem in your PLAN section before writing any PATCH — state the new approach you will use to avoid it, not just adjusted numbers or a smaller version of the same approach.",
         art_piece_media_policy_prompt($allowedMediaRefs, true),
     ];
-    if ($engine === 'svg' || $engine === 'aframe') {
+    if ($soundOnly) {
+        // Same no-visual-code contract as art_piece_refine_user_prompt()'s
+        // sound-only path — a retry here means the previous attempt didn't
+        // return a usable ```sonic``` block, not a PATCH-formatting problem.
+        $segments[] = "This is a SOUND-ONLY refinement. Do NOT emit any PATCH block for html, css, or js under any circumstance — visual code is deliberately not included below because it must not change. Only emit a valid ```sonic``` JSON block per the sonic capability instructions in the system prompt.";
+    } elseif ($engine === 'svg' || $engine === 'aframe') {
         $segments[] = "Respond again in the exact PLAN: / PATCH <file>: / <<<<<<< SEARCH / ======= / >>>>>>> REPLACE format. Every SEARCH block must be copied character-for-character from the CURRENT code below, including whitespace and indentation — do not paraphrase, reformat, or reproduce it from memory of your previous attempt. Re-read the current code below and copy directly from it.";
     } else {
         $segments[] = "Respond again in the exact PLAN: / PATCH <file>: / <<<<<<< SEARCH / ======= / >>>>>>> REPLACE format. Every SEARCH block must be copied character-for-character from the CURRENT code below, including whitespace and indentation — do not paraphrase, reformat, or reproduce it from memory of your previous attempt. Re-read the current code below and copy directly from it. Remember: You are STRICTLY FORBIDDEN from editing HTML. Only edit JS or CSS.";
     }
-    if ($engine === 'svg' || $engine === 'aframe') {
-        $segments[] = "### CURRENT HTML CODE";
-        $segments[] = "```html\n" . ($html ?? '') . "\n```";
+    if (!$soundOnly) {
+        if ($engine === 'svg' || $engine === 'aframe') {
+            $segments[] = "### CURRENT HTML CODE";
+            $segments[] = "```html\n" . ($html ?? '') . "\n```";
+        }
+        $segments[] = "### CURRENT CSS CODE";
+        $segments[] = "```css\n" . ($css ?? '') . "\n```";
+        $segments[] = "### CURRENT JAVASCRIPT CODE";
+        $segments[] = "```javascript\n" . ($js ?? '') . "\n```";
     }
-    $segments[] = "### CURRENT CSS CODE";
-    $segments[] = "```css\n" . ($css ?? '') . "\n```";
-    $segments[] = "### CURRENT JAVASCRIPT CODE";
-    $segments[] = "```javascript\n" . ($js ?? '') . "\n```";
     if ($previousRawResponse !== null && $previousRawResponse !== '') {
         $segments[] = "Your previous response: {$previousRawResponse}";
     }

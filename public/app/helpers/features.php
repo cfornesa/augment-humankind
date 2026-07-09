@@ -40,6 +40,14 @@ function feature_registry(): array
             'model' => 'PlatformCollection',
             'admin_href' => '/admin/platform-collections',
         ],
+        'media_models' => [
+            'label' => '3D Models',
+            'description' => 'Allow OBJ/GLTF/GLB uploads in the media library and their use in Three.js/A-Frame pieces.',
+            'group' => 'pieces',
+            'requires' => [],
+            'model' => null,
+            'admin_href' => '/admin/media',
+        ],
         'exhibits' => [
             'label' => 'Exhibits',
             'description' => 'Native exhibits with carousel media.',

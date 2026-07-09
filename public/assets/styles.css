@@ -1751,6 +1751,38 @@ h3 {
     border-color: #fff;
 }
 
+.piece-sound-toggle {
+    position: absolute;
+    top: 0.75rem;
+    right: calc(0.75rem + 2.75rem + 0.5rem);
+    z-index: 10;
+    display: inline-flex;
+    height: 2.75rem;
+    width: 2.75rem;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    border-radius: 0.75rem;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    cursor: pointer;
+    transition: background 0.2s, border-color 0.2s;
+}
+
+.piece-sound-toggle:hover,
+.piece-sound-toggle:focus-visible {
+    background: rgba(0, 0, 0, 0.7);
+    border-color: #fff;
+}
+
+.piece-stage-fullscreen .piece-sound-toggle {
+    top: calc(0.75rem + env(safe-area-inset-top));
+    right: calc(0.75rem + env(safe-area-inset-right) + 2.75rem + 0.5rem);
+}
+
 .piece-stage-fullscreen {
     position: fixed;
     inset: 0;

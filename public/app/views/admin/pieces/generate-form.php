@@ -135,6 +135,46 @@ ob_start();
                 <small>If an attempt fails syntax, namespace, or forbidden-API validation, you'll be asked whether to spend another attempt (up to <?= (int) ART_PIECE_MAX_ATTEMPTS ?> total) with the AI's own previous response as repair context.</small>
             </div>
 
+            <?php if (function_exists('art_piece_sonic_params_supported') && art_piece_sonic_params_supported()): ?>
+            <div class="field" id="sound-field">
+                <label class="sound-toggle-row">
+                    <span class="sound-toggle">
+                        <input type="checkbox" id="sound_enabled" name="sound_enabled" value="1">
+                        <span class="sound-toggle-track"><span class="sound-toggle-thumb"></span></span>
+                    </span>
+                    <span class="sound-toggle-text">Add instrumentation</span>
+                </label>
+                <small>Turns camera movement in the immersive view into Tone.js sound. Works with any piece type; heard only in the immersive view.</small>
+                <div id="sound-feel-wrap" style="margin-top:0.75rem;display:none;">
+                    <label for="sound_feel">Describe the feel (optional)</label>
+                    <textarea id="sound_feel" name="sound_feel" rows="2" maxlength="400" placeholder="E.g. 'ethereal, slow, minor pentatonic on a soft synth around 70 BPM'. Name a scale, instrument, or tempo if you like; the AI approximates anything unavailable."></textarea>
+                </div>
+            </div>
+            <style>
+                .sound-toggle-row { display:flex; align-items:center; gap:0.6rem; cursor:pointer; font-weight:600; user-select:none; }
+                .sound-toggle { position:relative; display:inline-flex; flex:0 0 auto; width:42px; height:24px; }
+                /* Absolutely positioned + sized to the 42px switch so the admin
+                   form's `input { width:100% }` rule can't blow the box up. */
+                .sound-toggle input { position:absolute; inset:0; width:100%; height:100%; margin:0; opacity:0; cursor:pointer; z-index:1; }
+                .sound-toggle-track { position:absolute; inset:0; border-radius:999px; background:var(--line, rgba(120,120,120,0.55)); transition:background .15s ease; }
+                .sound-toggle-thumb { position:absolute; top:2px; left:2px; width:20px; height:20px; border-radius:50%; background:#fff; box-shadow:0 1px 2px rgba(0,0,0,0.35); transition:transform .15s ease; }
+                .sound-toggle input:checked + .sound-toggle-track { background:var(--accent, #3b82f6); }
+                .sound-toggle input:checked + .sound-toggle-track .sound-toggle-thumb { transform:translateX(18px); }
+                .sound-toggle input:focus-visible + .sound-toggle-track { outline:2px solid var(--accent, #3b82f6); outline-offset:2px; }
+            </style>
+            <script>
+                (function () {
+                    var toggle = document.getElementById('sound_enabled');
+                    var wrap = document.getElementById('sound-feel-wrap');
+                    if (toggle && wrap) {
+                        toggle.addEventListener('change', function () {
+                            wrap.style.display = this.checked ? 'block' : 'none';
+                        });
+                    }
+                })();
+            </script>
+            <?php endif ?>
+
             <div class="form-actions" style="margin-top: 2rem;">
                 <div id="generate-status" class="form-status" role="status" aria-live="polite" style="display:none; width:100%; margin-bottom:0.75rem;"></div>
                 <button type="button" class="admin-btn" id="generate-submit-btn">Start AI Generation</button>

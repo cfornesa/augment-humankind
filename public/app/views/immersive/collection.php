@@ -22,6 +22,7 @@ if ($immersiveCollectionReturnTo === '') {
 
 $jsItems = [];
 $detailItems = [];
+$hasAnySonic = false;
 foreach ($items as $index => $item) {
     if ($item['type'] === 'art_piece' && !empty($item['piece']) && !empty($item['version'])) {
         $piece = $item['piece'];
@@ -73,7 +74,11 @@ foreach ($items as $index => $item) {
             'download_url' => $pieceDownloadUrl,
             'png_filename' => $piecePngFilename,
             'full_view' => $fullView,
+            'sonicParams' => !empty($version['sonic_params']) ? json_decode((string) $version['sonic_params'], true) : null,
         ];
+        if (!empty($version['sonic_params'])) {
+            $hasAnySonic = true;
+        }
         $detailItems[] = [
             'title' => $piece['title'] ?? 'Untitled Piece',
             'badge' => $itemEngineLabel,
@@ -717,6 +722,7 @@ html, body {
                         ],
                     ],
                 ],
+                'sound_action' => $hasAnySonic ? ['enabled' => true] : null,
                 'show_fullscreen' => true,
                 'fullscreen_onclick' => 'toggleFullscreen()',
             ]) ?>

@@ -541,11 +541,22 @@ STEP 5 — VALIDATE      (acceptance predicate — BOTH checks must pass)
   IN:    code (← STEP 4), allowed media refs (INPUT)
   check_a ← static_preflight(code)   // forbidden constructs, engine limits
   check_b ← every media URL IN code ∈ allowed set
+                                     // a /media/{id} 3D-model ref is allowed
+                                     // exactly like an image ref; the runtime
+                                     // provides THREE.GLTFLoader/OBJLoader so the
+                                     // code needs no forbidden import/fetch
   IF check_a fails OR check_b fails THEN
      → STEP 6 WITH exact failure_message    // first failure reported
   ELSE
      → STEP 7 WITH code
   END IF
+
+  // SIDE CHANNEL (optional, piece-sound feature): "Describe the feel" /
+  // "Tone Feel" guidance may produce a 4th ```sonic``` JSON block. When
+  // present, it is soft-validated SEPARATELY — coerced to nearest supported
+  // {tempo, scale, instrument} or dropped to null. It NEVER participates in
+  // the check_a/check_b accept/reject above, so a bad sonic block can't fail
+  // the code; it just means "no sound". Stored on the version as sonic_params.
 
 STEP 6 — REPAIR-OR-STOP
   IN:    failure_message (← STEP 3/4/5), raw_response, attempt
@@ -922,6 +933,19 @@ STEP 5 — INTERACTION-LOOP
         LEG C (gyro):
            IF permission granted THEN camera ← orientation
            // else this leg never activates
+        LEG D (audio — optional sonification):
+           IF current version has sonic params AND user enabled sound THEN
+              motion_delta ← camera.position − previous_frame_position
+              Tone.js ← map(motion_delta) per {tempo, scale, instrument}
+           // Tone.js self-hosted + lazy-loaded on the enable gesture; reads the
+           // SAME per-frame motion as LEG A/B/C — a listener, not new tracking.
+           // Autoplay-gated ("Tap to enable sound"); else this leg never sounds.
+           // The regular /pieces/{id} view runs an identical LEG D inside its
+           // own iframe (piece-runtime.js, three/aframe only there — other
+           // engines have no camera motion on that surface) but the enable
+           // gesture is a click on a PARENT-page button, relayed in via
+           // postMessage rather than an in-page click; the leg itself is the
+           // same motion→Tone.js mapping either way.
      END PARALLEL
      apply motion;  ease camera → walk_target UNTIL within epsilon;  render
      IF user requests capture THEN → STEP 6
@@ -967,6 +991,19 @@ STEP 6 — CAPTURE       (on demand; returns to STEP 5)
   pattern).
 - Devices without gyroscope permission → that input leg simply never
   activates.
+- Audio autoplay policy → the sonification leg (LEG D) stays silent until the
+  user taps "enable sound"; Tone.js is lazy-loaded then. The current version's
+  stored `sonic_params.feel` is documented as Sound Feel in both the regular
+  and immersive piece documentation blocks. If its (self-hosted) source fails
+  to load, model-free rendering is unaffected — same fail-open shape as the
+  gyro permission gate. Only the focused/active piece sonifies (in a
+  collection/exhibit wall, the audio controller is torn down and rebuilt
+  whenever camera focus moves to a different item).
+- Offline export parity → both standalone (`piece_export_document`) and
+  immersive/collection exports bundle Tone.js as an inlined Blob URL (same
+  technique already used for OrbitControls), so a sound-bearing exported
+  piece plays with zero network requests when opened via `file://` or a
+  static host.
 - Typing in form fields and window blur are filtered/cleared so the camera
   never moves unintentionally and keys never stick.
 
@@ -1268,6 +1305,13 @@ STEP 5 — MUTATE           (state machine: active ⇄ trashed)
   client-supplied one), check it against an allowlist map, enforce a byte
   cap, then move to storage with a generated name. Fail-fast: the first
   failing check terminates with a specific error.
+- **3D model branch (`upload_model_media()`):** OBJ/GLTF/GLB are the one case
+  where content-sniffing is *unreliable* (`.glb`→`application/octet-stream`,
+  `.obj`→`text/plain`, `.gltf`→JSON/text), so they are routed by **file
+  extension** against `ALLOWED_MODEL_EXT` and then stored under a **canonical
+  `model/*` MIME** — an extension-keyed variant of the same allowlist decision,
+  chosen because the sniffed type cannot distinguish these formats. 64 MB cap;
+  gated on the `media_models` feature.
 
 ### 7.4 Navigation feature-gating — `ah_navigation_apply_feature_gating()` ([navigation.php](public/app/helpers/navigation.php))
 - **Type:** Filtering (linear scan with predicate).
@@ -1386,8 +1430,12 @@ STEP 2 — DETECT-MIME    upload_resolve_mime()
   END IF
 
 STEP 3 — ROUTE          upload_media_auto()
-  IN:    mime (← STEP 2)
-  IF mime ∈ {mp4, webm, mov} THEN
+  IN:    mime (← STEP 2), file extension, media_models feature flag
+  IF media_models enabled AND ext ∈ {glb, gltf, obj} THEN
+     // 3D models: sniffed MIME is unreliable, so route by EXTENSION and
+     // store a canonical model/* MIME.  cap ← 64 MB   (upload_model_media)
+     rules ← model ext-allowlist;  cap ← 64 MB
+  ELSE IF mime ∈ {mp4, webm, mov} THEN
      rules ← video allowlist;  cap ← 64 MB
   ELSE
      rules ← image allowlist (jpg/png/gif/webp/avif);  cap ← 8 MB
@@ -1414,8 +1462,11 @@ STEP 5 — STORE
 2. The system first checks for upload errors and, if there is a problem,
    explains exactly which limit or issue caused it.
 3. It determines the file's real type by inspecting its contents — not by
-   trusting its name or extension.
-4. Videos are allowed up to 64 MB; images up to 8 MB.
+   trusting its name or extension. (3D models are the exception: because their
+   real type cannot be told apart by inspection, they are recognized by their
+   `.glb`/`.gltf`/`.obj` extension and then stored under a standard 3D-model
+   type.)
+4. Videos and 3D models are allowed up to 64 MB; images up to 8 MB.
 5. If the type is not on the allowed list, or the file is too big, it is
    rejected with a clear message.
 6. Otherwise the file is stored, and the uploader gets back a permanent web

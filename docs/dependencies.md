@@ -354,3 +354,31 @@
   `algorithms-latest` release on GitHub.
 - **Required config:** None — the workflow uses the built-in `GITHUB_TOKEN`
   secret, which requires no manual setup.
+
+## Tone.js (self-hosted)
+
+- **Purpose:** Movement sonification — turns camera motion around a piece with
+  sound metadata into sound, configured by optional version-level
+  `sonic_params` created via generation or AI Refine (the only two creation
+  paths; there is no manual per-version toggle). Live in the immersive viewer
+  (every engine) and the regular `/pieces/[id]` view (Three.js/A-Frame only,
+  since other engines have no camera motion there); bundled into standalone,
+  immersive, and collection exports for fully offline playback.
+- **Package:** `tone` (Web Audio framework).
+- **Delivery:** **Self-hosted / vendored** at
+  `public/assets/vendor/tone/Tone.js` (UMD build, sets `window.Tone`). It is
+  lazy-loaded only when a user enables sound (immersive toolbar button, or the
+  regular-view sound toggle), so it never affects pages that don't use it. In
+  bundle-mode exports (standalone, immersive, and collection ZIPs) the same
+  source is inlined as a Blob URL instead of fetched, so a sound-bearing
+  export needs no network at all.
+- **Data sent off-domain:** None. Vendored locally; no runtime CDN call.
+- **What breaks if unavailable or changed:** Only movement sonification. The
+  runtime loads it inside a try/catch; if the file is missing or fails to
+  parse, pieces render silently and everything else is unaffected.
+- **Self-hosting alternative:** N/A — already self-hosted. (The raw Web Audio
+  API is the lower-level fallback, at the cost of reimplementing synthesis,
+  scheduling, and scales.)
+- **Update procedure:** Replace `public/assets/vendor/tone/Tone.js` with the
+  pinned UMD build from the `tone` package and re-verify the immersive audio
+  enable flow, the regular-view toggle, and the offline export bundles.

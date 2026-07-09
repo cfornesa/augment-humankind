@@ -87,6 +87,51 @@ test('Extracts all three blocks', function () {
     assert_eq($blocks['generatedCode'], "window.sketch = () => {};");
 });
 
+test('Sonic params expose stored feel text for piece documentation', function () {
+    $sonic = validate_art_piece_sonic_params('{"tempo":72,"scale":"minor","instrument":"synth","feel":"ethereal, slow, minor pentatonic"}');
+    assert_eq(art_piece_sonic_feel($sonic), 'ethereal, slow, minor pentatonic');
+    assert_eq(art_piece_sonic_feel(null), '');
+    assert_eq(art_piece_sonic_feel('not json'), '');
+});
+
+test('Tone feel helper maps minor theremin wording to supported sonic params', function () {
+    $sonic = art_piece_sonic_params_from_feel('Ethereal, minor scale theremin sound.');
+    $decoded = json_decode((string) $sonic, true);
+    assert_eq($decoded['tempo'] ?? null, 90);
+    assert_eq($decoded['scale'] ?? null, 'minor');
+    assert_eq($decoded['instrument'] ?? null, 'fmsynth');
+    assert_eq($decoded['feel'] ?? null, 'Ethereal, minor scale theremin sound.');
+});
+
+test('Admin piece edit surfaces expose Tone controls only via AI Refine, not a manual Metadata toggle', function () {
+    $form = file_get_contents(__DIR__ . '/../public/app/views/admin/pieces/form.php');
+    // Sound is created/updated only through generation and AI Refine — the
+    // manual Metadata-tab checkbox was removed, so no id="sound_enabled"
+    // control should exist here.
+    assert_not_contains($form, 'id="sound_enabled"');
+    assert_contains($form, 'Tone Feel');
+    assert_contains($form, 'id="ai_sound_enabled"');
+    assert_contains($form, 'basePayload.sound_enabled = true');
+    assert_contains($form, 'sonic_params: lastProposedSonicParams');
+});
+
+test('Admin version form has no manual Tone controls', function () {
+    $form = file_get_contents(__DIR__ . '/../public/app/views/admin/pieces/version-form.php');
+    // Per-version sound toggles were removed — versions only carry
+    // sonic_params created upstream by generation or AI Refine.
+    assert_not_contains($form, 'id="sound_enabled"');
+    assert_not_contains($form, 'Tone Feel');
+});
+
+test('Controller treats Tone metadata as version-changing state', function () {
+    $controller = file_get_contents(__DIR__ . '/../public/app/controllers/Admin/PiecesAdminController.php');
+    assert_contains($controller, '$sonicChanged');
+    assert_contains($controller, "'sonic_params' => \$nextSonicParams");
+    assert_contains($controller, '$hasSubmittedSonic');
+    assert_contains($controller, 'sonic_params\' => $sonicParams');
+    assert_contains($controller, '$soundEnabled');
+});
+
 // 2. JS alias
 test('Extracts js alias block', function () {
     $raw = "```js\nwindow.sketch = () => {};\n```";

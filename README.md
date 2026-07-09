@@ -93,7 +93,7 @@ Admin routes are flat and protected by OAuth login:
 - `/admin/art-media` — piece taxonomy CRUD
 - `/admin/exhibits` — portfolio exhibits CRUD
 - `/admin/exhibit-collections` — native exhibit collections CRUD
-- `/admin/media` — media library uploads and migrated media assets (with AI alt-text generation for images)
+- `/admin/media` — media library uploads and migrated media assets (with AI alt-text generation for images; OBJ/GLTF/GLB 3D models up to 64 MB when the `media_models` feature is enabled, loadable into AI-generated Three.js/A-Frame pieces by referencing their `/media/{id}` path in the prompt)
 - `/admin/feed-sources` — RSS/Atom feed ingestion sources and approval queue
 - `/admin/site-identity` — site settings and assets management
 - `/admin/user-profiles` — public user account and profile photo management
@@ -101,7 +101,7 @@ Admin routes are flat and protected by OAuth login:
 - `/admin/features` — content-safe module and AI runtime toggles; disabled content modules stay manageable while records exist, and AI buttons are hidden per use-case flag
 - `/admin/platform-connections` — syndication platforms (Bluesky, WordPress, Blogger, Substack, LinkedIn, Meta) with OAuth credential acquisition and a diagnostics page
 - `/admin/forms` — database-owned Contact Form and Newsletter Signup records, fields, signups, and form settings
-- `/admin/pieces` — platform generative art pieces, version history, and starter templates (with AI-driven generation at `/admin/pieces/generate`, including C2.js Interactive and A-Frame Experimental modes, and AI refinement at `/admin/pieces/refine-ai`)
+- `/admin/pieces` — platform generative art pieces, version history, and starter templates (with AI-driven generation at `/admin/pieces/generate`, including C2.js Interactive and A-Frame Experimental modes, and AI refinement at `/admin/pieces/refine-ai`; when the `ai_pieces_sound` feature is enabled, generation, manual editing, and AI Refine can add optional Tone.js movement sonification whose "Describe the feel" / "Tone Feel" value is stored per version, shown in regular and immersive piece documentation, and heard in the immersive view)
 - `/admin/ai/process` — AI text improvement endpoint (used by the Tiptap editor)
 - `/admin/ai/describe-image` — AI alt-text generation endpoint (used by the media library)
 - `/admin/trash` — trash bins for soft-deleted content

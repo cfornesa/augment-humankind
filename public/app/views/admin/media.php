@@ -40,6 +40,7 @@ ob_start();
                 <button type="button" class="admin-tab" data-media-filter="image">Images</button>
                 <button type="button" class="admin-tab" data-media-filter="video">Videos</button>
                 <button type="button" class="admin-tab" data-media-filter="embed">Embeds</button>
+                <button type="button" class="admin-tab" data-media-filter="model">Models</button>
             </div>
         <?php endif ?>
 
@@ -52,7 +53,9 @@ ob_start();
                         $cardMime = (string) ($f['mime_type'] ?? '');
                         $cardKind = str_starts_with($cardMime, 'video/')
                             ? 'video'
-                            : ((($cardMime === 'text/html') || str_starts_with($cardMime, 'iframe')) ? 'embed' : 'image');
+                            : (str_starts_with($cardMime, 'model/')
+                                ? 'model'
+                                : ((($cardMime === 'text/html') || str_starts_with($cardMime, 'iframe')) ? 'embed' : 'image'));
                     ?>
                     <button
                         type="button"
@@ -92,6 +95,8 @@ ob_start();
                                 <?php endif ?>
                             <?php elseif (($f['mime_type'] ?? '') === 'text/html' || str_starts_with((string) ($f['mime_type'] ?? ''), 'iframe')): ?>
                                 <span class="media-thumb-iframe">&lt;/&gt; Embed</span>
+                            <?php elseif (str_starts_with((string) ($f['mime_type'] ?? ''), 'model/')): ?>
+                                <span class="media-thumb-model">◈ 3D Model</span>
                             <?php else: ?>
                                 <img
                                     src="<?= htmlspecialchars((string) $f['preview']) ?>"

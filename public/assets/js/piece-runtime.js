@@ -23,6 +23,202 @@ window.addEventListener('error', (event) => showPieceError(event.error || event.
 window.addEventListener('unhandledrejection', (event) => showPieceError(event.reason || 'Unhandled promise rejection'));
 const pieceContext = window.CREATR_PIECE_CONTEXT || {};
 const pieceDisableMotion = pieceContext.disableMotion === true;
+
+// Movement sonification (Tone.js) — per-piece, no master switch. The parent
+// page's sound toggle button toggles audio via postMessage; this iframe owns
+// audio (sandboxed with the render), reads camera/mover motion directly.
+// Any engine can carry a `sonic` block now: three/aframe sonify camera
+// motion, c2_interactive sonifies pointer motion, everything else has no
+// motion signal here and gets the idle random-note pattern only.
+const PIECE_SONIC = (pieceContext && pieceContext.sonic && typeof pieceContext.sonic === 'object') ? pieceContext.sonic : null;
+const PIECE_C2_INTERACTIVE = pieceContext.c2Interactive === true;
+const PIECE_SONIC_SCALES = {
+  major: [0, 2, 4, 5, 7, 9, 11], minor: [0, 2, 3, 5, 7, 8, 10],
+  pentatonic: [0, 2, 4, 7, 9], chromatic: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+  dorian: [0, 2, 3, 5, 7, 9, 10], phrygian: [0, 1, 3, 5, 7, 8, 10],
+  lydian: [0, 2, 4, 6, 7, 9, 11], mixolydian: [0, 2, 4, 5, 7, 9, 10],
+  wholetone: [0, 2, 4, 6, 8, 10],
+};
+const PIECE_SONIC_INSTRUMENTS = {
+  synth: 'Synth', amsynth: 'AMSynth', fmsynth: 'FMSynth',
+  membranesynth: 'MembraneSynth', metalsynth: 'MetalSynth',
+  plucksynth: 'PluckSynth', duosynth: 'DuoSynth',
+};
+let _pieceTonePromise = null;
+function pieceLoadToneOnce() {
+  if (window.Tone) return Promise.resolve(window.Tone);
+  if (_pieceTonePromise) return _pieceTonePromise;
+  _pieceTonePromise = new Promise((resolve, reject) => {
+    const src = (pieceContext && typeof pieceContext.toneSource === 'string' && pieceContext.toneSource !== '')
+      ? pieceContext.toneSource
+      : '/assets/vendor/tone/Tone.js';
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = () => (window.Tone ? resolve(window.Tone) : reject(new Error('Tone.js loaded but window.Tone missing')));
+    s.onerror = () => reject(new Error('Tone.js failed to load'));
+    document.head.appendChild(s);
+  });
+  return _pieceTonePromise;
+}
+function pieceSonicMidiToFreq(m) { return 440 * Math.pow(2, (m - 69) / 12); }
+
+// createPieceRuntimeAudioController(sonicParams, getMover) — muted by
+// default; listens for `window` message events from the parent page's sound
+// toggle button. On unmute, lazy-loads Tone.js (the postMessage handler
+// runs in this iframe's own user-gesture-initiated task chain; an actual
+// user click on the parent toggle is the autoplay gesture), instantiates the
+// synth, then drives notes from `getMover().position` deltas via internal rAF.
+// While enabled, a plain scale-walk idle pattern plays once the mover has
+// been still for ~2s; motion modulates pitch/octave and resets that clock.
+// getMover is optional — pass null/undefined for engines with no motion
+// signal on this view (p5, plain c2, svg); the idle pattern is then the only
+// thing that ever plays, giving the piece a random-note ambience on unmute.
+function createPieceRuntimeAudioController(sonicParams, getMover) {
+  if (!sonicParams || typeof sonicParams !== 'object') return null;
+  if (getMover != null && typeof getMover !== 'function') return null;
+
+  const scaleName = PIECE_SONIC_SCALES[sonicParams.scale] ? sonicParams.scale : 'major';
+  const scale = PIECE_SONIC_SCALES[scaleName];
+  const instrumentKey = PIECE_SONIC_INSTRUMENTS[sonicParams.instrument] ? sonicParams.instrument : 'synth';
+  const tempo = Math.max(40, Math.min(220, Number(sonicParams.tempo) || 90));
+  const minInterval = ((60 / tempo) * 1000) / 2;
+  const baseMidi = 48;
+
+  let enabled = false, synth = null, disposed = false, lastNoteAt = 0, walk = 0;
+  let prevX = null, prevY = null, prevZ = null;
+  let rafId = null;
+  let lastMotionAt = 0;
+  const IDLE_GAP_MS = 2000; // how long the mover must sit still before idle notes resume
+
+  function motionTick() {
+    rafId = requestAnimationFrame(motionTick);
+    if (!enabled || !synth || disposed) return;
+    const now = performance.now();
+    const mover = typeof getMover === 'function' ? getMover() : null;
+    if (mover && mover.position) {
+      const x = mover.position.x, y = mover.position.y, z = mover.position.z;
+      if (prevX !== null) {
+        const dx = x - prevX, dy = y - prevY, dz = z - prevZ;
+        const speed = Math.hypot(dx, dy, dz);
+        if (speed >= 0.002) {
+          lastMotionAt = now;
+          if (now - lastNoteAt >= minInterval) {
+            lastNoteAt = now;
+            const degree = walk++ % scale.length;
+            const octave = Math.min(2, Math.floor(Math.abs(dy) * 25));
+            const midi = baseMidi + scale[degree] + 12 * octave;
+            try { synth.triggerAttackRelease(pieceSonicMidiToFreq(midi), '16n'); } catch (_e) {}
+          }
+        }
+      }
+      prevX = x; prevY = y; prevZ = z;
+    }
+    // Idle pattern: plain scale-walk notes once the mover (if any) has been
+    // still for a beat — or always, for engines with no motion signal at
+    // all — so toggled-on sound never sits in dead silence.
+    if (now - lastMotionAt >= IDLE_GAP_MS && now - lastNoteAt >= minInterval) {
+      lastNoteAt = now;
+      const degree = walk++ % scale.length;
+      const midi = baseMidi + scale[degree];
+      try { synth.triggerAttackRelease(pieceSonicMidiToFreq(midi), '16n'); } catch (_e) {}
+    }
+  }
+
+  function setEnabled(on) {
+    enabled = on;
+  }
+
+  function handleMessage(event) {
+    if (!event || typeof event.data !== 'object') return;
+    const data = event.data;
+    if (data.type !== 'creatr-sound-toggle') return;
+    // Source check: message must be from this window's parent (the host page
+    // hosting the iframe) or this window itself (standalone export).
+    if (window.parent && event.source && event.source !== window.parent && event.source !== window) return;
+    const on = !!data.enabled;
+    if (on && !synth) {
+      // First unmute — load Tone.js + create synth. This fires from a
+      // postMessage originated by the user's click on the parent toggle,
+      // satisfying the autoplay policy's gesture requirement. toggleBtn is
+      // null when a host page owns the button (embedded /pieces/{id} view)
+      // instead of this iframe's own standalone fallback button.
+      if (toggleBtn) toggleBtn.disabled = true;
+      pieceLoadToneOnce().then((Tone) => {
+        return Tone.start();
+      }).then(() => {
+        if (disposed) return;
+        const Ctor = window.Tone[PIECE_SONIC_INSTRUMENTS[instrumentKey]] || window.Tone.Synth;
+        synth = new Ctor().toDestination();
+        if (synth.volume) synth.volume.value = -6;
+        enabled = true;
+        lastMotionAt = 0; // let idle notes start immediately on unmute
+        if (!rafId) motionTick();
+        notifyParentToggleState(true);
+      }).catch(() => {
+        notifyParentToggleState(false, 'unavailable');
+      }).finally(() => {
+        if (toggleBtn) toggleBtn.disabled = false;
+      });
+      return;
+    }
+    if (on && synth) {
+      enabled = true;
+      lastMotionAt = 0; // let idle notes start immediately on unmute
+      notifyParentToggleState(true);
+      return;
+    }
+    // Mute.
+    enabled = false;
+    notifyParentToggleState(false);
+  }
+
+  function notifyParentToggleState(on, reason) {
+    try {
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({ type: 'creatr-sound-state', enabled: !!on, reason: reason || null }, '*');
+      }
+    } catch (_) {}
+  }
+
+  // Inline sound toggle button for the standalone (file://) exported HTML,
+  // where there is no parent hosting the iframe — root document owns UI.
+  let toggleBtn = document.querySelector('[data-creatr-piece-sound-toggle]');
+  if (!toggleBtn && window.parent === window) {
+    toggleBtn = document.createElement('button');
+    toggleBtn.type = 'button';
+    toggleBtn.setAttribute('data-creatr-piece-sound-toggle', '');
+    toggleBtn.setAttribute('aria-pressed', 'false');
+    toggleBtn.setAttribute('aria-label', 'Unmute sound');
+    Object.assign(toggleBtn.style, {
+      position: 'fixed', top: 'calc(0.75rem + env(safe-area-inset-top))',
+      right: 'calc(0.75rem + env(safe-area-inset-right))',
+      zIndex: '200', width: '2.75rem', height: '2.75rem',
+      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+      borderRadius: '0.75rem', border: '1px solid rgba(255,255,255,0.15)',
+      background: 'rgba(0,0,0,0.55)', color: '#fff', cursor: 'pointer',
+      boxShadow: '0 4px 12px rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)',
+    });
+    toggleBtn.innerHTML = '<svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4z"/><line x1="22" y1="9" x2="16" y2="15"/><line x1="16" y1="9" x2="22" y2="15"/></svg>';
+    document.body.appendChild(toggleBtn);
+  }
+  if (toggleBtn) {
+    toggleBtn.addEventListener('click', () => {
+      if (disposed) return;
+      handleMessage({ source: window, data: { type: 'creatr-sound-toggle', enabled: !enabled } });
+    });
+  }
+
+  window.addEventListener('message', handleMessage);
+
+  return {
+    dispose() {
+      disposed = true; enabled = false;
+      if (rafId) cancelAnimationFrame(rafId);
+      try { synth?.dispose?.(); } catch (_e) {}
+    },
+  };
+}
+let pieceAudioController = null;
 function runPieceCode() {
   try {
     const fn = new Function(PIECE_CODE + "\n//# sourceURL=piece-runtime.js");
@@ -557,6 +753,29 @@ function bootCanvasRuntime(extra) {
     sizeCanvas(canvas);
     if (PIECE_ENGINE === 'c2') fitCanvasBox(canvas);
   });
+  if (PIECE_ENGINE === 'c2' && PIECE_SONIC) {
+    if (PIECE_C2_INTERACTIVE) {
+      // Pointer position over the canvas, normalized to ~0..1 so deltas are
+      // the same order of magnitude as the three/aframe camera-position
+      // deltas the sonification math was tuned against.
+      const c2Mover = { position: { x: 0, y: 0, z: 0 } };
+      const updateC2Mover = (clientX, clientY) => {
+        const rect = canvas.getBoundingClientRect();
+        if (!rect.width || !rect.height) return;
+        c2Mover.position.x = (clientX - rect.left) / rect.width;
+        c2Mover.position.y = (clientY - rect.top) / rect.height;
+      };
+      canvas.addEventListener('pointermove', (e) => updateC2Mover(e.clientX, e.clientY));
+      canvas.addEventListener('touchmove', (e) => {
+        const t = e.touches && e.touches[0];
+        if (t) updateC2Mover(t.clientX, t.clientY);
+      }, { passive: true });
+      pieceAudioController = createPieceRuntimeAudioController(PIECE_SONIC, () => c2Mover);
+    } else {
+      // Plain (non-interactive) c2 has no motion signal — idle-only pattern.
+      pieceAudioController = createPieceRuntimeAudioController(PIECE_SONIC, null);
+    }
+  }
   // Only the piece's own first real draw means there's something worth
   // capturing — wrap the startFrame handed to the sketch so the readiness
   // signal fires after its first tick actually runs, not merely once
@@ -678,6 +897,11 @@ function bootP5() {
         };
         ready.noteInlineMedia(document);
         requestAnimationFrame(waitForFirstDraw);
+      }
+      // p5 has no camera/pointer motion signal on this view — idle-only
+      // random-note pattern when sound is unmuted (see createPieceRuntimeAudioController).
+      if (PIECE_SONIC) {
+        pieceAudioController = createPieceRuntimeAudioController(PIECE_SONIC, null);
       }
     } catch (error) { showPieceError(error); }
   };
@@ -893,6 +1117,9 @@ function bootAFrame() {
         disableMotionTracking();
         bindAFramePointerControls();
         requestAnimationFrame(() => requestAnimationFrame(signalAFrameReadyOnce));
+        if (PIECE_SONIC) {
+          pieceAudioController = createPieceRuntimeAudioController(PIECE_SONIC, () => getAFrameCameraMover());
+        }
       }, { once: true });
       frameId = requestAnimationFrame(animateAFramePointerNavigation);
       requestAnimationFrame(disableMotionTracking);
@@ -1072,6 +1299,21 @@ async function bootThree() {
       const id = requestAnimationFrame(tick);
       rafIds.push(id);
       return () => { rafIds.forEach((rafId) => cancelAnimationFrame(rafId)); rafIds = []; };
+    }
+    // Attach 3D-model loaders so generated code can call THREE.GLTFLoader /
+    // THREE.OBJLoader (no import/fetch token → passes preflight). Loaded in a
+    // separate catch-wrapped step so a loader CDN hiccup only disables model
+    // loading, never the rest of the piece (same philosophy as the gyro/
+    // DeviceOrientationControls handling).
+    try {
+      const [{ GLTFLoader }, { OBJLoader }] = await Promise.all([
+        import('https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js'),
+        import('https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/OBJLoader.js'),
+      ]);
+      instrumentedThree.GLTFLoader = GLTFLoader;
+      instrumentedThree.OBJLoader = OBJLoader;
+    } catch (_e) {
+      // 3D model loaders unavailable; model-free pieces are unaffected.
     }
     window.THREE = instrumentedThree;
     window.sketch({ THREE: instrumentedThree, canvas, startFrame, width, height, size: { width, height }, OrbitControls });
@@ -1281,6 +1523,12 @@ async function bootThree() {
       animateControls();
     }
 
+    // Per-piece Tone.js sonification: muted by default, unmuted via a
+    // postMessage from the parent page's sound toggle (no master switch).
+    if (PIECE_SONIC && state.camera) {
+      pieceAudioController = createPieceRuntimeAudioController(PIECE_SONIC, () => state.camera);
+    }
+
     window.addEventListener('resize', () => {
       sizeCanvas(canvas);
       if (state.renderer && state.camera) {
@@ -1319,5 +1567,10 @@ if (PIECE_ENGINE === 'p5') {
     const ready = createReadyController(svg);
     ready.noteInlineMedia(document);
     ready.markRendered('svg-document');
+  }
+  // SVG has no camera/pointer motion signal on this view — idle-only
+  // random-note pattern when sound is unmuted.
+  if (PIECE_SONIC) {
+    pieceAudioController = createPieceRuntimeAudioController(PIECE_SONIC, null);
   }
 }

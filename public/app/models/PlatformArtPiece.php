@@ -261,6 +261,14 @@ class PlatformArtPiece
             $params[] = $engine;
         }
 
+        if ($q !== null && $q !== '' && ctype_digit($q)) {
+            // Admins searching by piece ID shouldn't have to scroll to find
+            // it — a purely-numeric query jumps straight to that row.
+            $where[] = 'ap.id = ?';
+            $params[] = (int) $q;
+            return ['WHERE ' . implode(' AND ', $where), $params];
+        }
+
         if ($q !== null && $q !== '') {
             $like = '%' . str_replace(['%', '_'], ['\\%', '\\_'], $q) . '%';
             if ($booleanExpr !== null) {
@@ -634,7 +642,12 @@ class PlatformArtPiece
 
     private static function versionSelectColumns(): string
     {
-        return art_piece_version_select_columns(self::versionHasGenerationMode());
+        return art_piece_version_select_columns(self::versionHasGenerationMode(), false, false, self::versionHasSonicParamsColumn());
+    }
+
+    private static function versionHasSonicParamsColumn(): bool
+    {
+        return ah_column_exists('art_piece_versions', 'sonic_params');
     }
 
     private static function versionHasGenerationMode(): bool

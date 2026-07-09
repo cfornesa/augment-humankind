@@ -12,7 +12,8 @@ $previewVersion = [
     'html_code' => $htmlCode,
     'css_code' => $cssCode,
     'generated_code' => $generatedCode,
-    'engine' => $engine
+    'engine' => $engine,
+    'sonic_params' => $sonicParams ?? null,
 ];
 
 $defaultTitle = 'AI ' . $generationModeLabel . ' Piece - ' . date('M d, Y H:i');
@@ -28,7 +29,10 @@ $defaultTitle = 'AI ' . $generationModeLabel . ' Piece - ' . date('M d, Y H:i');
     <div style="background: var(--ink); border: 1px solid var(--line); border-radius: 4px; padding: 0.5rem; margin-bottom: 2rem; box-shadow: var(--shadow);">
         <div style="display: flex; justify-content: space-between; align-items: center; padding: 0.5rem; border-bottom: 1px solid var(--line); margin-bottom: 0.5rem; font-size: 0.85rem; color: #a1a1aa;">
             <span>Live Sandbox Preview (Engine: <strong><?= e($generationModeLabel) ?></strong>)</span>
-            <button type="button" class="admin-btn admin-btn-ghost" style="padding: 2px 8px; font-size: 0.75rem;" onclick="reloadPreviewIframe()">Reload Sandbox</button>
+            <div style="display: flex; gap: 0.5rem;">
+                <button type="button" id="preview-sound-toggle" class="admin-btn admin-btn-ghost" style="padding: 2px 8px; font-size: 0.75rem;" data-piece-sound-toggle aria-pressed="false" aria-label="Unmute sound" hidden>Unmute</button>
+                <button type="button" class="admin-btn admin-btn-ghost" style="padding: 2px 8px; font-size: 0.75rem;" onclick="reloadPreviewIframe()">Reload Sandbox</button>
+            </div>
         </div>
         <div id="preview-iframe-wrapper">
             <?= piece_render_iframe($previewPiece, $previewVersion, 450) ?>
@@ -44,6 +48,7 @@ $defaultTitle = 'AI ' . $generationModeLabel . ' Piece - ' . date('M d, Y H:i');
         <input type="hidden" id="generation_attempt_count" name="generation_attempt_count" value="<?= (int) $attemptCount ?>">
         <input type="hidden" id="profile_id" name="profile_id" value="<?= (int) ($profileId ?? 0) ?>">
         <input type="hidden" id="persona_id" name="persona_id" value="<?= (int) ($personaId ?? 0) ?>">
+        <input type="hidden" id="sonic_params" name="sonic_params" value="<?= e((string) ($sonicParams ?? '')) ?>">
 
         <div class="admin-tabs piece-preview-tabs" role="tablist" style="margin-bottom: 1.5rem;">
             <button type="button" class="admin-tab active" data-tab="meta">Metadata</button>
@@ -178,8 +183,67 @@ $defaultTitle = 'AI ' . $generationModeLabel . ' Piece - ' . date('M d, Y H:i');
         }
     }
 
+    // Sound toggle — same pattern as piece-fullscreen.js/the edit form's
+    // preview: the iframe's document reloads on every regenerate/reload
+    // (srcdoc reassignment), so the button always re-queries the current
+    // iframe rather than caching a reference.
+    (function () {
+        var soundToggle = document.getElementById('preview-sound-toggle');
+        if (!soundToggle) return;
+        var soundEnabled = false;
+
+        function currentIframe() {
+            var wrapper = document.getElementById('preview-iframe-wrapper');
+            return wrapper ? wrapper.querySelector('iframe') : null;
+        }
+
+        window.setPreviewSoundToggleVisibility = function () {
+            soundToggle.hidden = !currentSonicParams();
+            soundEnabled = false;
+            soundToggle.setAttribute('aria-pressed', 'false');
+            soundToggle.setAttribute('aria-label', 'Unmute sound');
+            soundToggle.textContent = 'Unmute';
+        };
+
+        soundToggle.addEventListener('click', function () {
+            var next = !soundEnabled;
+            var iframe = currentIframe();
+            if (iframe && iframe.contentWindow) {
+                iframe.contentWindow.postMessage({ type: 'creatr-sound-toggle', enabled: next }, '*');
+            }
+            soundEnabled = next;
+            soundToggle.setAttribute('aria-pressed', next ? 'true' : 'false');
+            soundToggle.setAttribute('aria-label', next ? 'Mute sound' : 'Unmute sound');
+            soundToggle.textContent = next ? 'Mute' : 'Unmute';
+        });
+
+        window.addEventListener('message', function (event) {
+            var iframe = currentIframe();
+            if (!iframe || event.source !== iframe.contentWindow || !event.data || event.data.type !== 'creatr-sound-state') {
+                return;
+            }
+            soundEnabled = !!event.data.enabled;
+            soundToggle.setAttribute('aria-pressed', soundEnabled ? 'true' : 'false');
+            soundToggle.setAttribute('aria-label', soundEnabled ? 'Mute sound' : 'Unmute sound');
+            soundToggle.textContent = soundEnabled ? 'Mute' : 'Unmute';
+        });
+
+        setPreviewSoundToggleVisibility();
+    })();
+
     var updateTimeout = null;
     var thumbnailRevision = 0;
+    function currentSonicParams() {
+        var input = document.getElementById('sonic_params');
+        if (!input || !input.value) return null;
+        try {
+            var parsed = JSON.parse(input.value);
+            return (parsed && typeof parsed === 'object') ? parsed : null;
+        } catch (e) {
+            return null;
+        }
+    }
+
     function renderPreviewDocument() {
         var html = document.getElementById('html_code').value;
         var css = document.getElementById('css_code').value;
@@ -193,7 +257,8 @@ $defaultTitle = 'AI ' . $generationModeLabel . ' Piece - ' . date('M d, Y H:i');
             css: css,
             js: js,
             runtimeOrigin: RUNTIME_ORIGIN,
-            preserveDrawingBuffer: true
+            preserveDrawingBuffer: true,
+            sonicParams: currentSonicParams()
         });
 
         var wrapper = document.getElementById('preview-iframe-wrapper');
@@ -203,6 +268,7 @@ $defaultTitle = 'AI ' . $generationModeLabel . ' Piece - ' . date('M d, Y H:i');
                 iframe.srcdoc = docTemplate;
             }
         }
+        setPreviewSoundToggleVisibility();
     }
     function updatePreview() {
         clearTimeout(updateTimeout);

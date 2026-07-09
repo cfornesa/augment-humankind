@@ -11,6 +11,10 @@ $profiles = $profiles ?? [];
 $preferredProfileId = $preferredProfileId ?? null;
 $pieceEngine = (string) ($piece['engine'] ?? 'p5');
 $aiRefineEnabled = feature_enabled('ai_pieces_code') && feature_ai_piece_engine_enabled($pieceEngine);
+$cv = $piece['current_version'] ?? [];
+$soundControlsAvailable = function_exists('art_piece_sonic_params_supported') && art_piece_sonic_params_supported();
+$currentSonicFeel = $soundControlsAvailable ? art_piece_sonic_feel($cv['sonic_params'] ?? null) : '';
+$currentSonicEnabled = $soundControlsAvailable && !empty($cv['sonic_params']);
 ?>
 <style>
 .editor-workspace {
@@ -528,7 +532,6 @@ $aiRefineEnabled = feature_enabled('ai_pieces_code') && feature_ai_piece_engine_
                     </div>
 
                     <?php
-                    $cv = $piece['current_version'] ?? [];
                     $versionNum = $cv['version_number'] ?? null;
                     ?>
                     <!-- HTML Tab -->
@@ -603,6 +606,18 @@ if ($engineVal === 'p5') {
                             <textarea id="ai_refine_prompt" rows="6" placeholder="Describe the changes you want to make, e.g., 'Turn the background to deep blue and make the shapes expand and contract.'"></textarea>
                             <small>This will send your prompt and the current code blocks in the HTML/CSS/JS tabs above to the AI, then suggest changes that you can inspect, edit, and accept or reject.</small>
                         </div>
+                        <?php if ($soundControlsAvailable): ?>
+                        <div class="field">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="ai_sound_enabled" value="1">
+                                Add or update instrumentation
+                            </label>
+                        </div>
+                        <div class="field" id="ai-sound-feel-field" style="display:none;">
+                            <label for="ai_sound_feel">Tone Feel</label>
+                            <textarea id="ai_sound_feel" rows="2" maxlength="400" placeholder="E.g. 'Ethereal, minor scale theremin sound.'"><?= e($currentSonicFeel) ?></textarea>
+                        </div>
+                        <?php endif; ?>
                         <div style="margin-top: 1rem;">
                             <div id="ai-refine-status" role="status" aria-live="polite" style="min-height:1.4em; margin-bottom:0.5rem; font-size:0.875rem; color:var(--ink-soft);"></div>
                             <button type="button" id="btn-refine-ai" class="admin-btn" style="background: var(--yellow);">Request AI Changes</button>
@@ -622,6 +637,9 @@ if ($engineVal === 'p5') {
                 <div class="preview-container">
                     <div class="preview-header">
                         <h3>Interactive Live Canvas</h3>
+                        <button type="button" id="preview-sound-toggle" class="admin-btn admin-btn-sm admin-btn-ghost" data-piece-sound-toggle aria-pressed="false" aria-label="Unmute sound" hidden>
+                            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4z"/><line x1="22" y1="9" x2="16" y2="15"/><line x1="16" y1="9" x2="22" y2="15"/></svg>
+                        </button>
                         <div class="preview-dimensions" id="preview-dimensions">WebGL/Canvas Active</div>
                     </div>
                     <div class="preview-stage" id="preview-stage-wrapper">
@@ -674,6 +692,9 @@ if ($engineVal === 'p5') {
     var aiProfileField = document.getElementById('ai_profile_id');
     var aiPersonaField = document.getElementById('ai_persona_id');
     var aiPromptField = document.getElementById('ai_refine_prompt');
+    var aiSoundToggle = document.getElementById('ai_sound_enabled');
+    var aiSoundFeelField = document.getElementById('ai_sound_feel');
+    var aiSoundFeelWrap = document.getElementById('ai-sound-feel-field');
 
     var aiBanner = document.getElementById('ai-suggestion-banner');
     var btnAiAccept = document.getElementById('btn-ai-accept');
@@ -692,6 +713,18 @@ if ($engineVal === 'p5') {
     var lastVisualDeltaLow = false;
     var lastRefineFeedback = '';
     var lastProposedCode = null;
+    var lastProposedSonicParams = null;
+    // The piece's currently-saved sound (if any) — never mutated; used to
+    // reset the preview when an AI suggestion is rejected/cleared.
+    var savedPreviewSonicParams = <?= json_encode(
+        (is_array($cv) && !empty($cv['sonic_params'])) ? json_decode((string) $cv['sonic_params'], true) : null
+    ) ?>;
+    // What the preview actually renders — starts as the saved value, updated
+    // to the proposed sonic_params after a successful AI Refine so the
+    // preview always reflects whatever is about to be saved/accepted.
+    var currentPreviewSonicParams = savedPreviewSonicParams;
+    var previewSoundToggle = document.getElementById('preview-sound-toggle');
+    var previewIframe = null;
     var isAiRequestInFlight = false;
     var lastDialogClosedAt = 0;
     // Carries the successful attempt's persisted draft version forward to
@@ -710,6 +743,12 @@ if ($engineVal === 'p5') {
     var REFINE_RETRY_COOLDOWN_SECONDS = 30;
 
     // 1. Tab Switching
+    if (aiSoundToggle && aiSoundFeelWrap) {
+        aiSoundToggle.addEventListener('change', function () {
+            aiSoundFeelWrap.style.display = this.checked ? 'block' : 'none';
+        });
+    }
+
     tabs.forEach(function (tab) {
         tab.addEventListener('click', function () {
             tabs.forEach(function (t) { 
@@ -729,7 +768,7 @@ if ($engineVal === 'p5') {
     });
 
     // 2. Render Helper
-    function renderDocumentJS(title, engine, html, css, js, preserveDrawingBuffer) {
+    function renderDocumentJS(title, engine, html, css, js, preserveDrawingBuffer, sonicParams) {
         return window.CreatrPieceCapture.renderDocument({
             title: title,
             engine: engine,
@@ -737,7 +776,36 @@ if ($engineVal === 'p5') {
             css: css,
             js: js,
             runtimeOrigin: RUNTIME_ORIGIN,
-            preserveDrawingBuffer: preserveDrawingBuffer !== false
+            preserveDrawingBuffer: preserveDrawingBuffer !== false,
+            sonicParams: sonicParams || null
+        });
+    }
+
+    // Sound toggle: mirrors piece-fullscreen.js's pattern for the public
+    // site, except the target iframe is replaced on every re-render, so the
+    // click handler and message listener always read the current reference
+    // (previewIframe) rather than closing over a stale one.
+    var previewSoundEnabled = false;
+    function setPreviewSoundBtnState(muted) {
+        if (!previewSoundToggle) return;
+        previewSoundToggle.setAttribute('aria-pressed', muted ? 'false' : 'true');
+        previewSoundToggle.setAttribute('aria-label', muted ? 'Unmute sound' : 'Mute sound');
+    }
+    if (previewSoundToggle) {
+        previewSoundToggle.addEventListener('click', function () {
+            var next = !previewSoundEnabled;
+            if (previewIframe && previewIframe.contentWindow) {
+                previewIframe.contentWindow.postMessage({ type: 'creatr-sound-toggle', enabled: next }, '*');
+            }
+            previewSoundEnabled = next;
+            setPreviewSoundBtnState(!next);
+        });
+        window.addEventListener('message', function (event) {
+            if (!previewIframe || event.source !== previewIframe.contentWindow || !event.data || event.data.type !== 'creatr-sound-state') {
+                return;
+            }
+            previewSoundEnabled = !!event.data.enabled;
+            setPreviewSoundBtnState(!previewSoundEnabled);
         });
     }
 
@@ -751,7 +819,7 @@ if ($engineVal === 'p5') {
         var js = jsField.value || '';
 
         // Generate full document srcdoc
-        var srcdoc = renderDocumentJS(title, engine, html, css, js);
+        var srcdoc = renderDocumentJS(title, engine, html, css, js, true, currentPreviewSonicParams);
 
         // Remove old iframe and mount a fresh one to reset JS state completely
         previewStage.innerHTML = '';
@@ -764,6 +832,15 @@ if ($engineVal === 'p5') {
         iframe.title = title;
         iframe.srcdoc = srcdoc;
         previewStage.appendChild(iframe);
+        previewIframe = iframe;
+
+        // A fresh iframe always boots muted (piece-runtime.js's own default),
+        // so the toggle must reset to match rather than carry over stale state.
+        previewSoundEnabled = false;
+        if (previewSoundToggle) {
+            previewSoundToggle.hidden = !currentPreviewSonicParams;
+            setPreviewSoundBtnState(true);
+        }
     }
 
     // Debounce preview updates for manual edits
@@ -907,13 +984,15 @@ if ($engineVal === 'p5') {
         document.getElementById('ai-diff-container').innerHTML = '';
         document.getElementById('ai-plan-container').innerHTML = '';
         document.getElementById('ai-visual-container').innerHTML = '';
+        lastProposedSonicParams = null;
+        currentPreviewSonicParams = savedPreviewSonicParams;
         lastVisualDeltaLow = false;
         lastRefineFeedback = '';
         if (btnAiStronger) btnAiStronger.hidden = true;
         if (btnAiAccept) btnAiAccept.textContent = 'Accept Changes';
     }
 
-    function renderVisualComparison() {
+function renderVisualComparison() {
         var visualContainer = document.getElementById('ai-visual-container');
         visualContainer.innerHTML = '';
 
@@ -957,6 +1036,7 @@ if ($engineVal === 'p5') {
             htmlField.value = lastProposedCode.html;
             cssField.value = lastProposedCode.css;
             jsField.value = lastProposedCode.js;
+            currentPreviewSonicParams = lastProposedSonicParams;
             updateLivePreview();
         });
 
@@ -972,6 +1052,7 @@ if ($engineVal === 'p5') {
             htmlField.value = originalCode.html;
             cssField.value = originalCode.css;
             jsField.value = originalCode.js;
+            currentPreviewSonicParams = savedPreviewSonicParams;
             updateLivePreview();
         });
     }
@@ -1001,8 +1082,9 @@ if ($engineVal === 'p5') {
             alert('Please select an active AI vendor profile.');
             return;
         }
-        if (!prompt) {
-            alert('Please enter a refinement instruction.');
+        var soundOnly = aiSoundToggle && aiSoundToggle.checked && aiSoundFeelField && aiSoundFeelField.value.trim() !== '';
+        if (!prompt && !soundOnly) {
+            alert('Please enter a refinement instruction, or a Tone Feel with sound enabled.');
             return;
         }
 
@@ -1051,6 +1133,10 @@ if ($engineVal === 'p5') {
             // than an error.
             piece_id: currentPieceId || 0
         };
+        if (aiSoundToggle && aiSoundToggle.checked) {
+            basePayload.sound_enabled = true;
+            basePayload.sound_feel = aiSoundFeelField ? aiSoundFeelField.value.trim() : '';
+        }
 
         var sequenceToken = (window.crypto && window.crypto.randomUUID)
             ? window.crypto.randomUUID()
@@ -1181,6 +1267,8 @@ if ($engineVal === 'p5') {
         // instead of inserting a duplicate.
         lastRefineProfileId = data.profile_id || null;
         lastRefinePersonaId = data.persona_id || null;
+        lastProposedSonicParams = Object.prototype.hasOwnProperty.call(data, 'sonic_params') ? data.sonic_params : null;
+        currentPreviewSonicParams = lastProposedSonicParams;
         lastDraftVersionId = data.draft_version_id || null;
         lastSequenceToken = data.sequence_token || ctx.sequenceToken;
 
@@ -1411,6 +1499,7 @@ if ($engineVal === 'p5') {
                 refinement_prompt: refinementPrompt,
                 profile_id: lastRefineProfileId,
                 persona_id: lastRefinePersonaId,
+                sonic_params: lastProposedSonicParams,
                 // Promotes the exact draft version this successful attempt
                 // already persisted, instead of inserting a duplicate, and
                 // lets the server delete this sequence's failed-attempt
@@ -1470,6 +1559,7 @@ if ($engineVal === 'p5') {
             htmlField.value = originalCode.html;
             cssField.value = originalCode.css;
             jsField.value = originalCode.js;
+            currentPreviewSonicParams = savedPreviewSonicParams;
             updateLivePreview();
         }
         aiBanner.style.display = 'none';

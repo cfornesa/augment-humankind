@@ -30,6 +30,7 @@ $prompt = $version['prompt'] ?? $piece['prompt'] ?? '';
 $description = $piece['description'] ?? '';
 $aiProfileName = $version['ai_profile_name'] ?? '(Blank)';
 $aiPersonaName = $version['ai_persona_name'] ?? '(Blank)';
+$sonicFeel = art_piece_sonic_feel($version['sonic_params'] ?? null);
 
 // Build the three different iterations of embed codes mirroring legacy Node.js
 $titleSafe = htmlspecialchars($piece['title'] ?? 'Art piece', ENT_QUOTES | ENT_HTML5, 'UTF-8');
@@ -598,6 +599,7 @@ canvas[aria-hidden="true"] {
                     ],
                 ],
             ] : null,
+            'sound_action' => !$isStaticEmbed && !empty($version['sonic_params']) ? ['enabled' => true] : null,
             'show_fullscreen' => !$isStaticEmbed,
             'fullscreen_onclick' => 'toggleFullscreen()',
         ]) ?>
@@ -671,6 +673,12 @@ canvas[aria-hidden="true"] {
                         <dd class="prompt-val">"<?= e($prompt) ?>"</dd>
                     </div>
                 <?php endif; ?>
+                <?php if ($sonicFeel !== ''): ?>
+                    <div>
+                        <dt>Sound Feel</dt>
+                        <dd><?= e($sonicFeel) ?></dd>
+                    </div>
+                <?php endif; ?>
                 <?php if ($description !== ''): ?>
                     <div>
                         <dt>About this piece</dt>
@@ -708,6 +716,10 @@ canvas[aria-hidden="true"] {
                             AI Persona: <?= e($v['ai_persona_name'] ?? '(Blank)') ?>
                             <?php if (!empty($v['prompt'])): ?>
                                 <br>Prompt: <?= e($v['prompt']) ?>
+                            <?php endif; ?>
+                            <?php $versionSonicFeel = art_piece_sonic_feel($v['sonic_params'] ?? null); ?>
+                            <?php if ($versionSonicFeel !== ''): ?>
+                                <br>Sound Feel: <?= e($versionSonicFeel) ?>
                             <?php endif; ?>
                         </dd>
                     </div>
@@ -957,7 +969,14 @@ const title = <?= json_encode($piece['title'] ?? '') ?>;
 const prompt = <?= json_encode($prompt) ?>;
 const description = <?= json_encode($description) ?>;
 const sourceUrl = <?= json_encode($embedUrl) ?>;
-const viewerControlsOptions = { showViewerControls: <?= (!$isEmbedMode && !$isStaticEmbed) ? 'true' : 'false' ?> };
+// Optional Tone.js sonification params ({tempo, scale, instrument, feel}) — null
+// unless the piece-sound feature is on and this version stored a sonic block.
+const sonicParams = <?= json_encode(
+    !empty($version['sonic_params'])
+        ? json_decode((string) $version['sonic_params'], true)
+        : null
+) ?>;
+const viewerControlsOptions = { showViewerControls: <?= (!$isEmbedMode && !$isStaticEmbed) ? 'true' : 'false' ?>, sonicParams };
 
 const stage = document.getElementById('immersive-stage');
 

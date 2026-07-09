@@ -149,6 +149,74 @@ test('regular export bootstrap mirrors the live regular-view A-Frame teleport co
     assert_contains($render, 'raycaster.intersectObjects(scene.object3D?.children || [], true)');
 });
 
+echo "\n=== regular-view sound (Three.js/A-Frame only, muted by default) ===\n";
+
+test('mountExhibitWall sonifies only the camera-focused item, rebinding as focus changes', function () {
+    $immersiveSrc = file_get_contents(__DIR__ . '/../public/assets/js/immersive-gallery.js');
+    assert_contains($immersiveSrc, 'function computeFocusedSlotIndex()');
+    assert_contains($immersiveSrc, 'if (focusedIndex !== audioControllerIndex)');
+    assert_contains($immersiveSrc, 'audioController = createAudioController(focusedItem?.sonicParams, stageEl)');
+    // Old controller must be disposed on every rebind, and again on wall
+    // teardown, or a stale synth instance leaks.
+    assert_contains($immersiveSrc, 'audioController?.dispose();');
+});
+
+test('collection views/exports pass each item\'s own sonicParams and gate the sound toggle on any item having one', function () {
+    $collectionView = file_get_contents(__DIR__ . '/../public/app/views/immersive/collection.php');
+    assert_contains($collectionView, "'sonicParams' => !empty(\$version['sonic_params'])");
+    assert_contains($collectionView, "'sound_action' => \$hasAnySonic ? ['enabled' => true] : null");
+
+    $render = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
+    assert_contains($render, "'sonicParams' => !empty(\$version['sonic_params']) ? json_decode((string) \$version['sonic_params'], true) : null,\n    ];\n}");
+});
+
+test('piece-runtime.js wires the audio controller into both Three.js and A-Frame boot paths', function () use ($runtime) {
+    assert_contains($runtime, 'function createPieceRuntimeAudioController(sonicParams, getMover)');
+    assert_contains($runtime, 'pieceAudioController = createPieceRuntimeAudioController(PIECE_SONIC, () => state.camera)');
+    assert_contains($runtime, 'pieceAudioController = createPieceRuntimeAudioController(PIECE_SONIC, () => getAFrameCameraMover())');
+});
+
+test('piece-runtime.js audio controller does not assume a self-created toggle button exists', function () use ($runtime) {
+    // Regression guard: when a host page (e.g. pieces/show.php) owns the
+    // sound button and posts the toggle message, toggleBtn is null inside
+    // this iframe — an unguarded toggleBtn.disabled write throws and aborts
+    // the Tone.js load before it starts.
+    assert_not_contains($runtime, '  toggleBtn.disabled = true;');
+    assert_contains($runtime, 'if (toggleBtn) toggleBtn.disabled = true;');
+});
+
+test('piece_render_document injects sonic_params into the iframe context for three/aframe only', function () {
+    $render = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
+    assert_contains($render, "'sonic' => (in_array(\$engine, ['three', 'aframe'], true)");
+});
+
+test('pieces/show.php renders a gated sound toggle and posts creatr-sound-toggle to the iframe', function () {
+    $show = file_get_contents(__DIR__ . '/../public/app/views/pieces/show.php');
+    assert_contains($show, 'data-piece-sound-toggle');
+    assert_contains($show, "in_array(\$pieceEngine, ['three', 'aframe'], true)");
+
+    $fullscreenScript = file_get_contents(__DIR__ . '/../public/assets/js/piece-fullscreen.js');
+    assert_contains($fullscreenScript, "type: 'creatr-sound-toggle'");
+    assert_contains($fullscreenScript, "creatr-sound-state");
+});
+
+test('piece_export_document (non-immersive export) inlines a self-contained sound controller for three/aframe', function () {
+    $render = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
+    assert_contains($render, 'function piece_export_sonic_script(string $engine, string $sonicParamsJson, string $runtimeMode): string');
+    assert_contains($render, "in_array(\$engine, ['three', 'aframe'], true) || trim(\$sonicParamsJson) === ''");
+    // Bundle mode must embed Tone.js as a Blob so the export needs no network.
+    assert_contains($render, "piece_export_runtime_source_file('assets/vendor/tone/Tone.js')");
+    assert_contains($render, '__creatrSonicSetMover');
+});
+
+test('immersive export bundles Tone.js and wires sonicParams through to the mount* calls', function () {
+    $render = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
+    assert_contains($render, "['source_path' => \$publicRoot . '/assets/vendor/tone/Tone.js', 'zip_path' => 'runtime/tone/Tone.js']");
+    assert_contains($render, "'s.src = \"/assets/vendor/tone/Tone.js\";' => 's.src = \"runtime/tone/Tone.js\";'");
+    assert_contains($render, 'sonicParams: piece.sonicParams');
+    assert_contains($render, "'sound_action' => \$hasSonic ? ['enabled' => true] : null");
+});
+
 echo "\n=== PHP views load the shared runtime (not an inline copy) ===\n";
 
 foreach ([
@@ -203,6 +271,17 @@ foreach ([
 echo "\n=== immersive-gallery.js (separate implementation, same contract) ===\n";
 
 $immersive = file_get_contents(__DIR__ . '/../public/assets/js/immersive-gallery.js');
+
+test('createAudioController finds the sound toggle from the document, not scoped to stageEl', function () use ($immersive) {
+    // Regression guard: immersive_stage_toolbar_markup() renders the toggle
+    // as a SIBLING of #immersive-stage (both children of .stage-wrapper), not
+    // a descendant — stageEl.querySelector(...) can never find it, silently
+    // leaving the button unwired (no click listener attached at all, no
+    // error either) in the live view, single-piece export, and collection
+    // export alike.
+    assert_not_contains($immersive, 'stageEl?.querySelector?.("[data-immersive-sound-toggle]")');
+    assert_contains($immersive, 'document.querySelector("[data-immersive-sound-toggle]")');
+});
 
 test('mountThreeImmersivePiece startFrame passes frameCount, not elapsed/delta time', function () use ($immersive) {
     assert_contains($immersive, 'handler(frameCount)');
@@ -667,8 +746,8 @@ test('saved versions and immersive surfaces treat persisted generation mode as p
     $pieceModel = file_get_contents(__DIR__ . '/../public/app/models/PlatformArtPiece.php');
     $immersivePiece = file_get_contents(__DIR__ . '/../public/app/views/immersive/piece.php');
     $immersiveCollection = file_get_contents(__DIR__ . '/../public/app/views/immersive/collection.php');
-    assert_contains($versionModel, 'art_piece_version_select_columns(self::hasGenerationModeColumn(), true, true)');
-    assert_contains($versionModel, 'art_piece_version_storage_columns(self::hasGenerationModeColumn())');
+    assert_contains($versionModel, 'art_piece_version_select_columns(self::hasGenerationModeColumn(), true, true, self::hasSonicParamsColumn())');
+    assert_contains($versionModel, 'art_piece_version_storage_columns(self::hasGenerationModeColumn(), self::hasSonicParamsColumn())');
     assert_contains($versionModel, 'if (self::hasGenerationModeColumn())');
     assert_contains($versionModel, "return ah_column_exists('art_piece_versions', 'generation_mode');");
     assert_contains($pieceModel, 'art_piece_version_select_columns(self::versionHasGenerationMode())');
