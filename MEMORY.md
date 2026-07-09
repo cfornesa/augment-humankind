@@ -75,6 +75,20 @@ Source: DECISIONS.md 2026-07-06 Public Copy Subtabs, Footer Consolidation, Widen
 
 # Standing Decisions — Art Pieces, AI Generation & Immersive
 
+2026-07-09 CONSTRAINT Refine and regenerate partition scope by "purpose domain": when ONE refinement direction is filled, ONLY that direction is in scope — the other domain's content is context that must not change; BOTH directions may change only when both are filled.
+The original creative prompt is always labeled ### CONTEXT (never the goal — the directive is the ### PURPOSE OF THIS REFINEMENT header); out-of-scope asset refs (`image.png`, `/image/N`) are elided to `[(visual asset reference elided; out of scope for this audio-only refine)]` in audio-only mode only.
+
+2026-07-09 CONSTRAINT Regenerate inherits `purpose_domain` PURELY from lineage (`sound_enabled_lineage` + `sound_feel_lineage` captured at generation time, passed through as read-only hidden inputs) — never recomputed from new inputs at regenerate time; regeneration amplifies existing scope, never changes it.
+Generation lineage yields `'audio_visual'` or `'visual'` (never `'audio'` — pieces MUST have a visual prompt); sound-only lineage is reserved for a future refine-lineage regenerate flow the same arch already accommodates.
+
+2026-07-09 CORRECTION Sound is gated by the schema-column probe `art_piece_sonic_params_supported()` (true when `art_piece_versions.sonic_params` exists) — there is NO `ai_pieces_sound` feature flag in PHP, despite two prior DECISIONS.md mentions claiming so (both corrected 2026-07-09).
+The agentic opencode-zen provider proxy auto-resolves file refs it finds in outbound prompt text, crashing text-only models with `"Cannot read 'image.png' (this model does not support image input)"`; quarantine out-of-scope asset refs when sending context that may contain them.
+
+2026-07-09 DECISION Scoping logic in refineAi() ensures visual-only prompt refinement preserves existing sonic_params, and sound-only prompt refinement keeps visuals unchanged and bypasses visual preflight validation.
+
+2026-07-09 DECISION Sound-only AI Refine saves bypass validation of refinement prompt when empty, falling back to "Update sound design: [feel]". A manual "Enable sound playback" metadata checkbox is rendered only if sound is associated with the piece, and stored inside `sonic_params.enabled`. Public/immersive pages and export bundlers respect this flag to disable audio playback. The client-side payload explicitly supplies `purpose_domain` to ensure scoping guarantees hold through all retry iterations (including "Request stronger changes" where visual prompts are empty but feedback is present). The "Setup Checklist" header link is moved to the sidebar navigation panel to prevent accidental clicks.
+
+
 2026-06-14 NOTE The platform's "VR mode" is the Three.js immersive presentation at `/immersive/pieces/{id}` — not WebXR/A-Frame (rolled back). Linked from `/pieces/{id}` and `/admin/pieces`.
 
 2026-06-15 DECISION Art piece engine whitelist: `p5`, `c2`, `three`, `svg` (plus A-Frame in immersive contexts). `/admin/pieces/{id}/edit` and `/create` use Metadata/HTML/CSS/JS tabs editing `current_version` in place; split-pane editor on desktop, full-canvas on tablet/mobile.
@@ -164,6 +178,10 @@ Source: DECISIONS.md 2026-07-05 Shared Top Stage Toolbar session.
 2026-06-20 NOTE When an AI failure can't be explained from the audit log (`audit_log_redact_value()` truncates metadata to 500 chars), reproduce it with a standalone CLI script calling the same generate/extract/apply functions against the real piece/profile/instruction — that method found the `javascript`-vs-`js` bug after log-snippet guessing failed three times.
 
 2026-06-12 NOTE `scripts/verify-contact-config.php` probes `/contact` (not `/notes`) because DB-backed managed pages `exit` early — relevant if routing changes again.
+
+2026-07-09 DECISION A per-item controller must never own a DOM listener when its own lifecycle is shorter than the DOM element's — `mountExhibitWall`'s per-focus-change `createAudioController()` instances each attached/detached the shared sound button's click listener, so any focused item with no sonicParams left the button silently unwired. Fixed by having the longer-lived owner (the wall) hold one persistent listener and drive whichever controller is currently bound via exposed methods.
+
+2026-07-09 CORRECTION Other AI tools (Opencode Go, Antigravity) have been editing this same codebase concurrently with Claude Code sessions — always re-check current file state via fresh reads/Explore before trusting session memory, and scan DECISIONS.md for entries not yet seen this session before assuming a reported bug is unaddressed.
 
 # Closed Investigations — do not re-litigate
 

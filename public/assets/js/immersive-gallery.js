@@ -1860,8 +1860,20 @@ function _sonicMidiToFreq(m) { return 440 * Math.pow(2, (m - 69) / 12); }
 // camera motion (via update()) modulates pitch/octave and resets the idle
 // clock, so sound settles back to the idle pattern ~2s after motion stops.
 // Returns null when there are no usable sonic params — callers no-op safely.
-function createAudioController(sonicParams, stageEl) {
+// opts.attachListener (default true): single-piece mounts (three/aframe/
+// gallery) each own exactly one controller for the page's lifetime, so the
+// controller can safely own the toggle button's click listener directly.
+// mountExhibitWall passes attachListener:false — it tears down and rebuilds
+// a controller every time camera focus moves to a different wall item, and
+// a controller for an item with no sonicParams is `null` entirely (see the
+// early return above), so a listener living inside the controller would be
+// attached/detached unpredictably as focus moves, silently going dead
+// whenever the focused item happens to have no sound. In that mode the wall
+// owns ONE persistent listener across all rebinds and drives this
+// controller via the exposed toggleEnabled()/syncButton() methods instead.
+function createAudioController(sonicParams, stageEl, opts = {}) {
   if (!sonicParams || typeof sonicParams !== "object") return null;
+  const attachListener = opts.attachListener !== false;
 
   const scaleName = SONIC_SCALES[sonicParams.scale] ? sonicParams.scale : "major";
   const scale = SONIC_SCALES[scaleName];
@@ -1936,7 +1948,7 @@ function createAudioController(sonicParams, stageEl) {
     }
   }
 
-  async function onToggleClick() {
+  async function toggleEnabled() {
     if (disposed) return;
     // Mute path: synth already exists, just turn off triggering.
     if (enabled && synth) {
@@ -1947,7 +1959,7 @@ function createAudioController(sonicParams, stageEl) {
     // Unmute path: lazily load Tone.js on the first unmute (this click is
     // the autoplay-unlocking gesture Tone.start() requires).
     try {
-      toggleBtn.disabled = true;
+      if (toggleBtn) toggleBtn.disabled = true;
       const Tone = await loadToneOnce();
       await Tone.start();
       if (disposed) return;
@@ -1969,12 +1981,15 @@ function createAudioController(sonicParams, stageEl) {
     }
   }
 
-  if (toggleBtn) {
+  if (attachListener && toggleBtn) {
     setBtnState(true);
-    toggleBtn.addEventListener("click", onToggleClick);
+    toggleBtn.addEventListener("click", toggleEnabled);
   }
 
   return {
+    toggleEnabled,
+    syncButton: setBtnState,
+    isEnabled: () => enabled,
     update(motion) {
       if (!enabled || !synth || disposed) return;
       const dx = motion?.dx || 0, dy = motion?.dy || 0, dz = motion?.dz || 0;
@@ -1992,7 +2007,7 @@ function createAudioController(sonicParams, stageEl) {
     dispose() {
       disposed = true; enabled = false;
       if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
-      if (toggleBtn) toggleBtn.removeEventListener("click", onToggleClick);
+      if (attachListener && toggleBtn) toggleBtn.removeEventListener("click", toggleEnabled);
       try { synth?.dispose?.(); } catch (_e) {}
     },
   };
@@ -3768,6 +3783,35 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
     return closestIndex;
   }
 
+  // The toggle button is shared across every wall item, but which item
+  // (if any) currently has sonicParams changes as focus moves — a
+  // per-focus-change controller (attachListener:false) has no listener of
+  // its own, so the wall owns exactly ONE persistent listener here instead
+  // of one that's silently attached/detached as createAudioController is
+  // torn down and rebuilt. When the focused item has no sound at all,
+  // audioController is null and the button is disabled with a clear label
+  // rather than sitting there clickable-but-inert.
+  const wallSoundToggleBtn = document.querySelector("[data-immersive-sound-toggle]");
+  function syncWallSoundButton() {
+    if (!wallSoundToggleBtn) return;
+    if (!audioController) {
+      wallSoundToggleBtn.disabled = true;
+      wallSoundToggleBtn.style.opacity = "0.4";
+      wallSoundToggleBtn.setAttribute("aria-label", "No sound for this piece");
+    } else {
+      wallSoundToggleBtn.disabled = false;
+      wallSoundToggleBtn.style.opacity = "";
+      audioController.syncButton(true); // a freshly (re)bound controller always starts muted
+    }
+  }
+  function onWallSoundToggleClick() {
+    audioController?.toggleEnabled();
+  }
+  if (wallSoundToggleBtn) {
+    wallSoundToggleBtn.addEventListener("click", onWallSoundToggleClick);
+    syncWallSoundButton(); // establish the initial disabled/enabled state before the first animate() frame
+  }
+
   function getLiveSlots() {
     const budget = getProgressiveExhibitLiveBudget(window.innerWidth);
     return selectProgressiveExhibitSlots(items, shell.slots.map(s => s.center), shell.controls.target, budget);
@@ -4305,10 +4349,11 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
     if (focusedIndex !== audioControllerIndex && nowTs - lastAudioRebindAt >= AUDIO_REBIND_COOLDOWN_MS) {
       audioController?.dispose();
       const focusedItem = focusedIndex >= 0 ? items[focusedIndex] : null;
-      audioController = createAudioController(focusedItem?.sonicParams, stageEl);
+      audioController = createAudioController(focusedItem?.sonicParams, stageEl, { attachListener: false });
       audioControllerIndex = focusedIndex;
       lastAudioRebindAt = nowTs;
       exhibitAudioPrevInit = false;
+      syncWallSoundButton();
     }
     if (audioController && shell.camera) {
       if (exhibitAudioPrevInit) {
@@ -4353,6 +4398,7 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
     resizeObserver.disconnect();
     cancelAnimationFrame(frameId);
     audioController?.dispose();
+    if (wallSoundToggleBtn) wallSoundToggleBtn.removeEventListener("click", onWallSoundToggleClick);
     activeRuntimes.forEach(runtime => {
       runtime.stop?.();
       runtime.texture?.dispose();

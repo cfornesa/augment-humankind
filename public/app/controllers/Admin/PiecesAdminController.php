@@ -288,7 +288,15 @@ class PiecesAdminController
                         'css_code' => $currentVersion['css_code'] ?? null,
                         'generated_code' => $currentVersion['generated_code'] ?? '',
                     ];
-                    art_piece_preflight_document($data['engine'], $versionCode['html_code'], $versionCode['css_code'], $versionCode['generated_code'], $generationMode);
+                    if ($codeChanged) {
+                        // Only validate code that's actually being saved new —
+                        // re-running preflight against unchanged code (e.g. a
+                        // sonic-only save) can spuriously reject an
+                        // already-live, already-working piece over a rule it
+                        // was never checked against on whatever path first
+                        // saved it.
+                        art_piece_preflight_document($data['engine'], $versionCode['html_code'], $versionCode['css_code'], $versionCode['generated_code'], $generationMode);
+                    }
                     // Every code-changing save creates a new version rather
                     // than overwriting the current one in place, so version
                     // history is meaningful and "Revert" has something to
@@ -683,7 +691,17 @@ class PiecesAdminController
     // just preserves whatever the version already had.
     private static function resolveSonicParamsFromPost(?string $fallback = null): ?string
     {
-        return art_piece_sonic_params_supported() ? $fallback : null;
+        if (!art_piece_sonic_params_supported() || $fallback === null || trim($fallback) === '') {
+            return null;
+        }
+        $decoded = json_decode($fallback, true);
+        if (!is_array($decoded)) {
+            return null;
+        }
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            $decoded['enabled'] = isset($_POST['sound_playback_active']);
+        }
+        return json_encode($decoded, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     }
 
     private static function normalizeSonicParamsInput(mixed $value, ?string $fallback = null): ?string
@@ -1061,6 +1079,18 @@ class PiecesAdminController
                 'prompt' => $prompt,
                 'profile_id' => $profileId,
                 'persona_id' => $personaId,
+                // Sound lineage: the regenerate endpoint derives its
+                // purpose_domain PURELY from these (per the per-domain
+                // rule, lineage is the only determinant). sound_feel is
+                // the prose the admin wrote at generate time — needed to
+                // re-emit the sonic capability instructions in the system
+                // prompt on a regenerate with audio in scope. sound_enabled
+                // marks that this generation was an audio+visual
+                // generation, even if the model returned a null sonic
+                // block (in which case sonic_params would be null but the
+                // lineage intent is still audible).
+                'sound_feel' => $soundFeel,
+                'sound_enabled_lineage' => $soundEnabled,
             ]);
             echo json_encode(['success' => true]);
 
@@ -1121,6 +1151,11 @@ class PiecesAdminController
         $prompt = (string) ($original['prompt'] ?? $pending['prompt'] ?? '');
         $profileId = (int) ($original['profile_id'] ?? $pending['profile_id'] ?? 0);
         $personaId = (int) ($original['persona_id'] ?? $pending['persona_id'] ?? 0);
+        // Lineage: audio domain constants. Rendered as hidden inputs in
+        // generate-preview.php so the regenerate fetch carries them onward;
+        // the regenerate endpoint derives purpose_domain PURELY from these.
+        $soundFeelLineage = (string) ($original['sound_feel'] ?? '');
+        $soundEnabledLineage = (bool) ($original['sound_enabled_lineage'] ?? false);
 
         require dirname(__DIR__, 2) . '/views/admin/pieces/generate-preview.php';
     }
@@ -1261,6 +1296,21 @@ class PiecesAdminController
             $allowedMediaRefs = art_piece_extract_prompt_media_refs($prompt);
             $existingMediaRefs = art_piece_collect_cms_media_refs($html, $css, $js);
 
+            // Audio lineage (per the per-domain rule, lineage is the ONLY
+            // determinant of what a regenerate may touch). For generation
+            // lineage the visual domain is ALWAYS in scope (pieces MUST
+            // have a visual prompt — generation never produces sound-only
+            // pieces), so the lineage-induced purpose_domain is either
+            // 'visual' (no audio lineage) or 'audio_visual' (audio lineage
+            // present). 'audio' (sound-only) lineage here is a no-op —
+            // generation can never carry it, and a future refine-lineage
+            // regenerate flow can use the same arch cleanly when wired in.
+            $soundFeelLineage = trim((string) ($input['sound_feel_lineage'] ?? ''));
+            $soundEnabledLineage = art_piece_sonic_params_supported() && !empty($input['sound_enabled_lineage']);
+            $currentSonicParams = (string) ($input['sonic_params'] ?? '');
+            $purposeDomain = $soundEnabledLineage ? 'audio_visual' : 'visual';
+            $soundOnly = ($purposeDomain === 'audio');
+
             if ($prompt === '') {
                 throw new InvalidArgumentException('Prompt is required.');
             }
@@ -1293,15 +1343,32 @@ class PiecesAdminController
                     $systemPrompt .= "\n\n" . $modelCapability;
                 }
             }
+            // Sonic capability instructions when the lineage placed audio
+            // in scope — parity with refineAi()'s handling, so a regenerate
+            // of an audio+visual generation actually improves the sound
+            // design rather than silently dropping it. Previously regenerate
+            // discarded the audio lineage and produced visual-only output.
+            if ($soundEnabledLineage) {
+                $sonicCapability = art_piece_sonic_capability_prompt($engine, $soundFeelLineage);
+                if ($sonicCapability !== '') {
+                    $systemPrompt .= "\n\n" . $sonicCapability;
+                }
+            }
             if ($persona) {
                 $systemPrompt .= "\n\nPersona guidance:\n" . trim((string) $persona['system_prompt']) . "\n\nUse the persona to influence style and creative direction, but still obey all engine, safety, and output-format requirements.";
             }
 
-            $regenerateInstruction = 'Rebuild this piece so it better fulfills the original creative prompt. Treat the current code as the starting point, but revise any relevant HTML, CSS, or JS needed to improve fidelity, composition, and behavior while preserving the prompt-requested CMS media.';
+            // Lineage-aware regenerate instruction: visual-only lineage
+            // rebuilds the visuals; audio+visual lineage improves both the
+            // visuals AND the sound design together (the only mode in
+            // which regenerate may touch sound).
+            $regenerateInstruction = $soundEnabledLineage
+                ? 'Rebuild this piece so it better fulfills the original creative prompt. Treat the current code as the starting point, but revise any relevant HTML, CSS, or JS needed to improve visual fidelity, composition, and behavior, AND revise the sound design / instrumentation to better realize the sonic feel, while preserving the prompt-requested CMS media.'
+                : 'Rebuild this piece so it better fulfills the original creative prompt. Treat the current code as the starting point, but revise any relevant HTML, CSS, or JS needed to improve fidelity, composition, and behavior while preserving the prompt-requested CMS media. Do not produce any sound design; the lineage did not request sound.';
             if ($attemptNumber === 1) {
-                $userPromptForApi = art_piece_refine_user_prompt($engine, $regenerateInstruction, $html, $css, $js, $prompt, $allowedMediaRefs);
+                $userPromptForApi = art_piece_refine_user_prompt($engine, $regenerateInstruction, $html, $css, $js, $prompt, $allowedMediaRefs, $purposeDomain);
             } else {
-                $userPromptForApi = art_piece_refine_repair_prompt($engine, $regenerateInstruction, $clientPreviousRawResponse, $clientLastError !== '' ? $clientLastError : 'Unknown failure', $html, $css, $js, $allowedMediaRefs);
+                $userPromptForApi = art_piece_refine_repair_prompt($engine, $regenerateInstruction, $clientPreviousRawResponse, $clientLastError !== '' ? $clientLastError : 'Unknown failure', $html, $css, $js, $allowedMediaRefs, $purposeDomain);
             }
 
             $res = $aiClient->generate($systemPrompt, $userPromptForApi, suppressPlanningPreamble: false, maxTokensOverride: 24576);
@@ -1316,11 +1383,26 @@ class PiecesAdminController
             $rawText = $res['text'];
             $previousRawResponse = $rawText;
             $patches = art_piece_extract_refine_patches($rawText);
-            if (!$patches['html'] && !$patches['css'] && !$patches['js']) {
+            // Sonic-block extraction: when the lineage placed audio in
+            // scope, a regenerated sonic block is valid output (when the
+            // model revises only the sound, with visuals unchanged). When
+            // the lineage was visual-only, any sonic output is discarded
+            // — the OUT-OF-SCOPE domain must not change.
+            $blocks = art_piece_extract_code_blocks($rawText);
+            if ($soundEnabledLineage) {
+                $regeneratedSonicParams = validate_art_piece_sonic_params($blocks['sonicParams'] ?? null)
+                    ?? art_piece_sonic_params_from_feel($soundFeelLineage);
+                $currentSonicForCompare = $currentSonicParams !== '' ? $currentSonicParams : null;
+                $sonicChanged = !art_piece_sonic_params_equal($regeneratedSonicParams, $currentSonicForCompare);
+            } else {
+                $regeneratedSonicParams = null;
+                $sonicChanged = false;
+            }
+            if (!$patches['html'] && !$patches['css'] && !$patches['js'] && !$sonicChanged) {
                 if (preg_match('/```(?:css|javascript|js)\b/i', $rawText) && !preg_match('/\bPATCH\s/i', $rawText)) {
                     throw new RuntimeException('AI ignored the required PATCH format and returned full rewritten files in fenced code blocks instead of a diff.');
                 }
-                throw new RuntimeException('AI response contained no valid PATCH blocks in the required format — at least one PATCH is required to regenerate the preview.');
+                throw new RuntimeException('AI response contained no valid PATCH blocks in the required format — at least one PATCH' . ($soundEnabledLineage ? ' or a valid ```sonic``` block' : '') . ' is required to regenerate the preview.');
             }
 
             $extractedHtml = art_piece_apply_refine_patches($html, $patches['html']);
@@ -1342,6 +1424,11 @@ class PiecesAdminController
                 'html_code' => $extractedHtml,
                 'css_code' => $extractedCss,
                 'generated_code' => $extractedJs,
+                // Persist the regenerated (or carried-forward-unchanged)
+                // sonic_params on the pending preview row, parity with
+                // refineAi()'s draft-version persistence. Previously
+                // regenerate silently dropped the audio lineage here.
+                'sonic_params' => $regeneratedSonicParams,
             ]);
 
             echo json_encode([
@@ -1349,6 +1436,7 @@ class PiecesAdminController
                 'html_code' => $extractedHtml,
                 'css_code' => $extractedCss,
                 'generated_code' => $extractedJs,
+                'sonic_params' => (string) ($regeneratedSonicParams ?? ''),
                 'plan' => art_piece_extract_refine_plan($rawText),
                 'attempt_number' => $attemptNumber,
             ]);
@@ -1724,15 +1812,39 @@ class PiecesAdminController
             $clientLastError = trim((string) ($input['last_error'] ?? ''));
             $sequenceToken = trim((string) ($input['sequence_token'] ?? ''));
 
-            // Sound-only refine: no visual instructions were given, but a
-            // sonic "feel" was. $soundOnly is threaded into both prompt
-            // builders below (which omit visual code from the model
-            // entirely) and used again after the response comes back to
-            // force-clear any stray html/css/js patches — a model that
-            // ignores the prompt still can't leak a visual change through.
-            $soundOnly = $prompt === '' && $soundEnabled && $soundFeel !== '';
+            // Three-state purpose domain, derived from which instruction
+            // field(s) the admin filled in this request:
+            //  - prompt set, sound unchecked        => 'visual'
+            //  - prompt empty + sound feel provided => 'audio' (sound only)
+            //  - prompt set + sound feel provided   => 'audio_visual'
+            // Only one direction filled => only that direction is in scope;
+            // the other is OUT OF SCOPE and must not change (enforced inbound
+            // via art_piece_refine_user_prompt()'s $purposeDomain, outbound
+            // via the patch force-clear backstop below for 'audio'). The
+            // original creative prompt is always sent as CONTEXT, never as
+            // the directive — see the ### PURPOSE OF THIS REFINEMENT header.
+            $inputDomain = trim((string) ($input['purpose_domain'] ?? ''));
+            if ($inputDomain === 'audio' || $inputDomain === 'visual' || $inputDomain === 'audio_visual') {
+                $purposeDomain = $inputDomain;
+            } else {
+                $hasVisualPrompt = $prompt !== '';
+                $hasAudioPrompt = $soundEnabled && $soundFeel !== '';
+                if ($hasVisualPrompt && $hasAudioPrompt) {
+                    $purposeDomain = 'audio_visual';
+                } elseif ($hasAudioPrompt) {
+                    $purposeDomain = 'audio';
+                } else {
+                    $purposeDomain = 'visual';
+                }
+            }
+            $soundOnly = ($purposeDomain === 'audio');
             if ($soundOnly) {
-                $prompt = 'Keep the existing visuals exactly as they are — only update the sound design/instrumentation per the sonic instructions.';
+                $baseInstruction = 'Keep the existing visuals exactly as they are — only update the sound design/instrumentation per the sonic instructions.';
+                if ($prompt !== '') {
+                    $prompt = $baseInstruction . "\n\nSpecific sound instruction/feedback: " . $prompt;
+                } else {
+                    $prompt = $baseInstruction;
+                }
             }
             if ($prompt === '') {
                 throw new InvalidArgumentException('Prompt is required.');
@@ -1785,9 +1897,9 @@ class PiecesAdminController
             }
 
             if ($attemptNumber === 1) {
-                $userPromptForApi = art_piece_refine_user_prompt($engine, $prompt, $html, $css, $js, $originalPrompt ?: null, $allowedMediaRefs, $soundOnly);
+                $userPromptForApi = art_piece_refine_user_prompt($engine, $prompt, $html, $css, $js, $originalPrompt ?: null, $allowedMediaRefs, $purposeDomain);
             } else {
-                $userPromptForApi = art_piece_refine_repair_prompt($engine, $prompt, $clientPreviousRawResponse, $clientLastError !== '' ? $clientLastError : 'Unknown failure', $html, $css, $js, $allowedMediaRefs, $soundOnly);
+                $userPromptForApi = art_piece_refine_repair_prompt($engine, $prompt, $clientPreviousRawResponse, $clientLastError !== '' ? $clientLastError : 'Unknown failure', $html, $css, $js, $allowedMediaRefs, $purposeDomain);
             }
 
             // suppressPlanningPreamble=false: the PLAN+PATCH protocol
@@ -1818,19 +1930,21 @@ class PiecesAdminController
             $patches = art_piece_extract_refine_patches($rawText);
             if ($soundOnly) {
                 // Backstop: visual code was never even shown to the model
-                // (see art_piece_refine_user_prompt()'s $soundOnly branch),
-                // but if it hallucinates a patch anyway, discard it here —
-                // a sound-only request must never be able to change html/
-                // css/js, regardless of what the model returns.
+                // (see art_piece_refine_user_prompt()'s audio-purpose
+                // branch, where purposeDomain==='audio' omits the visual
+                // code blocks), but if it hallucinates a patch anyway,
+                // discard it here — a sound-only request must never be
+                // able to change html/css/js, regardless of what the
+                // model returns.
                 $patches['html'] = [];
                 $patches['css'] = [];
                 $patches['js'] = [];
             }
             $blocks = art_piece_extract_code_blocks($rawText);
-            $sonicParams = $soundEnabled
-                ? (validate_art_piece_sonic_params($blocks['sonicParams'] ?? null) ?? art_piece_sonic_params_from_feel($soundFeel))
-                : ($piece['current_version']['sonic_params'] ?? null);
-            $sonicChanged = $soundEnabled
+            $sonicParams = ($purposeDomain === 'visual')
+                ? ($piece['current_version']['sonic_params'] ?? null)
+                : (validate_art_piece_sonic_params($blocks['sonicParams'] ?? null) ?? art_piece_sonic_params_from_feel($soundFeel));
+            $sonicChanged = ($purposeDomain !== 'visual')
                 && !art_piece_sonic_params_equal($sonicParams, $piece['current_version']['sonic_params'] ?? null);
 
             // A response with zero patches across every file is not
@@ -1871,8 +1985,10 @@ class PiecesAdminController
                 $profileId, $personaId, $sequenceToken, $attemptNumber, 'pending', $sonicParams
             );
 
-            art_piece_preflight_document($engine, $extractedHtml, $extractedCss, $extractedJs, $persistedGenerationMode);
-            validate_art_piece_prompted_media_refs($allowedMediaRefs, $extractedHtml, $extractedCss, $extractedJs, $existingMediaRefs, false);
+            if (!$soundOnly) {
+                art_piece_preflight_document($engine, $extractedHtml, $extractedCss, $extractedJs, $persistedGenerationMode);
+                validate_art_piece_prompted_media_refs($allowedMediaRefs, $extractedHtml, $extractedCss, $extractedJs, $existingMediaRefs, false);
+            }
 
             // Canvas Preservation Constraints
             if (in_array($engine, art_piece_canvas_managed_engines(), true)) {
@@ -2079,16 +2195,22 @@ class PiecesAdminController
             $draftVersionId = (int) ($input['draft_version_id'] ?? 0) ?: null;
             $sequenceToken = trim((string) ($input['sequence_token'] ?? ''));
 
-            if ($refinementPrompt === '') {
-                throw new InvalidArgumentException('Refinement prompt is required.');
-            }
-
             $codeChanged = self::normalizeCode($html) !== self::normalizeCode($currentVersion['html_code'] ?? null)
                 || self::normalizeCode($css) !== self::normalizeCode($currentVersion['css_code'] ?? null)
                 || self::normalizeCode($js) !== self::normalizeCode($currentVersion['generated_code'] ?? null);
             $sonicChanged = $hasSubmittedSonic
                 && art_piece_sonic_params_supported()
                 && !art_piece_sonic_params_equal($sonicParams, $currentVersion['sonic_params'] ?? null);
+
+            if ($refinementPrompt === '') {
+                if (!$codeChanged && $sonicChanged) {
+                    $sonicParamsDecoded = json_decode((string) $sonicParams, true);
+                    $soundFeel = $sonicParamsDecoded['feel'] ?? 'unspecified feel';
+                    $refinementPrompt = 'Update sound design: ' . ($soundFeel !== '' ? $soundFeel : 'unspecified feel');
+                } else {
+                    throw new InvalidArgumentException('Refinement prompt is required.');
+                }
+            }
 
             if (!$codeChanged && !$sonicChanged) {
                 echo json_encode([
@@ -2220,6 +2342,15 @@ class PiecesAdminController
                 'attempt_count' => (int) ($pending['attempt_count'] ?? 1),
                 'profile_id' => (int) ($pending['profile_id'] ?? 0),
                 'persona_id' => (int) ($pending['persona_id'] ?? 0),
+                // Audio-lineage constants (per the per-domain rule,
+                // regenerate derives its purpose_domain PURELY from these).
+                // sound_feel is the prose the admin wrote at generate time
+                // (reused to re-emit sonic capability instructions on an
+                // audio-in-scope regenerate); sound_enabled_lineage marks
+                // that this generation was an audio+visual generation,
+                // even if the model produced no usable sonic_params block.
+                'sound_feel' => (string) ($pending['sound_feel'] ?? ''),
+                'sound_enabled_lineage' => (bool) ($pending['sound_enabled_lineage'] ?? false),
             ],
             'current' => [
                 'engine' => (string) ($pending['engine'] ?? 'p5'),

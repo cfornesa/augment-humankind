@@ -365,19 +365,35 @@ test('PDO connection classifier rejects unknown column query failure', function 
 echo "\n=== art_piece_refine_user_prompt ===\n";
 
 // 14. User prompt format
-test('User prompt includes all sections', function () {
-    // For SVG pieces, all sections including HTML are present
-    $svgPrompt = art_piece_refine_user_prompt('svg', 'Make it blue', '<div></div>', 'body{}', 'window.sketch = () => {};');
+test('User prompt includes all sections based on purpose domain', function () {
+    // For SVG pieces, visual sections are present under visual purpose
+    $svgPrompt = art_piece_refine_user_prompt('svg', 'Make it blue', '<div></div>', 'body{}', 'window.sketch = () => {};', purposeDomain: 'visual');
+    assert_contains($svgPrompt, 'PURPOSE: VISUAL ONLY');
     assert_contains($svgPrompt, 'CURRENT HTML CODE');
     assert_contains($svgPrompt, 'CURRENT CSS CODE');
     assert_contains($svgPrompt, 'CURRENT JAVASCRIPT CODE');
 
     // For non-SVG pieces (like p5), HTML is excluded and forbidden reminder is added
-    $p5Prompt = art_piece_refine_user_prompt('p5', 'Make it blue', '<div></div>', 'body{}', 'window.sketch = () => {};');
+    $p5Prompt = art_piece_refine_user_prompt('p5', 'Make it blue', '<div></div>', 'body{}', 'window.sketch = () => {};', purposeDomain: 'visual');
+    assert_contains($p5Prompt, 'PURPOSE: VISUAL ONLY');
     assert_not_contains($p5Prompt, 'CURRENT HTML CODE');
     assert_contains($p5Prompt, 'CURRENT CSS CODE');
     assert_contains($p5Prompt, 'CURRENT JAVASCRIPT CODE');
     assert_contains($p5Prompt, 'STRICTLY FORBIDDEN from editing or adding HTML patches');
+
+    // For audio purpose (sound-only), visual code blocks are excluded
+    $audioPrompt = art_piece_refine_user_prompt('p5', 'Make a sound', '<div></div>', 'body{}', 'window.sketch = () => {};', purposeDomain: 'audio');
+    assert_contains($audioPrompt, 'PURPOSE: AUDIO ONLY');
+    assert_not_contains($audioPrompt, 'CURRENT HTML CODE');
+    assert_not_contains($audioPrompt, 'CURRENT CSS CODE');
+    assert_not_contains($audioPrompt, 'CURRENT JAVASCRIPT CODE');
+
+    // For audio_visual purpose, both visual and audio are in scope
+    $avPrompt = art_piece_refine_user_prompt('p5', 'Make both changes', '<div></div>', 'body{}', 'window.sketch = () => {};', purposeDomain: 'audio_visual');
+    assert_contains($avPrompt, 'PURPOSE: AUDIO + VISUAL');
+    assert_not_contains($avPrompt, 'CURRENT HTML CODE');
+    assert_contains($avPrompt, 'CURRENT CSS CODE');
+    assert_contains($avPrompt, 'CURRENT JAVASCRIPT CODE');
 });
 
 test('User prompt repeats the minimal-edit reminder next to the instruction', function () {

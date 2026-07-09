@@ -153,8 +153,8 @@ echo "\n=== regular-view sound (Three.js/A-Frame only, muted by default) ===\n";
 
 test('mountExhibitWall sonifies only the camera-focused item, rebinding as focus changes', function () {
     $immersiveSrc = file_get_contents(__DIR__ . '/../public/assets/js/immersive-gallery.js');
-    assert_contains($immersiveSrc, 'function computeFocusedSlotIndex()');
-    assert_contains($immersiveSrc, 'if (focusedIndex !== audioControllerIndex)');
+    assert_contains($immersiveSrc, 'function computeFocusedSlotIndex');
+    assert_contains($immersiveSrc, 'if (focusedIndex !== audioControllerIndex');
     assert_contains($immersiveSrc, 'audioController = createAudioController(focusedItem?.sonicParams, stageEl)');
     // Old controller must be disposed on every rebind, and again on wall
     // teardown, or a stale synth instance leaks.
@@ -163,11 +163,12 @@ test('mountExhibitWall sonifies only the camera-focused item, rebinding as focus
 
 test('collection views/exports pass each item\'s own sonicParams and gate the sound toggle on any item having one', function () {
     $collectionView = file_get_contents(__DIR__ . '/../public/app/views/immersive/collection.php');
-    assert_contains($collectionView, "'sonicParams' => !empty(\$version['sonic_params'])");
+    assert_contains($collectionView, '$sonicParamsDecoded = !empty($version[\'sonic_params\'])');
     assert_contains($collectionView, "'sound_action' => \$hasAnySonic ? ['enabled' => true] : null");
 
     $render = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
-    assert_contains($render, "'sonicParams' => !empty(\$version['sonic_params']) ? json_decode((string) \$version['sonic_params'], true) : null,\n    ];\n}");
+    assert_contains($render, "collection_export_piece_item_payload");
+    assert_contains($render, "sonicParamsDecoded");
 });
 
 test('piece-runtime.js wires the audio controller into both Three.js and A-Frame boot paths', function () use ($runtime) {
@@ -185,25 +186,26 @@ test('piece-runtime.js audio controller does not assume a self-created toggle bu
     assert_contains($runtime, 'if (toggleBtn) toggleBtn.disabled = true;');
 });
 
-test('piece_render_document injects sonic_params into the iframe context for three/aframe only', function () {
+test('piece_render_document injects sonic_params into the iframe context', function () {
     $render = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
-    assert_contains($render, "'sonic' => (in_array(\$engine, ['three', 'aframe'], true)");
+    assert_contains($render, "'sonic' => !empty(\$version['sonic_params'])");
+    assert_contains($render, "(\$sonicDecoded['enabled'] ?? true) !== false");
 });
 
 test('pieces/show.php renders a gated sound toggle and posts creatr-sound-toggle to the iframe', function () {
     $show = file_get_contents(__DIR__ . '/../public/app/views/pieces/show.php');
     assert_contains($show, 'data-piece-sound-toggle');
-    assert_contains($show, "in_array(\$pieceEngine, ['three', 'aframe'], true)");
+    assert_contains($show, '$soundToggleAvailable = is_array($version)');
 
     $fullscreenScript = file_get_contents(__DIR__ . '/../public/assets/js/piece-fullscreen.js');
     assert_contains($fullscreenScript, "type: 'creatr-sound-toggle'");
     assert_contains($fullscreenScript, "creatr-sound-state");
 });
 
-test('piece_export_document (non-immersive export) inlines a self-contained sound controller for three/aframe', function () {
+test('piece_export_document (non-immersive export) inlines a self-contained sound controller', function () {
     $render = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
     assert_contains($render, 'function piece_export_sonic_script(string $engine, string $sonicParamsJson, string $runtimeMode): string');
-    assert_contains($render, "in_array(\$engine, ['three', 'aframe'], true) || trim(\$sonicParamsJson) === ''");
+    assert_contains($render, "trim(\$sonicParamsJson) === ''");
     // Bundle mode must embed Tone.js as a Blob so the export needs no network.
     assert_contains($render, "piece_export_runtime_source_file('assets/vendor/tone/Tone.js')");
     assert_contains($render, '__creatrSonicSetMover');
@@ -750,7 +752,7 @@ test('saved versions and immersive surfaces treat persisted generation mode as p
     assert_contains($versionModel, 'art_piece_version_storage_columns(self::hasGenerationModeColumn(), self::hasSonicParamsColumn())');
     assert_contains($versionModel, 'if (self::hasGenerationModeColumn())');
     assert_contains($versionModel, "return ah_column_exists('art_piece_versions', 'generation_mode');");
-    assert_contains($pieceModel, 'art_piece_version_select_columns(self::versionHasGenerationMode())');
+    assert_contains($pieceModel, 'art_piece_version_select_columns(self::versionHasGenerationMode(), false, false, self::versionHasSonicParamsColumn())');
     assert_contains($pieceModel, "return ah_column_exists('art_piece_versions', 'generation_mode');");
     assert_contains($pieceModel, 'public static function searchFilteredByGenerationMode(');
     assert_contains($immersivePiece, '$generationMode = art_piece_version_generation_mode($version, $piece);');
@@ -926,20 +928,19 @@ test('immersive-gallery.js has no static top-level import beyond the two uncondi
 
 test('the gyroscope feature loads DeviceOrientationControls via a contained dynamic import, not a static one', function () use ($immersive) {
     assert_contains($immersive, 'await import("/assets/js/three-device-orientation-controls.js")');
-    $setupBody = substr($immersive, strpos($immersive, 'async function setupGyroControls()'));
-    $setupBody = substr($setupBody, 0, strpos($setupBody, "\n    }\n"));
+    $setupBody = substr($immersive, strpos($immersive, 'function createSharedGyroController('));
+    $setupBody = substr($setupBody, 0, strpos($setupBody, '// Standalone image gallery mounting helper') ?: 5000);
     assert_contains($setupBody, 'try {');
     assert_contains($setupBody, 'catch');
 });
 
 test('Three.js gyro controls wait for real angles and calibrate first yaw to the visible view', function () use ($immersive) {
-    assert_contains($immersive, 'function requestGyroCalibration()');
+    assert_contains($immersive, 'function requestCalibration()');
     assert_contains($immersive, 'function hasDeviceOrientationAngles');
     assert_contains($immersive, 'function calibrateGyroToCurrentView()');
-    assert_contains($immersive, '_gyroBaselineQuat.copy(state.camera.quaternion)');
+    assert_contains($immersive, 'baselineQuat.copy(camera.quaternion)');
     assert_contains($immersive, 'if (hasDeviceOrientationAngles(deviceControls))');
     assert_contains($immersive, 'deviceControls.alphaOffset = bestOffset');
-    assert_contains($immersive, 'if (gyroActive) requestGyroCalibration();');
 });
 
 echo "\n=== Results ===\n";

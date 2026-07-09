@@ -49,6 +49,13 @@ $defaultTitle = 'AI ' . $generationModeLabel . ' Piece - ' . date('M d, Y H:i');
         <input type="hidden" id="profile_id" name="profile_id" value="<?= (int) ($profileId ?? 0) ?>">
         <input type="hidden" id="persona_id" name="persona_id" value="<?= (int) ($personaId ?? 0) ?>">
         <input type="hidden" id="sonic_params" name="sonic_params" value="<?= e((string) ($sonicParams ?? '')) ?>">
+        <!-- Audio-lineage hidden inputs: per the per-domain rule, regenerate
+             derives its purpose_domain PURELY from these (the original
+             generation's audio intention), NOT from any new user input on
+             the regenerate request (regenerate only amplifies existing
+             scope, never changes it). -->
+        <input type="hidden" id="sound_feel_lineage" name="sound_feel_lineage" value="<?= e($soundFeelLineage ?? '') ?>">
+        <input type="hidden" id="sound_enabled_lineage" name="sound_enabled_lineage" value="<?= $soundEnabledLineage ? '1' : '0' ?>">
 
         <div class="admin-tabs piece-preview-tabs" role="tablist" style="margin-bottom: 1.5rem;">
             <button type="button" class="admin-tab active" data-tab="meta">Metadata</button>
@@ -198,7 +205,8 @@ $defaultTitle = 'AI ' . $generationModeLabel . ' Piece - ' . date('M d, Y H:i');
         }
 
         window.setPreviewSoundToggleVisibility = function () {
-            soundToggle.hidden = !currentSonicParams();
+            var params = currentSonicParams();
+            soundToggle.hidden = !params || params.enabled === false;
             soundEnabled = false;
             soundToggle.setAttribute('aria-pressed', 'false');
             soundToggle.setAttribute('aria-label', 'Unmute sound');
@@ -361,6 +369,15 @@ $defaultTitle = 'AI ' . $generationModeLabel . ' Piece - ' . date('M d, Y H:i');
         var engineField = document.querySelector('input[name="engine"]');
         var generationModeField = document.getElementById('generation_mode');
         var thumbField = document.getElementById('thumbnail_data');
+        // Lineage hidden inputs — per the per-domain rule regenerate derives
+        // its purpose_domain PURELY from these (read-only lineage, never
+        // recomputed from scratch on a regenerate request). sonicField is
+        // the current (potentially already-regenerated) preview's sound
+        // design; soundFeelLineageField / soundEnabledLineageField are the
+        // audio-intent constants captured at generation time.
+        var sonicField = document.getElementById('sonic_params');
+        var soundFeelLineageField = document.getElementById('sound_feel_lineage');
+        var soundEnabledLineageField = document.getElementById('sound_enabled_lineage');
         var failedDialog = document.getElementById('preview-regenerate-failed-dialog');
         var failedTitle = document.getElementById('preview-regenerate-failed-title');
         var failedMessage = document.getElementById('preview-regenerate-failed-message');
@@ -393,6 +410,12 @@ $defaultTitle = 'AI ' . $generationModeLabel . ' Piece - ' . date('M d, Y H:i');
                 html_code: htmlField ? htmlField.value : '',
                 css_code: cssField ? cssField.value : '',
                 generated_code: jsField ? jsField.value : '',
+                // Audio lineage — passed straight through as read-only
+                // constants. The server derives purpose_domain solely
+                // from these (per the per-domain rule).
+                sound_feel_lineage: soundFeelLineageField ? soundFeelLineageField.value : '',
+                sound_enabled_lineage: soundEnabledLineageField ? (soundEnabledLineageField.value === '1') : false,
+                sonic_params: sonicField ? sonicField.value : '',
                 attempt_number: ctx.attemptNumber,
                 previous_raw_response: ctx.previousRawResponse || '',
                 last_error: ctx.lastError || '',
@@ -404,6 +427,16 @@ $defaultTitle = 'AI ' . $generationModeLabel . ' Piece - ' . date('M d, Y H:i');
             if (htmlField && typeof data.html_code === 'string') htmlField.value = data.html_code;
             if (cssField && typeof data.css_code === 'string') cssField.value = data.css_code;
             if (jsField && typeof data.generated_code === 'string') jsField.value = data.generated_code;
+            // Reflect the regenerated sound design back into the hidden
+            // input BEFORE renderPreviewDocument() — render() reads
+            // currentSonicParams() live from this input to assemble the
+            // preview iframe, so an updated value here is what surfaces
+            // the new instrumentation audibly in the preview. Previously
+            // regenerate silently dropped the sonic_params back to the
+            // client, leaving the preview with the original sound.
+            if (sonicField && Object.prototype.hasOwnProperty.call(data, 'sonic_params')) {
+                sonicField.value = (typeof data.sonic_params === 'string') ? data.sonic_params : '';
+            }
             thumbnailRevision++;
             if (thumbField) thumbField.value = '';
             renderPreviewDocument();

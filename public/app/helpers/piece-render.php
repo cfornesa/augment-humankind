@@ -63,7 +63,7 @@ function piece_render_document(array $piece, array $version, array $options = []
         // (p5, plain c2, svg) has no motion signal on this view and plays a
         // random idle note pattern instead.
         'sonic' => !empty($version['sonic_params'])
-            ? json_decode((string) $version['sonic_params'], true)
+            ? (($sonicDecoded = json_decode((string) $version['sonic_params'], true)) && ($sonicDecoded['enabled'] ?? true) !== false ? $sonicDecoded : null)
             : null,
         'toneSource' => !empty($options['tone_source']) ? (string) $options['tone_source'] : null,
     ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
@@ -311,7 +311,7 @@ function piece_export_sonic_script(string $engine, string $sonicParamsJson, stri
     }
 
     $decoded = json_decode($sonicParamsJson, true);
-    if (!is_array($decoded)) {
+    if (!is_array($decoded) || ($decoded['enabled'] ?? true) === false) {
         return '';
     }
 
@@ -596,8 +596,9 @@ function piece_export_immersive_document(array $piece, array $version, array $op
     $jsonEmbeddedDeviceOrientation = json_encode(piece_export_patched_device_orientation_source(), $jsonFlags);
     $jsonEmbeddedImmersiveGallery = json_encode(piece_export_patched_immersive_gallery_source(), $jsonFlags);
     $downloadBridgeScript = piece_export_download_bridge_script();
-    $hasSonic = !empty($version['sonic_params']);
-    $jsonSonic = json_encode($hasSonic ? json_decode((string) $version['sonic_params'], true) : null, $jsonFlags);
+    $sonicDecoded = !empty($version['sonic_params']) ? json_decode((string) $version['sonic_params'], true) : null;
+    $hasSonic = $sonicDecoded && ($sonicDecoded['enabled'] ?? true) !== false;
+    $jsonSonic = json_encode($hasSonic ? $sonicDecoded : null, $jsonFlags);
 
     // Shared top toolbar — identical placement/appearance to the live
     // immersive surfaces. Three/A-Frame pieces have no gallery full view, so
@@ -2546,7 +2547,7 @@ function collection_export_piece_item_payload(array $piece, array $version): arr
             'subtitle' => $itemEngineLabel,
             'png_filename' => $piecePngFilename,
         ],
-        'sonicParams' => !empty($version['sonic_params']) ? json_decode((string) $version['sonic_params'], true) : null,
+        'sonicParams' => ($sonicParamsDecoded = !empty($version['sonic_params']) ? json_decode((string) $version['sonic_params'], true) : null) && ($sonicParamsDecoded['enabled'] ?? true) !== false ? $sonicParamsDecoded : null,
     ];
 }
 

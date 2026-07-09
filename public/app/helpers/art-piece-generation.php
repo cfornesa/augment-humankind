@@ -538,11 +538,14 @@ function validate_art_piece_sonic_params(?string $sonicJson): ?string
         $feel = mb_substr($feel, 0, 400);
     }
 
+    $enabled = isset($decoded['enabled']) ? (bool) $decoded['enabled'] : true;
+
     return json_encode([
         'tempo' => $tempo,
         'scale' => $scale,
         'instrument' => $instrument,
         'feel' => $feel,
+        'enabled' => $enabled,
     ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 }
 
@@ -1173,19 +1176,126 @@ function art_piece_refine_patch_format_example(): string
 }
 
 /**
+ * The set of file-name extensions whose references name visual/media assets.
+ * Used by art_piece_elide_out_of_scope_refs() when a refine has explicitly
+ * placed the visual domain OUT OF SCOPE (an audio-only refine): referencing
+ * `image.png` in such a request is unwanted context that some agentic
+ * provider proxies will attempt to auto-resolve as file input, crashing a
+ * text-only model. Same-origin CMS asset paths like `/image/2` are also
+ * visual asset references and are elided in the same pass.
+ */
+function art_piece_out_of_scope_media_extensions(): array
+{
+    return ['png', 'jpg', 'jpeg', 'webp', 'gif', 'mp4', 'webm', 'glb', 'gltf', 'obj', 'fbx', 'svg'];
+}
+
+/**
+ * Replaces bare file-name references whose extension is in $extensions with
+ * a descriptive placeholder that explicitly disclaims the reference as out
+ * of scope for this request. Conservative: matches `image.png`, `wave.jpg`,
+ * `/path/to/model.glb`, and same-origin CMS asset paths `/image/2`,
+ * `/media/5`; never matches a bare word like `image`, `images`, or an
+ * extension-less filename.
+ *
+ * The placeholder form, rather than silently dropping or quoting the token,
+ * keeps the surrounding prose intelligible to the model while making the
+ * out-of-scope status explicit — an agentic proxy layer resolving files by
+ * literal name cannot treat the placeholder as a file to read, and a
+ * reasoning model cannot mistake the reference for an actionable asset.
+ */
+function art_piece_elide_out_of_scope_refs(string $text, array $extensions): string
+{
+    if ($text === '' || $extensions === []) {
+        return $text;
+    }
+    $extAlt = implode('|', array_map(static fn (string $e): string => preg_quote($e, '/'), $extensions));
+    // Same-origin CMS asset paths first: `/image/N`, `/media/N` standalone.
+    $text = preg_replace('#(?<![\w/])/(?:image|media)/\d+(?![\w/])#i', '[(visual asset reference elided; out of scope for this audio-only refine)]', $text);
+    // Bare filenames with an out-of-scope extension: word/path chars + `.ext`,
+    // not preceded by a URL scheme or a CMS path already handled above.
+    $text = preg_replace('/\b[\w.\-/]+\.(?:' . $extAlt . ')\b(?!\w)/i', '[(visual asset reference elided; out of scope for this audio-only refine)]', $text);
+    return $text;
+}
+
+/**
+ * The three purpose domains a refine or regenerate request can target. Each
+ * explicitly declares what is IN SCOPE this request and what is OUT OF SCOPE
+ * and must not change, so the model — and any tool-using proxy in front of
+ * it — understands the request's scope unambiguously regardless of which
+ * prior context is also included.
+ *
+ *  - 'visual'        : visuals in scope; sound OUT OF SCOPE, carried forward
+ *                      unchanged (no sonic block requested; sonic_params
+ *                      preserved as-is server-side).
+ *  - 'audio'          : sound in scope; visuals OUT OF SCOPE, must not change
+ *                      (no visual code shown; no visual patches accepted).
+ *  - 'audio_visual'   : both domains in scope; both may change in one request
+ *                      — the only mode where a model may emit visual patches
+ *                      AND a sonic block together.
+ *
+ * The original creative prompt is always labeled as CONTEXT, never as the
+ * goal of the refine — the directive is the PURPOSE header. This reframing
+ * stops the model from treating an older prompt (which may reference assets
+ * the proxy then tries to resolve) as an actionable instruction.
+ */
+function art_piece_purpose_domain_header(string $purposeDomain): string
+{
+    switch ($purposeDomain) {
+        case 'audio':
+            return "### PURPOSE OF THIS REFINEMENT\nPURPOSE: AUDIO ONLY. Only the sound design / instrumentation may change. The visual presentation (HTML, CSS, JS) is OUT OF SCOPE and must not change in any way. Do not emit any PATCH block for html, css, or js. Emit only the ```sonic``` JSON block described in the system prompt.";
+        case 'audio_visual':
+            return "### PURPOSE OF THIS REFINEMENT\nPURPOSE: AUDIO + VISUAL. Both the visual presentation and the sound design may change in this single request. You may emit PATCH blocks for html, css, and/or js AND a ```sonic``` JSON block together. Anything not named by this refinement instruction must still be preserved exactly as-is.";
+        case 'visual':
+        default:
+            return "### PURPOSE OF THIS REFINEMENT\nPURPOSE: VISUAL ONLY. Only the visual presentation (HTML, CSS, JS) may change. The sound design is OUT OF SCOPE and must not change — do not emit a ```sonic``` block; the existing sound design is carried forward unchanged.";
+    }
+}
+
+/**
+ * Coarse validation helper for the 3-state purpose domain. Anything not
+ * exactly one of the three allowed values normalizes to 'visual' (the
+ * historical default prior to the audio/visual split), so callers can pass
+ * untrusted input safely without ever producing an empty/unknown header.
+ */
+function art_piece_normalize_purpose_domain(?string $purposeDomain): string
+{
+    return in_array($purposeDomain, ['audio', 'visual', 'audio_visual'], true)
+        ? $purposeDomain
+        : 'visual';
+}
+
+/**
  * Builds the user prompt representing the refinement task.
  *
- * $originalPrompt is the piece's own creative prompt (why the code looks the
- * way it does), distinct from $refinementPrompt (what to change about it
- * now) — without it, the AI only sees the code and the new instruction, with
- * no sense of the original intent it's supposed to stay true to.
+ * The original creative prompt ($originalPrompt) is included as CONTEXT
+ * for reference only — never as the goal of the refine (the directive is
+ * the ### PURPOSE OF THIS REFINEMENT header, derived from $purposeDomain).
+ * This reframing matters most in audio-only mode, where an older prompt
+ * that mentioned e.g. `image.png` would otherwise leak an out-of-scope
+ * asset reference into a request whose purpose explicitly excludes the
+ * visual domain — and a tool-using provider proxy may then try to read
+ * that file, crashing a text-only model. art_piece_elide_out_of_scope_refs
+ * neutralizes such references only in audio-only mode (visual context is
+ * in scope in the other two modes, so asset references there are legitimate).
+ *
+ * $purposeDomain ('visual' | 'audio' | 'audio_visual') replaces the prior
+ * boolean $soundOnly. The visual code is omitted in 'audio' mode (there is
+ * nothing to patch that would be allowed anyway); it is included in
+ * 'visual' and 'audio_visual'.
  */
-function art_piece_refine_user_prompt(string $engine, string $refinementPrompt, ?string $html, ?string $css, ?string $js, ?string $originalPrompt = null, array $allowedMediaRefs = [], bool $soundOnly = false): string
+function art_piece_refine_user_prompt(string $engine, string $refinementPrompt, ?string $html, ?string $css, ?string $js, ?string $originalPrompt = null, array $allowedMediaRefs = [], string $purposeDomain = 'visual'): string
 {
+    $purposeDomain = art_piece_normalize_purpose_domain($purposeDomain);
+    $soundOnly = ($purposeDomain === 'audio');
+
     $sections = [];
+    $sections[] = art_piece_purpose_domain_header($purposeDomain);
     if ($originalPrompt !== null && trim($originalPrompt) !== '') {
-        $sections[] = "### ORIGINAL CREATIVE PROMPT (the intent this piece was built to fulfill — stay true to it)";
-        $sections[] = $originalPrompt;
+        $contextualizedOriginalPrompt = $soundOnly
+            ? art_piece_elide_out_of_scope_refs($originalPrompt, art_piece_out_of_scope_media_extensions())
+            : $originalPrompt;
+        $sections[] = "### CONTEXT: ORIGINAL CREATIVE PROMPT (history of the piece, for reference only — the directive is the PURPOSE above; do not treat this prompt as the goal of this refine)";
+        $sections[] = $contextualizedOriginalPrompt;
     }
     $sections[] = "### REFINEMENT INSTRUCTION";
     $sections[] = $refinementPrompt;
@@ -1372,9 +1482,12 @@ function art_piece_find_patch_match(string $code, string $search): array|string|
  * blind from memory of its own previous (wrong) response, with no way to
  * actually re-derive a correct verbatim SEARCH block from the real source.
  */
-function art_piece_refine_repair_prompt(string $engine, string $refinementPrompt, ?string $previousRawResponse, string $failureMessage, ?string $html = null, ?string $css = null, ?string $js = null, array $allowedMediaRefs = [], bool $soundOnly = false): string
+function art_piece_refine_repair_prompt(string $engine, string $refinementPrompt, ?string $previousRawResponse, string $failureMessage, ?string $html = null, ?string $css = null, ?string $js = null, array $allowedMediaRefs = [], string $purposeDomain = 'visual'): string
 {
+    $purposeDomain = art_piece_normalize_purpose_domain($purposeDomain);
+    $soundOnly = ($purposeDomain === 'audio');
     $segments = [
+        art_piece_purpose_domain_header($purposeDomain),
         "Target engine: {$engine}",
         "Refinement instruction: {$refinementPrompt}",
         "CRITICAL — your previous attempt failed: \"{$failureMessage}\" You MUST directly address this specific problem in your PLAN section before writing any PATCH — state the new approach you will use to avoid it, not just adjusted numbers or a smaller version of the same approach.",

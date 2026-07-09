@@ -10,6 +10,155 @@
 
 None.
 
+## 2026-07-09 — Unmute preview button, metadata sound toggle, and refinement prompt requirement fix
+
+### Decision
+
+Implemented fixes and features to resolve the sound previewing, metadata sound toggles, empty refinement prompts during sound-only refinement, and cleaned up pre-existing consistency test failures:
+
+- **Refinement Acceptance Error**: Allowed an empty visual refinement prompt if a sound-only refinement took place. Automatically falls back to generating a descriptive prompt: `Update sound design: [feel]`.
+- **Sound Toggle Metadata Switch**: Added an `Enable sound playback on this piece` checkbox under the Metadata tab in `form.php`, visible only if sound is associated with the piece. Stored as an `enabled` boolean within the `sonic_params` JSON.
+- **AI Refinement Preview Audio Parsing**: Correctly parsed JSON strings returned from the server into objects on the client-side so the sound controller initializes correctly. Hides the unmute button when disabled.
+- **Public and Immersive Surfaces Sound Disablement**: Disabled sound action buttons, synth initialization, and export payloads if `enabled` is `false` inside the piece's `sonic_params`.
+- **Runtime Consistency Test Suite Fixes**: Updated assertions in `tests/three-runtime-consistency.php` to align with the new engine-less sound architecture and matched the refactored gyroscope helper names (`createSharedGyroController`, `requestCalibration`, `calibrateGyroToCurrentView`).
+- **Domain Scoping Preservation on Retry**: Integrated an explicit `purpose_domain` property inside the client's `basePayload` sent from `form.php`. This guarantees the server respects the sound-only partition across all retry attempts (such as "Request stronger changes" where visual prompts are empty but feedback text is appended to the request prompt). Sound-only instruction overrides now preserve the feedback instruction.
+- **Layout Link Relocation**: Moved the "Setup Checklist" header link in `layout.php` into the main sidebar navigation panel to prevent accidental misclicks.
+
+### Verification
+- Checked syntax across all changed PHP and view files.
+- Run `php tests/three-runtime-consistency.php` — **Passed: 105, Failed: 0** (all tests passed).
+- Run `php tests/art-piece-generation.php` — **Passed: 126, Failed: 0** (all tests passed).
+
+## 2026-07-09 — AI Refine purpose-domain partition: original prompt is context, not the goal; regen inherits lineage
+
+### Decision
+
+Sound-only AI Refine on `/admin/pieces/{id}/edit` was crashing with the
+provider error `"Cannot read 'image.png' (this model does not support
+image input)"` within ~10s. Investigation showed the application code
+never attaches image input at all — `AiProviderClient::generate()` is
+strictly text-only across every transport (the only image-attaching
+method, `describeImage()`, is the alt-text path, separate from refine).
+The proximate cause was the agentic provider proxy auto-resolving
+`image.png` referenced in a piece's stored original creative prompt,
+which was still being sent to a text-only model even in sound-only mode —
+because the code only quarantined the visual *code* (HTML/CSS/JS blocks)
+in sound-only refine, not the original creative *prompt* (which still
+held the reference).
+
+The real underlying principle — which the user named and which this fix
+implements — is **per-domain purpose partition**, summarized as:
+
+> When ONE refinement direction is filled, ONLY that direction is in
+> scope — the other domain's content is context that must not change.
+> When BOTH are filled, only then may both change.
+
+Applied to refine:
+- Replaced the binary `$soundOnly` flag with a 3-state `$purposeDomain`
+  (`'visual' | 'audio' | 'audio_visual'`) on both
+  `art_piece_refine_user_prompt()` and `art_piece_refine_repair_prompt()`
+  in `public/app/helpers/art-piece-generation.php`.
+- Every refine request now opens with an explicit
+  `### PURPOSE OF THIS REFINEMENT` header declaring which domain is IN
+  SCOPE and which is OUT OF SCOPE and must not change, so the model — and
+  any tool-using proxy layer in front of it — understands scope
+  unambiguously regardless of any other context included.
+- The original creative prompt is now labeled **CONTEXT** ("for reference
+  only — the directive is the PURPOSE above; do not treat this prompt as
+  the goal of this refine"), not "stay true to it," in every mode. This
+  applies to visual-only and audio+visual refine too, per the user's
+  framing ("prior prompts need to be contextualized as context, rather
+  than the goal").
+- In audio-only mode, the original creative prompt is additionally run
+  through a new `art_piece_elide_out_of_scope_refs()` helper that
+  neutralizes bare file-name references (`image.png`, `/image/N`,
+  model file extensions, etc.) with a descriptive placeholder
+  `[(visual asset reference elided; out of scope for this audio-only refine)]`
+  (chosen over the quoted-literal form `backticked:image.png` per the
+  user's preference — the descriptive form explicitly disclaims the
+  reference as out of scope, which both an agentic proxy and a reasoning
+  model interpret more reliably than a quoted token). Visual-only and
+  audio+visual refine keep the original prompt text verbatim (visual
+  assets are in scope in those modes).
+- The outbound patch force-clear backstop in `refineAi()` (lines ~1904+
+  in `PiecesAdminController.php`) keeps discarding any hallucinated
+  html/css/js patches in audio-only mode — the inbound quarantine (no
+  visual code shown to the model) and the outbound backstop (no visual
+  patches accepted) form a two-sided guarantee that an out-of-scope
+  domain cannot change.
+
+Applied to regenerate (`/admin/pieces/generate/regenerate`):
+- **Regenerate inherits its purpose_domain PURELY from its lineage —
+  lineage is the only determinant** (per the user's explicit caveat:
+  regeneration's lineage, whether from piece generation or from a prior
+  refine, is the SOLE determinant of whether regeneration does visual,
+  audio, or both — never recomputed from new user inputs at regenerate
+  time, because regenerate only amplifies existing scope and never
+  changes it).
+- Two audio-lineage constants are now captured at generation time into
+  the pending-generation session (`storePendingGeneration`) and persisted
+  in its `original` block: `sound_feel` (the prose the admin wrote at
+  generate time, reused to re-emit sonic capability instructions on an
+  audio-in-scope regenerate) and `sound_enabled_lineage` (a bool
+  marking that this generation was an audio+visual generation, even if
+  the model returned a null sonic block; null sonic_params would
+  otherwise obscure the audio intent that the lineage must preserve).
+  These render as read-only hidden inputs in `generate-preview.php` and
+  pass through unchanged in `buildRegeneratePayload` to the regenerate
+  endpoint, which derives `purposeDomain` purely from them.
+- For generation lineage the visual domain is ALWAYS in scope (pieces
+  MUST have a visual prompt; the sound prompt is the only optional
+  domain). So generation lineage yields `'audio_visual'` or `'visual'`
+  — never `'audio'` (sound-only lineage from generation is impossible;
+  the same arch will accommodate a future refine-lineage regenerate flow
+  where `'audio'` (sound-only refine) lineage would inherit untouched).
+- The regenerate instruction is now lineage-aware: audio+visual lineage
+  rebuilds visuals AND sound; visual-only lineage rebuilds visuals and
+  forbids the model from producing sound. Sonic capability instructions
+  are appended to the system prompt only when the lineage placed audio
+  in scope (parity with `refineAi()`), ended a silent drop where
+  regenerate previously produced visual-only output for a sound-enabled
+  generation.
+- The regenerated sonic_params (or `null` when visual-only lineage)
+  persist into the pending preview's `current` block via
+  `updatePendingGenerationCurrent()`, return in the JSON response, and
+  `applyRegeneratedPreview` in `generate-preview.php` writes them back
+  into the `sonic_params` hidden input BEFORE `renderPreviewDocument()`,
+  so the preview iframe (which reads `currentSonicParams()` live from
+  that input) actually surfaces the new instrumentation audibly.
+  The save form already read this hidden input via
+  `validate_art_piece_sonic_params($_POST['sonic_params'] ?? null)`, so
+  the regenerated sound flows through unchanged to the persisted
+  `art_piece_versions.sonic_params` column.
+- Sonic-aware empty-patches check: visual-only lineage requires at least
+  one visual patch (regenerate without change is not a valid outcome);
+  audio+visual lineage accepts a regenerated sonic block alone as a valid
+  regenerate (sound improved, visuals preserved).
+
+### Behavior changes flagged per Rule 7 (both explicitly approved)
+
+1. The original creative prompt relabeled as **context, not the goal**
+   in EVERY refine mode (not just audio-only). Models may now treat the
+   prior prompt with less deference in visual-only and audio+visual
+   refine too.
+2. Regenerate with audio+visual lineage now preserves or improves the
+   sound design, where it previously silently dropped the audio lineage
+   and produced visual-only output.
+
+### Correction of a prior doc/code mismatch
+
+Two prior DECISIONS.md entries (the 2026-07-08 sound continuation entry
+and one above) claim sound is "Gated on `ai_pieces_sound`." That feature
+flag does NOT exist anywhere in the PHP code (grep returned 0 matches).
+Sound is actually gated only by `art_piece_sonic_params_supported()`, a
+schema-column probe (true when `art_piece_versions.sonic_params`
+exists) — there is no separate `ai_pieces_sound` feature flag
+registered in `public/app/helpers/features.php` and no router feature
+key for it. The two `ai_pieces_sound` mentions have been corrected
+below; per AGENTS.md convention (sound stays gated by the schema probe
+only, which is sufficient under the project's feature-flag rules), no
+new flag is being introduced.
+
 ## 2026-07-08 — Sound continuation: regular-view + offline export parity, fixed toggle bug, exhibit-wall sonification
 
 ### Decision
@@ -116,7 +265,10 @@ finished the outstanding pieces:
 Tone.js movement sonification for art pieces is stored on
 `art_piece_versions.sonic_params`, not on the piece row. Generation,
 manual editing, per-version editing, and AI Refine can all create or update
-this metadata when `ai_pieces_sound` is enabled and the schema column exists.
+this metadata when the schema column `art_piece_versions.sonic_params`
+exists (gated by `art_piece_sonic_params_supported()`, a probe of that
+column — there is no `ai_pieces_sound` feature flag registered anywhere
+in the PHP).
 A sound-only change creates a new current version with unchanged visual code;
 turning instrumentation off stores `NULL` for the new version.
 
@@ -1504,7 +1656,9 @@ auto-wired into AI-generated Three.js/A-Frame pieces.
   in a new optional `art_piece_versions.sonic_params` column. The immersive
   runtime owns Tone.js and drives it from the same per-frame camera motion the
   navigation legs produce (a new "audio leg"). Only the focused/active piece
-  sonifies. Gated on `ai_pieces_sound`.
+  sonifies. Gated on `art_piece_sonic_params_supported()` (a probe of the
+  `art_piece_versions.sonic_params` column — there is no `ai_pieces_sound`
+  feature flag).
 - `validate_art_piece_sonic_params()` **soft-fails** (coerce to nearest
   supported instrument/scale, clamp tempo; malformed/missing → null "no sound")
   and is **decoupled** from code validation so it never blocks valid code.
@@ -1557,3 +1711,127 @@ Follow-up to the same-day 3D/sonification entry, per user correction:
   admin form's `input { width:100% }` rule stretched it; the switch absolutely-
   positions the (transparent) input inside a fixed 42px control so that rule
   can't distort it, with the label text adjacent.
+
+## 2026-07-09 — Visual and Audio Refinement Scope Boundaries
+
+### Decision
+Ensured clean boundaries for visual-only and sound-only changes during refinement and generation, complying with the user's domain-scoping expectations.
+
+- **Visual-Only Refine:** When the visual prompt is the only prompt provided, the audio domain is out of scope. The existing `sonic_params` are carried forward exactly as-is from the current version. This prevents the sound design from being deleted/nullified even when the "Add or update instrumentation" checkbox is toggled.
+- **Sound-Only Refine:** When only a sound prompt is provided, the visuals must stay exactly the same. The current visual code (HTML, CSS, JS) remains completely quarantined (omitted from the prompt context). Furthermore, visual preflight validation (`art_piece_preflight_document`) and media reference validation (`validate_art_piece_prompted_media_refs`) are bypassed, ensuring that legacy visual warnings or errors do not block sound-only refinements.
+- **Both Domains:** If both prompts are provided, both are sent to the AI and refined concurrently.
+
+### Verification
+- Added prompt-scoping tests to `tests/art-piece-generation.php` and verified that they pass.
+- Verified that all 126 tests in the test suite pass successfully.
+
+## 2026-07-09 — Idle-pattern sonification, exhibit-wall toggle desync, screenshot allowlist, and a metadata-save re-validation regression
+
+Ran alongside the other 2026-07-09 sessions above (some of this overlaps with
+or builds on their sound-only-refine/metadata-toggle work) — this entry
+covers the parts not already logged: idle-pattern playback, the offline
+export parity work, and three separately-discovered bugs found while
+verifying the sound toggle end to end.
+
+### Decision
+
+**Idle-pattern sonification** (`immersive-gallery.js`'s `createAudioController()`,
+`piece-runtime.js`'s `createPieceRuntimeAudioController()`, and the matching
+inline script in `piece-render.php`'s `piece_export_sonic_script()`): toggled-on
+sound previously stayed silent at rest, only firing on real camera/pointer
+motion. Added an idle ticker (2s-after-last-motion threshold) that plays a
+plain scale-walk pattern from the same scale/instrument at rest; motion still
+modulates pitch/octave as before and resets the idle clock. Also extended
+sonification on the regular (non-immersive) `/pieces/{id}` view to every
+engine, not just three/aframe: p5/plain-c2/svg get idle-only playback (no
+motion signal there), c2_interactive gets pointer-position-driven modulation
+via a new canvas listener gated on a `c2Interactive` context flag derived
+from `generation_mode`. All three surfaces (live regular view, live immersive
+view, and every offline export — both single-piece and collection bundles,
+which already reuse the live runtime files directly) inherit this from the
+same shared functions.
+
+**Exhibit-wall (collection) sound toggle was three separate bugs, not one:**
+1. The read-only "slide view" overlay (`createReadOnlyFullViewOverlay()`)
+   never hid the shared stage toolbar's sound button, so it stayed
+   interactive — and confusingly overlaid — behind the modal. Fixed by
+   hiding/restoring it in `openAt()`/`close()`.
+2. `createAudioController()`'s `dispose()` never removed its own click
+   listener, so `mountExhibitWall`'s per-focus-change rebind (recreating a
+   controller every time the nearest wall item changes) leaked one stale
+   listener per rebind and let a controller's `enabled` state get wiped out
+   mid-unmute by the next rebind before a click could take effect. Added a
+   distance-margin (0.85×) plus a 500ms cooldown to `computeFocusedSlotIndex()`
+   /the rebind gate so OrbitControls damping jitter can't thrash the focused
+   index every frame.
+3. Root architectural bug, found after (1) and (2) still didn't fully fix it:
+   the click listener lived *inside* each per-item controller object, so any
+   wall item with no `sonicParams` (most of them, typically) produced a
+   `null` controller with **no listener attached at all** — the button looked
+   identical whether or not a click would do anything, and appeared randomly
+   "broken" depending on which item the camera happened to be focused on.
+   Refactored `createAudioController()` to take an `attachListener` option;
+   `mountExhibitWall` now owns exactly one persistent listener for the
+   wall's lifetime, driving whichever controller is currently bound via new
+   `toggleEnabled()`/`syncButton()` methods, and disables the button with a
+   "No sound for this piece" label when the focused item has none.
+
+**Screenshot-overlay allowlist**: `piece_export_supports_screenshot_overlay()`
+was hardcoded to `['c2_interactive', 'three', 'aframe']` — a copy-paste of an
+unrelated "interactive viewer" allowlist, not a real technical constraint.
+The capture code already finds any `<canvas>`/`<svg>` generically and
+captures with plain `toDataURL()`/`toBlob()`; the admin's live thumbnail
+capture already proves this works for p5. Changed to
+`art_piece_supported_generation_modes()` (every engine).
+
+**Metadata/sonic-only saves were re-validating unchanged code.**
+`PiecesAdminController::update()`'s version-creation branch called
+`art_piece_preflight_document()` unconditionally, even when `$codeChanged`
+was `false` and only `$sonicChanged` was `true` — validating the piece's
+already-saved, already-working JS against a preflight rule
+(`art_piece_preflight_code()`'s three.js `startFrame` arity check, added
+2026-06-19) it may never have been run through before. This could reject an
+unrelated metadata or sound-only save outright. Now gated on `$codeChanged`
+— only code that's actually changing gets (re-)validated.
+
+**Also added:** an admin edit link on the regular `/pieces/{id}` view
+(mirrors `blog/show.php`'s existing pattern, gated on `admin_identity()`),
+numeric-ID matching in the admin pieces list search (`buildSearchWhere()`),
+and a working sound preview toggle in both admin generation/refine preview
+surfaces (`generate-preview.php`, `form.php`) — these reuse
+`piece-runtime.js`'s existing controller via `window.CREATR_PIECE_CONTEXT`
+(now settable by `admin-piece-capture.js`'s `renderDocument()`), no new
+client audio code.
+
+### Corrections
+- A reported "duplicate Version 1 rows" bug on pieces 18/19 was investigated
+  with an explicit-authorization, read-only production `SELECT` — all
+  duplicates predate the 2026-06-20 version-diffing fix; today's saves
+  correctly increment version numbers. No code change was needed there.
+- A reported "no Tone.js in downloads" belief was disproven by unzipping
+  real downloads: single immersive-piece exports bundle Tone.js
+  unconditionally, and collection exports already reuse the live
+  `mountExhibitWall` runtime with every engine library bundled. Only the
+  *inline-vs-standalone-file* packaging differed between the immersive and
+  plain export paths, not sound support itself.
+
+### Follow-ups
+- Offline exports of `c2_interactive` pieces still only get idle-pattern
+  playback, not pointer-driven modulation — `piece_export_bootstrap()` has
+  no c2 pointer-listener branch to mirror `piece-runtime.js`'s live one.
+  Flagged as a separate background task, not yet done.
+- The translucent movement D-pad HUD (`createImmersiveViewerControls()`,
+  34% opacity at rest) some screenshots showed is confirmed by-design, not a
+  bug — left as-is pending explicit direction to change it.
+
+### Verification
+- `php -l`/`node --check` clean on every changed file.
+- Live-server served files byte-diffed against source (ruled out stale
+  opcache after edits).
+- Downloaded and unzipped a single p5 piece, a single svg piece, a single
+  immersive piece, and the full "apocalyptic" collection; confirmed the
+  screenshot button, idle-pattern code, and the exhibit-wall listener fix
+  are all present and `node --check`-clean inside the bundled runtime files.
+- User confirmed in the browser: the metadata sound-playback checkbox fix
+  unblocked piece 18's sound; the exhibit-wall persistent-listener fix is
+  pending the user's own browser re-verification.

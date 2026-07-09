@@ -74,9 +74,9 @@ foreach ($items as $index => $item) {
             'download_url' => $pieceDownloadUrl,
             'png_filename' => $piecePngFilename,
             'full_view' => $fullView,
-            'sonicParams' => !empty($version['sonic_params']) ? json_decode((string) $version['sonic_params'], true) : null,
+            'sonicParams' => ($sonicParamsDecoded = !empty($version['sonic_params']) ? json_decode((string) $version['sonic_params'], true) : null) && ($sonicParamsDecoded['enabled'] ?? true) !== false ? $sonicParamsDecoded : null,
         ];
-        if (!empty($version['sonic_params'])) {
+        if (!empty($jsItems[count($jsItems) - 1]['sonicParams'])) {
             $hasAnySonic = true;
         }
         $detailItems[] = [

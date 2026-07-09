@@ -11,7 +11,10 @@ $sonicFeel = is_array($version) ? art_piece_sonic_feel($version['sonic_params'] 
 // Every engine can carry sonic_params now: three/aframe sonify camera
 // motion, c2_interactive sonifies pointer motion, everything else gets the
 // idle random-note pattern (see createPieceRuntimeAudioController).
-$soundToggleAvailable = is_array($version) && !empty($version['sonic_params']);
+$sonicParamsDecoded = !empty($version['sonic_params']) ? json_decode((string) $version['sonic_params'], true) : null;
+$soundToggleAvailable = is_array($version)
+    && !empty($version['sonic_params'])
+    && (!is_array($sonicParamsDecoded) || ($sonicParamsDecoded['enabled'] ?? true) !== false);
 $isAdmin = (bool) admin_identity();
 $pngFilenameBase = pathinfo(piece_export_filename($piece), PATHINFO_FILENAME);
 $pngFilename = ($pngFilenameBase !== '' ? $pngFilenameBase : 'piece-' . (int) ($piece['id'] ?? 0)) . '.png';

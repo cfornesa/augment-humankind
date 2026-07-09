@@ -486,6 +486,21 @@ $currentSonicEnabled = $soundControlsAvailable && !empty($cv['sonic_params']);
                             <?php endif ?>
                         </div>
 
+                        <div id="sound-playback-toggle-wrap" class="field" <?= empty($cv['sonic_params']) ? 'style="display:none;"' : '' ?>>
+                            <?php
+                            $sonicDecoded = !empty($cv['sonic_params']) ? json_decode((string) $cv['sonic_params'], true) : null;
+                            $soundPlayEnabled = !is_array($sonicDecoded) || ($sonicDecoded['enabled'] ?? true) !== false;
+                            ?>
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="sound_playback_active" name="sound_playback_active" value="1"
+                                       <?= $soundPlayEnabled ? 'checked' : '' ?>>
+                                Enable sound playback on this piece
+                            </label>
+                            <small class="admin-hint" style="display: block; margin-top: 0.25rem;">
+                                This piece has an AI-generated sound design. Unchecking this disables sound playback globally on all public and immersive surfaces.
+                            </small>
+                        </div>
+
                         <div class="field">
                             <label class="checkbox-label">
                                 <input type="checkbox" name="comments_enabled" value="1"
@@ -1115,9 +1130,20 @@ function renderVisualComparison() {
         aiSaveStatusEl.className = 'ai-save-status';
         clearAiSuggestionUi();
 
+        var visualPrompt = aiPromptField ? aiPromptField.value.trim() : '';
+        var soundEnabled = aiSoundToggle && aiSoundToggle.checked;
+        var soundFeel = aiSoundFeelField ? aiSoundFeelField.value.trim() : '';
+        var purposeDomain = 'visual';
+        if (visualPrompt && soundEnabled && soundFeel) {
+            purposeDomain = 'audio_visual';
+        } else if (soundEnabled && soundFeel) {
+            purposeDomain = 'audio';
+        }
+
         var pieceOriginalPromptField = document.getElementById('prompt');
         var basePayload = {
             prompt: promptForRequest,
+            purpose_domain: purposeDomain,
             engine: engine,
             profile_id: parseInt(profileId, 10),
             persona_id: aiPersonaField && aiPersonaField.value ? parseInt(aiPersonaField.value, 10) : 0,
@@ -1267,7 +1293,18 @@ function renderVisualComparison() {
         // instead of inserting a duplicate.
         lastRefineProfileId = data.profile_id || null;
         lastRefinePersonaId = data.persona_id || null;
-        lastProposedSonicParams = Object.prototype.hasOwnProperty.call(data, 'sonic_params') ? data.sonic_params : null;
+        var rawSonic = Object.prototype.hasOwnProperty.call(data, 'sonic_params') ? data.sonic_params : null;
+        if (typeof rawSonic === 'string' && rawSonic.trim() !== '') {
+            try {
+                lastProposedSonicParams = JSON.parse(rawSonic);
+            } catch (e) {
+                lastProposedSonicParams = null;
+            }
+        } else if (rawSonic && typeof rawSonic === 'object') {
+            lastProposedSonicParams = rawSonic;
+        } else {
+            lastProposedSonicParams = null;
+        }
         currentPreviewSonicParams = lastProposedSonicParams;
         lastDraftVersionId = data.draft_version_id || null;
         lastSequenceToken = data.sequence_token || ctx.sequenceToken;
@@ -1527,6 +1564,19 @@ function renderVisualComparison() {
             lastSequenceToken = '';
             resetDirtyBaselines();
             clearAiSuggestionUi();
+
+            savedPreviewSonicParams = currentPreviewSonicParams;
+            var wrap = document.getElementById('sound-playback-toggle-wrap');
+            var cb = document.getElementById('sound_playback_active');
+            if (wrap && cb) {
+                if (savedPreviewSonicParams) {
+                    wrap.style.display = 'block';
+                    cb.checked = (savedPreviewSonicParams.enabled !== false);
+                } else {
+                    wrap.style.display = 'none';
+                    cb.checked = false;
+                }
+            }
 
             // Thumbnail capture happens only at "Update" now, not here —
             // capturing immediately on Accept used to upload straight to the

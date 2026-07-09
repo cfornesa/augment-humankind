@@ -599,7 +599,10 @@ canvas[aria-hidden="true"] {
                     ],
                 ],
             ] : null,
-            'sound_action' => !$isStaticEmbed && !empty($version['sonic_params']) ? ['enabled' => true] : null,
+            'sound_action' => !$isStaticEmbed
+                && !empty($version['sonic_params'])
+                && (($sonicParamsDecoded = json_decode((string) $version['sonic_params'], true)) && ($sonicParamsDecoded['enabled'] ?? true) !== false)
+                ? ['enabled' => true] : null,
             'show_fullscreen' => !$isStaticEmbed,
             'fullscreen_onclick' => 'toggleFullscreen()',
         ]) ?>
@@ -972,8 +975,8 @@ const sourceUrl = <?= json_encode($embedUrl) ?>;
 // Optional Tone.js sonification params ({tempo, scale, instrument, feel}) — null
 // unless the piece-sound feature is on and this version stored a sonic block.
 const sonicParams = <?= json_encode(
-    !empty($version['sonic_params'])
-        ? json_decode((string) $version['sonic_params'], true)
+    (!empty($version['sonic_params']) && ($sonicParamsDecoded = json_decode((string) $version['sonic_params'], true)) && ($sonicParamsDecoded['enabled'] ?? true) !== false)
+        ? $sonicParamsDecoded
         : null
 ) ?>;
 const viewerControlsOptions = { showViewerControls: <?= (!$isEmbedMode && !$isStaticEmbed) ? 'true' : 'false' ?>, sonicParams };

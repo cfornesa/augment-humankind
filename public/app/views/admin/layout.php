@@ -137,7 +137,6 @@ if (function_exists('ah_table_exists') && ah_table_exists('ai_personas')) {
                 <?php if ($adminIdentity): ?>
                     <span class="admin-kicker">Signed in as <?= htmlspecialchars($adminIdentity['display_name'], ENT_QUOTES, 'UTF-8') ?> via <?= htmlspecialchars(ucfirst($adminIdentity['provider']), ENT_QUOTES, 'UTF-8') ?></span>
                 <?php endif ?>
-                <a href="/admin/setup" class="admin-kicker">Setup checklist</a>
             </div>
             <button class="menu-toggle" aria-label="Toggle navigation" aria-expanded="false" aria-controls="admin-nav">
                 <span></span>
@@ -154,6 +153,9 @@ if (function_exists('ah_table_exists') && ah_table_exists('ai_personas')) {
                         <?php endif ?>
                     </a>
                 <?php endforeach ?>
+                <a href="/admin/setup" class="admin-setup-link<?= admin_navigation_is_active($currentUri, '/admin/setup') ? ' active' : '' ?>">
+                    <span class="admin-nav-label">Setup Checklist</span>
+                </a>
                 <a href="/admin/logout" class="admin-logout">Logout</a>
             </nav>
         </header>
