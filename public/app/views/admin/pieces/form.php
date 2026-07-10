@@ -15,6 +15,10 @@ $cv = $piece['current_version'] ?? [];
 $soundControlsAvailable = function_exists('art_piece_sonic_params_supported') && art_piece_sonic_params_supported();
 $currentSonicFeel = $soundControlsAvailable ? art_piece_sonic_feel($cv['sonic_params'] ?? null) : '';
 $currentSonicEnabled = $soundControlsAvailable && !empty($cv['sonic_params']);
+$audioTabAvailable = $currentSonicEnabled;
+$sonicExtras = $audioTabAvailable && function_exists('validate_art_piece_sonic_extras')
+    ? validate_art_piece_sonic_extras((json_decode((string) $cv['sonic_params'], true) ?: [])['extras'] ?? null)
+    : null;
 ?>
 <style>
 .editor-workspace {
@@ -409,6 +413,9 @@ $currentSonicEnabled = $soundControlsAvailable && !empty($cv['sonic_params']);
                         <?php if ($aiRefineEnabled): ?>
                             <button type="button" class="admin-tab" data-tab="ai" role="tab" aria-selected="false" style="border-color: var(--yellow); background: rgba(254, 224, 72, 0.1);">AI Refine ✨</button>
                         <?php endif ?>
+                        <?php if ($audioTabAvailable): ?>
+                            <button type="button" class="admin-tab" data-tab="audio" role="tab" aria-selected="false">Audio</button>
+                        <?php endif ?>
                     </div>
 
                     <!-- Metadata Tab -->
@@ -640,6 +647,136 @@ if ($engineVal === 'p5') {
                     </div>
                     <?php endif ?>
 
+                    <?php if ($audioTabAvailable): ?>
+                    <div id="tab-audio" class="piece-tab-panel is-hidden" role="tabpanel">
+                        <fieldset class="form-fieldset">
+                            <legend>Public sound controls</legend>
+                            <p class="admin-hint" style="margin-top:0;">Which of the sonification voices are exposed to visitors on the sound popover. Volume and the on/off toggle are always shown regardless of these.</p>
+                            <label class="checkbox-label">
+                                <input type="checkbox" name="sonic_voice_ambient" value="1" <?= $sonicExtras['voices']['ambient'] ? 'checked' : '' ?>>
+                                Ambient soundscape (idle notes)
+                            </label>
+                            <label class="checkbox-label">
+                                <input type="checkbox" name="sonic_voice_movement" value="1" <?= $sonicExtras['voices']['movement'] ? 'checked' : '' ?>>
+                                Movement sounds (camera/pointer motion)
+                            </label>
+                            <label class="checkbox-label">
+                                <input type="checkbox" name="sonic_voice_melodic" value="1" <?= $sonicExtras['voices']['melodic'] ? 'checked' : '' ?>>
+                                Keyboard (melodic voice, piano UI)
+                            </label>
+                            <label class="checkbox-label">
+                                <input type="checkbox" name="sonic_voice_hand_tracking" value="1" <?= $sonicExtras['voices']['hand_tracking'] ? 'checked' : '' ?>>
+                                Hand-tracking (camera theremin)
+                            </label>
+                        </fieldset>
+
+                        <div class="field">
+                            <label for="sonic_default_volume">Default volume</label>
+                            <input type="range" id="sonic_default_volume" name="sonic_default_volume" min="0" max="100" step="1" value="<?= (int) $sonicExtras['default_volume'] ?>">
+                        </div>
+
+                        <fieldset class="form-fieldset">
+                            <legend>Synth controls (admin only — never shown publicly)</legend>
+                            <div class="field-grid">
+                                <div class="field">
+                                    <label for="sonic_octave_min">Octave range: min</label>
+                                    <input type="number" id="sonic_octave_min" name="sonic_octave_min" min="-1" max="7" value="<?= (int) $sonicExtras['synth']['octave_min'] ?>">
+                                </div>
+                                <div class="field">
+                                    <label for="sonic_octave_max">Octave range: max</label>
+                                    <input type="number" id="sonic_octave_max" name="sonic_octave_max" min="-1" max="7" value="<?= (int) $sonicExtras['synth']['octave_max'] ?>">
+                                </div>
+                                <div class="field">
+                                    <label for="sonic_filter_type">Filter type</label>
+                                    <select id="sonic_filter_type" name="sonic_filter_type">
+                                        <option value="lowpass" <?= $sonicExtras['synth']['filter_type'] === 'lowpass' ? 'selected' : '' ?>>Lowpass</option>
+                                        <option value="highpass" <?= $sonicExtras['synth']['filter_type'] === 'highpass' ? 'selected' : '' ?>>Highpass</option>
+                                        <option value="bandpass" <?= $sonicExtras['synth']['filter_type'] === 'bandpass' ? 'selected' : '' ?>>Bandpass</option>
+                                    </select>
+                                </div>
+                                <div class="field">
+                                    <label for="sonic_filter_cutoff">Filter cutoff (Hz)</label>
+                                    <input type="number" id="sonic_filter_cutoff" name="sonic_filter_cutoff" min="20" max="20000" step="1" value="<?= (float) $sonicExtras['synth']['filter_cutoff'] ?>">
+                                </div>
+                                <div class="field">
+                                    <label for="sonic_filter_resonance">Resonance (Q)</label>
+                                    <input type="number" id="sonic_filter_resonance" name="sonic_filter_resonance" min="0.1" max="20" step="0.1" value="<?= (float) $sonicExtras['synth']['filter_resonance'] ?>">
+                                </div>
+                            </div>
+                        </fieldset>
+
+                        <fieldset class="form-fieldset">
+                            <legend>Effects (admin only — never shown publicly)</legend>
+                            <div class="field-grid">
+                                <div class="field">
+                                    <label class="checkbox-label">
+                                        <input type="checkbox" name="sonic_fx_distortion_enabled" value="1" <?= $sonicExtras['synth']['effects']['distortion']['enabled'] ? 'checked' : '' ?>>
+                                        Distortion
+                                    </label>
+                                    <label for="sonic_fx_distortion_amount">Amount</label>
+                                    <input type="range" id="sonic_fx_distortion_amount" name="sonic_fx_distortion_amount" min="0" max="1" step="0.05" value="<?= (float) $sonicExtras['synth']['effects']['distortion']['amount'] ?>">
+                                </div>
+                                <div class="field">
+                                    <label class="checkbox-label">
+                                        <input type="checkbox" name="sonic_fx_chorus_enabled" value="1" <?= $sonicExtras['synth']['effects']['chorus']['enabled'] ? 'checked' : '' ?>>
+                                        Chorus
+                                    </label>
+                                    <label for="sonic_fx_chorus_depth">Depth</label>
+                                    <input type="range" id="sonic_fx_chorus_depth" name="sonic_fx_chorus_depth" min="0" max="1" step="0.05" value="<?= (float) $sonicExtras['synth']['effects']['chorus']['depth'] ?>">
+                                    <label for="sonic_fx_chorus_rate">Rate (Hz)</label>
+                                    <input type="number" id="sonic_fx_chorus_rate" name="sonic_fx_chorus_rate" min="0.1" max="20" step="0.1" value="<?= (float) $sonicExtras['synth']['effects']['chorus']['rate'] ?>">
+                                </div>
+                                <div class="field">
+                                    <label class="checkbox-label">
+                                        <input type="checkbox" name="sonic_fx_tremolo_enabled" value="1" <?= $sonicExtras['synth']['effects']['tremolo']['enabled'] ? 'checked' : '' ?>>
+                                        Tremolo
+                                    </label>
+                                    <label for="sonic_fx_tremolo_depth">Depth</label>
+                                    <input type="range" id="sonic_fx_tremolo_depth" name="sonic_fx_tremolo_depth" min="0" max="1" step="0.05" value="<?= (float) $sonicExtras['synth']['effects']['tremolo']['depth'] ?>">
+                                    <label for="sonic_fx_tremolo_rate">Rate (Hz)</label>
+                                    <input type="number" id="sonic_fx_tremolo_rate" name="sonic_fx_tremolo_rate" min="0.1" max="20" step="0.1" value="<?= (float) $sonicExtras['synth']['effects']['tremolo']['rate'] ?>">
+                                </div>
+                                <div class="field">
+                                    <label class="checkbox-label">
+                                        <input type="checkbox" name="sonic_fx_pitch_shift_enabled" value="1" <?= $sonicExtras['synth']['effects']['pitch_shift']['enabled'] ? 'checked' : '' ?>>
+                                        Pitch shift
+                                    </label>
+                                    <label for="sonic_fx_pitch_shift_semitones">Semitones</label>
+                                    <input type="number" id="sonic_fx_pitch_shift_semitones" name="sonic_fx_pitch_shift_semitones" min="-24" max="24" step="1" value="<?= (int) $sonicExtras['synth']['effects']['pitch_shift']['semitones'] ?>">
+                                </div>
+                                <div class="field">
+                                    <label class="checkbox-label">
+                                        <input type="checkbox" name="sonic_fx_bitcrusher_enabled" value="1" <?= $sonicExtras['synth']['effects']['bitcrusher']['enabled'] ? 'checked' : '' ?>>
+                                        Bitcrusher
+                                    </label>
+                                    <label for="sonic_fx_bitcrusher_bits">Bits</label>
+                                    <input type="number" id="sonic_fx_bitcrusher_bits" name="sonic_fx_bitcrusher_bits" min="1" max="16" step="1" value="<?= (int) $sonicExtras['synth']['effects']['bitcrusher']['bits'] ?>">
+                                </div>
+                                <div class="field">
+                                    <label class="checkbox-label">
+                                        <input type="checkbox" name="sonic_fx_flanger_enabled" value="1" <?= $sonicExtras['synth']['effects']['flanger']['enabled'] ? 'checked' : '' ?>>
+                                        Flanger
+                                    </label>
+                                    <label for="sonic_fx_flanger_depth">Depth (s)</label>
+                                    <input type="number" id="sonic_fx_flanger_depth" name="sonic_fx_flanger_depth" min="0" max="0.02" step="0.001" value="<?= (float) $sonicExtras['synth']['effects']['flanger']['depth'] ?>">
+                                    <label for="sonic_fx_flanger_rate">Rate (Hz)</label>
+                                    <input type="number" id="sonic_fx_flanger_rate" name="sonic_fx_flanger_rate" min="0.05" max="5" step="0.05" value="<?= (float) $sonicExtras['synth']['effects']['flanger']['rate'] ?>">
+                                    <label for="sonic_fx_flanger_feedback">Feedback</label>
+                                    <input type="number" id="sonic_fx_flanger_feedback" name="sonic_fx_flanger_feedback" min="0" max="0.95" step="0.05" value="<?= (float) $sonicExtras['synth']['effects']['flanger']['feedback'] ?>">
+                                </div>
+                                <div class="field">
+                                    <label class="checkbox-label">
+                                        <input type="checkbox" name="sonic_fx_ring_mod_enabled" value="1" <?= $sonicExtras['synth']['effects']['ring_mod']['enabled'] ? 'checked' : '' ?>>
+                                        Ring modulator
+                                    </label>
+                                    <label for="sonic_fx_ring_mod_frequency">Carrier frequency (Hz)</label>
+                                    <input type="number" id="sonic_fx_ring_mod_frequency" name="sonic_fx_ring_mod_frequency" min="1" max="5000" step="1" value="<?= (float) $sonicExtras['synth']['effects']['ring_mod']['frequency'] ?>">
+                                </div>
+                            </div>
+                        </fieldset>
+                    </div>
+                    <?php endif ?>
+
                     <div class="form-actions" style="margin-top: 1.5rem; border-top: 3px solid var(--line); padding-top: 1.5rem;">
                         <button type="submit" class="admin-btn"><?= $isEdit ? 'Update' : 'Create' ?> Piece</button>
                         <a href="/admin/pieces" class="admin-btn admin-btn-ghost">Cancel</a>
@@ -683,7 +820,8 @@ if ($engineVal === 'p5') {
         html: document.getElementById('tab-html'),
         css: document.getElementById('tab-css'),
         js: document.getElementById('tab-js'),
-        ai: document.getElementById('tab-ai')
+        ai: document.getElementById('tab-ai'),
+        audio: document.getElementById('tab-audio')
     };
 
     var htmlField = document.getElementById('html_code');
@@ -773,6 +911,7 @@ if ($engineVal === 'p5') {
             tab.classList.add('active');
             tab.setAttribute('aria-selected', 'true');
             Object.keys(panels).forEach(function (key) {
+                if (!panels[key]) return;
                 if (key === tab.dataset.tab) {
                     panels[key].classList.remove('is-hidden');
                 } else {

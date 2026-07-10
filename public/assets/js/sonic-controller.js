@@ -1,0 +1,602 @@
+// Shared movement/keyboard sonification engine (Tone.js-backed), used by
+// immersive-gallery.js (parent-page immersive views), piece-runtime.js (the
+// sandboxed per-piece iframe), and piece-render.php's standalone/ZIP export
+// bootstrap. Classic script (no ES import/export) so every one of those three
+// contexts — including sandboxed srcdoc iframes and file:// exports — can
+// load it the same way Tone.js itself is already loaded.
+//
+// This module owns only the sonification ENGINE (synth construction, scale
+// walk, motion/idle note-triggering, volume, keyboard-mode note triggering).
+// Each caller keeps its own enable/mute wiring (direct click listener,
+// postMessage relay, or a self-owned button) because those differ
+// meaningfully per context — see opts.getMover below.
+(function (global) {
+  'use strict';
+
+  var SONIC_SCALES = {
+    major: [0, 2, 4, 5, 7, 9, 11], minor: [0, 2, 3, 5, 7, 8, 10],
+    pentatonic: [0, 2, 4, 7, 9], chromatic: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+    dorian: [0, 2, 3, 5, 7, 9, 10], phrygian: [0, 1, 3, 5, 7, 8, 10],
+    lydian: [0, 2, 4, 6, 7, 9, 11], mixolydian: [0, 2, 4, 5, 7, 9, 10],
+    wholetone: [0, 2, 4, 6, 8, 10],
+  };
+  var SONIC_INSTRUMENTS = {
+    synth: 'Synth', amsynth: 'AMSynth', fmsynth: 'FMSynth',
+    membranesynth: 'MembraneSynth', metalsynth: 'MetalSynth',
+    plucksynth: 'PluckSynth', duosynth: 'DuoSynth',
+  };
+
+  function midiToFreq(m) { return 440 * Math.pow(2, (m - 69) / 12); }
+
+  // Maps a 0-100 volume percent to a Tone.js dB value. 50 reproduces the
+  // previously-hardcoded -6dB default so existing pieces don't change
+  // loudness until a user actually touches the new slider.
+  function percentToDb(percent) {
+    var p = Math.max(0, Math.min(100, Number(percent)));
+    if (p <= 0) return -Infinity;
+    return p <= 50 ? (-40 + (p / 50) * 34) : (-6 + ((p - 50) / 50) * 12);
+  }
+
+  var _toneLoadPromise = null;
+  function loadToneOnce(toneSrc) {
+    if (global.Tone) return Promise.resolve(global.Tone);
+    if (_toneLoadPromise) return _toneLoadPromise;
+    _toneLoadPromise = new Promise(function (resolve, reject) {
+      var s = document.createElement('script');
+      s.src = toneSrc || '/assets/vendor/tone/Tone.js';
+      s.onload = function () { global.Tone ? resolve(global.Tone) : reject(new Error('Tone.js loaded but window.Tone missing')); };
+      s.onerror = function () { reject(new Error('Tone.js failed to load')); };
+      document.head.appendChild(s);
+    });
+    return _toneLoadPromise;
+  }
+
+  // Plucked-string approximation, standing in for Tone.PluckSynth (which
+  // internally builds an AudioWorkletProcessor that browsers refuse to load
+  // under file:// — a downloaded piece opened by double-clicking index.html
+  // — so it never sounds under that context). An earlier version of this
+  // function hand-built a true Karplus-Strong feedback loop (Noise -> Delay
+  // -> Filter -> Gain, feeding back into the Delay) using only native Web
+  // Audio nodes. That turned out to be fundamentally unreliable: a native
+  // DelayNode+BiquadFilterNode feedback loop can go numerically unstable
+  // under sustained, frequently-retriggered use ("BiquadFilterNode: state
+  // is bad" in the console), and once that happens the node is permanently
+  // silenced until torn down — which is exactly why real Tone.PluckSynth
+  // needed a dedicated AudioWorklet in the first place rather than native
+  // feedback nodes. Three separate mitigation attempts (frequency clamping,
+  // lower feedback gain, muting the loop around retunes) all still hit the
+  // same failure mode after continued use.
+  //
+  // This version has NO feedback loop at all, so that entire failure class
+  // is structurally impossible: Tone.MonoSynth (oscillator -> filter, with
+  // separate amplitude and filter envelopes) already ships in the vendored
+  // Tone.js build and is the standard, well-tested way to fake a plucked/
+  // percussive twang — bright attack, filter sweeping dark as the note
+  // decays. It's a close approximation, not literal physical modeling, but
+  // it can never diverge the way a feedback-based DSP loop can.
+  function createPluckVoice(Tone) {
+    return new Tone.MonoSynth({
+      oscillator: { type: 'triangle' },
+      envelope: { attack: 0.001, decay: 0.25, sustain: 0, release: 0.08 },
+      filterEnvelope: {
+        attack: 0.001, decay: 0.2, sustain: 0, release: 0.08,
+        baseFrequency: 200, octaves: 5, exponent: 2,
+      },
+      filter: { type: 'lowpass', rolloff: -24, Q: 1 },
+    });
+  }
+
+  // Builds one voice instance for the given Tone.js ctor name. PluckSynth is
+  // special-cased to the hand-built Karplus-Strong voice above; every other
+  // instrument type is built exactly as before via the real Tone.js class.
+  function buildVoice(Tone, ctorName) {
+    if (ctorName === 'PluckSynth') return createPluckVoice(Tone);
+    var Ctor = Tone[ctorName] || Tone.Synth;
+    return new Ctor();
+  }
+
+  // Hand-built flanger — Tone.js has no named Flanger class, but ships every
+  // primitive the classic algorithm needs: an LFO modulating a short Delay's
+  // delayTime, mixed wet+dry, with a feedback path for a stronger effect.
+  // Returns a real Tone.Gain (`input`) so upstream .connect(node) calls work
+  // via Tone's normal node-connection machinery; input.connect/dispose are
+  // then overridden (after all internal wiring is done) so calls made ON
+  // this node route to the wet/dry-summed output instead of the bare input.
+  function createFlangerNode(Tone, cfg) {
+    var input = new Tone.Gain(1);
+    var delay = new Tone.Delay(cfg.depth);
+    var lfo = new Tone.LFO(cfg.rate, 0, cfg.depth).start();
+    var feedback = new Tone.Gain(cfg.feedback);
+    var output = new Tone.Gain(1);
+    lfo.connect(delay.delayTime);
+    input.connect(delay);
+    input.connect(output);
+    delay.connect(output);
+    delay.connect(feedback);
+    feedback.connect(delay);
+    input.connect = function (dest) { output.connect(dest); return input; };
+    input.dispose = function () {
+      try { lfo.dispose(); } catch (_e) {}
+      try { delay.dispose(); } catch (_e) {}
+      try { feedback.dispose(); } catch (_e) {}
+      try { output.dispose(); } catch (_e) {}
+      try { Tone.Gain.prototype.dispose.call(input); } catch (_e) {}
+    };
+    return input;
+  }
+
+  // Hand-built ring modulator — a carrier oscillator drives a Gain node's
+  // own gain AudioParam, amplitude-modulating whatever's connected into it.
+  // A single real Tone.Gain both receives input and produces output, so no
+  // connect()/dispose() override is needed (unlike the flanger above).
+  function createRingModNode(Tone, cfg) {
+    var carrier = new Tone.Oscillator(cfg.frequency, 'sine').start();
+    var ringGain = new Tone.Gain(0);
+    carrier.connect(ringGain.gain);
+    var disposeGain = ringGain.dispose.bind(ringGain);
+    ringGain.dispose = function () {
+      try { carrier.dispose(); } catch (_e) {}
+      disposeGain();
+    };
+    return ringGain;
+  }
+
+  /**
+   * create(sonicParams, opts)
+   *
+   * opts.getMover()   optional fn returning {position:{x,y,z}}. When present,
+   *                   the engine drives its own requestAnimationFrame loop,
+   *                   polling position deltas itself (piece-runtime.js's
+   *                   iframe style — no host page to call update() for it).
+   *                   When absent, the caller must call update(motionVector)
+   *                   once per frame with a precomputed {dx,dy,dz} (the
+   *                   immersive-gallery.js style, which already knows the
+   *                   camera delta from its own render loop) — an idle
+   *                   timer still runs internally either way.
+   * opts.toneSrc      string override for the Tone.js <script> src.
+   * opts.defaultVolume 0-100, default 50 (~ legacy -6dB).
+   *
+   * Three concurrent Tone.js voices (all built from the same sonicParams
+   * instrument/scale/tempo — no schema fork), mixed through one shared
+   * Tone.Volume bus so the single volume slider controls all of them
+   * together:
+   *   - ambient: the idle scale-walk ticker, plays whenever the mover/camera
+   *     has been still for IDLE_GAP_MS. Always on while enabled.
+   *   - movement: motion-triggered notes (getMover deltas or externally
+   *     supplied update()). Always on while enabled, runs independently of
+   *     the ambient voice so a fast idle note and a motion note never fight
+   *     over one monophonic synth.
+   *   - melodic: driven directly by triggerNote() (keyboard buttons, and
+   *     eventually hand-tracking) — never touched by the idle/motion timers.
+   * setInputMode() no longer mutes anything; it's a UI-facing "what's the
+   * current control source" flag for callers to key their popover UI off of.
+   *
+   * Returns null when sonicParams is missing/invalid — callers no-op safely.
+   */
+  function create(sonicParams, opts) {
+    opts = opts || {};
+    if (!sonicParams || typeof sonicParams !== 'object') return null;
+    if (opts.getMover != null && typeof opts.getMover !== 'function') return null;
+
+    var scaleName = SONIC_SCALES[sonicParams.scale] ? sonicParams.scale : 'major';
+    var scale = SONIC_SCALES[scaleName];
+    var instrumentKey = SONIC_INSTRUMENTS[sonicParams.instrument] ? sonicParams.instrument : 'synth';
+    var instrumentCtorName = SONIC_INSTRUMENTS[instrumentKey];
+    var tempo = Math.max(40, Math.min(220, Number(sonicParams.tempo) || 90));
+    var minInterval = ((60 / tempo) * 1000) / 2; // ~eighth-note spacing
+    var baseMidi = 48; // C3
+    var IDLE_GAP_MS = 2000; // how long the mover/camera must sit still before idle notes resume
+    var drivesSelf = typeof opts.getMover === 'function';
+
+    // Mechanical, non-AI-authored settings (public voice-visibility toggles +
+    // admin-only synth tuning) nested under sonicParams.extras — see
+    // validate_art_piece_sonic_extras() in art-piece-generation.php. Falls
+    // back to "everything on, default tuning" for pieces saved before this
+    // existed, so nothing regresses.
+    var extras = (sonicParams.extras && typeof sonicParams.extras === 'object') ? sonicParams.extras : {};
+    var voices = (extras.voices && typeof extras.voices === 'object') ? extras.voices : {};
+    var voiceAmbient = voices.ambient !== false;
+    var voiceMovement = voices.movement !== false;
+    var synthExtras = (extras.synth && typeof extras.synth === 'object') ? extras.synth : {};
+    var octaveMin = Number.isFinite(synthExtras.octave_min) ? synthExtras.octave_min : 1;
+    var octaveMax = Number.isFinite(synthExtras.octave_max) ? synthExtras.octave_max : 5;
+    var filterCutoff = Number.isFinite(synthExtras.filter_cutoff) ? synthExtras.filter_cutoff : 8000;
+    var filterResonance = Number.isFinite(synthExtras.filter_resonance) ? synthExtras.filter_resonance : 1;
+    var filterType = ['lowpass', 'highpass', 'bandpass'].indexOf(synthExtras.filter_type) >= 0 ? synthExtras.filter_type : 'lowpass';
+    // Admin-only effects chain (Audio tab) — see
+    // validate_art_piece_sonic_extras() in art-piece-generation.php for the
+    // validated/clamped shape. Absent/malformed entries default to off.
+    var effectsExtras = (synthExtras.effects && typeof synthExtras.effects === 'object') ? synthExtras.effects : {};
+
+    var enabled = false, disposed = false;
+    var bus = null, filter = null, ambientSynth = null, movementSynth = null, melodicSynth = null;
+    var effectNodes = [];
+    var handStream = null, handLandmarker = null, handVideoEl = null, handRafId = null, handNoteHeld = false;
+    var lastIdleNoteAt = 0, lastMotionNoteAt = 0, walk = 0;
+    var prevX = null, prevY = null, prevZ = null;
+    var lastMotionAt = 0;
+    var volumePercent = Math.max(0, Math.min(100, Number(opts.defaultVolume)) || 50);
+    var inputMode = 'motion'; // 'motion' | 'keyboard' | 'hand' — UI flag only, gates nothing audio-side
+    var currentOctave = Math.max(octaveMin, Math.min(octaveMax, 3)); // 3 matches the legacy baseMidi=48 (C3) default
+    var rafId = null, idleTimer = null;
+    // Visitor-chosen per-voice instrument overrides — session-local only (the
+    // caller is responsible for persisting/restoring these, e.g. localStorage;
+    // this engine never touches storage or the piece's authored sonicParams).
+    // Missing keys mean "use the piece's authored instrumentKey".
+    var voiceInstrumentOverrides = {};
+
+    function applyVolume() {
+      if (bus) bus.volume.value = percentToDb(volumePercent);
+    }
+
+    function playOn(voiceSynth, degree, octaveOffset) {
+      if (!enabled || !voiceSynth || disposed) return;
+      var idx = ((degree % scale.length) + scale.length) % scale.length;
+      var midi = baseMidi + scale[idx] + 12 * (octaveOffset || 0);
+      try { voiceSynth.triggerAttackRelease(midiToFreq(midi), '16n'); } catch (_e) {}
+    }
+
+    // Idle voice: plays a plain scale-walk pattern once the mover/camera has
+    // been still for a beat. Always active while enabled — never gated by
+    // inputMode, so it keeps sounding underneath keyboard/hand play. Skipped
+    // entirely when the admin has hidden the ambient voice for this piece.
+    function ambientStep(now) {
+      if (!voiceAmbient) return;
+      if (now - lastMotionAt >= IDLE_GAP_MS && now - lastIdleNoteAt >= minInterval) {
+        lastIdleNoteAt = now;
+        playOn(ambientSynth, walk++, 0);
+      }
+    }
+
+    // Movement voice: motion-triggered notes from either the self-driven
+    // getMover rAF loop or an externally-supplied update(motion) call. Always
+    // active while enabled — never gated by inputMode. Skipped entirely when
+    // the admin has hidden the movement voice for this piece.
+    function movementStep(now) {
+      if (!voiceMovement) return;
+      if (!drivesSelf) return; // external-drive style feeds this via update() instead
+      var mover = opts.getMover();
+      if (!mover || !mover.position) return;
+      var x = mover.position.x, y = mover.position.y, z = mover.position.z;
+      if (prevX !== null) {
+        var dx = x - prevX, dy = y - prevY, dz = z - prevZ;
+        var speed = Math.hypot(dx, dy, dz);
+        if (speed >= 0.002) {
+          lastMotionAt = now;
+          if (now - lastMotionNoteAt >= minInterval) {
+            lastMotionNoteAt = now;
+            var octave = Math.min(2, Math.floor(Math.abs(dy) * 25));
+            playOn(movementSynth, walk++, octave);
+          }
+        }
+      }
+      prevX = x; prevY = y; prevZ = z;
+    }
+
+    function autoStep(now) {
+      movementStep(now);
+      ambientStep(now);
+    }
+
+    function rafLoop() {
+      rafId = requestAnimationFrame(rafLoop);
+      if (!enabled || !ambientSynth || disposed) return;
+      autoStep(performance.now());
+    }
+
+    function idleLoop() {
+      if (disposed) { idleTimer = null; return; }
+      idleTimer = setTimeout(idleLoop, minInterval);
+      if (!enabled || !ambientSynth) return;
+      autoStep(performance.now());
+    }
+
+    function ensureLoopStarted() {
+      if (drivesSelf) { if (!rafId) rafLoop(); }
+      else { if (!idleTimer) idleLoop(); }
+    }
+
+    // --- Hand-tracking (camera theremin), via MediaPipe Tasks-Vision's -----
+    // HandLandmarker, self-hosted under public/assets/vendor/mediapipe-hands/.
+    // Wrist vertical position -> pitch (glides continuously, real theremin
+    // feel, not discrete note triggers), wrist-to-middle-fingertip spread ->
+    // volume of the melodic voice specifically (not the shared master bus),
+    // so hand-tracking layers over the ambient/movement voices exactly like
+    // keyboard mode does.
+    var _handLandmarkerPromise = null;
+    function loadHandLandmarkerOnce() {
+      if (_handLandmarkerPromise) return _handLandmarkerPromise;
+      _handLandmarkerPromise = (async function () {
+        var visionSrc = opts.mediaPipeVisionSrc || '/assets/vendor/mediapipe-hands/vision_bundle.mjs';
+        var wasmDir = opts.mediaPipeWasmDir || '/assets/vendor/mediapipe-hands/';
+        var modelSrc = opts.mediaPipeModelSrc || '/assets/vendor/mediapipe-hands/hand_landmarker.task';
+        // Dynamic import() works even from a classic (non type="module")
+        // script in evergreen browsers — avoids needing a UMD/global build,
+        // which MediaPipe's tasks-vision package doesn't ship.
+        var vision = await import(visionSrc);
+        var fileset = await vision.FilesetResolver.forVisionTasks(wasmDir);
+        return vision.HandLandmarker.createFromOptions(fileset, {
+          baseOptions: { modelAssetPath: modelSrc },
+          runningMode: 'VIDEO',
+          numHands: 1,
+        });
+      })();
+      return _handLandmarkerPromise;
+    }
+
+    function handFrameStep() {
+      handRafId = requestAnimationFrame(handFrameStep);
+      if (!handLandmarker || !handVideoEl || handVideoEl.readyState < 2) return;
+      var result;
+      try { result = handLandmarker.detectForVideo(handVideoEl, performance.now()); } catch (_e) { return; }
+      var hand = result && result.landmarks && result.landmarks[0];
+      if (!hand || !enabled || !melodicSynth) {
+        if (handNoteHeld) { try { melodicSynth.triggerRelease(); } catch (_e) {} handNoteHeld = false; }
+        return;
+      }
+      var wrist = hand[0], midTip = hand[12];
+      // y is 0 (top of frame) to 1 (bottom) — invert so raising the hand
+      // raises pitch, matching a physical theremin's vertical antenna.
+      var semitoneRange = (octaveMax - octaveMin + 1) * 12;
+      var midi = 12 * (octaveMin + 1) + Math.max(0, Math.min(semitoneRange, (1 - wrist.y) * semitoneRange));
+      var spread = Math.hypot(midTip.x - wrist.x, midTip.y - wrist.y);
+      var volumeDb = -30 + Math.max(0, Math.min(1, (spread - 0.05) / 0.3)) * 30;
+      try {
+        if (melodicSynth.volume) melodicSynth.volume.value = volumeDb;
+        if (!handNoteHeld) {
+          melodicSynth.triggerAttack(midiToFreq(midi));
+          handNoteHeld = true;
+        } else if (melodicSynth.frequency && melodicSynth.frequency.rampTo) {
+          melodicSynth.frequency.rampTo(midiToFreq(midi), 0.08);
+        } else if (melodicSynth.setNote) {
+          melodicSynth.setNote(midiToFreq(midi));
+        }
+      } catch (_e) {}
+    }
+
+    async function enableHandTracking() {
+      if (disposed || !voices.hand_tracking) return false;
+      try {
+        await ensureSynth();
+        if (disposed) return false;
+        handLandmarker = await loadHandLandmarkerOnce();
+        if (disposed) return false;
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          return false;
+        }
+        handStream = await navigator.mediaDevices.getUserMedia({ video: true });
+        if (disposed) { handStream.getTracks().forEach(function (t) { t.stop(); }); return false; }
+        handVideoEl = document.createElement('video');
+        handVideoEl.muted = true;
+        handVideoEl.playsInline = true;
+        handVideoEl.srcObject = handStream;
+        await handVideoEl.play();
+        if (!handRafId) handFrameStep();
+        return true;
+      } catch (_e) {
+        disableHandTracking();
+        return false;
+      }
+    }
+
+    function disableHandTracking() {
+      if (handRafId) { cancelAnimationFrame(handRafId); handRafId = null; }
+      if (handNoteHeld) { try { melodicSynth && melodicSynth.triggerRelease && melodicSynth.triggerRelease(); } catch (_e) {} handNoteHeld = false; }
+      if (handStream) { try { handStream.getTracks().forEach(function (t) { t.stop(); }); } catch (_e) {} handStream = null; }
+      if (melodicSynth && melodicSynth.volume) { try { melodicSynth.volume.value = 0; } catch (_e) {} }
+      handVideoEl = null;
+    }
+
+    async function ensureSynth() {
+      if (ambientSynth) return ambientSynth;
+      var Tone = await loadToneOnce(opts.toneSrc);
+      await Tone.start();
+      if (disposed) return null;
+      if (!bus) {
+        bus = new Tone.Volume(percentToDb(volumePercent)).toDestination();
+        // One shared filter shapes the combined timbre of all three voices —
+        // admin-only cutoff/resonance/type tuning (extras.synth), applied
+        // once at creation like instrument/scale/tempo.
+        filter = new Tone.Filter(filterCutoff, filterType);
+        filter.Q.value = filterResonance;
+        // Admin-enabled effects, in a fixed order, inserted between filter
+        // and bus. Only constructed for effects the admin actually turned
+        // on, so a piece with no effects pays no extra audio-node cost.
+        var chainTail = filter;
+        function maybeAddEffect(key, factory) {
+          var cfg = effectsExtras[key];
+          if (!cfg || !cfg.enabled) return;
+          var node = factory(cfg);
+          chainTail.connect(node);
+          chainTail = node;
+          effectNodes.push(node);
+        }
+        maybeAddEffect('distortion', function (cfg) { return new Tone.Distortion(cfg.amount); });
+        maybeAddEffect('chorus', function (cfg) { var c = new Tone.Chorus(cfg.rate, 2.5, cfg.depth).start(); return c; });
+        maybeAddEffect('tremolo', function (cfg) { var t = new Tone.Tremolo(cfg.rate, cfg.depth).start(); return t; });
+        maybeAddEffect('pitch_shift', function (cfg) { return new Tone.PitchShift(cfg.semitones); });
+        maybeAddEffect('bitcrusher', function (cfg) { return new Tone.BitCrusher(cfg.bits); });
+        maybeAddEffect('flanger', function (cfg) { return createFlangerNode(Tone, cfg); });
+        maybeAddEffect('ring_mod', function (cfg) { return createRingModNode(Tone, cfg); });
+        chainTail.connect(bus);
+        ambientSynth = buildVoice(Tone, instrumentCtorName).connect(filter);
+        movementSynth = buildVoice(Tone, instrumentCtorName).connect(filter);
+        melodicSynth = buildVoice(Tone, instrumentCtorName).connect(filter);
+      }
+      return ambientSynth;
+    }
+
+    return {
+      async enable() {
+        if (disposed) return false;
+        await ensureSynth();
+        if (disposed || !ambientSynth) return false;
+        enabled = true;
+        lastMotionAt = 0; // let idle/motion notes start immediately on unmute
+        ensureLoopStarted();
+        return true;
+      },
+      disable() {
+        enabled = false;
+      },
+      isEnabled: function () { return enabled; },
+      update: function (motion) {
+        // External-drive style only (immersive-gallery.js) — controllers
+        // that own their own getMover-driven rAF loop ignore this. Always
+        // active while enabled — never gated by inputMode.
+        if (!voiceMovement || drivesSelf || !enabled || !movementSynth || disposed) return;
+        var dx = (motion && motion.dx) || 0, dy = (motion && motion.dy) || 0, dz = (motion && motion.dz) || 0;
+        var speed = Math.hypot(dx, dy, dz);
+        if (speed < 0.002) return;
+        lastMotionAt = performance.now();
+        var now = lastMotionAt;
+        if (now - lastMotionNoteAt < minInterval) return;
+        lastMotionNoteAt = now;
+        var octave = Math.min(2, Math.floor(Math.abs(dy) * 25));
+        playOn(movementSynth, walk++, octave);
+      },
+      setVolume: function (percent) {
+        volumePercent = Math.max(0, Math.min(100, Number(percent) || 0));
+        applyVolume();
+      },
+      getVolume: function () { return volumePercent; },
+      setInputMode: function (mode) {
+        inputMode = (mode === 'keyboard' || mode === 'hand') ? mode : 'motion';
+      },
+      getInputMode: function () { return inputMode; },
+      getScaleLength: function () { return scale.length; },
+      triggerNote: function (degree, octaveOffset) { playOn(melodicSynth, degree, octaveOffset); },
+      // Chromatic (piano-key) triggering — plays any semitone, not just the
+      // piece's configured scale degrees, through the same melodic voice.
+      // Standard MIDI numbering (C4=60); currentOctave defaults to 3, which
+      // maps to the legacy baseMidi=48 (C3) convention. semitoneIndex is NOT
+      // wrapped to 0-11 — the physical-keyboard mapping deliberately spans
+      // just past one octave (K/L/O/P land in the octave above), so values
+      // up to ~16 are expected and should advance into the next octave
+      // rather than wrapping back into the current one.
+      triggerChromaticNote: function (semitoneIndex) {
+        if (!enabled || !melodicSynth || disposed) return;
+        var midi = 12 * (currentOctave + 1) + (Number(semitoneIndex) || 0);
+        try { melodicSynth.triggerAttackRelease(midiToFreq(midi), '16n'); } catch (_e) {}
+      },
+      setOctave: function (octave) {
+        currentOctave = Math.max(octaveMin, Math.min(octaveMax, Math.round(Number(octave) || currentOctave)));
+      },
+      getOctave: function () { return currentOctave; },
+      getOctaveRange: function () { return { min: octaveMin, max: octaveMax }; },
+      // Visitor-facing per-voice instrument override — rebuilds just the one
+      // voice's synth in place, live, without disposing/recreating the whole
+      // engine. Never touches sonicParams/the DB; callers own persisting the
+      // choice (e.g. localStorage) across page loads. No-ops until the
+      // engine has been enabled at least once (ensureSynth() must have run).
+      setVoiceInstrument: function (voiceName, instrumentKey) {
+        if (!SONIC_INSTRUMENTS[instrumentKey] || disposed || !ambientSynth) return false;
+        var Tone = global.Tone;
+        if (!Tone) return false;
+        var ctorName = SONIC_INSTRUMENTS[instrumentKey];
+        var newSynth = buildVoice(Tone, ctorName).connect(filter);
+        if (voiceName === 'ambient') {
+          try { ambientSynth.dispose && ambientSynth.dispose(); } catch (_e) {}
+          ambientSynth = newSynth;
+        } else if (voiceName === 'movement') {
+          try { movementSynth.dispose && movementSynth.dispose(); } catch (_e) {}
+          movementSynth = newSynth;
+        } else if (voiceName === 'melodic') {
+          try { melodicSynth.dispose && melodicSynth.dispose(); } catch (_e) {}
+          melodicSynth = newSynth;
+        } else {
+          try { newSynth.dispose && newSynth.dispose(); } catch (_e) {}
+          return false;
+        }
+        voiceInstrumentOverrides[voiceName] = instrumentKey;
+        return true;
+      },
+      getVoiceInstrument: function (voiceName) {
+        return voiceInstrumentOverrides[voiceName] || instrumentKey;
+      },
+      // Hand-tracking is only offered when extras.voices.hand_tracking is
+      // true for this piece (enableHandTracking() itself also refuses
+      // otherwise, as defense in depth against a caller that doesn't check).
+      isHandTrackingAllowed: function () { return !!voices.hand_tracking; },
+      enableHandTracking: enableHandTracking,
+      disableHandTracking: disableHandTracking,
+      dispose: function () {
+        disposed = true; enabled = false;
+        if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
+        if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+        disableHandTracking();
+        try { handLandmarker && handLandmarker.close && handLandmarker.close(); } catch (_e) {}
+        try { ambientSynth && ambientSynth.dispose && ambientSynth.dispose(); } catch (_e) {}
+        try { movementSynth && movementSynth.dispose && movementSynth.dispose(); } catch (_e) {}
+        try { melodicSynth && melodicSynth.dispose && melodicSynth.dispose(); } catch (_e) {}
+        try { filter && filter.dispose && filter.dispose(); } catch (_e) {}
+        effectNodes.forEach(function (node) { try { node && node.dispose && node.dispose(); } catch (_e) {} });
+        try { bus && bus.dispose && bus.dispose(); } catch (_e) {}
+      },
+    };
+  }
+
+  // Standard "typing keyboard as piano" layout: home row A S D F G H J K L ;
+  // are the white keys (K L ; deliberately spill into the octave above,
+  // matching a real piano's continuation), the row above — W E _ T Y U _ O P —
+  // are the black/sharp keys in the gaps (no black key above the E-F or B-C
+  // boundaries). Values are semitone offsets from the current octave's root,
+  // fed straight into triggerChromaticNote().
+  var PIANO_KEY_MAP = {
+    a: 0, w: 1, s: 2, e: 3, d: 4, f: 5, t: 6, g: 7, y: 8, h: 9, u: 10, j: 11,
+    k: 12, o: 13, l: 14, p: 15, ';': 16,
+  };
+
+  /**
+   * Attaches a keydown listener mapping PIANO_KEY_MAP to
+   * engine.triggerChromaticNote(). Callers should only call this while their
+   * on-screen "keyboard mode" toggle is active, and call the returned
+   * detach() the moment it's switched off (or the piece/popover unmounts) —
+   * this is what keeps physical piano keys from ever fighting with WASD
+   * camera-movement shortcuts, since the listener simply doesn't exist
+   * except during deliberate piano play.
+   */
+  function attachPianoKeyListener(engine, onNoteStateChange) {
+    function onKeyDown(event) {
+      if (event.repeat) return;
+      var target = event.target;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+      var key = event.key && event.key.length === 1 ? event.key.toLowerCase() : event.key;
+      if (!Object.prototype.hasOwnProperty.call(PIANO_KEY_MAP, key)) return;
+      event.preventDefault();
+      var semitone = PIANO_KEY_MAP[key];
+      engine.triggerChromaticNote(semitone);
+      if (typeof onNoteStateChange === 'function') {
+        onNoteStateChange(semitone, true);
+      }
+    }
+    function onKeyUp(event) {
+      var target = event.target;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+      var key = event.key && event.key.length === 1 ? event.key.toLowerCase() : event.key;
+      if (!Object.prototype.hasOwnProperty.call(PIANO_KEY_MAP, key)) return;
+      event.preventDefault();
+      var semitone = PIANO_KEY_MAP[key];
+      if (typeof onNoteStateChange === 'function') {
+        onNoteStateChange(semitone, false);
+      }
+    }
+    document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('keyup', onKeyUp);
+    return function detach() {
+      document.removeEventListener('keydown', onKeyDown);
+      document.removeEventListener('keyup', onKeyUp);
+    };
+  }
+
+  global.CreatrSonicController = {
+    create: create,
+    SONIC_SCALES: SONIC_SCALES,
+    SONIC_INSTRUMENTS: SONIC_INSTRUMENTS,
+    midiToFreq: midiToFreq,
+    percentToDb: percentToDb,
+    loadToneOnce: loadToneOnce,
+    PIANO_KEY_MAP: PIANO_KEY_MAP,
+    attachPianoKeyListener: attachPianoKeyListener,
+  };
+})(typeof window !== 'undefined' ? window : this);

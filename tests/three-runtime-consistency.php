@@ -122,6 +122,31 @@ test('user-driven camera control overrides a piece\'s own scripted camera once t
     assert_contains($runtime, 'userHasInteracted = true');
 });
 
+test('regular piece runtime keyboard navigation uses only Arrow keys, never WASD', function () use ($runtime) {
+    // WASD is reserved for the piano-key sound input; camera movement must
+    // not respond to those keys.
+    assert_contains($runtime, "function mapMovementKey(event)");
+    $mapFn = substr($runtime, strpos($runtime, "function mapMovementKey(event)"));
+    $mapFn = substr($mapFn, 0, strpos($mapFn, "function shouldIgnoreKeyEventTarget"));
+    assert_contains($mapFn, "if (event.key === 'ArrowLeft' || event.key === 'ArrowRight' || event.key === 'ArrowUp' || event.key === 'ArrowDown') return event.key;");
+    assert_not_contains($mapFn, "KeyW");
+    assert_not_contains($mapFn, "KeyA");
+    assert_not_contains($mapFn, "KeyS");
+    assert_not_contains($mapFn, "KeyD");
+});
+
+test('regular piece runtime disables A-Frame WASD after the A-Frame script loads', function () use ($runtime) {
+    assert_contains($runtime, 'function disableAFrameWASD()');
+    assert_contains($runtime, "window.AFRAME.components['wasd-controls']");
+    assert_contains($runtime, "if (e.code === 'KeyW' || e.code === 'KeyA' || e.code === 'KeyS' || e.code === 'KeyD') return;");
+    // The safeguard must run after A-Frame is actually available, not just
+    // at module parse time, because bootAFrame loads aframe.min.js dynamically.
+    $bootAFrame = substr($runtime, strpos($runtime, 'function bootAFrame()'));
+    $bootAFrame = substr($bootAFrame, 0, strpos($bootAFrame, 'let pointerTarget = null'));
+    assert_contains($bootAFrame, 'script.onload = () => {');
+    assert_contains($bootAFrame, 'disableAFrameWASD();');
+});
+
 test('Three.js/OrbitControls load from absolute https:// CDN URLs, not relative/bare-specifier imports (Safari sandboxed-srcdoc compatibility)', function () use ($runtime) {
     // Regression guard: Safari blocks relative dynamic module imports
     // inside sandboxed <iframe srcdoc> documents — this is why Three.js
@@ -149,13 +174,23 @@ test('regular export bootstrap mirrors the live regular-view A-Frame teleport co
     assert_contains($render, 'raycaster.intersectObjects(scene.object3D?.children || [], true)');
 });
 
+test('regular export bootstrap disables A-Frame WASD in both CDN and bundle modes', function () {
+    $render = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
+    // CDN imports: inline shim immediately after the aframe.min.js script tag.
+    assert_contains($render, 'if (window.AFRAME && window.AFRAME.components["wasd-controls"]) {');
+    // Bundle inline runtime: shim appended to the vendored A-Frame source.
+    assert_contains($render, "if (window.AFRAME && window.AFRAME.components['wasd-controls']) {");
+    assert_contains($render, 'if (e.code === "KeyW" || e.code === "KeyA" || e.code === "KeyS" || e.code === "KeyD") return;');
+    assert_contains($render, "if (e.code === 'KeyW' || e.code === 'KeyA' || e.code === 'KeyS' || e.code === 'KeyD') return;");
+});
+
 echo "\n=== regular-view sound (Three.js/A-Frame only, muted by default) ===\n";
 
 test('mountExhibitWall sonifies only the camera-focused item, rebinding as focus changes', function () {
     $immersiveSrc = file_get_contents(__DIR__ . '/../public/assets/js/immersive-gallery.js');
     assert_contains($immersiveSrc, 'function computeFocusedSlotIndex');
     assert_contains($immersiveSrc, 'if (focusedIndex !== audioControllerIndex');
-    assert_contains($immersiveSrc, 'audioController = createAudioController(focusedItem?.sonicParams, stageEl, { attachListener: false })');
+    assert_contains($immersiveSrc, 'audioController = createAudioController(focusedItem?.sonicParams, stageEl, { attachListener: false, allowHandTracking: false, pieceId: focusedItem?.piece_id })');
     assert_contains($immersiveSrc, 'wallSoundToggleBtn.addEventListener("click", onWallSoundToggleClick)');
     // Old controller must be disposed on every rebind, and again on wall
     // teardown, or a stale synth instance leaks.
@@ -205,7 +240,7 @@ test('pieces/show.php renders a gated sound toggle and posts creatr-sound-toggle
 
 test('piece_export_document (non-immersive export) inlines a self-contained sound controller', function () {
     $render = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
-    assert_contains($render, 'function piece_export_sonic_script(string $engine, string $sonicParamsJson, string $runtimeMode): string');
+    assert_contains($render, 'function piece_export_sonic_script(string $engine, string $sonicParamsJson, string $runtimeMode, int $pieceId = 0): string');
     assert_contains($render, "trim(\$sonicParamsJson) === ''");
     // Bundle mode must load Tone.js from the ZIP, not from a blob:null script URL.
     assert_contains($render, "'runtime/tone/Tone.js'");
@@ -215,7 +250,8 @@ test('piece_export_document (non-immersive export) inlines a self-contained soun
 
 test('immersive export bundles Tone.js and wires sonicParams through to the mount* calls', function () {
     $render = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
-    assert_contains($render, "['source_path' => \$publicRoot . '/assets/vendor/tone/Tone.js', 'zip_path' => 'runtime/tone/Tone.js']");
+    assert_contains($render, "'source_path' => \$publicRoot . '/assets/vendor/tone/Tone.js',");
+    assert_contains($render, "'zip_path' => 'runtime/tone/Tone.js',");
     assert_contains($render, "'s.src = \"/assets/vendor/tone/Tone.js\";' => 's.src = \"runtime/tone/Tone.js\";'");
     assert_contains($render, 'sonicParams: piece.sonicParams');
     assert_contains($render, "'sound_action' => \$hasSonic ? ['enabled' => true] : null");
@@ -424,6 +460,29 @@ test('A-Frame immersive pieces expose viewer zoom and tap-to-move controls witho
     assert_contains($immersive, 'onFloatUp: () => applyAFrameFloatMove(1)');
     assert_contains($immersive, 'onFloatDown: () => applyAFrameFloatMove(-1)');
     assert_not_contains($immersive, 'import("/assets/js/aframe');
+});
+
+test('immersive gallery keyboard navigation uses only Arrow keys, never WASD', function () use ($immersive) {
+    assert_contains($immersive, 'function mapMovementKey(e)');
+    $mapFn = substr($immersive, strpos($immersive, 'function mapMovementKey(e)'));
+    $mapFn = substr($mapFn, 0, strpos($mapFn, 'function shouldIgnoreKeyEventTarget'));
+    assert_contains($mapFn, 'if (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "ArrowUp" || e.key === "ArrowDown") return e.key;');
+    assert_not_contains($mapFn, 'KeyW');
+    assert_not_contains($mapFn, 'KeyA');
+    assert_not_contains($mapFn, 'KeyS');
+    assert_not_contains($mapFn, 'KeyD');
+});
+
+test('immersive gallery disables A-Frame WASD after the A-Frame runtime loads', function () use ($immersive) {
+    assert_contains($immersive, 'function disableAFrameWASD()');
+    assert_contains($immersive, 'window.AFRAME.components["wasd-controls"]');
+    assert_contains($immersive, 'if (e.code === "KeyW" || e.code === "KeyA" || e.code === "KeyS" || e.code === "KeyD") return;');
+    $loadAFrame = substr($immersive, strpos($immersive, 'function loadAFrameRuntime()'));
+    $loadAFrame = substr($loadAFrame, 0, strpos($loadAFrame, 'let p5RuntimePromise'));
+    assert_contains($loadAFrame, 'script.onload = () => {');
+    assert_contains($loadAFrame, 'disableAFrameWASD();');
+    assert_contains($loadAFrame, 'if (window.AFRAME) {');
+    assert_contains($loadAFrame, 'disableAFrameWASD();');
 });
 
 test('full-view overlay PNG capture uses strict validation only for A-Frame iframe slides, not every exported canvas slide', function () use ($immersive) {

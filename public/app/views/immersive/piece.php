@@ -9,6 +9,13 @@ $engine = strtolower((string) ($version['engine'] ?? $piece['engine'] ?? 'p5'));
 // Safari especially) can keep serving a stale cached copy of
 // immersive-gallery.js indefinitely after a deploy.
 $galleryRuntimeVersion = (int) @filemtime(dirname(__DIR__, 3) . '/assets/js/immersive-gallery.js');
+// Same cache-busting need applies to sonic-controller.js/Tone.js: unlike
+// immersive-gallery.js above (a static <script> src), these are loaded via
+// a dynamically-created <script> tag inside immersive-gallery.js itself, so
+// there's no URL for the browser to see change on a normal page load unless
+// we inject a versioned override here.
+$sonicControllerVersion = (int) @filemtime(dirname(__DIR__, 3) . '/assets/js/sonic-controller.js');
+$toneVersion = (int) @filemtime(dirname(__DIR__, 3) . '/assets/vendor/tone/Tone.js');
 
 // Determine details for URL/origin
 $origin = ($_SERVER['REQUEST_SCHEME'] ?? 'http') . '://' . ($_SERVER['HTTP_HOST'] ?? 'localhost');
@@ -738,6 +745,8 @@ canvas[aria-hidden="true"] {
 
 <script src="/assets/js/public-piece-download.js?v=<?= $publicPieceScriptVersion ?>"></script>
 <script type="module">
+window.__creatrSonicControllerSrc = '/assets/js/sonic-controller.js?v=<?= $sonicControllerVersion ?>';
+window.__creatrToneSrc = '/assets/vendor/tone/Tone.js?v=<?= $toneVersion ?>';
 import { mountThreeImmersivePiece, mountAFrameImmersivePiece, mountGalleryPiece, setupImmersiveStageChrome } from '/assets/js/immersive-gallery.js?v=<?= $galleryRuntimeVersion ?>';
 
 // Setup full screen toggling variables
@@ -976,7 +985,7 @@ const sonicParams = <?= json_encode(
         ? $sonicParamsDecoded
         : null
 ) ?>;
-const viewerControlsOptions = { showViewerControls: <?= (!$isEmbedMode && !$isStaticEmbed) ? 'true' : 'false' ?>, sonicParams };
+const viewerControlsOptions = { showViewerControls: <?= (!$isEmbedMode && !$isStaticEmbed) ? 'true' : 'false' ?>, sonicParams, pieceId: <?= (int) ($piece['id'] ?? 0) ?> };
 
 const stage = document.getElementById('immersive-stage');
 
@@ -1018,6 +1027,7 @@ try {
         onViewAction() {
             immersiveViewer?.openFullViewAt?.(0);
         },
+        getAudioController: () => immersiveViewer?.getAudioController?.(),
     });
 
     const downloadPieceLink = document.querySelector('[data-immersive-download-piece]');

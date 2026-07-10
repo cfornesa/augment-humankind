@@ -549,6 +549,154 @@ function validate_art_piece_sonic_params(?string $sonicJson): ?string
     ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
 }
 
+/**
+ * Validates/normalizes the mechanical, non-AI-authored "extras" sub-object
+ * nested inside sonic_params: per-piece public-visibility toggles for each
+ * sonification voice, a default volume, and admin-only synth tuning
+ * (octave range / filter cutoff / resonance). Deliberately SOFT-FAILING like
+ * validate_art_piece_sonic_params() — always returns a fully-defaulted array,
+ * never null, so a malformed/missing extras block never blocks a save.
+ *
+ * This is intentionally a sibling function, not a merge into
+ * validate_art_piece_sonic_params() itself: keeping extras out of that
+ * function's own canonicalization means art_piece_sonic_params_equal()
+ * (which re-validates through that function before comparing) naturally
+ * ignores extras when deciding whether AI-authored sonic content changed —
+ * admin-only Audio-tab tweaks must never look like a "sonic changed" event
+ * for version-forking purposes.
+ */
+function validate_art_piece_sonic_extras(mixed $decoded): array
+{
+    $extras = is_array($decoded) ? $decoded : [];
+    $voicesIn = is_array($extras['voices'] ?? null) ? $extras['voices'] : [];
+
+    $volume = $extras['default_volume'] ?? 50;
+    $volume = is_numeric($volume) ? (int) round((float) $volume) : 50;
+    $volume = max(0, min(100, $volume));
+
+    $synthIn = is_array($extras['synth'] ?? null) ? $extras['synth'] : [];
+    $filterTypes = ['lowpass', 'highpass', 'bandpass'];
+    $filterType = in_array($synthIn['filter_type'] ?? null, $filterTypes, true) ? $synthIn['filter_type'] : 'lowpass';
+
+    $octaveMin = $synthIn['octave_min'] ?? 1;
+    $octaveMin = is_numeric($octaveMin) ? (int) round((float) $octaveMin) : 1;
+    $octaveMin = max(-1, min(7, $octaveMin));
+
+    $octaveMax = $synthIn['octave_max'] ?? 5;
+    $octaveMax = is_numeric($octaveMax) ? (int) round((float) $octaveMax) : 5;
+    $octaveMax = max(-1, min(7, $octaveMax));
+    if ($octaveMax < $octaveMin) {
+        [$octaveMin, $octaveMax] = [$octaveMax, $octaveMin];
+    }
+
+    $cutoff = $synthIn['filter_cutoff'] ?? 8000;
+    $cutoff = is_numeric($cutoff) ? (float) $cutoff : 8000.0;
+    $cutoff = max(20.0, min(20000.0, $cutoff));
+
+    $resonance = $synthIn['filter_resonance'] ?? 1;
+    $resonance = is_numeric($resonance) ? (float) $resonance : 1.0;
+    $resonance = max(0.1, min(20.0, $resonance));
+
+    // Admin-only effects chain, inserted between the shared filter and the
+    // master volume bus in sonic-controller.js's ensureSynth(). All default
+    // 'enabled' => false so existing pieces are unaffected until an admin
+    // opts in. See docs/dependencies.md's Tone.js section for the shape.
+    $effectsIn = is_array($synthIn['effects'] ?? null) ? $synthIn['effects'] : [];
+
+    $distortionIn = is_array($effectsIn['distortion'] ?? null) ? $effectsIn['distortion'] : [];
+    $distortionAmount = $distortionIn['amount'] ?? 0.4;
+    $distortionAmount = is_numeric($distortionAmount) ? (float) $distortionAmount : 0.4;
+    $distortionAmount = max(0.0, min(1.0, $distortionAmount));
+
+    $chorusIn = is_array($effectsIn['chorus'] ?? null) ? $effectsIn['chorus'] : [];
+    $chorusDepth = $chorusIn['depth'] ?? 0.5;
+    $chorusDepth = is_numeric($chorusDepth) ? (float) $chorusDepth : 0.5;
+    $chorusDepth = max(0.0, min(1.0, $chorusDepth));
+    $chorusRate = $chorusIn['rate'] ?? 1.5;
+    $chorusRate = is_numeric($chorusRate) ? (float) $chorusRate : 1.5;
+    $chorusRate = max(0.1, min(20.0, $chorusRate));
+
+    $tremoloIn = is_array($effectsIn['tremolo'] ?? null) ? $effectsIn['tremolo'] : [];
+    $tremoloDepth = $tremoloIn['depth'] ?? 0.5;
+    $tremoloDepth = is_numeric($tremoloDepth) ? (float) $tremoloDepth : 0.5;
+    $tremoloDepth = max(0.0, min(1.0, $tremoloDepth));
+    $tremoloRate = $tremoloIn['rate'] ?? 5.0;
+    $tremoloRate = is_numeric($tremoloRate) ? (float) $tremoloRate : 5.0;
+    $tremoloRate = max(0.1, min(20.0, $tremoloRate));
+
+    $pitchShiftIn = is_array($effectsIn['pitch_shift'] ?? null) ? $effectsIn['pitch_shift'] : [];
+    $pitchSemitones = $pitchShiftIn['semitones'] ?? 0;
+    $pitchSemitones = is_numeric($pitchSemitones) ? (int) round((float) $pitchSemitones) : 0;
+    $pitchSemitones = max(-24, min(24, $pitchSemitones));
+
+    $bitcrusherIn = is_array($effectsIn['bitcrusher'] ?? null) ? $effectsIn['bitcrusher'] : [];
+    $bits = $bitcrusherIn['bits'] ?? 4;
+    $bits = is_numeric($bits) ? (int) round((float) $bits) : 4;
+    $bits = max(1, min(16, $bits));
+
+    $flangerIn = is_array($effectsIn['flanger'] ?? null) ? $effectsIn['flanger'] : [];
+    $flangerDepth = $flangerIn['depth'] ?? 0.006;
+    $flangerDepth = is_numeric($flangerDepth) ? (float) $flangerDepth : 0.006;
+    $flangerDepth = max(0.0, min(0.02, $flangerDepth));
+    $flangerRate = $flangerIn['rate'] ?? 0.25;
+    $flangerRate = is_numeric($flangerRate) ? (float) $flangerRate : 0.25;
+    $flangerRate = max(0.05, min(5.0, $flangerRate));
+    $flangerFeedback = $flangerIn['feedback'] ?? 0.5;
+    $flangerFeedback = is_numeric($flangerFeedback) ? (float) $flangerFeedback : 0.5;
+    $flangerFeedback = max(0.0, min(0.95, $flangerFeedback));
+
+    $ringModIn = is_array($effectsIn['ring_mod'] ?? null) ? $effectsIn['ring_mod'] : [];
+    $ringModFreq = $ringModIn['frequency'] ?? 440.0;
+    $ringModFreq = is_numeric($ringModFreq) ? (float) $ringModFreq : 440.0;
+    $ringModFreq = max(1.0, min(5000.0, $ringModFreq));
+
+    return [
+        'default_volume' => $volume,
+        'voices' => [
+            'ambient' => !isset($voicesIn['ambient']) || (bool) $voicesIn['ambient'],
+            'movement' => !isset($voicesIn['movement']) || (bool) $voicesIn['movement'],
+            'melodic' => !isset($voicesIn['melodic']) || (bool) $voicesIn['melodic'],
+            'hand_tracking' => (bool) ($voicesIn['hand_tracking'] ?? false),
+        ],
+        'synth' => [
+            'octave_min' => $octaveMin,
+            'octave_max' => $octaveMax,
+            'filter_cutoff' => $cutoff,
+            'filter_resonance' => $resonance,
+            'filter_type' => $filterType,
+            'effects' => [
+                'distortion' => ['enabled' => (bool) ($distortionIn['enabled'] ?? false), 'amount' => $distortionAmount],
+                'chorus' => ['enabled' => (bool) ($chorusIn['enabled'] ?? false), 'depth' => $chorusDepth, 'rate' => $chorusRate],
+                'tremolo' => ['enabled' => (bool) ($tremoloIn['enabled'] ?? false), 'depth' => $tremoloDepth, 'rate' => $tremoloRate],
+                'pitch_shift' => ['enabled' => (bool) ($pitchShiftIn['enabled'] ?? false), 'semitones' => $pitchSemitones],
+                'bitcrusher' => ['enabled' => (bool) ($bitcrusherIn['enabled'] ?? false), 'bits' => $bits],
+                'flanger' => ['enabled' => (bool) ($flangerIn['enabled'] ?? false), 'depth' => $flangerDepth, 'rate' => $flangerRate, 'feedback' => $flangerFeedback],
+                'ring_mod' => ['enabled' => (bool) ($ringModIn['enabled'] ?? false), 'frequency' => $ringModFreq],
+            ],
+        ],
+    ];
+}
+
+/**
+ * Merges a validated extras array into an AI-validated sonic_params JSON
+ * string as a sibling `extras` key — the actual value written to the DB
+ * column. Returns null when there's no AI-validated sonic content at all
+ * (extras alone, with no sonic_params, means "no sound" — nothing to attach
+ * extras to).
+ */
+function art_piece_sonic_json_merge_extras(?string $aiValidatedJson, array $extras): ?string
+{
+    if ($aiValidatedJson === null || trim($aiValidatedJson) === '') {
+        return null;
+    }
+    $decoded = json_decode($aiValidatedJson, true);
+    if (!is_array($decoded)) {
+        return null;
+    }
+    $decoded['extras'] = $extras;
+    return json_encode($decoded, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+}
+
 function art_piece_sonic_params_from_feel(?string $feel): ?string
 {
     $feel = trim((string) $feel);
@@ -961,6 +1109,11 @@ function validate_art_piece_media_references(string $engine, ?string $html, ?str
         if ($content === '') {
             continue;
         }
+
+        if (preg_match_all('/url\s*\(\s*([\'"]?)\s*\1\s*\)/i', $content, $emptyUrlMatches, PREG_SET_ORDER)) {
+            throw new RuntimeException("{$label} contains an empty url() reference. Empty resource URLs resolve to the document itself and break downloaded pieces under file://.");
+        }
+
         if (preg_match_all('/url\s*\(\s*([\'"]?)([^)\'"]+)\1\s*\)/i', $content, $urlMatches, PREG_SET_ORDER)) {
             foreach ($urlMatches as $match) {
                 $src = trim((string) $match[2]);
@@ -974,10 +1127,13 @@ function validate_art_piece_media_references(string $engine, ?string $html, ?str
         }
     }
 
-    if ($html !== null && preg_match_all('/\b(?:src|href|xlink:href)\s*=\s*(["\'])([^"\']+)\1/i', $html, $attrMatches, PREG_SET_ORDER)) {
+    if ($html !== null && preg_match_all('/\b(?:src|href|xlink:href)\s*=\s*(["\'])([^"\']*)\1/i', $html, $attrMatches, PREG_SET_ORDER)) {
         foreach ($attrMatches as $match) {
             $src = trim((string) $match[2]);
-            if ($src === '' || str_starts_with($src, '#') || str_starts_with($src, 'data:')) {
+            if ($src === '') {
+                throw new RuntimeException('HTML contains an empty src/href/xlink:href attribute. Empty resource URLs resolve to the document itself and break downloaded pieces under file://.');
+            }
+            if (str_starts_with($src, '#') || str_starts_with($src, 'data:')) {
                 continue;
             }
             if (!is_allowed_art_piece_media_src($src)) {
@@ -987,17 +1143,28 @@ function validate_art_piece_media_references(string $engine, ?string $html, ?str
     }
 
     if ($engine === 'p5' && $js !== null) {
+        validate_empty_literal_media_call($js, '/\bp\s*\.\s*loadImage\s*\(\s*(["\'])\1\s*\)/i', 'p5 loadImage()');
         validate_literal_media_call_urls($js, '/\bp\s*\.\s*loadImage\s*\(\s*(["\'])([^"\']+)\1/i', 'p5 loadImage()');
     }
 
     if ($engine === 'three' && $js !== null) {
+        validate_empty_literal_media_call($js, '/\bTextureLoader\s*\(\s*\)\s*\.\s*load\s*\(\s*(["\'])\1\s*\)/i', 'Three.js TextureLoader.load()');
+        validate_empty_literal_media_call($js, '/\.\s*load\s*\(\s*(["\'])\1\s*\)/i', 'Three.js asset loader calls');
         validate_literal_media_call_urls($js, '/\bTextureLoader\s*\(\s*\)\s*\.\s*load\s*\(\s*(["\'])([^"\']+)\1/i', 'Three.js TextureLoader.load()');
         validate_literal_media_call_urls($js, '/\.\s*load\s*\(\s*(["\'])([^"\']+)\1/i', 'Three.js asset loader calls');
         validate_three_gltf_material_preservation($js);
     }
 
     if ($engine === 'c2' && $js !== null) {
+        validate_empty_literal_media_call($js, '/\bruntime\s*\.\s*loadImage\s*\(\s*(["\'])\1\s*\)/i', 'C2 runtime.loadImage()');
         validate_literal_media_call_urls($js, '/\bruntime\s*\.\s*loadImage\s*\(\s*(["\'])([^"\']+)\1/i', 'C2 runtime.loadImage()');
+    }
+}
+
+function validate_empty_literal_media_call(string $code, string $pattern, string $label): void
+{
+    if (preg_match($pattern, $code)) {
+        throw new RuntimeException("{$label} was called with an empty URL. Empty resource URLs resolve to the document itself and break downloaded pieces under file://.");
     }
 }
 

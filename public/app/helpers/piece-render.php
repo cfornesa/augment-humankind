@@ -49,6 +49,7 @@ function piece_render_document(array $piece, array $version, array $options = []
     $jsonHtml = json_encode($html, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     $jsonCss = json_encode($css, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     $jsonContext = json_encode([
+        'pieceId' => (int) ($piece['id'] ?? 0),
         'viewerMode' => (string) ($options['viewer_mode'] ?? 'default'),
         'interactive' => !empty($options['interactive']),
         'disableMotion' => !empty($options['disable_motion']),
@@ -65,7 +66,19 @@ function piece_render_document(array $piece, array $version, array $options = []
         'sonic' => !empty($version['sonic_params'])
             ? (($sonicDecoded = json_decode((string) $version['sonic_params'], true)) && ($sonicDecoded['enabled'] ?? true) !== false ? $sonicDecoded : null)
             : null,
-        'toneSource' => !empty($options['tone_source']) ? (string) $options['tone_source'] : null,
+        // Cache-busted by file mtime, matching piece-runtime.js's own ?v=
+        // pattern — without this, sonic-controller.js/Tone.js were being
+        // loaded from a fixed, unversioned URL, so browsers could keep
+        // serving a stale cached copy of the sonification engine
+        // indefinitely after a fix ships (silently reproducing already-
+        // fixed bugs). $options overrides exist for bundle-mode callers
+        // that need ZIP-local runtime/ paths instead.
+        'sonicControllerSource' => !empty($options['sonic_controller_source'])
+            ? (string) $options['sonic_controller_source']
+            : ('/assets/js/sonic-controller.js?v=' . (int) @filemtime(dirname(__DIR__, 2) . '/assets/js/sonic-controller.js')),
+        'toneSource' => !empty($options['tone_source'])
+            ? (string) $options['tone_source']
+            : ('/assets/vendor/tone/Tone.js?v=' . (int) @filemtime(dirname(__DIR__, 2) . '/assets/vendor/tone/Tone.js')),
     ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     $aframeCaptureShim = $engine === 'aframe' ? piece_aframe_capture_context_shim() : '';
     $aframeCss = $engine === 'aframe'
@@ -239,7 +252,7 @@ function piece_export_document(array $piece, array $version, array $options = []
     $imports = piece_export_imports($engine, $runtimeMode);
     $inlineRuntime = $runtimeMode === 'bundle' ? piece_export_inline_runtime_markup($engine) : '';
     $aframeCaptureShim = $engine === 'aframe' ? piece_aframe_capture_context_shim() : '';
-    $sonicScript = piece_export_sonic_script($engine, (string) ($version['sonic_params'] ?? ''), $runtimeMode);
+    $sonicScript = piece_export_sonic_script($engine, (string) ($version['sonic_params'] ?? ''), $runtimeMode, (int) ($piece['id'] ?? 0));
     $bootstrap = piece_export_bootstrap($engine, $generationMode, $runtimeMode);
     $exportOverlayCss = piece_export_screenshot_overlay_css($generationMode);
     $exportOverlayMarkup = piece_export_screenshot_overlay_markup($generationMode);
@@ -293,19 +306,24 @@ HTML;
  * only) — muted by default, no master switch. Unlike the live regular view
  * (piece-runtime.js, controlled via postMessage from a host page's button),
  * an export has no host page, so this owns and creates its own toggle
- * button directly, mirroring piece-runtime.js's own standalone fallback
- * button. In bundle mode Tone.js is loaded from the ZIP-local runtime file
- * so direct-open file:// exports do not depend on blob:null script origins;
- * in cdn mode it's loaded from the same self-hosted path the live view uses.
+ * button (+ volume/keyboard popover) directly, mirroring piece-runtime.js's
+ * own standalone fallback button. The actual synth/scale/motion/idle/
+ * volume/keyboard engine is delegated to the shared sonic-controller.js
+ * (vendored into the export by piece_export_build_manifest), the same
+ * module the live immersive views use — this function only builds the
+ * self-mounted UI and the __creatrSonicSetMover indirection three/aframe
+ * bootstraps feed a camera getter into once their scene exists. In bundle
+ * mode Tone.js/sonic-controller.js are loaded from ZIP-local runtime/ paths
+ * so direct-open file:// exports do not depend on the live site; in cdn
+ * mode they load from the same self-hosted paths the live view uses.
  */
-function piece_export_sonic_script(string $engine, string $sonicParamsJson, string $runtimeMode): string
+function piece_export_sonic_script(string $engine, string $sonicParamsJson, string $runtimeMode, int $pieceId = 0): string
 {
     // Every engine can carry sonic_params (matches the live regular-view
     // gate in piece_render_document()). three/aframe get camera-driven
     // sonification via __creatrSonicSetMover (wired in piece_export_bootstrap);
     // p5/c2/svg have no motion signal in this export and get the idle
-    // random-note pattern only (see motionTick's getMover-optional handling
-    // below).
+    // random-note pattern only (create()'s getMover-optional handling).
     if (trim($sonicParamsJson) === '') {
         return '';
     }
@@ -316,140 +334,448 @@ function piece_export_sonic_script(string $engine, string $sonicParamsJson, stri
     }
 
     $sonicJson = json_encode($decoded, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-    $toneSrc = $runtimeMode === 'bundle'
+    $isBundle = $runtimeMode === 'bundle';
+    // Cache-busted by file mtime in the live (non-bundle) case — see the
+    // matching comment in piece_render_document(). Bundle mode always
+    // fetches the ZIP-local copy, so it needs no versioning.
+    $toneSrc = $isBundle
         ? 'runtime/tone/Tone.js'
-        : rtrim(piece_request_origin(), '/') . '/assets/vendor/tone/Tone.js';
+        : rtrim(piece_request_origin(), '/') . '/assets/vendor/tone/Tone.js?v=' . (int) @filemtime(dirname(__DIR__, 2) . '/assets/vendor/tone/Tone.js');
+    $sonicControllerSrc = $isBundle
+        ? 'runtime/sonic-controller.js'
+        : rtrim(piece_request_origin(), '/') . '/assets/js/sonic-controller.js?v=' . (int) @filemtime(dirname(__DIR__, 2) . '/assets/js/sonic-controller.js');
+    $mediaPipeVisionSrc = $isBundle
+        ? 'runtime/mediapipe-hands/vision_bundle.mjs'
+        : rtrim(piece_request_origin(), '/') . '/assets/vendor/mediapipe-hands/vision_bundle.mjs';
+    $mediaPipeWasmDir = $isBundle
+        ? 'runtime/mediapipe-hands/'
+        : rtrim(piece_request_origin(), '/') . '/assets/vendor/mediapipe-hands/';
+    $mediaPipeModelSrc = $isBundle
+        ? 'runtime/mediapipe-hands/hand_landmarker.task'
+        : rtrim(piece_request_origin(), '/') . '/assets/vendor/mediapipe-hands/hand_landmarker.task';
     $toneSrcJson = json_encode($toneSrc);
-    $pluckSynthCtor = $runtimeMode === 'bundle' ? 'FMSynth' : 'PluckSynth';
+    $sonicControllerSrcJson = json_encode($sonicControllerSrc);
+    $mediaPipeVisionSrcJson = json_encode($mediaPipeVisionSrc);
+    $mediaPipeWasmDirJson = json_encode($mediaPipeWasmDir);
+    $mediaPipeModelSrcJson = json_encode($mediaPipeModelSrc);
+    $pieceIdJson = json_encode($pieceId);
+    // KEEP IN SYNC with SONIC_INSTRUMENTS in public/assets/js/sonic-controller.js.
+    $instrumentOptionsJson = json_encode([
+        ['synth', 'Synth'], ['amsynth', 'AM Synth'], ['fmsynth', 'FM Synth'],
+        ['membranesynth', 'Membrane'], ['metalsynth', 'Metal'], ['plucksynth', 'Plucked String'],
+        ['duosynth', 'Duo Synth'],
+    ]);
+    // Hand-tracking's row/toggle only exist in the generated markup at all
+    // when the admin enabled it for this piece — unlike the always-present
+    // keyboard row (which only toggles CSS visibility client-side), there is
+    // no reason to ship this JS/UI to a piece that will never use it.
+    $handTrackingEnabledForPiece = !empty($decoded['extras']['voices']['hand_tracking']);
+    $handRowElementsScript = '';
+    $handRowAppendScript = '';
+    $handRowWiringScript = '';
+    if ($handTrackingEnabledForPiece) {
+        $handRowElementsScript = <<<'JS'
+
+    var handRow = document.createElement('div');
+    handRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:0.5rem;';
+    var handLabel = document.createElement('span');
+    handLabel.textContent = 'Hand-tracking';
+    var handToggle = document.createElement('button');
+    handToggle.type = 'button';
+    handToggle.textContent = 'Camera theremin';
+    handToggle.setAttribute('aria-pressed', 'false');
+    handToggle.style.cssText = 'border:1px solid rgba(255,255,255,0.18);border-radius:0.6rem;background:rgba(255,255,255,0.06);color:#fff;font:inherit;font-weight:600;padding:0.3rem 0.55rem;cursor:pointer;';
+    handRow.appendChild(handLabel); handRow.appendChild(handToggle);
+
+JS;
+        $handRowAppendScript = '    panel.appendChild(handRow);';
+        $handRowWiringScript = <<<'JS'
+
+    handToggle.addEventListener('click', async function () {
+      var turningOn = !engine || engine.getInputMode() !== 'hand';
+      if (turningOn) {
+        // getUserMedia's own permission prompt is the user gesture here; on
+        // denial/error this silently reverts — no error banner, matching the
+        // live-page hand-tracking behavior.
+        var ok = await ensureEnabled();
+        var handOk = ok && engine ? await engine.enableHandTracking() : false;
+        if (handOk) {
+          engine.setInputMode('hand');
+          handToggle.setAttribute('aria-pressed', 'true');
+        }
+      } else {
+        engine.disableHandTracking();
+        engine.setInputMode('motion');
+        handToggle.setAttribute('aria-pressed', 'false');
+      }
+    });
+
+JS;
+    }
 
     return <<<HTML
 <script>
-window.__creatrSonicParams = {$sonicJson};
 window.__creatrToneSrc = {$toneSrcJson};
+window.__creatrMediaPipeVisionSrc = {$mediaPipeVisionSrcJson};
+window.__creatrMediaPipeWasmDir = {$mediaPipeWasmDirJson};
+window.__creatrMediaPipeModelSrc = {$mediaPipeModelSrcJson};
 (function () {
-  var sonicParams = window.__creatrSonicParams;
+  var sonicParams = {$sonicJson};
   if (!sonicParams) return;
-  var SCALES = {
-    major: [0, 2, 4, 5, 7, 9, 11], minor: [0, 2, 3, 5, 7, 8, 10],
-    pentatonic: [0, 2, 4, 7, 9], chromatic: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
-    dorian: [0, 2, 3, 5, 7, 9, 10], phrygian: [0, 1, 3, 5, 7, 8, 10],
-    lydian: [0, 2, 4, 6, 7, 9, 11], mixolydian: [0, 2, 4, 5, 7, 9, 10],
-    wholetone: [0, 2, 4, 6, 8, 10],
-  };
-  var INSTRUMENTS = {
-    synth: 'Synth', amsynth: 'AMSynth', fmsynth: 'FMSynth',
-    membranesynth: 'MembraneSynth', metalsynth: 'MetalSynth',
-    plucksynth: '{$pluckSynthCtor}', duosynth: 'DuoSynth',
-  };
-  var scale = SCALES[sonicParams.scale] || SCALES.major;
-  var instrumentKey = INSTRUMENTS[sonicParams.instrument] ? sonicParams.instrument : 'synth';
-  var tempo = Math.max(40, Math.min(220, Number(sonicParams.tempo) || 90));
-  var minInterval = ((60 / tempo) * 1000) / 2;
-  var baseMidi = 48;
-  var enabled = false, synth = null, lastNoteAt = 0, walk = 0;
-  var prevX = null, prevY = null, prevZ = null;
-  var lastMotionAt = 0;
-  var IDLE_GAP_MS = 2000;
+  var pieceId = {$pieceIdJson};
+
   var getMover = null;
   window.__creatrSonicSetMover = function (fn) { getMover = fn; };
 
-  function midiToFreq(m) { return 440 * Math.pow(2, (m - 69) / 12); }
+  // Visitor-chosen per-voice instrument overrides — session-local only,
+  // never touches sonicParams/the DB. One localStorage entry per piece.
+  function voiceInstrumentStorageKey() { return 'creatr-sonic-voice-instruments:' + pieceId; }
+  function readVoiceInstrumentOverrides() {
+    try {
+      var raw = window.localStorage.getItem(voiceInstrumentStorageKey());
+      var parsed = raw ? JSON.parse(raw) : null;
+      return (parsed && typeof parsed === 'object') ? parsed : {};
+    } catch (_e) {
+      return {};
+    }
+  }
+  function writeVoiceInstrumentOverride(voiceName, instrumentKey) {
+    try {
+      var overrides = readVoiceInstrumentOverrides();
+      overrides[voiceName] = instrumentKey;
+      window.localStorage.setItem(voiceInstrumentStorageKey(), JSON.stringify(overrides));
+    } catch (_e) {}
+  }
 
-  function loadToneOnce() {
-    if (window.Tone) return Promise.resolve(window.Tone);
-    return new Promise(function (resolve, reject) {
+  var sonicControllerPromise = null;
+  function loadSonicControllerOnce() {
+    if (window.CreatrSonicController) return Promise.resolve(window.CreatrSonicController);
+    if (sonicControllerPromise) return sonicControllerPromise;
+    sonicControllerPromise = new Promise(function (resolve, reject) {
       var s = document.createElement('script');
-      s.onload = function () { window.Tone ? resolve(window.Tone) : reject(new Error('Tone.js loaded but window.Tone missing')); };
-      s.onerror = function () { reject(new Error('Tone.js failed to load')); };
-      s.src = window.__creatrToneSrc;
+      s.onload = function () { window.CreatrSonicController ? resolve(window.CreatrSonicController) : reject(new Error('sonic-controller.js loaded but window.CreatrSonicController missing')); };
+      s.onerror = function () { reject(new Error('sonic-controller.js failed to load')); };
+      s.src = {$sonicControllerSrcJson};
       document.head.appendChild(s);
     });
+    return sonicControllerPromise;
   }
 
-  function motionTick() {
-    requestAnimationFrame(motionTick);
-    if (!enabled || !synth) return;
-    var now = performance.now();
-    var mover = getMover ? getMover() : null;
-    if (mover && mover.position) {
-      var x = mover.position.x, y = mover.position.y, z = mover.position.z;
-      if (prevX !== null) {
-        var dx = x - prevX, dy = y - prevY, dz = z - prevZ;
-        var speed = Math.hypot(dx, dy, dz);
-        if (speed >= 0.002) {
-          lastMotionAt = now;
-          if (now - lastNoteAt >= minInterval) {
-            lastNoteAt = now;
-            var degree = walk++ % scale.length;
-            var octave = Math.min(2, Math.floor(Math.abs(dy) * 25));
-            var midi = baseMidi + scale[degree] + 12 * octave;
-            try { synth.triggerAttackRelease(midiToFreq(midi), '16n'); } catch (_e) {}
-          }
-        }
-      }
-      prevX = x; prevY = y; prevZ = z;
-    }
-    // Idle pattern: plain scale-walk notes once the mover (if any) has been
-    // still for a beat — or always, for engines with no motion signal at
-    // all — so toggled-on sound never sits in dead silence.
-    if (now - lastMotionAt >= IDLE_GAP_MS && now - lastNoteAt >= minInterval) {
-      lastNoteAt = now;
-      var idleDegree = walk++ % scale.length;
-      var idleMidi = baseMidi + scale[idleDegree];
-      try { synth.triggerAttackRelease(midiToFreq(idleMidi), '16n'); } catch (_e) {}
-    }
-  }
-  requestAnimationFrame(motionTick);
+  var engine = null;
 
   var ICON_OFF = '<svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4z"></path><line x1="22" y1="9" x2="16" y2="15"></line><line x1="16" y1="9" x2="22" y2="15"></line></svg>';
   var ICON_ON = '<svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4z"></path><path d="M16 9a4 4 0 0 1 0 6"></path><path d="M19 6a8 8 0 0 1 0 12"></path></svg>';
 
-  function mountButton() {
+  function mountUi() {
+    var wrap = document.createElement('div');
+    Object.assign(wrap.style, {
+      position: 'fixed', top: 'calc(0.75rem + env(safe-area-inset-top))',
+      right: 'calc(0.75rem + env(safe-area-inset-right))',
+      zIndex: '200', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.5rem',
+    });
+
+    var row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:0.3rem;';
+
     var btn = document.createElement('button');
     btn.type = 'button';
     btn.setAttribute('aria-pressed', 'false');
     btn.setAttribute('aria-label', 'Unmute sound');
     Object.assign(btn.style, {
-      position: 'fixed', top: 'calc(0.75rem + env(safe-area-inset-top))',
-      right: 'calc(0.75rem + env(safe-area-inset-right))',
-      zIndex: '200', width: '2.75rem', height: '2.75rem',
+      width: '2.75rem', height: '2.75rem',
       display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
       borderRadius: '0.75rem', border: '1px solid rgba(255,255,255,0.15)',
       background: 'rgba(0,0,0,0.55)', color: '#fff', cursor: 'pointer',
       boxShadow: '0 4px 12px rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)',
     });
     btn.innerHTML = ICON_OFF;
-    document.body.appendChild(btn);
-    btn.addEventListener('click', function () {
-      var nextEnabled = !enabled;
-      if (nextEnabled && !synth) {
-        btn.disabled = true;
-        loadToneOnce().then(function (Tone) { return Tone.start(); }).then(function () {
-          var Ctor = window.Tone[INSTRUMENTS[instrumentKey]] || window.Tone.Synth;
-          synth = new Ctor().toDestination();
-          if (synth.volume) synth.volume.value = -6;
-          enabled = true;
-          lastMotionAt = 0; // let idle notes start immediately on unmute
+
+    var panelTrigger = document.createElement('button');
+    panelTrigger.type = 'button';
+    panelTrigger.setAttribute('aria-haspopup', 'true');
+    panelTrigger.setAttribute('aria-expanded', 'false');
+    panelTrigger.setAttribute('aria-label', 'Sound settings');
+    Object.assign(panelTrigger.style, {
+      width: '2.75rem', height: '2.75rem',
+      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+      borderRadius: '0.75rem', border: '1px solid rgba(255,255,255,0.15)',
+      background: 'rgba(0,0,0,0.55)', color: '#fff', cursor: 'pointer', padding: '0',
+      boxShadow: '0 4px 12px rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)',
+    });
+    panelTrigger.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>';
+
+    var panel = document.createElement('div');
+    Object.assign(panel.style, {
+      display: 'none', flexDirection: 'column', gap: '0.6rem', width: '13rem',
+      padding: '0.85rem', borderRadius: '1rem', border: '1px solid rgba(255,255,255,0.14)',
+      background: 'rgba(9,14,24,0.94)', boxShadow: '0 18px 40px rgba(0,0,0,0.4)',
+      backdropFilter: 'blur(8px)', color: '#fff', font: '12px/1.4 system-ui,sans-serif',
+    });
+
+    var style = document.createElement('style');
+    style.textContent = `
+      .offline-piano-keys {
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      .offline-key-white {
+        flex: 1 1 0;
+        height: 100%;
+        border: 1px solid rgba(0, 0, 0, 0.35);
+        border-radius: 0 0 0.3rem 0.3rem;
+        background: #f4f1e8;
+        cursor: pointer;
+        touch-action: none;
+      }
+      .offline-key-white:hover {
+        background: #d8d4c4;
+      }
+      .offline-key-white:active, .offline-key-white.is-pressed {
+        background: #bbb7a8;
+      }
+      .offline-key-black {
+        position: absolute;
+        top: 0;
+        width: 6%;
+        height: 62%;
+        transform: translateX(-50%);
+        border: 1px solid rgba(0, 0, 0, 0.6);
+        border-radius: 0 0 0.25rem 0.25rem;
+        background: #17161a;
+        cursor: pointer;
+        z-index: 2;
+        touch-action: none;
+      }
+      .offline-key-black:hover {
+        background: #3a3942;
+      }
+      .offline-key-black:active, .offline-key-black.is-pressed {
+        background: #5c5a69;
+      }
+    `;
+    document.head.appendChild(style);
+
+    var volumeRow = document.createElement('div');
+    volumeRow.style.cssText = 'display:flex;align-items:center;gap:0.5rem;';
+    var volumeLabel = document.createElement('label');
+    volumeLabel.textContent = 'Volume';
+    var volumeInput = document.createElement('input');
+    volumeInput.type = 'range'; volumeInput.min = '0'; volumeInput.max = '100'; volumeInput.value = '50';
+    volumeInput.style.cssText = 'width:100%;';
+    volumeRow.appendChild(volumeLabel); volumeRow.appendChild(volumeInput);
+
+    var keyboardRow = document.createElement('div');
+    keyboardRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:0.5rem;';
+    var keyboardLabel = document.createElement('span');
+    keyboardLabel.textContent = 'Keyboard';
+    var keyboardToggle = document.createElement('button');
+    keyboardToggle.type = 'button';
+    keyboardToggle.textContent = 'Play notes';
+    keyboardToggle.setAttribute('aria-pressed', 'false');
+    keyboardToggle.style.cssText = 'border:1px solid rgba(255,255,255,0.18);border-radius:0.6rem;background:rgba(255,255,255,0.06);color:#fff;font:inherit;font-weight:600;padding:0.3rem 0.55rem;cursor:pointer;';
+    keyboardRow.appendChild(keyboardLabel); keyboardRow.appendChild(keyboardToggle);
+    var voicesConfig = (sonicParams.extras && sonicParams.extras.voices) || {};
+    if (voicesConfig.melodic === false) keyboardRow.style.display = 'none';
+
+    // Visitor-facing per-voice instrument picker — session-local only (see
+    // readVoiceInstrumentOverrides()/writeVoiceInstrumentOverride() below,
+    // never touches sonicParams/the DB), mirroring the live-view popover's
+    // picker (immersive_stage_voice_instrument_picker_markup() in
+    // immersive-chrome.php).
+    var instrumentOptions = {$instrumentOptionsJson};
+    var voicePickerWrap = document.createElement('div');
+    voicePickerWrap.style.cssText = 'display:flex;flex-direction:column;gap:0.45rem;';
+    var voicePickerSelects = {};
+    [['ambient', 'Ambient'], ['movement', 'Movement'], ['melodic', 'Melodic']].forEach(function (pair) {
+      var voiceName = pair[0], label = pair[1];
+      var pickerRow = document.createElement('div');
+      pickerRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:0.5rem;';
+      if (voicesConfig[voiceName] === false) pickerRow.style.display = 'none';
+      var pickerLabel = document.createElement('span');
+      pickerLabel.textContent = label;
+      var select = document.createElement('select');
+      select.style.cssText = 'border:1px solid rgba(255,255,255,0.18);border-radius:0.6rem;background:rgba(255,255,255,0.06);color:#fff;font:inherit;padding:0.25rem 0.4rem;';
+      instrumentOptions.forEach(function (pair2) {
+        var option = document.createElement('option');
+        option.value = pair2[0];
+        option.textContent = pair2[1];
+        select.appendChild(option);
+      });
+      select.value = readVoiceInstrumentOverrides()[voiceName] || sonicParams.instrument || 'synth';
+      select.addEventListener('change', function () {
+        ensureEnabled().then(function (ok) {
+          if (ok && engine && engine.setVoiceInstrument(voiceName, select.value)) {
+            writeVoiceInstrumentOverride(voiceName, select.value);
+          }
+        });
+      });
+      voicePickerSelects[voiceName] = select;
+      pickerRow.appendChild(pickerLabel);
+      pickerRow.appendChild(select);
+      voicePickerWrap.appendChild(pickerRow);
+    });
+
+    var octaveRow = document.createElement('div');
+    octaveRow.style.cssText = 'display:none;align-items:center;justify-content:center;gap:0.5rem;';
+    var octaveDown = document.createElement('button'); octaveDown.type = 'button'; octaveDown.textContent = '−';
+    var octaveUp = document.createElement('button'); octaveUp.type = 'button'; octaveUp.textContent = '+';
+    var octaveDisplay = document.createElement('output'); octaveDisplay.textContent = '3';
+    [octaveDown, octaveUp].forEach(function (b) { b.style.cssText = 'height:1.6rem;width:1.6rem;border:1px solid rgba(255,255,255,0.18);border-radius:0.4rem;background:rgba(255,255,255,0.08);color:#fff;font:inherit;font-weight:700;cursor:pointer;'; });
+    octaveRow.appendChild(octaveDown); octaveRow.appendChild(octaveDisplay); octaveRow.appendChild(octaveUp);
+
+    var keysWrap = document.createElement('div');
+    keysWrap.className = 'offline-piano-keys';
+    keysWrap.style.cssText = 'display:none;position:relative;height:4rem;';
+    var whiteRow = document.createElement('div');
+    whiteRow.style.cssText = 'display:flex;height:100%;';
+    // 10 white keys (one octave plus a major third into the next), matching
+    // PIANO_KEY_MAP's physical-keyboard span (sonic-controller.js) exactly.
+    var whiteSemitones = [0, 2, 4, 5, 7, 9, 11, 12, 14, 16];
+    var blackAfter = {0: 1, 1: 3, 3: 6, 4: 8, 5: 10, 7: 13, 8: 15};
+    whiteSemitones.forEach(function (semitone, i) {
+      var keyBtn = document.createElement('button');
+      keyBtn.type = 'button';
+      keyBtn.dataset.semitone = String(semitone);
+      keyBtn.className = 'offline-key-white';
+      whiteRow.appendChild(keyBtn);
+      if (blackAfter[i] !== undefined) {
+        var blackBtn = document.createElement('button');
+        blackBtn.type = 'button';
+        blackBtn.dataset.semitone = String(blackAfter[i]);
+        blackBtn.className = 'offline-key-black';
+        blackBtn.style.left = ((i + 1) * (100 / 10)) + '%';
+        keysWrap.appendChild(blackBtn);
+      }
+    });
+    keysWrap.insertBefore(whiteRow, keysWrap.firstChild);
+    keysWrap.addEventListener('pointerdown', function (event) {
+      var keyBtn = event.target.closest && event.target.closest('button[data-semitone]');
+      if (!keyBtn) return;
+      playChromaticNote(Number(keyBtn.dataset.semitone || 0));
+    });
+{$handRowElementsScript}
+    panel.appendChild(volumeRow);
+    panel.appendChild(voicePickerWrap);
+    panel.appendChild(keyboardRow);
+    panel.appendChild(octaveRow);
+    panel.appendChild(keysWrap);
+{$handRowAppendScript}
+    row.appendChild(btn);
+    row.appendChild(panelTrigger);
+    wrap.appendChild(row);
+    wrap.appendChild(panel);
+    document.body.appendChild(wrap);
+
+    async function ensureEnabled() {
+      if (engine && engine.isEnabled()) return true;
+      btn.disabled = true;
+      try {
+        if (!engine) {
+          var CSC = await loadSonicControllerOnce();
+          engine = CSC.create(sonicParams, {
+            getMover: function () { return getMover ? getMover() : null; },
+            toneSrc: window.__creatrToneSrc,
+            mediaPipeVisionSrc: window.__creatrMediaPipeVisionSrc,
+            mediaPipeWasmDir: window.__creatrMediaPipeWasmDir,
+            mediaPipeModelSrc: window.__creatrMediaPipeModelSrc,
+          });
+          if (!engine) return false;
+        }
+        var ok = await engine.enable();
+        if (ok) {
           btn.setAttribute('aria-pressed', 'true');
           btn.setAttribute('aria-label', 'Mute sound');
           btn.innerHTML = ICON_ON;
-        }).catch(function () {
-          enabled = false;
-        }).finally(function () {
-          btn.disabled = false;
-        });
+          volumeInput.value = String(engine.getVolume());
+          var storedOverrides = readVoiceInstrumentOverrides();
+          Object.keys(storedOverrides).forEach(function (voiceName) {
+            engine.setVoiceInstrument(voiceName, storedOverrides[voiceName]);
+            if (voicePickerSelects[voiceName]) voicePickerSelects[voiceName].value = storedOverrides[voiceName];
+          });
+        } else {
+          btn.setAttribute('aria-label', 'Sound unavailable');
+        }
+        return ok;
+      } catch (_e) {
+        btn.setAttribute('aria-label', 'Sound unavailable');
+        return false;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function playChromaticNote(semitoneIndex) {
+      var ok = await ensureEnabled();
+      if (ok && engine) engine.triggerChromaticNote(semitoneIndex);
+    }
+
+    var detachPianoKeys = null;
+
+    btn.addEventListener('click', async function () {
+      if (engine && engine.isEnabled()) {
+        engine.disable();
+        btn.setAttribute('aria-pressed', 'false');
+        btn.setAttribute('aria-label', 'Unmute sound');
+        btn.innerHTML = ICON_OFF;
         return;
       }
-      enabled = nextEnabled;
-      if (enabled) lastMotionAt = 0; // let idle notes start immediately on unmute
-      btn.setAttribute('aria-pressed', enabled ? 'true' : 'false');
-      btn.setAttribute('aria-label', enabled ? 'Mute sound' : 'Unmute sound');
-      btn.innerHTML = enabled ? ICON_ON : ICON_OFF;
+      await ensureEnabled();
     });
+
+    var panelOpen = false;
+    panelTrigger.addEventListener('click', function () {
+      panelOpen = !panelOpen;
+      panel.style.display = panelOpen ? 'flex' : 'none';
+      panelTrigger.setAttribute('aria-expanded', panelOpen ? 'true' : 'false');
+    });
+
+    volumeInput.addEventListener('input', function () {
+      if (engine) engine.setVolume(Number(volumeInput.value));
+    });
+
+    keyboardToggle.addEventListener('click', async function () {
+      var next = engine && engine.getInputMode() === 'keyboard' ? 'motion' : 'keyboard';
+      var keyboardOn = next === 'keyboard';
+      keyboardToggle.setAttribute('aria-pressed', keyboardOn ? 'true' : 'false');
+      octaveRow.style.display = keyboardOn ? 'flex' : 'none';
+      keysWrap.style.display = keyboardOn ? 'block' : 'none';
+      if (keyboardOn) {
+        await ensureEnabled();
+        if (detachPianoKeys) detachPianoKeys();
+        detachPianoKeys = window.CreatrSonicController ? window.CreatrSonicController.attachPianoKeyListener(engine, function (semitone, pressed) {
+          var k = keysWrap.querySelector('[data-semitone="' + semitone + '"]');
+          if (k) k.classList.toggle('is-pressed', pressed);
+        }) : null;
+      } else {
+        if (detachPianoKeys) detachPianoKeys();
+        detachPianoKeys = null;
+        keysWrap.querySelectorAll('[data-semitone]').forEach(function (k) { k.classList.remove('is-pressed'); });
+      }
+      if (engine) engine.setInputMode(next);
+    });
+{$handRowWiringScript}
+    octaveDown.addEventListener('click', function () {
+      if (!engine) return;
+      engine.setOctave(engine.getOctave() - 1);
+      octaveDisplay.textContent = String(engine.getOctave());
+    });
+    octaveUp.addEventListener('click', function () {
+      if (!engine) return;
+      engine.setOctave(engine.getOctave() + 1);
+      octaveDisplay.textContent = String(engine.getOctave());
+    });
+
+    document.addEventListener('pointerdown', function (event) {
+      if (!panelOpen) return;
+      if (wrap.contains(event.target)) return;
+      panelOpen = false;
+      panel.style.display = 'none';
+    }, { capture: true });
   }
 
-  if (document.body) mountButton();
-  else document.addEventListener('DOMContentLoaded', mountButton, { once: true });
+  if (document.body) mountUi();
+  else document.addEventListener('DOMContentLoaded', mountUi, { once: true });
 })();
 </script>
 HTML;
@@ -594,6 +920,7 @@ function piece_export_immersive_document(array $piece, array $version, array $op
     $sonicDecoded = !empty($version['sonic_params']) ? json_decode((string) $version['sonic_params'], true) : null;
     $hasSonic = $sonicDecoded && ($sonicDecoded['enabled'] ?? true) !== false;
     $jsonSonic = json_encode($hasSonic ? $sonicDecoded : null, $jsonFlags);
+    $jsonPieceId = json_encode((int) ($piece['id'] ?? 0), $jsonFlags);
 
     // Shared top toolbar — identical placement/appearance to the live
     // immersive surfaces. Three/A-Frame pieces have no gallery full view, so
@@ -655,6 +982,17 @@ window.addEventListener('unhandledrejection',event=>{const r=event.reason;const 
 <script src="runtime/immersive-gallery.global.js"></script>
 <script>
 const { mountAFrameImmersivePiece, mountGalleryPiece, mountThreeImmersivePiece, setupImmersiveStageChrome } = window.CreatrImmersiveGallery || {};
+// Bundle-local paths so exported/offline pieces load sonification assets
+// from the ZIP instead of the live site (mirrors runtime/tone/Tone.js above).
+// The mediapipe-hands runtime/ files only exist in the ZIP when this piece's
+// hand-tracking voice was enabled (piece_export_version_has_hand_tracking());
+// harmless to set the overrides unconditionally since sonic-controller.js
+// only loads them if the user actually activates hand-tracking mode.
+window.__creatrSonicControllerSrc = 'runtime/sonic-controller.js';
+window.__creatrToneSrc = 'runtime/tone/Tone.js';
+window.__creatrMediaPipeVisionSrc = 'runtime/mediapipe-hands/vision_bundle.mjs';
+window.__creatrMediaPipeWasmDir = 'runtime/mediapipe-hands/';
+window.__creatrMediaPipeModelSrc = 'runtime/mediapipe-hands/hand_landmarker.task';
 
 const piece = {
   engine: {$jsonEngine},
@@ -666,7 +1004,8 @@ const piece = {
   fullViewSrcdoc: {$jsonFullView},
   initialViewState: {$jsonViewState},
   pngFilename: {$pngFilename},
-  sonicParams: {$jsonSonic}
+  sonicParams: {$jsonSonic},
+  pieceId: {$jsonPieceId}
 };
 const stage = document.getElementById('immersive-stage');
 const fullscreenBtn = document.getElementById('fullscreen-toggle-btn');
@@ -674,7 +1013,7 @@ const pngBtn = document.querySelector('[data-immersive-download-png]');
 let viewer = null;
 
 try {
-  const controls = { showViewerControls: true, initialViewState: piece.initialViewState, sonicParams: piece.sonicParams };
+  const controls = { showViewerControls: true, initialViewState: piece.initialViewState, sonicParams: piece.sonicParams, pieceId: piece.pieceId };
   if (piece.engine === 'three') {
     viewer = mountThreeImmersivePiece(stage, piece.code, piece.html, piece.css, showPieceError, controls);
   } else if (piece.engine === 'aframe') {
@@ -692,7 +1031,8 @@ try {
   setupImmersiveStageChrome(stage, {
     onViewAction() {
       viewer?.openFullViewAt?.(0);
-    }
+    },
+    getAudioController: () => viewer?.getAudioController?.(),
   });
 } catch (error) {
   showPieceError(error);
@@ -947,7 +1287,22 @@ function piece_export_imports(string $engine, string $runtimeMode = 'cdn'): stri
         'p5' => '<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>',
         'c2' => '<script src="https://cdn.jsdelivr.net/npm/c2.js@1.0.9/dist/c2.min.js"></script>',
         'three' => '<script type="importmap">' . "\n" . '{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}' . "\n" . '</script>',
-        'aframe' => '<script src="https://aframe.io/releases/1.6.0/aframe.min.js"></script>',
+        'aframe' => '<script src="https://aframe.io/releases/1.6.0/aframe.min.js"></script>'
+            . '<script>'
+            . 'if (window.AFRAME && window.AFRAME.components["wasd-controls"]) {'
+            . '  const proto = window.AFRAME.components["wasd-controls"].Component.prototype;'
+            . '  const origKeyDown = proto.onKeyDown;'
+            . '  const origKeyUp = proto.onKeyUp;'
+            . '  proto.onKeyDown = function(e) {'
+            . '    if (e.code === "KeyW" || e.code === "KeyA" || e.code === "KeyS" || e.code === "KeyD") return;'
+            . '    origKeyDown.call(this, e);'
+            . '  };'
+            . '  proto.onKeyUp = function(e) {'
+            . '    if (e.code === "KeyW" || e.code === "KeyA" || e.code === "KeyS" || e.code === "KeyD") return;'
+            . '    origKeyUp.call(this, e);'
+            . '  };'
+            . '}'
+            . '</script>',
         default => '',
     };
 }
@@ -968,6 +1323,22 @@ function piece_export_inline_runtime_markup(string $engine): string
     $source = piece_export_runtime_inline_source($engine);
     if ($source === '') {
         return '';
+    }
+
+    if ($engine === 'aframe') {
+        $source .= "\nif (window.AFRAME && window.AFRAME.components['wasd-controls']) {\n"
+            . "  const proto = window.AFRAME.components['wasd-controls'].Component.prototype;\n"
+            . "  const origKeyDown = proto.onKeyDown;\n"
+            . "  const origKeyUp = proto.onKeyUp;\n"
+            . "  proto.onKeyDown = function(e) {\n"
+            . "    if (e.code === 'KeyW' || e.code === 'KeyA' || e.code === 'KeyS' || e.code === 'KeyD') return;\n"
+            . "    origKeyDown.call(this, e);\n"
+            . "  };\n"
+            . "  proto.onKeyUp = function(e) {\n"
+            . "    if (e.code === 'KeyW' || e.code === 'KeyA' || e.code === 'KeyS' || e.code === 'KeyD') return;\n"
+            . "    origKeyUp.call(this, e);\n"
+            . "  };\n"
+            . "}";
     }
 
     return "<script>\n" . piece_escape_inline_script($source) . "\n</script>";
@@ -1006,7 +1377,22 @@ function piece_export_runtime_source_file(string $relativePath): string
         throw new RuntimeException('Missing vendored runtime source for piece export: ' . $path);
     }
 
-    return $source;
+    return piece_export_strip_source_maps($source);
+}
+
+/**
+ * Strips `sourceMappingURL` comments from bundled runtime sources. When a
+ * downloaded piece is opened from file://, Safari/WebKit refuses to load
+ * missing .map files and logs confusing security/origin warnings; removing
+ * the reference eliminates that class of errors entirely.
+ */
+function piece_export_strip_source_maps(string $source): string
+{
+    return preg_replace(
+        '/(?:\r?\n|^)\s*\/\/#\s*sourceMappingURL=[^\r\n]*|\/\*\s*#\s*sourceMappingURL=[^*]*\*\//',
+        '',
+        $source
+    ) ?? $source;
 }
 
 /**
@@ -1198,7 +1584,6 @@ function piece_export_immersive_gallery_global_source(): string
         'const DeviceOrientationControls = window.DeviceOrientationControls;',
         $source
     );
-    $source = str_replace('plucksynth: "PluckSynth"', 'plucksynth: "FMSynth"', $source);
     $source = preg_replace('/^export\s+const\s+/m', 'const ', $source) ?? $source;
     $source = preg_replace('/^export\s+function\s+/m', 'function ', $source) ?? $source;
 
@@ -1270,6 +1655,11 @@ try {
     requestAnimationFrame(tick);
   }
   function loadImage(src) {
+    if (typeof src !== 'string' || src.trim() === '') {
+      const message = 'Cannot load image with an empty source URL.';
+      showPieceError(message);
+      return Promise.reject(new Error(message));
+    }
     if (imageCache.has(src)) return imageCache.get(src);
     const image = new Image();
     image.decoding = 'async';
@@ -1434,10 +1824,6 @@ try {
     }
 
     function mapMovementKey(event) {
-      if (event.code === 'KeyW') return 'ArrowUp';
-      if (event.code === 'KeyS') return 'ArrowDown';
-      if (event.code === 'KeyA') return 'ArrowLeft';
-      if (event.code === 'KeyD') return 'ArrowRight';
       if (event.key === 'ArrowLeft' || event.key === 'ArrowRight' || event.key === 'ArrowUp' || event.key === 'ArrowDown') return event.key;
       return null;
     }
@@ -1778,10 +2164,6 @@ try {
     }
 
     function mapMovementKey(event) {
-      if (event.code === 'KeyW') return 'ArrowUp';
-      if (event.code === 'KeyS') return 'ArrowDown';
-      if (event.code === 'KeyA') return 'ArrowLeft';
-      if (event.code === 'KeyD') return 'ArrowRight';
       if (event.key === 'ArrowLeft' || event.key === 'ArrowRight' || event.key === 'ArrowUp' || event.key === 'ArrowDown') return event.key;
       return null;
     }
@@ -2324,7 +2706,11 @@ function collection_export_build_manifest(array $collection, array $items, array
             $piece = $item['piece'];
             $version = $item['version'];
 
-            $pieceManifest = piece_export_build_manifest($piece, $version, ['surface' => '']);
+            // exclude_hand_tracking keeps the ~19.4MB MediaPipe payload out of
+            // every piece inside a collection ZIP, even where the admin
+            // enabled hand-tracking for that piece individually — see
+            // piece_export_force_voice_off() in piece_export_build_manifest().
+            $pieceManifest = piece_export_build_manifest($piece, $version, ['surface' => '', 'exclude_hand_tracking' => true]);
             $folder = pathinfo(piece_export_filename($piece), PATHINFO_FILENAME);
             if ($folder === '') {
                 $folder = 'piece-' . (int) ($piece['id'] ?? 0);
@@ -2492,6 +2878,8 @@ window.addEventListener('unhandledrejection',event=>{const r=event.reason;const 
 <script src="runtime/immersive-gallery.global.js"></script>
 <script>
 const { mountExhibitWall, setupImmersiveStageChrome } = window.CreatrImmersiveGallery || {};
+window.__creatrSonicControllerSrc = 'runtime/sonic-controller.js';
+window.__creatrToneSrc = 'runtime/tone/Tone.js';
 const stage = document.getElementById('immersive-stage');
 const rows = {$jsonRows};
 const cols = {$jsonCols};
@@ -2515,7 +2903,8 @@ setupImmersiveStageChrome(stage, {
     }
     const state = viewer?.getViewState?.() || {};
     viewer?.openSlideshowAt?.(Number.isFinite(Number(state.activeIndex)) ? Number(state.activeIndex) : 0);
-  }
+  },
+  getAudioController: () => viewer?.getAudioController?.(),
 });
 fullscreenBtn?.addEventListener('click', async () => {
   try {
@@ -2730,8 +3119,79 @@ function piece_build_media_manifest(array $contents): array
     return $mediaMap;
 }
 
+/**
+ * Narrows a version's sonic_params.extras.voices for a SPECIFIC export
+ * request, without touching the database or the passed-in $version outside
+ * this function's own return value. $requestedCsv is an optional
+ * downloader-supplied comma list (e.g. "melodic,hand_tracking") of which
+ * admin-ALLOWED optional voices to actually include in this particular
+ * download — the admin's per-piece config is always a ceiling; this can
+ * only narrow it, never expand it. `ambient`/`movement` always pass through
+ * unchanged (no downloader-facing toggle exists for those). When
+ * $requestedCsv is null (no downloader input at all — e.g. a
+ * collection-internal call, or an old/external link with no query param),
+ * the admin's config is used as-is, exactly like before this feature existed.
+ */
+function piece_export_apply_requested_voices(array $version, ?string $requestedCsv): array
+{
+    if ($requestedCsv === null) {
+        return $version;
+    }
+    $raw = trim((string) ($version['sonic_params'] ?? ''));
+    if ($raw === '') {
+        return $version;
+    }
+    $decoded = json_decode($raw, true);
+    if (!is_array($decoded)) {
+        return $version;
+    }
+    $adminVoices = is_array($decoded['extras']['voices'] ?? null) ? $decoded['extras']['voices'] : [];
+    $requested = array_map('trim', explode(',', $requestedCsv));
+    $decoded['extras']['voices']['melodic'] = ($adminVoices['melodic'] ?? true) !== false && in_array('melodic', $requested, true);
+    $decoded['extras']['voices']['hand_tracking'] = !empty($adminVoices['hand_tracking']) && in_array('hand_tracking', $requested, true);
+    $version['sonic_params'] = json_encode($decoded, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    return $version;
+}
+
+/**
+ * Forces a single sonic_params.extras.voices.* key off for this specific
+ * export, without touching the database. Narrower than
+ * piece_export_apply_requested_voices() (which recomputes every
+ * downloader-choosable voice) — used only to exclude hand-tracking from
+ * collection exports regardless of the admin's per-piece config, leaving
+ * every other voice (including keyboard) untouched.
+ */
+function piece_export_force_voice_off(array $version, string $voiceKey): array
+{
+    $raw = trim((string) ($version['sonic_params'] ?? ''));
+    if ($raw === '') {
+        return $version;
+    }
+    $decoded = json_decode($raw, true);
+    if (!is_array($decoded)) {
+        return $version;
+    }
+    $decoded['extras']['voices'][$voiceKey] = false;
+    $version['sonic_params'] = json_encode($decoded, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    return $version;
+}
+
 function piece_export_build_manifest(array $piece, array $version, array $options = []): array
 {
+    // Applied once, up top: every downstream read of $version['sonic_params']
+    // in this function (document building, hand-tracking bundling gate) then
+    // automatically respects the downloader's choice with no further changes,
+    // since it's the same version array they'd otherwise have used unmodified.
+    $version = piece_export_apply_requested_voices($version, $options['requested_voices'] ?? null);
+    // Collections pass this to keep hand-tracking out of every per-piece
+    // export inside a collection ZIP regardless of the admin's config or any
+    // downloader choice — see collection_export_build_manifest() below. This
+    // is what keeps a collection's total size bounded no matter how many
+    // hand-tracking-enabled pieces it contains.
+    if (!empty($options['exclude_hand_tracking'])) {
+        $version = piece_export_force_voice_off($version, 'hand_tracking');
+    }
+
     $htmlCode = (string) ($version['html_code'] ?? '');
     $cssCode = (string) ($version['css_code'] ?? '');
     $jsCode = (string) ($version['generated_code'] ?? '');
@@ -2752,14 +3212,31 @@ function piece_export_build_manifest(array $piece, array $version, array $option
     $immersive = $surface === 'immersive';
     $viewState = $immersive ? piece_export_decode_view_state((string) ($options['view_state'] ?? '')) : [];
     $runtimeFiles = $immersive
-        ? piece_export_immersive_runtime_files((string) ($version['engine'] ?? $piece['engine'] ?? 'p5'))
+        ? piece_export_immersive_runtime_files((string) ($version['engine'] ?? $piece['engine'] ?? 'p5'), piece_export_version_has_hand_tracking($version))
         : piece_export_runtime_files((string) ($version['engine'] ?? $piece['engine'] ?? 'p5'));
 
     if (!$immersive && piece_export_version_has_enabled_sonic($version)) {
         $runtimeFiles[] = [
             'source_path' => dirname(__DIR__, 2) . '/assets/vendor/tone/Tone.js',
             'zip_path' => 'runtime/tone/Tone.js',
+            'data' => piece_export_runtime_source_file('assets/vendor/tone/Tone.js'),
         ];
+        $runtimeFiles[] = [
+            'source_path' => dirname(__DIR__, 2) . '/assets/js/sonic-controller.js',
+            'zip_path' => 'runtime/sonic-controller.js',
+            'data' => piece_export_runtime_source_file('assets/js/sonic-controller.js'),
+        ];
+        // piece_export_sonic_script() now wires a real hand-tracking toggle
+        // for this non-immersive export path too, gated the same way its own
+        // markup is (extras.voices.hand_tracking). Collections force this
+        // voice off via 'exclude_hand_tracking' above (see
+        // collection_export_build_manifest()), so piece_export_version_has_hand_tracking()
+        // naturally returns false there and this never bundles — that's what
+        // keeps a collection ZIP's size bounded regardless of how many
+        // hand-tracking-enabled pieces it contains.
+        if (piece_export_version_has_hand_tracking($version)) {
+            $runtimeFiles = array_merge($runtimeFiles, piece_export_mediapipe_hands_runtime_files());
+        }
     }
 
     return [
@@ -2791,6 +3268,45 @@ function piece_export_version_has_enabled_sonic(array $version): bool
 
     $decoded = json_decode($raw, true);
     return is_array($decoded) && ($decoded['enabled'] ?? true) !== false;
+}
+
+/**
+ * Whether this version's hand-tracking voice is enabled — gates bundling the
+ * ~19MB self-hosted MediaPipe HandLandmarker assets into the export, so an
+ * export for a piece that doesn't use hand-tracking isn't bloated by it.
+ */
+function piece_export_version_has_hand_tracking(array $version): bool
+{
+    if (!piece_export_version_has_enabled_sonic($version)) {
+        return false;
+    }
+    $decoded = json_decode((string) ($version['sonic_params'] ?? ''), true);
+    return is_array($decoded) && !empty($decoded['extras']['voices']['hand_tracking']);
+}
+
+/**
+ * The self-hosted MediaPipe HandLandmarker assets (~19.4MB) for camera
+ * hand-tracking — vendored under public/assets/vendor/mediapipe-hands/,
+ * bundled into an export only when that piece's hand-tracking voice is
+ * enabled (see piece_export_version_has_hand_tracking()).
+ */
+function piece_export_mediapipe_hands_runtime_files(): array
+{
+    $vendorRoot = dirname(__DIR__, 2) . '/assets/vendor/mediapipe-hands';
+    return [
+        [
+            'source_path' => $vendorRoot . '/vision_bundle.mjs',
+            'zip_path' => 'runtime/mediapipe-hands/vision_bundle.mjs',
+            'data' => piece_export_runtime_source_file('assets/vendor/mediapipe-hands/vision_bundle.mjs'),
+        ],
+        [
+            'source_path' => $vendorRoot . '/vision_wasm_internal.js',
+            'zip_path' => 'runtime/mediapipe-hands/vision_wasm_internal.js',
+            'data' => piece_export_runtime_source_file('assets/vendor/mediapipe-hands/vision_wasm_internal.js'),
+        ],
+        ['source_path' => $vendorRoot . '/vision_wasm_internal.wasm', 'zip_path' => 'runtime/mediapipe-hands/vision_wasm_internal.wasm'],
+        ['source_path' => $vendorRoot . '/hand_landmarker.task', 'zip_path' => 'runtime/mediapipe-hands/hand_landmarker.task'],
+    ];
 }
 
 function piece_export_bundle_files(array $piece, array $version, array $mediaMap): array
@@ -3038,10 +3554,18 @@ function piece_export_runtime_files(string $engine): array
     $vendorRoot = $publicRoot . '/assets/vendor/piece-runtime';
     $runtimeFiles = match (strtolower($engine)) {
         'p5' => [
-            ['source_path' => $vendorRoot . '/p5/p5.min.js', 'zip_path' => 'runtime/p5/p5.min.js'],
+            [
+                'source_path' => $vendorRoot . '/p5/p5.min.js',
+                'zip_path' => 'runtime/p5/p5.min.js',
+                'data' => piece_export_runtime_source_file('assets/vendor/piece-runtime/p5/p5.min.js'),
+            ],
         ],
         'c2' => [
-            ['source_path' => $vendorRoot . '/c2/c2.min.js', 'zip_path' => 'runtime/c2/c2.min.js'],
+            [
+                'source_path' => $vendorRoot . '/c2/c2.min.js',
+                'zip_path' => 'runtime/c2/c2.min.js',
+                'data' => piece_export_runtime_source_file('assets/vendor/piece-runtime/c2/c2.min.js'),
+            ],
         ],
         'three' => [
             ['zip_path' => 'runtime/three/three.global.js', 'data' => piece_export_three_global_source()],
@@ -3049,7 +3573,11 @@ function piece_export_runtime_files(string $engine): array
             ['zip_path' => 'runtime/three/OrbitControls.global.js', 'data' => piece_export_orbitcontrols_global_source()],
         ],
         'aframe' => [
-            ['source_path' => $publicRoot . '/assets/js/aframe.min.js', 'zip_path' => 'runtime/aframe/aframe.min.js'],
+            [
+                'source_path' => $publicRoot . '/assets/js/aframe.min.js',
+                'zip_path' => 'runtime/aframe/aframe.min.js',
+                'data' => piece_export_runtime_source_file('assets/js/aframe.min.js'),
+            ],
         ],
         default => [],
     };
@@ -3063,7 +3591,7 @@ function piece_export_runtime_files(string $engine): array
     return $runtimeFiles;
 }
 
-function piece_export_immersive_runtime_files(string $engine): array
+function piece_export_immersive_runtime_files(string $engine, bool $handTrackingEnabled = false): array
 {
     $publicRoot = dirname(__DIR__, 2);
     $vendorRoot = $publicRoot . '/assets/vendor/piece-runtime';
@@ -3085,10 +3613,22 @@ function piece_export_immersive_runtime_files(string $engine): array
             'zip_path' => 'runtime/three-device-orientation-controls.global.js',
             'data' => piece_export_device_orientation_global_source(),
         ],
-        ['source_path' => $vendorRoot . '/three/three.module.js', 'zip_path' => 'runtime/three/three.module.js'],
+        [
+            'source_path' => $vendorRoot . '/three/three.module.js',
+            'zip_path' => 'runtime/three/three.module.js',
+            'data' => piece_export_runtime_source_file('assets/vendor/piece-runtime/three/three.module.js'),
+        ],
         ['zip_path' => 'runtime/three/three.global.js', 'data' => piece_export_three_global_source()],
-        ['source_path' => $vendorRoot . '/three/GLTFLoader.js', 'zip_path' => 'runtime/three/GLTFLoader.js'],
-        ['source_path' => $vendorRoot . '/three/utils/BufferGeometryUtils.js', 'zip_path' => 'runtime/three/utils/BufferGeometryUtils.js'],
+        [
+            'source_path' => $vendorRoot . '/three/GLTFLoader.js',
+            'zip_path' => 'runtime/three/GLTFLoader.js',
+            'data' => piece_export_runtime_source_file('assets/vendor/piece-runtime/three/GLTFLoader.js'),
+        ],
+        [
+            'source_path' => $vendorRoot . '/three/utils/BufferGeometryUtils.js',
+            'zip_path' => 'runtime/three/utils/BufferGeometryUtils.js',
+            'data' => piece_export_runtime_source_file('assets/vendor/piece-runtime/three/utils/BufferGeometryUtils.js'),
+        ],
         ['zip_path' => 'runtime/three/GLTFLoader.global.js', 'data' => piece_export_gltfloader_global_source()],
         [
             'zip_path' => 'runtime/three/addons/controls/OrbitControls.js',
@@ -3099,17 +3639,46 @@ function piece_export_immersive_runtime_files(string $engine): array
             'data' => piece_export_orbitcontrols_global_source(),
         ],
         // Sonification applies to every engine in the immersive view (not
-        // just three/aframe), so Tone.js is bundled unconditionally here,
-        // same as three.module.js above.
-        ['source_path' => $publicRoot . '/assets/vendor/tone/Tone.js', 'zip_path' => 'runtime/tone/Tone.js'],
+        // just three/aframe), so Tone.js and the shared sonic-controller
+        // engine are bundled unconditionally here, same as three.module.js
+        // above. sonic-controller.js needs no source patching (unlike
+        // immersive-gallery.js above) — its Tone.js/self src are resolved via
+        // window.__creatrToneSrc/__creatrSonicControllerSrc, set by the
+        // bootstrap script before mounting.
+        [
+            'source_path' => $publicRoot . '/assets/vendor/tone/Tone.js',
+            'zip_path' => 'runtime/tone/Tone.js',
+            'data' => piece_export_runtime_source_file('assets/vendor/tone/Tone.js'),
+        ],
+        [
+            'source_path' => $publicRoot . '/assets/js/sonic-controller.js',
+            'zip_path' => 'runtime/sonic-controller.js',
+            'data' => piece_export_runtime_source_file('assets/js/sonic-controller.js'),
+        ],
     ];
 
+    if ($handTrackingEnabled) {
+        $runtimeFiles = array_merge($runtimeFiles, piece_export_mediapipe_hands_runtime_files());
+    }
+
     if ($engine === 'p5') {
-        $runtimeFiles[] = ['source_path' => $vendorRoot . '/p5/p5.min.js', 'zip_path' => 'runtime/p5/p5.min.js'];
+        $runtimeFiles[] = [
+            'source_path' => $vendorRoot . '/p5/p5.min.js',
+            'zip_path' => 'runtime/p5/p5.min.js',
+            'data' => piece_export_runtime_source_file('assets/vendor/piece-runtime/p5/p5.min.js'),
+        ];
     } elseif ($engine === 'c2') {
-        $runtimeFiles[] = ['source_path' => $vendorRoot . '/c2/c2.min.js', 'zip_path' => 'runtime/c2/c2.min.js'];
+        $runtimeFiles[] = [
+            'source_path' => $vendorRoot . '/c2/c2.min.js',
+            'zip_path' => 'runtime/c2/c2.min.js',
+            'data' => piece_export_runtime_source_file('assets/vendor/piece-runtime/c2/c2.min.js'),
+        ];
     } elseif ($engine === 'aframe') {
-        $runtimeFiles[] = ['source_path' => $publicRoot . '/assets/js/aframe.min.js', 'zip_path' => 'runtime/aframe/aframe.min.js'];
+        $runtimeFiles[] = [
+            'source_path' => $publicRoot . '/assets/js/aframe.min.js',
+            'zip_path' => 'runtime/aframe/aframe.min.js',
+            'data' => piece_export_runtime_source_file('assets/js/aframe.min.js'),
+        ];
     }
 
     foreach ($runtimeFiles as $runtimeFile) {

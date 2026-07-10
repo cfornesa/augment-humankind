@@ -689,6 +689,7 @@ try {
         onViewAction() {
             immersiveViewer?.openFullViewAt?.(0);
         },
+        getAudioController: () => immersiveViewer?.getAudioController?.(),
     });
 } catch (error) {
     console.error('Failed to mount immersive image:', error);

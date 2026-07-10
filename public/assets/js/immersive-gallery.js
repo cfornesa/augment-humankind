@@ -24,27 +24,6 @@ try {
 // instead, wrapped in try/catch, so a missing/broken source only disables
 // the gyro feature itself and never the rest of this module.
 
-// Tone.js's PluckSynth builds a LowpassCombFilter -> FeedbackCombFilter
-// internally, and FeedbackCombFilter is the one Tone building block this app
-// uses that's backed by a real AudioWorkletProcessor (Karplus-Strong plucked-
-// string synthesis needs a feedback delay line) — none of the other 6
-// instruments touch a worklet at all. That worklet registration is
-// fire-and-forget deep inside PluckSynth's own constructor, so it can't be
-// caught by our own try/catch around synth creation. Under file:// (opaque/
-// null origin, e.g. a downloaded piece opened by double-clicking index.html
-// instead of being served), the browser refuses to load the worklet's
-// blob-URL module, producing an unhandled `AbortError: Unable to load a
-// worklet's module.` that has nothing to do with — and shouldn't be
-// mistaken for — a real piece-rendering failure. The piece still plays (the
-// comb filter's pitched resonance is what's missing, not all audio).
-window.addEventListener("unhandledrejection", (event) => {
-  const reason = event?.reason;
-  const message = typeof reason?.message === "string" ? reason.message : String(reason || "");
-  if (reason?.name === "AbortError" && /worklet/i.test(message)) {
-    event.preventDefault();
-  }
-});
-
 // Constants
 const WALL_CENTER = new THREE.Vector3(0, 1.35, -1.08);
 const TARGET_OFFSET = new THREE.Vector3(0, -0.16, 0);
@@ -239,10 +218,6 @@ export function createKeyboardNavigation(controls, options = {}) {
   const target = window;
 
   function mapMovementKey(e) {
-    if (e.code === "KeyW") return "ArrowUp";
-    if (e.code === "KeyS") return "ArrowDown";
-    if (e.code === "KeyA") return "ArrowLeft";
-    if (e.code === "KeyD") return "ArrowRight";
     if (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "ArrowUp" || e.key === "ArrowDown") return e.key;
     return null;
   }
@@ -566,6 +541,29 @@ export function getProgressiveExhibitLiveBudget(viewportWidth, staticMode = fals
   if (viewportWidth < 640) return 1;   // mobile
   if (viewportWidth < 1180) return 2;  // tablet
   return 3;                            // desktop
+}
+
+// A-Frame ships a default `wasd-controls` component that moves the camera on
+// W/A/S/D. Those same keys are used as piano-key triggers when sound is
+// enabled, so camera movement must be decoupled from them in every view that
+// supports sound — regular /pieces/{id}, immersive /immersive/pieces/{id},
+// and the derived ZIP exports. Arrow keys remain the canonical camera-move
+// input.
+function disableAFrameWASD() {
+  if (!window.AFRAME || !window.AFRAME.components || !window.AFRAME.components["wasd-controls"]) return;
+  const proto = window.AFRAME.components["wasd-controls"].Component.prototype;
+  if (proto.__creatrWASDsafeguard) return;
+  proto.__creatrWASDsafeguard = true;
+  const origKeyDown = proto.onKeyDown;
+  const origKeyUp = proto.onKeyUp;
+  proto.onKeyDown = function (e) {
+    if (e.code === "KeyW" || e.code === "KeyA" || e.code === "KeyS" || e.code === "KeyD") return;
+    origKeyDown.call(this, e);
+  };
+  proto.onKeyUp = function (e) {
+    if (e.code === "KeyW" || e.code === "KeyA" || e.code === "KeyS" || e.code === "KeyD") return;
+    origKeyUp.call(this, e);
+  };
 }
 
 function createImmersiveViewerControls(stageEl, handlers = {}) {
@@ -1367,6 +1365,184 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
     document.addEventListener("keydown", onDocumentKeyDown);
   }
 
+  // --- Sound settings popover (volume / keyboard mode / note buttons) -------
+  // A separate small chevron button (not the mute/unmute icon itself) opens
+  // this panel, so the existing mute/unmute click wiring owned directly by
+  // createAudioController() (and, on the exhibit wall, its own persistent
+  // listener — see mountExhibitWall) never has to change or share a listener.
+  // getAudioController is a live getter (not a snapshot) so the wall's
+  // rebind-on-focus-change pattern is reflected automatically.
+  const soundWrap = root.querySelector(".immersive-stage-sound-wrap");
+  const soundPanelTrigger = root.querySelector("[data-immersive-sound-panel-trigger]");
+  const soundPanel = root.querySelector("[data-immersive-sound-panel]");
+  const soundMuteToggle = root.querySelector("[data-immersive-sound-mute-toggle]");
+  const soundVolume = root.querySelector("[data-immersive-sound-volume]");
+  const soundKeyboardRow = root.querySelector("[data-immersive-sound-keyboard-row]");
+  const soundKeyboardToggle = root.querySelector("[data-immersive-sound-keyboard-toggle]");
+  const soundKeysWrap = root.querySelector("[data-immersive-sound-keys]");
+  const pianoKeysGroup = root.querySelector("[data-immersive-piano-keys]");
+  const pianoOctaveDisplay = root.querySelector("[data-immersive-piano-octave-display]");
+  const pianoOctaveDown = root.querySelector("[data-immersive-piano-octave-down]");
+  const pianoOctaveUp = root.querySelector("[data-immersive-piano-octave-up]");
+  const soundHandRow = root.querySelector("[data-immersive-sound-hand-row]");
+  const soundHandToggle = root.querySelector("[data-immersive-sound-hand-toggle]");
+  const voicePickerRows = root.querySelectorAll("[data-immersive-voice-picker-row]");
+  const voicePickerSelects = root.querySelectorAll("[data-immersive-voice-picker-select]");
+  const getAudioController = typeof options.getAudioController === "function" ? options.getAudioController : () => null;
+  let detachPianoKeyListener = null;
+
+  function isSoundPanelOpen() {
+    return !!soundPanel && !soundPanel.hidden;
+  }
+
+  function syncSoundPanel() {
+    const ctrl = getAudioController();
+    if (!ctrl) return;
+    const enabled = ctrl.isEnabled();
+    if (soundMuteToggle) {
+      soundMuteToggle.setAttribute("aria-checked", enabled ? "true" : "false");
+      soundMuteToggle.textContent = enabled ? "On" : "Off";
+    }
+    if (soundVolume) soundVolume.value = String(ctrl.getVolume());
+    const voices = ctrl.getVoices();
+    if (soundKeyboardRow) soundKeyboardRow.hidden = !voices.melodic;
+    const keyboardOn = voices.melodic && ctrl.getInputMode() === "keyboard";
+    if (soundKeyboardToggle) soundKeyboardToggle.setAttribute("aria-pressed", keyboardOn ? "true" : "false");
+    if (soundKeysWrap) soundKeysWrap.hidden = !keyboardOn;
+    if (pianoOctaveDisplay) pianoOctaveDisplay.textContent = String(ctrl.getOctave());
+    if (soundHandRow) soundHandRow.hidden = !voices.hand_tracking;
+    if (soundHandToggle) soundHandToggle.setAttribute("aria-pressed", ctrl.getInputMode() === "hand" ? "true" : "false");
+    voicePickerRows.forEach((row) => {
+      const voiceName = row.dataset.immersiveVoicePickerRow;
+      row.hidden = !voices[voiceName];
+    });
+    voicePickerSelects.forEach((select) => {
+      select.value = ctrl.getVoiceInstrument(select.dataset.voice);
+    });
+  }
+
+  function setSoundPanelOpen(open, { focusTrigger = false } = {}) {
+    if (!soundPanelTrigger || !soundPanel) return;
+    soundPanel.hidden = !open;
+    soundPanelTrigger.setAttribute("aria-expanded", open ? "true" : "false");
+    if (open) {
+      syncSoundPanel();
+    } else if (focusTrigger) {
+      soundPanelTrigger.focus?.();
+    }
+  }
+
+  const onSoundPanelToggle = () => setSoundPanelOpen(!isSoundPanelOpen());
+
+  const onSoundMuteToggle = async () => {
+    const ctrl = getAudioController();
+    if (!ctrl) return;
+    await ctrl.toggleEnabled();
+    syncSoundPanel();
+  };
+
+  const onSoundVolumeInput = (event) => {
+    getAudioController()?.setVolume(Number(event.target.value));
+  };
+
+  const onSoundKeyboardToggle = async () => {
+    const ctrl = getAudioController();
+    if (!ctrl) return;
+    const turningOn = ctrl.getInputMode() !== "keyboard";
+    if (turningOn) {
+      // Force the lazy engine/Tone.js load now (this click is the
+      // autoplay-unlocking gesture) so physical key presses work
+      // immediately, rather than only after the first mouse-clicked key.
+      await ctrl.ensureAudioReady();
+      detachPianoKeyListener?.();
+      detachPianoKeyListener = ctrl.attachPianoKeyListener((semitone, pressed) => {
+        const keyBtn = pianoKeysGroup?.querySelector(`[data-semitone="${semitone}"]`);
+        if (keyBtn) {
+          keyBtn.classList.toggle('is-pressed', pressed);
+        }
+      });
+    } else {
+      detachPianoKeyListener?.();
+      detachPianoKeyListener = null;
+      pianoKeysGroup?.querySelectorAll('[data-semitone]').forEach(k => k.classList.remove('is-pressed'));
+    }
+    ctrl.setInputMode(turningOn ? "keyboard" : "motion");
+    syncSoundPanel();
+  };
+
+  const onSoundHandToggle = async () => {
+    const ctrl = getAudioController();
+    if (!ctrl) return;
+    const turningOn = ctrl.getInputMode() !== "hand";
+    if (turningOn) {
+      // getUserMedia's own permission prompt is the user gesture here; on
+      // denial/error this silently stays off — no error banner, matching
+      // this codebase's "approximate rather than fail" philosophy.
+      const ok = await ctrl.enableHandTracking();
+      if (ok) ctrl.setInputMode("hand");
+    } else {
+      ctrl.disableHandTracking();
+      ctrl.setInputMode("motion");
+    }
+    syncSoundPanel();
+  };
+
+  const onPianoKeysClick = (event) => {
+    if (!(event.target instanceof Element)) return;
+    const keyBtn = event.target.closest("[data-immersive-piano-key]");
+    if (!keyBtn) return;
+    getAudioController()?.playChromaticNote(Number(keyBtn.dataset.semitone || 0));
+  };
+
+  const onPianoOctaveDown = () => {
+    const ctrl = getAudioController();
+    if (!ctrl) return;
+    ctrl.setOctave(ctrl.getOctave() - 1);
+    if (pianoOctaveDisplay) pianoOctaveDisplay.textContent = String(ctrl.getOctave());
+  };
+
+  const onPianoOctaveUp = () => {
+    const ctrl = getAudioController();
+    if (!ctrl) return;
+    ctrl.setOctave(ctrl.getOctave() + 1);
+    if (pianoOctaveDisplay) pianoOctaveDisplay.textContent = String(ctrl.getOctave());
+  };
+
+  const onVoicePickerChange = async (event) => {
+    const select = event.target;
+    if (!(select instanceof Element) || !select.matches("[data-immersive-voice-picker-select]")) return;
+    const ctrl = getAudioController();
+    if (!ctrl) return;
+    await ctrl.setVoiceInstrument(select.dataset.voice, select.value);
+  };
+
+  const onSoundDocumentPointerDown = (event) => {
+    if (!isSoundPanelOpen()) return;
+    if (soundWrap && event.target instanceof Node && soundWrap.contains(event.target)) return;
+    setSoundPanelOpen(false);
+  };
+
+  const onSoundDocumentKeyDown = (event) => {
+    if (event.key === "Escape" && isSoundPanelOpen()) {
+      event.stopPropagation();
+      setSoundPanelOpen(false, { focusTrigger: true });
+    }
+  };
+
+  soundPanelTrigger?.addEventListener("click", onSoundPanelToggle);
+  soundMuteToggle?.addEventListener("click", onSoundMuteToggle);
+  soundVolume?.addEventListener("input", onSoundVolumeInput);
+  soundKeyboardToggle?.addEventListener("click", onSoundKeyboardToggle);
+  pianoKeysGroup?.addEventListener("pointerdown", onPianoKeysClick);
+  pianoOctaveDown?.addEventListener("click", onPianoOctaveDown);
+  pianoOctaveUp?.addEventListener("click", onPianoOctaveUp);
+  soundHandToggle?.addEventListener("click", onSoundHandToggle);
+  voicePickerSelects.forEach((select) => select.addEventListener("change", onVoicePickerChange));
+  if (soundPanelTrigger && soundPanel) {
+    document.addEventListener("pointerdown", onSoundDocumentPointerDown, { capture: true });
+    document.addEventListener("keydown", onSoundDocumentKeyDown);
+  }
+
   return {
     closeDownloadMenu() {
       setMenuOpen(false);
@@ -1378,6 +1554,21 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
       if (downloadTrigger && downloadMenu) {
         document.removeEventListener("pointerdown", onDocumentPointerDown, { capture: true });
         document.removeEventListener("keydown", onDocumentKeyDown);
+      }
+      soundPanelTrigger?.removeEventListener("click", onSoundPanelToggle);
+      soundMuteToggle?.removeEventListener("click", onSoundMuteToggle);
+      soundVolume?.removeEventListener("input", onSoundVolumeInput);
+      soundKeyboardToggle?.removeEventListener("click", onSoundKeyboardToggle);
+      pianoKeysGroup?.removeEventListener("pointerdown", onPianoKeysClick);
+      pianoOctaveDown?.removeEventListener("click", onPianoOctaveDown);
+      pianoOctaveUp?.removeEventListener("click", onPianoOctaveUp);
+      soundHandToggle?.removeEventListener("click", onSoundHandToggle);
+      voicePickerSelects.forEach((select) => select.removeEventListener("change", onVoicePickerChange));
+      detachPianoKeyListener?.();
+      detachPianoKeyListener = null;
+      if (soundPanelTrigger && soundPanel) {
+        document.removeEventListener("pointerdown", onSoundDocumentPointerDown, { capture: true });
+        document.removeEventListener("keydown", onSoundDocumentKeyDown);
       }
     },
   };
@@ -1506,18 +1697,27 @@ export function resolveSketchFactory(code) {
 
 let aframeRuntimePromise = null;
 function loadAFrameRuntime() {
-  if (window.AFRAME) return Promise.resolve(window.AFRAME);
+  if (window.AFRAME) {
+    disableAFrameWASD();
+    return Promise.resolve(window.AFRAME);
+  }
   if (aframeRuntimePromise) return aframeRuntimePromise;
   aframeRuntimePromise = new Promise((resolve, reject) => {
     const existing = Array.from(document.scripts).find((script) => script.src && script.src.endsWith("/assets/js/aframe.min.js"));
     if (existing) {
-      existing.addEventListener("load", () => resolve(window.AFRAME), { once: true });
+      existing.addEventListener("load", () => {
+        disableAFrameWASD();
+        resolve(window.AFRAME);
+      }, { once: true });
       existing.addEventListener("error", () => reject(new Error("Could not load self-hosted A-Frame runtime.")), { once: true });
       return;
     }
     const script = document.createElement("script");
     script.src = "/assets/js/aframe.min.js";
-    script.onload = () => resolve(window.AFRAME);
+    script.onload = () => {
+      disableAFrameWASD();
+      resolve(window.AFRAME);
+    };
     script.onerror = () => reject(new Error("Could not load self-hosted A-Frame runtime."));
     document.head.appendChild(script);
   });
@@ -1839,49 +2039,40 @@ export function fitMultiFrameExhibitCamera(shell, stage, resetCamera = true) {
   shell.controls.update();
 }
 
-// --- Movement sonification (Tone.js) ---------------------------------------
-// Self-hosted Tone.js is lazy-loaded only when a user enables sound, so pieces
-// without sonification never pay for it. Sonic params ({tempo, scale,
+// --- Movement/keyboard sonification (Tone.js) ------------------------------
+// The actual synth/scale/motion/idle/volume/keyboard engine lives in the
+// shared classic-script module sonic-controller.js (window.CreatrSonicController),
+// consumed here the same way Tone.js itself is: lazy-loaded on first use, so
+// pieces without sonification never pay for it. Sonic params ({tempo, scale,
 // instrument, feel}) come from the piece's stored AI-generated sonic block; the
-// generated piece code never touches audio.
-const SONIC_SCALES = {
-  major: [0, 2, 4, 5, 7, 9, 11], minor: [0, 2, 3, 5, 7, 8, 10],
-  pentatonic: [0, 2, 4, 7, 9], chromatic: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
-  dorian: [0, 2, 3, 5, 7, 9, 10], phrygian: [0, 1, 3, 5, 7, 8, 10],
-  lydian: [0, 2, 4, 6, 7, 9, 11], mixolydian: [0, 2, 4, 5, 7, 9, 10],
-  wholetone: [0, 2, 4, 6, 8, 10],
-};
-const SONIC_INSTRUMENTS = {
-  synth: "Synth", amsynth: "AMSynth", fmsynth: "FMSynth",
-  membranesynth: "MembraneSynth", metalsynth: "MetalSynth",
-  plucksynth: "PluckSynth", duosynth: "DuoSynth",
-};
-
-let _toneLoadPromise = null;
-function loadToneOnce() {
-  if (window.Tone) return Promise.resolve(window.Tone);
-  if (_toneLoadPromise) return _toneLoadPromise;
-  _toneLoadPromise = new Promise((resolve, reject) => {
+// generated piece code never touches audio. This wrapper keeps the toggle
+// button/postMessage-free direct-click wiring that's specific to this
+// (parent-page) context; piece-runtime.js and the ZIP export bootstrap wrap
+// the same shared engine with their own wiring.
+let _sonicControllerLoadPromise = null;
+function loadSonicControllerOnce() {
+  if (window.CreatrSonicController) return Promise.resolve(window.CreatrSonicController);
+  if (_sonicControllerLoadPromise) return _sonicControllerLoadPromise;
+  _sonicControllerLoadPromise = new Promise((resolve, reject) => {
     const s = document.createElement("script");
-    s.src = "/assets/vendor/tone/Tone.js";
-    s.onload = () => (window.Tone ? resolve(window.Tone) : reject(new Error("Tone.js loaded but window.Tone missing")));
-    s.onerror = () => reject(new Error("Tone.js failed to load"));
+    // Standalone/ZIP exports set window.__creatrSonicControllerSrc to a
+    // ZIP-local runtime/ path (mirrors how Tone.js's own src differs between
+    // the live site and bundle mode) so exported pieces stay fully offline.
+    s.src = window.__creatrSonicControllerSrc || "/assets/js/sonic-controller.js";
+    s.onload = () => (window.CreatrSonicController ? resolve(window.CreatrSonicController) : reject(new Error("sonic-controller.js loaded but window.CreatrSonicController missing")));
+    s.onerror = () => reject(new Error("sonic-controller.js failed to load"));
     document.head.appendChild(s);
   });
-  return _toneLoadPromise;
+  return _sonicControllerLoadPromise;
 }
 
-function _sonicMidiToFreq(m) { return 440 * Math.pow(2, (m - 69) / 12); }
-
-// Returns a controller with update(motionVector)/dispose(), bound to the
-// shared toolbar's mute/unmute toggle (`[data-immersive-sound-toggle]`).
-// Browsers block audio autoplay until a user gesture — tapping the unmute
-// button IS that gesture (Tone.start() runs on the click). Mute stops
-// triggering notes but keeps the synth instantiated for instant re-unmute.
-// While enabled, an idle ticker plays a plain scale-walk pattern at rest;
-// camera motion (via update()) modulates pitch/octave and resets the idle
-// clock, so sound settles back to the idle pattern ~2s after motion stops.
-// Returns null when there are no usable sonic params — callers no-op safely.
+// Returns a controller with update(motionVector)/setVolume()/setInputMode()/
+// triggerNote()/dispose(), bound to the shared toolbar's mute/unmute toggle
+// (`[data-immersive-sound-toggle]`). Browsers block audio autoplay until a
+// user gesture — tapping the unmute button IS that gesture (the shared
+// engine's Tone.start() runs on the click). Mute stops triggering notes but
+// keeps the synth instantiated for instant re-unmute. Returns null when there
+// are no usable sonic params — callers no-op safely.
 // opts.attachListener (default true): single-piece mounts (three/aframe/
 // gallery) each own exactly one controller for the page's lifetime, so the
 // controller can safely own the toggle button's click listener directly.
@@ -1893,42 +2084,45 @@ function _sonicMidiToFreq(m) { return 440 * Math.pow(2, (m - 69) / 12); }
 // whenever the focused item happens to have no sound. In that mode the wall
 // owns ONE persistent listener across all rebinds and drives this
 // controller via the exposed toggleEnabled()/syncButton() methods instead.
+// Visitor-chosen per-voice instrument overrides, session-local only (never
+// sent to the server / never touches sonicParams) — one localStorage entry
+// per piece so different pieces don't collide. Read/write helpers live here
+// rather than in sonic-controller.js, which owns no DOM/storage access by
+// design (see that file's header comment).
+function voiceInstrumentStorageKey(pieceId) {
+  return "creatr-sonic-voice-instruments:" + pieceId;
+}
+function readVoiceInstrumentOverrides(pieceId) {
+  if (pieceId == null) return {};
+  try {
+    const raw = window.localStorage.getItem(voiceInstrumentStorageKey(pieceId));
+    const parsed = raw ? JSON.parse(raw) : null;
+    return (parsed && typeof parsed === "object") ? parsed : {};
+  } catch (_e) {
+    return {};
+  }
+}
+function writeVoiceInstrumentOverride(pieceId, voiceName, instrumentKey) {
+  if (pieceId == null) return;
+  try {
+    const overrides = readVoiceInstrumentOverrides(pieceId);
+    overrides[voiceName] = instrumentKey;
+    window.localStorage.setItem(voiceInstrumentStorageKey(pieceId), JSON.stringify(overrides));
+  } catch (_e) {
+    // Storage unavailable/full — override simply won't persist across reloads.
+  }
+}
+
 function createAudioController(sonicParams, stageEl, opts = {}) {
   if (!sonicParams || typeof sonicParams !== "object") return null;
   const attachListener = opts.attachListener !== false;
+  const pieceId = opts.pieceId != null ? opts.pieceId : null;
 
-  const scaleName = SONIC_SCALES[sonicParams.scale] ? sonicParams.scale : "major";
-  const scale = SONIC_SCALES[scaleName];
-  const instrumentKey = SONIC_INSTRUMENTS[sonicParams.instrument] ? sonicParams.instrument : "synth";
-  const tempo = Math.max(40, Math.min(220, Number(sonicParams.tempo) || 90));
-  const minInterval = ((60 / tempo) * 1000) / 2; // ~eighth-note spacing
-  const baseMidi = 48; // C3
-
-  let enabled = false, synth = null, disposed = false, lastNoteAt = 0, walk = 0;
-  let lastMotionAt = 0, idleTimer = null;
-  const IDLE_GAP_MS = 2000; // how long the camera must sit still before idle notes resume
+  let engine = null, disposed = false;
   // The toolbar (immersive_stage_toolbar_markup) renders as a SIBLING of
   // stageEl, not a descendant — stageEl.querySelector can never find it, so
   // this looks it up from the document instead. One immersive stage per page.
   const toggleBtn = document.querySelector("[data-immersive-sound-toggle]") || null;
-
-  function playIdleNote() {
-    if (!enabled || !synth || disposed) return;
-    const degree = walk++ % scale.length;
-    const midi = baseMidi + scale[degree];
-    try { synth.triggerAttackRelease(_sonicMidiToFreq(midi), "16n"); } catch (_e) {}
-  }
-
-  function idleTick() {
-    if (disposed) { idleTimer = null; return; }
-    idleTimer = setTimeout(idleTick, minInterval);
-    if (!enabled || !synth) return;
-    const now = performance.now();
-    if (now - lastMotionAt >= IDLE_GAP_MS && now - lastNoteAt >= minInterval) {
-      lastNoteAt = now;
-      playIdleNote();
-    }
-  }
 
   function setBtnState(muted) {
     if (!toggleBtn) return;
@@ -1970,37 +2164,63 @@ function createAudioController(sonicParams, stageEl, opts = {}) {
     }
   }
 
-  async function toggleEnabled() {
-    if (disposed) return;
-    // Mute path: synth already exists, just turn off triggering.
-    if (enabled && synth) {
-      enabled = false;
-      setBtnState(true);
-      return;
-    }
-    // Unmute path: lazily load Tone.js on the first unmute (this click is
-    // the autoplay-unlocking gesture Tone.start() requires).
+  // Shared unmute path: lazily loads the sonic-controller module (and, inside
+  // it, Tone.js) on first use, then enables the engine. Used both by the
+  // mute/unmute toggle and by the keyboard-mode note buttons, since tapping a
+  // note before ever unmuting should itself count as the autoplay-unlocking
+  // user gesture and just start playing.
+  async function ensureEnabled() {
+    if (disposed) return false;
+    if (engine && engine.isEnabled()) return true;
     try {
       if (toggleBtn) toggleBtn.disabled = true;
-      const Tone = await loadToneOnce();
-      await Tone.start();
-      if (disposed) return;
-      if (!synth) {
-        const Ctor = Tone[SONIC_INSTRUMENTS[instrumentKey]] || Tone.Synth;
-        synth = new Ctor().toDestination();
-        if (synth.volume) synth.volume.value = -6;
+      if (!engine) {
+        const CSC = await loadSonicControllerOnce();
+        if (disposed) return false;
+        // window.__creatrToneSrc, when set by a standalone/ZIP export's
+        // bootstrap script, points Tone.js loading at the bundle-local
+        // runtime/tone/Tone.js copy instead of the live site's vendor path.
+        engine = CSC.create(sonicParams, {
+          toneSrc: window.__creatrToneSrc,
+          mediaPipeVisionSrc: window.__creatrMediaPipeVisionSrc,
+          mediaPipeWasmDir: window.__creatrMediaPipeWasmDir,
+          mediaPipeModelSrc: window.__creatrMediaPipeModelSrc,
+        });
+        if (!engine) return false;
       }
-      enabled = true;
-      setBtnState(false);
-      lastMotionAt = 0; // let idle notes start immediately on unmute
-      if (!idleTimer) idleTick();
-    } catch (_e) {
-      if (toggleBtn) {
+      const ok = await engine.enable();
+      if (disposed) return false;
+      if (ok) {
+        // Re-apply any visitor-chosen per-voice instrument overrides now that
+        // the engine's synths actually exist (setVoiceInstrument() no-ops
+        // before enable()). Safe to call every ensureEnabled() — it's a
+        // cheap no-op once already applied to the current engine instance.
+        const overrides = readVoiceInstrumentOverrides(pieceId);
+        Object.keys(overrides).forEach((voiceName) => {
+          engine.setVoiceInstrument(voiceName, overrides[voiceName]);
+        });
+        setBtnState(false);
+      } else if (toggleBtn) {
         toggleBtn.setAttribute("aria-label", "Sound unavailable");
       }
+      return ok;
+    } catch (_e) {
+      if (toggleBtn) toggleBtn.setAttribute("aria-label", "Sound unavailable");
+      return false;
     } finally {
       if (toggleBtn) toggleBtn.disabled = false;
     }
+  }
+
+  async function toggleEnabled() {
+    if (disposed) return;
+    // Mute path: engine already exists, just turn off triggering.
+    if (engine && engine.isEnabled()) {
+      engine.disable();
+      setBtnState(true);
+      return;
+    }
+    await ensureEnabled();
   }
 
   if (attachListener && toggleBtn) {
@@ -2011,26 +2231,67 @@ function createAudioController(sonicParams, stageEl, opts = {}) {
   return {
     toggleEnabled,
     syncButton: setBtnState,
-    isEnabled: () => enabled,
-    update(motion) {
-      if (!enabled || !synth || disposed) return;
-      const dx = motion?.dx || 0, dy = motion?.dy || 0, dz = motion?.dz || 0;
-      const speed = Math.hypot(dx, dy, dz);
-      if (speed < 0.002) return; // near-still → let the idle ticker handle it
-      lastMotionAt = performance.now();
-      const now = lastMotionAt;
-      if (now - lastNoteAt < minInterval) return; // rate-limit to tempo
-      lastNoteAt = now;
-      const degree = walk++ % scale.length;
-      const octave = Math.min(2, Math.floor(Math.abs(dy) * 25));
-      const midi = baseMidi + scale[degree] + 12 * octave;
-      try { synth.triggerAttackRelease(_sonicMidiToFreq(midi), "16n"); } catch (_e) {}
+    isEnabled: () => !!engine && engine.isEnabled(),
+    update(motion) { if (engine) engine.update(motion); },
+    setVolume(percent) { if (engine) engine.setVolume(percent); },
+    getVolume: () => (engine ? engine.getVolume() : (opts.defaultVolume ?? 50)),
+    setInputMode(mode) { if (engine) engine.setInputMode(mode); },
+    getInputMode: () => (engine ? engine.getInputMode() : "motion"),
+    getScaleLength: () => (engine ? engine.getScaleLength() : 7),
+    // Read directly off sonicParams (available immediately, no need to wait
+    // for the lazily-created engine) so popover wiring can decide which
+    // voice controls to show before the user has ever unmuted.
+    getVoices: () => {
+      const voices = sonicParams && sonicParams.extras && sonicParams.extras.voices;
+      const allowHandTracking = opts.allowHandTracking !== false;
+      return {
+        ambient: !voices || voices.ambient !== false,
+        movement: !voices || voices.movement !== false,
+        melodic: !voices || voices.melodic !== false,
+        hand_tracking: allowHandTracking && !!(voices && voices.hand_tracking),
+      };
     },
+    // Public alias so callers (e.g. the keyboard-mode toggle, before
+    // attaching a physical-key listener) can force the lazy engine/Tone.js
+    // load without actually playing a note.
+    ensureAudioReady: () => ensureEnabled(),
+    async playNote(degree, octaveOffset) {
+      const ok = await ensureEnabled();
+      if (ok && engine) engine.triggerNote(degree, octaveOffset);
+    },
+    async playChromaticNote(semitoneIndex) {
+      const ok = await ensureEnabled();
+      if (ok && engine) engine.triggerChromaticNote(semitoneIndex);
+    },
+    setOctave(octave) { if (engine) engine.setOctave(octave); },
+    getOctave: () => (engine ? engine.getOctave() : 3),
+    getOctaveRange: () => (engine ? engine.getOctaveRange() : { min: 1, max: 5 }),
+    // Visitor-facing per-voice instrument override — session-local only, see
+    // readVoiceInstrumentOverrides()/writeVoiceInstrumentOverride() above.
+    async setVoiceInstrument(voiceName, instrumentKey) {
+      const ok = await ensureEnabled();
+      if (!ok || !engine) return false;
+      const applied = engine.setVoiceInstrument(voiceName, instrumentKey);
+      if (applied) writeVoiceInstrumentOverride(pieceId, voiceName, instrumentKey);
+      return applied;
+    },
+    getVoiceInstrument(voiceName) {
+      if (engine) return engine.getVoiceInstrument(voiceName);
+      const overrides = readVoiceInstrumentOverrides(pieceId);
+      return overrides[voiceName] || (sonicParams && sonicParams.instrument) || "synth";
+    },
+    attachPianoKeyListener(onNoteStateChange) { return engine ? window.CreatrSonicController.attachPianoKeyListener(engine, onNoteStateChange) : () => {}; },
+    async enableHandTracking() {
+      if (opts.allowHandTracking === false) return false;
+      const ok = await ensureEnabled();
+      if (!ok || !engine) return false;
+      return engine.enableHandTracking();
+    },
+    disableHandTracking() { if (engine) engine.disableHandTracking(); },
     dispose() {
-      disposed = true; enabled = false;
-      if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+      disposed = true;
       if (attachListener && toggleBtn) toggleBtn.removeEventListener("click", toggleEnabled);
-      try { synth?.dispose?.(); } catch (_e) {}
+      if (engine) engine.dispose();
     },
   };
 }
@@ -2214,7 +2475,7 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
   let userHasInteracted = false;
   let gyroController = null;
   let viewerControls = null;
-  const audioController = createAudioController(options.sonicParams, stageEl);
+  const audioController = createAudioController(options.sonicParams, stageEl, { pieceId: options.pieceId });
   const _audioPrevPos = new THREE.Vector3();
   let _audioPrevInit = false;
   const _orbitCamPos = new THREE.Vector3();
@@ -2780,6 +3041,7 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
         },
       }),
       getViewState: () => shellViewState({ camera: state.camera, controls }),
+      getAudioController: () => audioController,
     };
   } catch (err) {
     onError(err);
@@ -2822,7 +3084,7 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
   let viewerControls = null;
   let pointerTarget = null;
   let frameId = 0;
-  const audioController = createAudioController(options.sonicParams, stageEl);
+  const audioController = createAudioController(options.sonicParams, stageEl, { pieceId: options.pieceId });
   let _aframeAudioPrev = null;
   const stopFrameHandles = [];
   const aframeNav = {
@@ -3199,6 +3461,7 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
       },
       }),
     getViewState: getAFrameViewState,
+    getAudioController: () => audioController,
   };
 }
 
@@ -3230,7 +3493,7 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
   let viewerControls = null;
   let readOnlyOverlay = null;
   let gyroController = null;
-  const audioController = createAudioController(options.sonicParams, stageEl);
+  const audioController = createAudioController(options.sonicParams, stageEl, { pieceId: options.pieceId });
   const _galleryAudioPrevPos = new THREE.Vector3();
   let _galleryAudioPrevInit = false;
   const galleryButtonForward = new THREE.Vector3();
@@ -3679,6 +3942,7 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
       },
     }),
     getViewState: () => shellViewState(shell),
+    getAudioController: () => audioController,
   };
 }
 
@@ -3931,7 +4195,6 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
         const iframe = document.createElement('iframe');
         iframe.style.cssText = `position:fixed;left:-10000px;top:0;width:${runtimeSize.width}px;height:${runtimeSize.height}px;pointer-events:none;border:none;`;
         iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin');
-        document.body.appendChild(iframe);
 
         const proxyCanvas = document.createElement('canvas');
         proxyCanvas.width = runtimeSize.width;
@@ -3940,6 +4203,10 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
         let iframeCanvas = null;
         let liveTexture = null;
         let iframeRafId = 0;
+
+        iframe.addEventListener('load', () => { iframeRafId = requestAnimationFrame(syncFrame); }, { once: true });
+        iframe.srcdoc = srcdoc;
+        document.body.appendChild(iframe);
 
         // Show thumbnail as placeholder while the iframe piece boots
         if (item.thumbnail_url) {
@@ -3993,8 +4260,6 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
           failed: false,
         });
 
-        iframe.addEventListener('load', () => { iframeRafId = requestAnimationFrame(syncFrame); }, { once: true });
-        iframe.srcdoc = srcdoc;
         return;
       }
 
@@ -4370,7 +4635,11 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
     if (focusedIndex !== audioControllerIndex && nowTs - lastAudioRebindAt >= AUDIO_REBIND_COOLDOWN_MS) {
       audioController?.dispose();
       const focusedItem = focusedIndex >= 0 ? items[focusedIndex] : null;
-      audioController = createAudioController(focusedItem?.sonicParams, stageEl, { attachListener: false });
+      // Hand-tracking is gated to single-piece full-view contexts only —
+      // never the exhibit-wall/gallery-room multiplex (performance: no
+      // running N MediaPipe inference loops for N wall thumbnails; UX: no
+      // getUserMedia prompts firing on an unfocused tile).
+      audioController = createAudioController(focusedItem?.sonicParams, stageEl, { attachListener: false, allowHandTracking: false, pieceId: focusedItem?.piece_id });
       audioControllerIndex = focusedIndex;
       lastAudioRebindAt = nowTs;
       exhibitAudioPrevInit = false;
@@ -4455,6 +4724,7 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
 
   return {
     destroy,
+    getAudioController: () => audioController,
     getSelectedItem() {
       return items[selectedSourceIndex] || null;
     },

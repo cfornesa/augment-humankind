@@ -10,6 +10,86 @@
 
 None.
 
+## 2026-07-09 — Completed WASD decoupling for A-Frame in immersive views and exports
+
+### Decision
+
+The 2026-07-10 entry below asserted that WASD keys were decoupled from camera movement across all piece types, including immersive galleries and downloaded ZIP files. Review showed that A-Frame pieces in the immersive VR view (`/immersive/pieces/{id}` and collection exports) were still relying on A-Frame's default `wasd-controls`, which moves the camera on W/A/S/D — the same keys used for piano-note input when sound is enabled.
+
+To close the gap:
+
+- Added a `disableAFrameWASD()` helper to `public/assets/js/immersive-gallery.js` that intercepts the `wasd-controls` component prototype and ignores `KeyW`, `KeyA`, `KeyS`, and `KeyD` events.
+- Wired the shim into `loadAFrameRuntime()` so it runs both when A-Frame is already present and immediately after the `aframe.min.js` script finishes loading.
+- Strengthened `public/assets/js/piece-runtime.js` by calling `disableAFrameWASD()` inside `bootAFrame()`'s `script.onload` callback, ensuring the shim is applied after A-Frame is actually available rather than only at module parse time.
+- This automatically covers immersive/collection ZIP exports, because `piece_export_patched_immersive_gallery_source()` in `public/app/helpers/piece-render.php` reads directly from `immersive-gallery.js`.
+- Added regression tests in `tests/three-runtime-consistency.php` verifying that both runtimes' keyboard navigation maps only Arrow keys and that the A-Frame WASD disable runs after A-Frame loads.
+
+Camera movement remains arrow-key-only across regular views, immersive VR views, and all download bundles.
+
+### Verification
+
+- `php tests/three-runtime-consistency.php` — **Passed: 110, Failed: 0**
+- `php tests/art-piece-generation.php` — **Passed: 136, Failed: 0**
+- `php tests/art-piece-ordering.php` — **Passed: 4, Failed: 0**
+
+## 2026-07-09 — Defensive fixes for C2 interactive file:// security warning and empty resource URLs
+
+### Decision
+
+Investigated the Safari/WebKit warning in downloaded C2 interactive pieces:
+
+`Unsafe attempt to load URL file:///.../index.html from frame with URL file:///.../index.html. 'file:' URLs are treated as unique security origins.`
+
+Static inspection of the failing download (`/Users/Fornesus/Downloads/3d-unified-minimax-m3-c2js-interactive (2)/`) found no iframe, no empty `src`/`href`/`url()`, and no empty `runtime.loadImage()` calls in the bundled runtime or the piece's own `scripts/piece.js`. The warning's "from frame" phrasing is WebKit's generic message when a `file://` document tries to load itself as a subresource, which can happen from an empty/self-referential resource URL anywhere in the asset graph.
+
+Because the actual production database credentials in `.env` point to a remote host, I did not connect to it to inspect the saved version row for piece 110. Instead, I added defensive guards that protect every engine and every export path from this class of bug:
+
+- **`public/app/helpers/art-piece-generation.php`** `validate_art_piece_media_references()` now rejects:
+  - Empty `src`, `href`, and `xlink:href` attributes in HTML.
+  - Empty `url()` references in CSS.
+  - Empty literal URLs passed to `p5.loadImage()`, Three.js `TextureLoader.load()` / `.load()`, and `runtime.loadImage()`.
+  These checks run at generation/validation time so an AI-generated draft with an empty resource URL fails preflight instead of reaching a download.
+
+- **`public/app/helpers/piece-render.php`** export C2 bootstrap `loadImage()` now guards against empty/non-string `src` at runtime, returning a rejected Promise and surfacing a clear error instead of letting the browser resolve an empty URL to `index.html`.
+
+- **`public/app/helpers/piece-render.php`** now strips `sourceMappingURL` comments from every vendored runtime file copied into an export (`piece_export_strip_source_maps()` applied via `piece_export_runtime_source_file()`). This removes a separate class of `file://` warnings caused by browsers trying to load missing `.map` files such as `Tone.js.map`.
+
+- Updated `piece_export_runtime_files()`, `piece_export_immersive_runtime_files()`, `piece_export_mediapipe_hands_runtime_files()`, and the non-immersive sonic runtime injection in `piece_export_build_manifest()` to route vendor sources through `piece_export_runtime_source_file()` so the source-map stripping is applied consistently.
+
+### Impact
+
+- All future AI-generated code with empty resource URLs will fail validation with a repairable error message.
+- Existing downloads that happen to pass empty URLs will now surface a clear runtime error instead of a cryptic WebKit security warning.
+- Exported bundles no longer reference missing source maps, removing unrelated `file://` console noise.
+
+### Verification
+
+- Static inspection of the reported failing download confirmed no iframe or obvious empty URL in the runtime or `scripts/piece.js`.
+- Generated a fresh C2 interactive test bundle and confirmed:
+  - `runtime/tone/Tone.js` contains zero `sourceMappingURL` references.
+  - `runtime/c2/c2.min.js` contains zero `sourceMappingURL` references.
+  - The export `loadImage()` guard string is present in `index.html`.
+- `php tests/three-runtime-consistency.php` — **Passed: 110, Failed: 0**
+- `php tests/art-piece-generation.php` — **Passed: 136, Failed: 0**
+- `php tests/art-piece-ordering.php` — **Passed: 4, Failed: 0**
+
+## 2026-07-10 — Fixed SyntaxError in offline bundle styles; aligned sound controls and visual piano keys state
+
+### Decision
+
+Implemented fixes to resolve the syntax error on offline bundle download pages, and improved the layout, alignment, and responsiveness of the sound control buttons:
+
+- **Syntax Error in style block**: Fixed `Uncaught SyntaxError: Invalid or unexpected token` inside generated offline `index.html` files. The issue was that PHP's heredoc string compiled `\n` to a literal newline byte (`0x0A`), which JavaScript single-quoted strings cannot legally contain. Replaced the concatenated single-quoted style string with a JavaScript template literal (using backticks) which natively supports multi-line newlines.
+- **Visual Piano Key Pressed State**: Integrated a callback in `piece-runtime.js`'s standalone piano key listener so that physical keyboard key presses correctly toggle the `.is-pressed` state class on visual white/black keys, matching the host page's behavior. Injected matching `.runtime-key-white`/`.runtime-key-black` hover and pressed styles to `document.head` in `piece-runtime.js`.
+- **Sound Control Buttons Alignment**: Grouped the sound toggle and settings trigger buttons into a single flex container row in `pieces/show.php` and `piece-runtime.js`, matching the layout of the downloaded offline version. Enlarged the settings trigger chevron icon to `16x16` (up from `12x12`) for improved clickability/mobile responsiveness, and allowed the dropdown panel to flow naturally rather than using complex absolute calculations.
+- **WASD Decoupled from Movement**: Decoupled W, A, S, D keys from keyboard/camera movement controls across all piece types (Three.js and A-Frame) for both online previews and downloaded ZIP files. Removed WASD mapping from Three.js bootloaders and decoupled A-Frame's built-in `wasd-controls` component by intercepting its prototype event handlers synchronously at boot time. Movement is now safely restricted to arrow keys, preventing camera drift when physical keyboard keys are played.
+
+### Verification
+
+- `php tests/art-piece-generation.php` — **Passed: 136, Failed: 0**
+- `php tests/three-runtime-consistency.php` — **Passed: 105, Failed: 0**
+- Verified that generated offline bundle HTML files contain valid template literal backticks in their style blocks and load without console SyntaxErrors.
+
 ## 2026-07-09 — Immersive screenshot button, single-item download simplification, ZIP label, fullscreen click-through fix
 
 ### Decision
@@ -2110,3 +2190,116 @@ have been the wrong direction.
 - Grepped all touched files post-edit for `OBJLoader`/`.obj`/`'obj'` —
   zero remaining references outside unrelated identifier usage (e.g.
   `obj-model`, `Object3D`).
+
+## 2026-07-09 — Sound expansion: three concurrent voices, piano keyboard, per-piece Audio tab, hand-tracking, and downloader-chosen ZIP contents
+
+### Decision
+
+**Rebuilt the movement-sonification engine around three concurrent Tone.js
+voices instead of one.** The prior single-synth design forced idle-pattern
+and motion-triggered notes to share one monophonic voice (audibly cutting
+each other off) and had no way to let a keyboard/hand-tracking melodic layer
+play *over* the ambient soundscape rather than replacing it — the user's
+stated goal was explicitly to avoid needing a second sound library (Wad.js/
+XSound.js) for layering, since Tone.js's single shared `AudioContext` already
+supports arbitrarily many concurrent instruments for free. `sonic-controller.js`
+now builds three independent Tone instruments — `ambientSynth` (idle-timer
+scale-walk), `movementSynth` (motion-triggered), `melodicSynth` (keyboard/
+hand-tracking-triggered) — all `.connect()`ed through one shared `Tone.Filter`
+(admin-tunable cutoff/resonance) into one shared `Tone.Volume` bus, so a
+single slider controls the combined mix and `setInputMode()` is now purely a
+UI-facing "which control source feeds the melodic voice" flag rather than an
+audio mute switch. This module is the single shared engine for all four
+sound-bearing surfaces (immersive views, the regular `/pieces/[id]` view via
+`piece-runtime.js`, and both ZIP export bootstraps) — replacing what had been
+three separately-duplicated synth implementations.
+
+**Added a real piano keyboard** (C-to-B chromatic layout, octave display +
+up/down, `triggerChromaticNote()`/`setOctave()` on the engine) replacing the
+placeholder 7-button scale-degree grid, plus **physical-keyboard play**
+using the standard "typing keyboard as piano" convention (home row `A S D F
+G H J K L ;` = white keys, `W E T Y U O P` = black/sharp keys in the gaps).
+The physical-key listener is attached **only while on-screen keyboard mode is
+toggled on**, specifically to avoid colliding with existing WASD/arrow-key
+Three.js camera-movement shortcuts — verified live that toggling keyboard
+mode off fully restores normal camera movement with no lingering listener.
+
+**Added a per-piece "Audio tab"** in the admin piece editor exposing
+mechanical, non-AI-authored settings — per-voice public-visibility toggles
+(ambient/movement/melodic/hand-tracking), a default volume, and admin-only
+synth tuning (octave range, filter cutoff/resonance/type) — stored as a
+nested `extras` key inside the *existing* `sonic_params` JSON column (no
+schema migration). Kept deliberately separate from
+`validate_art_piece_sonic_params()`'s own AI-authored canonicalization
+specifically so `art_piece_sonic_params_equal()` (used to decide whether a
+save forks a new version) naturally ignores `extras` with zero changes to
+that function — confirmed via direct execution that toggling an Audio-tab
+setting does **not** fork a new version (a small `PiecesAdminController`
+branch updates the current version row in place instead), while an actual
+code/AI-sonic change still does.
+
+**Added camera hand-tracking** (MediaPipe Tasks-Vision `HandLandmarker`,
+self-hosted at `public/assets/vendor/mediapipe-hands/`, ~19.4MB — WASM engine
++ float16 model, no UMD build available so loaded via dynamic `import()`
+even from classic, non-module scripts). Wrist height drives continuous pitch
+glide (not discrete triggers, for real theremin feel); wrist-to-fingertip
+spread drives that voice's own volume, independent of the shared master
+slider. Gated to single-piece full-view contexts only — confirmed the
+exhibit-wall/gallery-room multiplex never receives `allow="camera"` or the
+hand-tracking toggle at all, so no parallel inference or camera prompts fire
+across unfocused wall thumbnails.
+
+**Discovered mid-implementation that hand-tracking was initially wired into
+only two of the four sound surfaces** — the immersive view and the live
+regular-view (`piece-runtime.js`/`piece-fullscreen.js`), but not
+`piece_export_sonic_script()` (the self-built popover used for every
+non-immersive ZIP export, including every piece inside a collection). This
+meant the ~19.4MB MediaPipe payload was being bundled into non-immersive
+exports as pure dead weight with no UI to ever trigger it — and, worse, was
+being duplicated **once per piece** inside collection ZIP exports with zero
+cross-piece deduplication, a real bug that would blow a collection past
+100MB for a handful of hand-tracking-enabled pieces. Fixed in two passes:
+first by removing the dead-weight bundling entirely (temporarily leaving
+hand-tracking export-only in the immersive path), then, once the user asked
+for hand-tracking to work in *all* downloaded pieces, by properly wiring a
+matching toggle into `piece_export_sonic_script()` and restoring conditional
+bundling — with an explicit, user-confirmed decision to keep collection
+exports excluding hand-tracking entirely (`piece_export_force_voice_off()`,
+via `collection_export_build_manifest()`'s `'exclude_hand_tracking' => true`)
+rather than build collection-root deduplication, since a solo download of
+the same piece still gets it and the wall is a live-viewing surface first.
+
+**Added a downloader-facing ZIP-contents picker** on the regular `/pieces/[id]`
+view: before downloading, the person chooses which admin-*allowed* optional
+panels (keyboard, hand-tracking) ride along in their specific export via a
+`dl_voices` query param, resolved server-side by
+`piece_export_apply_requested_voices()` — the admin's per-piece config is
+always a ceiling, never expandable by the downloader. Collections
+intentionally get no picker at all; every piece in a collection ZIP keeps
+using its admin-configured defaults exactly as before this whole feature
+existed, per explicit user instruction.
+
+### Verification
+- Live-verified (browser, no console errors) on both an immersive Three.js
+  piece and the regular `/pieces/[id]` view: popover open/close, volume
+  slider, mute/unmute, piano key clicks, physical key presses (`a`, `w`, `j`),
+  and octave up/down all work identically across both surfaces.
+- Confirmed WASD camera movement is fully undisturbed with keyboard mode off,
+  and fully restored after toggling it off again.
+- Confirmed a piece with no `sonic_params` at all renders zero sound UI
+  (clean regression check) and a piece with sonic but no optional voices
+  enabled shows a plain, un-popovered download link.
+- Direct PHP execution (bypassing the DB, using synthetic `$piece`/`$version`
+  arrays) against the real `piece_export_build_manifest()`/
+  `collection_export_build_manifest()` code paths confirmed all four
+  target scenarios: solo hand-tracking export bundles MediaPipe + renders
+  the toggle; the same piece inside a collection context does neither;
+  downloader-unchecked hand-tracking bundles neither; a piece with
+  hand-tracking disabled by the admin is unaffected by any of this.
+- Downloaded the real `apocalyptic` collection ZIP and confirmed via
+  `unzip -l` zero MediaPipe files anywhere in it, and downloaded a real
+  single piece's ZIP confirming `dl_voices=` (nothing checked) produces a
+  clean, ~8.3MB export with no dead assets.
+- `art_piece_sonic_params_equal()` confirmed (direct execution) to return
+  `true` across two JSON blobs differing only in `extras`, verifying
+  Audio-tab-only saves cannot fork a spurious new version.

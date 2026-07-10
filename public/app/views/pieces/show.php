@@ -15,9 +15,42 @@ $sonicParamsDecoded = !empty($version['sonic_params']) ? json_decode((string) $v
 $soundToggleAvailable = is_array($version)
     && !empty($version['sonic_params'])
     && (!is_array($sonicParamsDecoded) || ($sonicParamsDecoded['enabled'] ?? true) !== false);
+$handTrackingAvailable = $soundToggleAvailable && !empty($sonicParamsDecoded['extras']['voices']['hand_tracking']);
+// Which optional sound panels the admin has allowed for this piece, offered
+// to the downloader as a ceiling-bounded choice for their own ZIP (see
+// piece_export_apply_requested_voices() in piece-render.php) — never
+// expandable past what's checked here.
+$downloadVoiceOptions = [];
+if ($soundToggleAvailable && (($sonicParamsDecoded['extras']['voices']['melodic'] ?? true) !== false)) {
+    $downloadVoiceOptions['melodic'] = 'Keyboard (piano)';
+}
+if ($handTrackingAvailable) {
+    $downloadVoiceOptions['hand_tracking'] = 'Hand-tracking (camera theremin)';
+}
 $isAdmin = (bool) admin_identity();
 $pngFilenameBase = pathinfo(piece_export_filename($piece), PATHINFO_FILENAME);
 $pngFilename = ($pngFilenameBase !== '' ? $pngFilenameBase : 'piece-' . (int) ($piece['id'] ?? 0)) . '.png';
+ob_start();
+if (empty($downloadVoiceOptions)) {
+    ?><a href="/pieces/<?= (int) $piece['id'] ?>/download" class="piece-immersive-link"><?= e(public_copy_value('public_art_copy.shared_ui.download_piece_label')) ?></a><?php
+} else {
+    ?><span class="piece-download-picker-wrap" data-piece-download-picker-wrap>
+        <a href="/pieces/<?= (int) $piece['id'] ?>/download" class="piece-immersive-link" data-piece-download-link><?= e(public_copy_value('public_art_copy.shared_ui.download_piece_label')) ?></a>
+        <button type="button" class="piece-download-picker-trigger" data-piece-download-picker-trigger aria-haspopup="true" aria-expanded="false" aria-label="Choose download options">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <div class="piece-download-picker" data-piece-download-picker role="region" aria-label="Download options" hidden>
+            <p class="admin-hint" style="margin:0 0 0.5rem;">Include in this download:</p>
+            <?php foreach ($downloadVoiceOptions as $key => $label): ?>
+            <label class="checkbox-label">
+                <input type="checkbox" data-piece-download-voice="<?= e($key) ?>" checked>
+                <?= e($label) ?>
+            </label>
+            <?php endforeach; ?>
+        </div>
+    </span><?php
+}
+$downloadLinkMarkup = ob_get_clean();
 $publicPieceScriptVersion = (int) @filemtime(dirname(__DIR__, 3) . '/assets/js/public-piece-download.js');
 $pieceFullscreenScriptVersion = (int) @filemtime(dirname(__DIR__, 3) . '/assets/js/piece-fullscreen.js');
 ?>
@@ -52,26 +85,60 @@ $pieceFullscreenScriptVersion = (int) @filemtime(dirname(__DIR__, 3) . '/assets/
 
 <section class="piece-stage" aria-label="Generative art piece">
     <?php if ($hasCode): ?>
-        <div data-piece-download-root>
+        <div data-piece-download-root data-piece-id="<?= (int) $piece['id'] ?>">
             <div class="piece-canvas-container">
-                <?= piece_render_iframe($piece, $version, 560, ['data-piece-download-frame' => 'true']) ?>
+                <?= piece_render_iframe($piece, $version, 560, array_filter([
+                    'data-piece-download-frame' => 'true',
+                    'allow' => $handTrackingAvailable ? 'camera' : null,
+                ])) ?>
                 <?php if ($soundToggleAvailable): ?>
-                <button type="button" class="piece-sound-toggle" data-piece-sound-toggle aria-pressed="false" aria-label="Unmute sound">
-                    <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4z"/><line x1="22" y1="9" x2="16" y2="15"/><line x1="16" y1="9" x2="22" y2="15"/></svg>
-                </button>
+                <div class="piece-sound-controls">
+                    <div class="piece-sound-buttons">
+                        <button type="button" class="piece-sound-toggle" data-piece-sound-toggle aria-pressed="false" aria-label="Unmute sound">
+                            <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4z"/><line x1="22" y1="9" x2="16" y2="15"/><line x1="16" y1="9" x2="22" y2="15"/></svg>
+                        </button>
+                        <button type="button" class="piece-sound-panel-trigger" data-piece-sound-panel-trigger aria-haspopup="true" aria-expanded="false" aria-controls="piece-sound-panel" aria-label="Sound settings">
+                            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+                        </button>
+                    </div>
+                    <div id="piece-sound-panel" class="piece-sound-panel" data-piece-sound-panel role="region" aria-label="Sound settings" hidden>
+                        <div class="piece-sound-row">
+                            <span>Sound</span>
+                            <button type="button" class="piece-sound-switch" data-piece-sound-mute-toggle role="switch" aria-checked="false">Off</button>
+                        </div>
+                        <div class="piece-sound-row">
+                            <label for="piece-sound-volume" style="flex:0 0 auto;">Volume</label>
+                            <input type="range" id="piece-sound-volume" class="piece-sound-volume" data-piece-sound-volume min="0" max="100" step="1" value="50" aria-label="Volume">
+                        </div>
+                        <?= immersive_stage_voice_instrument_picker_markup('piece-voice-picker', 'data-piece-voice-picker') ?>
+                        <div class="piece-sound-row" data-piece-sound-keyboard-row>
+                            <span>Keyboard</span>
+                            <button type="button" class="piece-sound-keyboard-toggle" data-piece-sound-keyboard-toggle aria-pressed="false">Play notes</button>
+                        </div>
+                        <div class="piece-piano-wrap" data-piece-sound-keys hidden>
+                            <?= immersive_stage_piano_keyboard_markup('piece-piano', 'data-piece-piano') ?>
+                        </div>
+                        <?php if ($handTrackingAvailable): ?>
+                        <div class="piece-sound-row" data-piece-sound-hand-row>
+                            <span>Hand-tracking</span>
+                            <button type="button" class="piece-sound-keyboard-toggle" data-piece-sound-hand-toggle aria-pressed="false">Camera theremin</button>
+                        </div>
+                        <?php endif; ?>
+                    </div>
+                </div>
                 <?php endif; ?>
                 <button type="button" class="piece-fullscreen-toggle" data-piece-fullscreen-toggle aria-expanded="false" aria-label="Expand piece to fullscreen">
                     <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
                 </button>
             </div>
             <div class="piece-fullscreen-bar" data-piece-fullscreen-bar role="toolbar" aria-label="Piece downloads" hidden>
-                <a href="/pieces/<?= (int) $piece['id'] ?>/download" class="piece-immersive-link"><?= e(public_copy_value('public_art_copy.shared_ui.download_piece_label')) ?></a>
+                <?= $downloadLinkMarkup ?>
                 <button type="button" class="piece-immersive-link piece-download-button" data-piece-download-trigger data-download-filename="<?= e($pngFilename) ?>"><?= e(public_copy_value('public_art_copy.shared_ui.download_png_label')) ?></button>
                 <button type="button" class="piece-immersive-link piece-download-button" data-piece-fullscreen-close>Close</button>
             </div>
             <div class="piece-action-row">
                 <a href="/immersive/pieces/<?= (int) $piece['id'] ?>?returnTo=<?= rawurlencode($_SERVER['REQUEST_URI'] ?? '') ?>" target="_blank" rel="noopener" class="piece-immersive-link"><?= e(public_copy_value('public_art_copy.shared_ui.view_immersive_label')) ?></a>
-                <a href="/pieces/<?= (int) $piece['id'] ?>/download" class="piece-immersive-link"><?= e(public_copy_value('public_art_copy.shared_ui.download_piece_label')) ?></a>
+                <?= $downloadLinkMarkup ?>
                 <button type="button" class="piece-immersive-link piece-download-button" data-piece-download-trigger data-download-filename="<?= e($pngFilename) ?>"><?= e(public_copy_value('public_art_copy.shared_ui.download_png_label')) ?></button>
             </div>
             <p class="piece-download-status" data-piece-download-status role="status" aria-live="polite" hidden></p>

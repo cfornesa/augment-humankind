@@ -99,6 +99,11 @@
 // iframe (piece-runtime.js) owns Tone.js and playback; this button only
 // posts the enable/mute request and reflects the state it echoes back, so a
 // Tone.js load failure inside the iframe can't leave the button stuck "on".
+// A separate small chevron opens a volume/keyboard popover (same pattern as
+// the immersive toolbar's sound panel) — its controls post the analogous
+// creatr-sound-volume/creatr-sound-input-mode/creatr-sound-note messages,
+// each a thin pass-through inside the iframe to the shared sonic-controller
+// engine.
 (function () {
     const root = document.querySelector('[data-piece-download-root]');
     const toggle = root && root.querySelector('[data-piece-sound-toggle]');
@@ -117,10 +122,13 @@
         toggle.setAttribute('aria-pressed', on ? 'true' : 'false');
         toggle.setAttribute('aria-label', on ? 'Mute sound' : 'Unmute sound');
         toggle.innerHTML = on ? ICON_ON : ICON_OFF;
+        if (panelMuteToggle) {
+            panelMuteToggle.setAttribute('aria-checked', on ? 'true' : 'false');
+            panelMuteToggle.textContent = on ? 'On' : 'Off';
+        }
     }
 
-    toggle.addEventListener('click', () => {
-        const nextEnabled = !enabled;
+    function requestToggle(nextEnabled) {
         const win = frame.contentWindow;
         if (!win) {
             return;
@@ -129,7 +137,9 @@
         // Optimistic UI; corrected by the state message below if the iframe
         // rejects it (e.g. Tone.js failed to load).
         setVisualState(nextEnabled);
-    });
+    }
+
+    toggle.addEventListener('click', () => requestToggle(!enabled));
 
     window.addEventListener('message', (event) => {
         if (event.source !== frame.contentWindow || !event.data || event.data.type !== 'creatr-sound-state') {
@@ -137,4 +147,248 @@
         }
         setVisualState(!!event.data.enabled);
     });
+
+    // --- Sound settings popover (volume / keyboard mode / piano keyboard) --
+    const panelTrigger = root.querySelector('[data-piece-sound-panel-trigger]');
+    const panel = root.querySelector('[data-piece-sound-panel]');
+    const panelMuteToggle = root.querySelector('[data-piece-sound-mute-toggle]');
+    const panelVolume = root.querySelector('[data-piece-sound-volume]');
+    const panelKeyboardRow = root.querySelector('[data-piece-sound-keyboard-row]');
+    const panelKeyboardToggle = root.querySelector('[data-piece-sound-keyboard-toggle]');
+    const panelKeysWrap = root.querySelector('[data-piece-sound-keys]');
+    const pianoKeysGroup = root.querySelector('[data-piece-piano-keys]');
+    const pianoOctaveDisplay = root.querySelector('[data-piece-piano-octave-display]');
+    const pianoOctaveDown = root.querySelector('[data-piece-piano-octave-down]');
+    const pianoOctaveUp = root.querySelector('[data-piece-piano-octave-up]');
+    const voicePickerRows = root.querySelectorAll('[data-piece-voice-picker-row]');
+    const voicePickerSelects = root.querySelectorAll('[data-piece-voice-picker-select]');
+    const pieceId = root.dataset.pieceId || null;
+    if (!panelTrigger || !panel) {
+        return;
+    }
+
+    // Visitor-chosen per-voice instrument overrides — session-local only,
+    // never touches sonicParams/the DB. One localStorage entry per piece.
+    function voiceInstrumentStorageKey() {
+        return 'creatr-sonic-voice-instruments:' + pieceId;
+    }
+    function readVoiceInstrumentOverrides() {
+        if (!pieceId) return {};
+        try {
+            const raw = window.localStorage.getItem(voiceInstrumentStorageKey());
+            const parsed = raw ? JSON.parse(raw) : null;
+            return (parsed && typeof parsed === 'object') ? parsed : {};
+        } catch (_e) {
+            return {};
+        }
+    }
+    function writeVoiceInstrumentOverride(voiceName, instrumentKey) {
+        if (!pieceId) return;
+        try {
+            const overrides = readVoiceInstrumentOverrides();
+            overrides[voiceName] = instrumentKey;
+            window.localStorage.setItem(voiceInstrumentStorageKey(), JSON.stringify(overrides));
+        } catch (_e) {}
+    }
+
+    // The iframe (piece-runtime.js) knows sonicParams.extras.voices directly;
+    // this parent page only relays postMessages, so it announces which
+    // voices are visible once at startup — also the point at which we push
+    // any stored per-voice instrument overrides into the (now-listening)
+    // iframe, and sync the dropdowns to reflect them.
+    window.addEventListener('message', (event) => {
+        if (event.source !== frame.contentWindow || !event.data || event.data.type !== 'creatr-sound-voices') {
+            return;
+        }
+        if (panelKeyboardRow) panelKeyboardRow.hidden = !event.data.voices.melodic;
+        const overrides = readVoiceInstrumentOverrides();
+        voicePickerRows.forEach((row) => {
+            row.hidden = !event.data.voices[row.dataset.pieceVoicePickerRow];
+        });
+        voicePickerSelects.forEach((select) => {
+            const voiceName = select.dataset.voice;
+            if (overrides[voiceName]) {
+                select.value = overrides[voiceName];
+                frame.contentWindow?.postMessage({ type: 'creatr-sound-voice-instrument', voice: voiceName, instrument: overrides[voiceName] }, '*');
+            }
+        });
+    });
+
+    voicePickerSelects.forEach((select) => {
+        select.addEventListener('change', () => {
+            const voiceName = select.dataset.voice;
+            frame.contentWindow?.postMessage({ type: 'creatr-sound-voice-instrument', voice: voiceName, instrument: select.value }, '*');
+            writeVoiceInstrumentOverride(voiceName, select.value);
+        });
+    });
+
+    function isPanelOpen() {
+        return !panel.hidden;
+    }
+
+    function setPanelOpen(open) {
+        panel.hidden = !open;
+        panelTrigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+
+    panelTrigger.addEventListener('click', () => setPanelOpen(!isPanelOpen()));
+
+    panelMuteToggle?.addEventListener('click', () => requestToggle(!enabled));
+
+    panelVolume?.addEventListener('input', (event) => {
+        const win = frame.contentWindow;
+        win?.postMessage({ type: 'creatr-sound-volume', percent: Number(event.target.value) }, '*');
+    });
+
+    // Same standard "typing keyboard as piano" layout as sonic-controller.js's
+    // PIANO_KEY_MAP — duplicated here (rather than loading the whole shared
+    // engine into this parent page just for a lookup table) since this
+    // surface only ever relays postMessages, never touches Tone.js directly.
+    const PIANO_KEY_MAP = {
+        a: 0, w: 1, s: 2, e: 3, d: 4, f: 5, t: 6, g: 7, y: 8, h: 9, u: 10, j: 11,
+        k: 12, o: 13, l: 14, p: 15, ';': 16,
+    };
+    let onPhysicalKeyDown = null;
+    let onPhysicalKeyUp = null;
+
+    function sendChromaticNote(semitone) {
+        const win = frame.contentWindow;
+        win?.postMessage({ type: 'creatr-sound-note', semitone }, '*');
+    }
+
+    function attachPhysicalPianoKeys() {
+        detachPhysicalPianoKeys();
+        onPhysicalKeyDown = (event) => {
+            if (event.repeat) return;
+            const target = event.target;
+            if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+            const key = event.key && event.key.length === 1 ? event.key.toLowerCase() : event.key;
+            if (!Object.prototype.hasOwnProperty.call(PIANO_KEY_MAP, key)) return;
+            event.preventDefault();
+            const semitone = PIANO_KEY_MAP[key];
+            sendChromaticNote(semitone);
+            const keyBtn = pianoKeysGroup?.querySelector('[data-semitone="' + semitone + '"]');
+            if (keyBtn) keyBtn.classList.add('is-pressed');
+        };
+        onPhysicalKeyUp = (event) => {
+            const target = event.target;
+            if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+            const key = event.key && event.key.length === 1 ? event.key.toLowerCase() : event.key;
+            if (!Object.prototype.hasOwnProperty.call(PIANO_KEY_MAP, key)) return;
+            event.preventDefault();
+            const semitone = PIANO_KEY_MAP[key];
+            const keyBtn = pianoKeysGroup?.querySelector('[data-semitone="' + semitone + '"]');
+            if (keyBtn) keyBtn.classList.remove('is-pressed');
+        };
+        document.addEventListener('keydown', onPhysicalKeyDown);
+        document.addEventListener('keyup', onPhysicalKeyUp);
+    }
+
+    function detachPhysicalPianoKeys() {
+        if (onPhysicalKeyDown) document.removeEventListener('keydown', onPhysicalKeyDown);
+        if (onPhysicalKeyUp) document.removeEventListener('keyup', onPhysicalKeyUp);
+        onPhysicalKeyDown = null;
+        onPhysicalKeyUp = null;
+        pianoKeysGroup?.querySelectorAll('[data-semitone]').forEach(k => k.classList.remove('is-pressed'));
+    }
+
+    panelKeyboardToggle?.addEventListener('click', () => {
+        const nextOn = panelKeyboardToggle.getAttribute('aria-pressed') !== 'true';
+        panelKeyboardToggle.setAttribute('aria-pressed', nextOn ? 'true' : 'false');
+        if (panelKeysWrap) panelKeysWrap.hidden = !nextOn;
+        if (nextOn) {
+            // This click is the autoplay-unlocking gesture, so unmute now
+            // too — otherwise physical key presses before ever clicking a
+            // key would silently do nothing.
+            if (!enabled) requestToggle(true);
+            attachPhysicalPianoKeys();
+        } else {
+            detachPhysicalPianoKeys();
+        }
+        const win = frame.contentWindow;
+        win?.postMessage({ type: 'creatr-sound-input-mode', mode: nextOn ? 'keyboard' : 'motion' }, '*');
+    });
+
+    pianoKeysGroup?.addEventListener('pointerdown', (event) => {
+        const keyBtn = event.target instanceof Element ? event.target.closest('[data-piece-piano-key]') : null;
+        if (!keyBtn) return;
+        sendChromaticNote(Number(keyBtn.dataset.semitone || 0));
+    });
+
+    let currentOctaveDisplay = 3;
+    pianoOctaveDown?.addEventListener('click', () => {
+        currentOctaveDisplay -= 1;
+        if (pianoOctaveDisplay) pianoOctaveDisplay.textContent = String(currentOctaveDisplay);
+        frame.contentWindow?.postMessage({ type: 'creatr-sound-octave', octave: currentOctaveDisplay }, '*');
+    });
+    pianoOctaveUp?.addEventListener('click', () => {
+        currentOctaveDisplay += 1;
+        if (pianoOctaveDisplay) pianoOctaveDisplay.textContent = String(currentOctaveDisplay);
+        frame.contentWindow?.postMessage({ type: 'creatr-sound-octave', octave: currentOctaveDisplay }, '*');
+    });
+
+    const panelHandToggle = root.querySelector('[data-piece-sound-hand-toggle]');
+    panelHandToggle?.addEventListener('click', () => {
+        const nextOn = panelHandToggle.getAttribute('aria-pressed') !== 'true';
+        // getUserMedia's own permission prompt (inside the iframe) is the
+        // user gesture here; on denial the iframe replies with enabled:false
+        // and this silently reverts — no error banner.
+        frame.contentWindow?.postMessage({ type: 'creatr-sound-hand-toggle', enabled: nextOn }, '*');
+    });
+
+    window.addEventListener('message', (event) => {
+        if (event.source !== frame.contentWindow || !event.data || event.data.type !== 'creatr-sound-hand-state') {
+            return;
+        }
+        panelHandToggle?.setAttribute('aria-pressed', event.data.enabled ? 'true' : 'false');
+    });
+
+    document.addEventListener('pointerdown', (event) => {
+        if (!isPanelOpen()) return;
+        if (event.target instanceof Node && (panelTrigger.contains(event.target) || panel.contains(event.target))) return;
+        setPanelOpen(false);
+    }, { capture: true });
 })();
+
+// Download-options picker — lets the person downloading a piece narrow
+// which optional sound panels (keyboard/hand-tracking) ride along in their
+// own ZIP, bounded by whichever the admin already enabled (see
+// piece_export_apply_requested_voices() in piece-render.php). Only rendered
+// at all when the admin allowed at least one optional voice (show.php);
+// there can be more than one instance on the page (fullscreen bar + action
+// row), each wired independently here.
+document.querySelectorAll('[data-piece-download-picker-wrap]').forEach((wrap) => {
+    const link = wrap.querySelector('[data-piece-download-link]');
+    const trigger = wrap.querySelector('[data-piece-download-picker-trigger]');
+    const picker = wrap.querySelector('[data-piece-download-picker]');
+    const checkboxes = wrap.querySelectorAll('[data-piece-download-voice]');
+    if (!link || !trigger || !picker) return;
+
+    const baseHref = link.getAttribute('href') || '';
+
+    function updateHref() {
+        const chosen = Array.from(checkboxes).filter((cb) => cb.checked).map((cb) => cb.dataset.pieceDownloadVoice);
+        const url = new URL(baseHref, window.location.href);
+        url.searchParams.set('dl_voices', chosen.join(','));
+        link.setAttribute('href', url.pathname + url.search);
+    }
+
+    function isOpen() {
+        return !picker.hidden;
+    }
+
+    function setOpen(open) {
+        picker.hidden = !open;
+        trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+
+    trigger.addEventListener('click', () => setOpen(!isOpen()));
+    checkboxes.forEach((cb) => cb.addEventListener('change', updateHref));
+    document.addEventListener('pointerdown', (event) => {
+        if (!isOpen()) return;
+        if (event.target instanceof Node && wrap.contains(event.target)) return;
+        setOpen(false);
+    }, { capture: true });
+
+    updateHref();
+});

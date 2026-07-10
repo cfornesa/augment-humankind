@@ -1428,7 +1428,7 @@ test('piece_export_assert_no_module_syntax throws on stray export/import syntax'
     piece_export_assert_no_module_syntax("const exportSomething = 1;\nconsole.log(foo.export);\n", 'test.global.js');
 });
 
-test('sound-bearing C2 interactive bundle export loads Tone.js from the ZIP and avoids worklet-backed PluckSynth', function () {
+test('sound-bearing C2 interactive bundle export loads Tone.js from the ZIP and ships a worklet-free PluckSynth replacement', function () {
     $piece = ['id' => 197, 'title' => 'Sound C2 Bundle Piece', 'engine' => 'c2'];
     $version = [
         'engine' => 'c2',
@@ -1444,16 +1444,18 @@ test('sound-bearing C2 interactive bundle export loads Tone.js from the ZIP and 
     $zip->open($bundle['path']);
     $index = $zip->getFromName('index.html');
     $tone = $zip->getFromName('runtime/tone/Tone.js');
+    $sonicController = $zip->getFromName('runtime/sonic-controller.js');
     $zip->close();
     unlink($bundle['path']);
 
     assert_contains($index, 'runtime\/tone\/Tone.js');
     assert_not_contains($index, '__creatrToneInlineSource');
     assert_not_contains($index, 'new Blob([window.__creatrToneInlineSource]');
-    assert_contains($index, "plucksynth: 'FMSynth'");
-    assert_not_contains($index, "plucksynth: 'PluckSynth'");
+    assert_not_contains($index, 'avoidPluckSynthWorklet');
     assert_contains($index, '__creatrSonicSetMover');
     assert_true(is_string($tone) && strlen($tone) > 1000, 'Expected bundled Tone.js runtime file.');
+    assert_contains($sonicController, 'createPluckVoice');
+    assert_not_contains($sonicController, 'avoidPluckSynthWorklet');
 });
 
 test('immersive bundle export keeps index.html as the immersive manual entry point', function () {
@@ -1509,8 +1511,7 @@ test('immersive bundle export keeps index.html as the immersive manual entry poi
     assert_contains($globalRuntime, 'const THREE = window.THREE;');
     assert_contains($globalRuntime, 'let _GLTFLoaderCtor = window.GLTFLoader || null;');
     assert_contains($globalRuntime, 'const DeviceOrientationControls = window.DeviceOrientationControls;');
-    assert_contains($globalRuntime, 'plucksynth: "FMSynth"');
-    assert_not_contains($globalRuntime, 'plucksynth: "PluckSynth"');
+    assert_not_contains($globalRuntime, 'avoidPluckSynthWorklet');
     assert_contains($runtime, 'runtime/p5/p5.min.js');
     assert_contains($gltfLoader, "from './utils/BufferGeometryUtils.js';");
     assert_contains($gltfUtils, 'toTrianglesDrawMode');

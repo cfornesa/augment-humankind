@@ -370,29 +370,118 @@
 
 ## Tone.js (self-hosted)
 
-- **Purpose:** Movement sonification — turns camera motion around a piece with
-  sound metadata into sound, configured by optional version-level
-  `sonic_params` created via generation or AI Refine (the only two creation
-  paths; there is no manual per-version toggle). Live in the immersive viewer
-  (every engine) and the regular `/pieces/[id]` view (Three.js/A-Frame only,
-  since other engines have no camera motion there); bundled into standalone,
-  immersive, and collection exports for fully offline playback.
+- **Purpose:** Sonification engine, shared across every sound-bearing surface
+  via `public/assets/js/sonic-controller.js` (`window.CreatrSonicController`).
+  The engine runs three concurrent voices per piece — an ambient idle-note
+  ticker, a movement-triggered voice (camera/pointer motion), and a melodic
+  voice driven by an on-screen piano keyboard, the physical keyboard (A S D F
+  G H J K L ; for white keys, W E T Y U O P for sharps), or camera
+  hand-tracking (see the MediaPipe entry below) — all mixed through one
+  shared volume/filter chain. Configured by optional version-level
+  `sonic_params` created via generation or AI Refine (tempo/scale/instrument/
+  feel) plus a mechanical, non-AI-authored `extras` sub-object (per-voice
+  public-visibility toggles, default volume, and admin-only octave range/
+  filter cutoff/resonance — edited in the piece admin's Audio tab, never sent
+  to the AI). Live in the immersive viewer (every engine) and the regular
+  `/pieces/[id]` view (Three.js/A-Frame/c2_interactive, since other engines
+  have no motion signal there); bundled into standalone, immersive, and
+  collection exports for fully offline playback. The plucked-string
+  instrument (`plucksynth`) is a hand-built Karplus-Strong voice (noise burst
+  through a feedback delay/filter loop) rather than Tone's own `PluckSynth`,
+  which requires an AudioWorklet that browsers refuse to load under `file://`
+  — the hand-built voice sounds identical in the web, immersive, and offline
+  export contexts. `extras.synth` also carries an admin-only `effects`
+  sub-object (all default off): `distortion`, `chorus`, `tremolo`,
+  `pitch_shift`, and `bitcrusher` wrap Tone's own effect classes; `flanger`
+  and `ring_mod` are hand-built from Tone's `Delay`/`LFO`/`Gain`/`Oscillator`
+  primitives (Tone ships no named classes for those two) — evaluated instead
+  of adding Pizzicato.js, which covers the same effect list but nothing
+  Tone.js can't already build itself. Visitors can also independently
+  override which instrument plays on each of the three voices from the sound
+  popover — client-side only (localStorage, keyed per piece), never written
+  to `sonic_params`.
 - **Package:** `tone` (Web Audio framework).
 - **Delivery:** **Self-hosted / vendored** at
-  `public/assets/vendor/tone/Tone.js` (UMD build, sets `window.Tone`). It is
-  lazy-loaded only when a user enables sound (immersive toolbar button, or the
-  regular-view sound toggle), so it never affects pages that don't use it. In
-  bundle-mode exports (standalone, immersive, and collection ZIPs) the same
-  source is packaged as `runtime/tone/Tone.js` and loaded as a local classic
-  script, so a sound-bearing export needs no network and avoids `blob:null`
-  direct-open origin failures.
+  `public/assets/vendor/tone/Tone.js` (UMD build, sets `window.Tone`), loaded
+  by `sonic-controller.js` — lazy-loaded only when a user enables sound, so it
+  never affects pages that don't use it. In bundle-mode exports (standalone,
+  immersive, and collection ZIPs) the same source is packaged as
+  `runtime/tone/Tone.js` and `sonic-controller.js` itself as
+  `runtime/sonic-controller.js`, both loaded as local classic scripts, so a
+  sound-bearing export needs no network and avoids `blob:null` direct-open
+  origin failures.
 - **Data sent off-domain:** None. Vendored locally; no runtime CDN call.
-- **What breaks if unavailable or changed:** Only movement sonification. The
-  runtime loads it inside a try/catch; if the file is missing or fails to
-  parse, pieces render silently and everything else is unaffected.
+- **What breaks if unavailable or changed:** Only sonification. The runtime
+  loads it inside a try/catch; if the file is missing or fails to parse,
+  pieces render silently and everything else is unaffected.
 - **Self-hosting alternative:** N/A — already self-hosted. (The raw Web Audio
   API is the lower-level fallback, at the cost of reimplementing synthesis,
   scheduling, and scales.)
 - **Update procedure:** Replace `public/assets/vendor/tone/Tone.js` with the
   pinned UMD build from the `tone` package and re-verify the immersive audio
-  enable flow, the regular-view toggle, and the offline export bundles.
+  enable flow, the regular-view toggle, the piano keyboard, and the offline
+  export bundles.
+
+## MediaPipe HandLandmarker (self-hosted)
+
+- **Purpose:** Camera-driven "theremin" input mode for `sonic-controller.js`'s
+  melodic voice — tracks one hand via the device camera; wrist height
+  controls pitch (continuously, gliding rather than discrete note triggers)
+  and wrist-to-fingertip spread controls that voice's volume. Enabled per
+  piece by the admin (Audio tab, "Hand-tracking" voice toggle) and, when
+  enabled, exposed to visitors as a toggle in the sound popover on the
+  regular `/pieces/[id]` view and the immersive single-piece view only —
+  never the exhibit-wall/gallery-room multiplex (performance: no running
+  parallel inference for every wall thumbnail; UX: no camera prompts firing
+  on an unfocused tile).
+- **Package:** `@mediapipe/tasks-vision` (WASM inference engine) +
+  Google's pre-trained `hand_landmarker` (float16) model.
+- **Delivery:** **Self-hosted / vendored** at
+  `public/assets/vendor/mediapipe-hands/` — `vision_bundle.mjs` (~137KB ES
+  module loader), `vision_wasm_internal.js` + `.wasm` (~11.1MB, the SIMD WASM
+  inference engine), and `hand_landmarker.task` (~7.8MB model) — **~19.4MB
+  total**. `sonic-controller.js` loads the `.mjs` bundle via a dynamic
+  `import()` (valid even from a classic, non-module script in evergreen
+  browsers, avoiding the need for a UMD build MediaPipe doesn't ship), lazy,
+  only when a user actually activates hand-tracking mode. **Works in both the
+  live pages and single-piece ZIP exports** (immersive and non-immersive/
+  standalone alike) — `piece_export_sonic_script()`'s self-built popover
+  (used for standalone single-piece exports) mirrors the live keyboard/hand
+  toggle, and both export paths bundle `runtime/mediapipe-hands/*` only when
+  that piece's hand-tracking voice is enabled
+  (`piece_export_version_has_hand_tracking()` in `piece-render.php`). The
+  downloader-facing "choose what's in my ZIP" picker on the regular
+  `/pieces/[id]` view (`piece_export_apply_requested_voices()`) offers a
+  hand-tracking checkbox whenever the admin allowed it, narrowing (never
+  expanding) that ceiling for the downloader's specific ZIP.
+  **Collection (exhibit-wall) ZIP exports are the one exception**: every
+  piece inside a collection ZIP has hand-tracking forced off regardless of
+  its own admin config (`piece_export_force_voice_off()`, set via
+  `collection_export_build_manifest()`'s `'exclude_hand_tracking' => true`) —
+  a solo single-piece download of that same piece still gets it. This is a
+  deliberate simplicity/size tradeoff: each piece would otherwise duplicate
+  its own ~19.4MB copy inside the collection ZIP (a real bug once found —
+  a handful of hand-tracking-enabled pieces in one collection would blow
+  past 100MB), and collection-root deduplication was judged more engineering
+  than the feature is worth there.
+- **Data sent off-domain:** None at runtime — video frames are processed
+  entirely client-side inside the browser's WASM sandbox and never leave the
+  device; only the vendored model/WASM assets are fetched, and those come
+  from this site's own server, not Google's CDN.
+- **What breaks if unavailable or changed:** Only the hand-tracking input
+  mode. `enableHandTracking()` is wrapped in a try/catch; a missing/corrupt
+  vendored file, a `getUserMedia` denial, or no camera hardware all fail
+  silently — the toggle simply reverts to whichever mode was active before,
+  with no error banner, matching this codebase's "approximate rather than
+  fail" sonic-params philosophy. Movement, keyboard, and ambient voices are
+  entirely unaffected.
+- **Self-hosting alternative:** N/A — already self-hosted (not loaded from
+  Google's `storage.googleapis.com`/CDN at runtime).
+- **Update procedure:** Re-download `vision_bundle.mjs`,
+  `vision_wasm_internal.js`/`.wasm` from the pinned `@mediapipe/tasks-vision`
+  npm version (via jsDelivr, e.g.
+  `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@<version>/...`), and
+  `hand_landmarker.task` from
+  `https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task`,
+  replacing the files under `public/assets/vendor/mediapipe-hands/` and
+  re-verifying the camera-permission flow and export bundling.

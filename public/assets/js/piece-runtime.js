@@ -1,3 +1,21 @@
+function disableAFrameWASD() {
+  if (window.AFRAME && window.AFRAME.components['wasd-controls']) {
+    const proto = window.AFRAME.components['wasd-controls'].Component.prototype;
+    const origKeyDown = proto.onKeyDown;
+    const origKeyUp = proto.onKeyUp;
+    proto.onKeyDown = function (e) {
+      if (e.code === 'KeyW' || e.code === 'KeyA' || e.code === 'KeyS' || e.code === 'KeyD') return;
+      origKeyDown.call(this, e);
+    };
+    proto.onKeyUp = function (e) {
+      if (e.code === 'KeyW' || e.code === 'KeyA' || e.code === 'KeyS' || e.code === 'KeyD') return;
+      origKeyUp.call(this, e);
+    };
+  }
+}
+disableAFrameWASD();
+window.addEventListener('DOMContentLoaded', disableAFrameWASD);
+
 // TEMPORARY DIAGNOSTIC — forwards timing events to the parent page's
 // console (visible even when the iframe's own console context isn't
 // selected) so a live device reproduction can show the real sequence of
@@ -45,136 +63,147 @@ window.addEventListener('unhandledrejection', (event) => {
 const pieceContext = window.CREATR_PIECE_CONTEXT || {};
 const pieceDisableMotion = pieceContext.disableMotion === true;
 
-// Movement sonification (Tone.js) — per-piece, no master switch. The parent
-// page's sound toggle button toggles audio via postMessage; this iframe owns
-// audio (sandboxed with the render), reads camera/mover motion directly.
-// Any engine can carry a `sonic` block now: three/aframe sonify camera
-// motion, c2_interactive sonifies pointer motion, everything else has no
-// motion signal here and gets the idle random-note pattern only.
+// Movement sonification (Tone.js, via the shared CreatrSonicController
+// engine) — per-piece, no master switch. The parent page's sound toggle
+// button toggles audio (and, now, volume/input-mode/notes) via postMessage;
+// this iframe owns audio (sandboxed with the render), reads camera/mover
+// motion directly. Any engine can carry a `sonic` block now: three/aframe
+// sonify camera motion, c2_interactive sonifies pointer motion, everything
+// else has no motion signal here and gets the idle random-note pattern only.
 const PIECE_SONIC = (pieceContext && pieceContext.sonic && typeof pieceContext.sonic === 'object') ? pieceContext.sonic : null;
 const PIECE_C2_INTERACTIVE = pieceContext.c2Interactive === true;
-const PIECE_SONIC_SCALES = {
-  major: [0, 2, 4, 5, 7, 9, 11], minor: [0, 2, 3, 5, 7, 8, 10],
-  pentatonic: [0, 2, 4, 7, 9], chromatic: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
-  dorian: [0, 2, 3, 5, 7, 9, 10], phrygian: [0, 1, 3, 5, 7, 8, 10],
-  lydian: [0, 2, 4, 6, 7, 9, 11], mixolydian: [0, 2, 4, 5, 7, 9, 10],
-  wholetone: [0, 2, 4, 6, 8, 10],
-};
-const PIECE_SONIC_INSTRUMENTS = {
-  synth: 'Synth', amsynth: 'AMSynth', fmsynth: 'FMSynth',
-  membranesynth: 'MembraneSynth', metalsynth: 'MetalSynth',
-  plucksynth: 'PluckSynth', duosynth: 'DuoSynth',
-};
-let _pieceTonePromise = null;
-function pieceLoadToneOnce() {
-  if (window.Tone) return Promise.resolve(window.Tone);
-  if (_pieceTonePromise) return _pieceTonePromise;
-  _pieceTonePromise = new Promise((resolve, reject) => {
-    const src = (pieceContext && typeof pieceContext.toneSource === 'string' && pieceContext.toneSource !== '')
-      ? pieceContext.toneSource
-      : '/assets/vendor/tone/Tone.js';
+
+let _pieceSonicControllerPromise = null;
+function pieceLoadSonicControllerOnce() {
+  if (window.CreatrSonicController) return Promise.resolve(window.CreatrSonicController);
+  if (_pieceSonicControllerPromise) return _pieceSonicControllerPromise;
+  _pieceSonicControllerPromise = new Promise((resolve, reject) => {
+    const src = (pieceContext && typeof pieceContext.sonicControllerSource === 'string' && pieceContext.sonicControllerSource !== '')
+      ? pieceContext.sonicControllerSource
+      : '/assets/js/sonic-controller.js';
     const s = document.createElement('script');
     s.src = src;
-    s.onload = () => (window.Tone ? resolve(window.Tone) : reject(new Error('Tone.js loaded but window.Tone missing')));
-    s.onerror = () => reject(new Error('Tone.js failed to load'));
+    s.onload = () => (window.CreatrSonicController ? resolve(window.CreatrSonicController) : reject(new Error('sonic-controller.js loaded but window.CreatrSonicController missing')));
+    s.onerror = () => reject(new Error('sonic-controller.js failed to load'));
     document.head.appendChild(s);
   });
-  return _pieceTonePromise;
+  return _pieceSonicControllerPromise;
 }
-function pieceSonicMidiToFreq(m) { return 440 * Math.pow(2, (m - 69) / 12); }
 
 // createPieceRuntimeAudioController(sonicParams, getMover) — muted by
 // default; listens for `window` message events from the parent page's sound
-// toggle button. On unmute, lazy-loads Tone.js (the postMessage handler
-// runs in this iframe's own user-gesture-initiated task chain; an actual
-// user click on the parent toggle is the autoplay gesture), instantiates the
-// synth, then drives notes from `getMover().position` deltas via internal rAF.
-// While enabled, a plain scale-walk idle pattern plays once the mover has
-// been still for ~2s; motion modulates pitch/octave and resets that clock.
+// toggle button. On unmute, lazy-loads sonic-controller.js (and, inside it,
+// Tone.js) — the postMessage handler runs in this iframe's own
+// user-gesture-initiated task chain, so an actual user click on the parent
+// toggle is the autoplay gesture — then delegates all synth/scale/motion/
+// idle/volume/keyboard logic to the shared engine, driven from
+// `getMover().position` deltas via the engine's own internal rAF loop.
 // getMover is optional — pass null/undefined for engines with no motion
 // signal on this view (p5, plain c2, svg); the idle pattern is then the only
 // thing that ever plays, giving the piece a random-note ambience on unmute.
+// Mirrors sonic-controller.js's SONIC_INSTRUMENTS keys — duplicated here
+// (rather than force-loading the whole engine before the visitor has ever
+// unmuted) since the standalone panel below needs the instrument list before
+// sonic-controller.js is lazy-loaded, matching how PIANO_KEY_MAP is already
+// duplicated the same way in piece-fullscreen.js.
+const PIECE_SONIC_INSTRUMENTS = {
+  synth: 'Synth', amsynth: 'AM Synth', fmsynth: 'FM Synth',
+  membranesynth: 'Membrane', metalsynth: 'Metal', plucksynth: 'Plucked String',
+  duosynth: 'Duo Synth',
+};
+
+// Visitor-chosen per-voice instrument overrides — session-local only, never
+// touches sonicParams/the DB. One localStorage entry per piece.
+function pieceVoiceInstrumentStorageKey(pieceId) {
+  return 'creatr-sonic-voice-instruments:' + pieceId;
+}
+function readPieceVoiceInstrumentOverrides(pieceId) {
+  if (pieceId == null) return {};
+  try {
+    const raw = window.localStorage.getItem(pieceVoiceInstrumentStorageKey(pieceId));
+    const parsed = raw ? JSON.parse(raw) : null;
+    return (parsed && typeof parsed === 'object') ? parsed : {};
+  } catch (_e) {
+    return {};
+  }
+}
+function writePieceVoiceInstrumentOverride(pieceId, voiceName, instrumentKey) {
+  if (pieceId == null) return;
+  try {
+    const overrides = readPieceVoiceInstrumentOverrides(pieceId);
+    overrides[voiceName] = instrumentKey;
+    window.localStorage.setItem(pieceVoiceInstrumentStorageKey(pieceId), JSON.stringify(overrides));
+  } catch (_e) {}
+}
+
 function createPieceRuntimeAudioController(sonicParams, getMover) {
   if (!sonicParams || typeof sonicParams !== 'object') return null;
   if (getMover != null && typeof getMover !== 'function') return null;
 
-  const scaleName = PIECE_SONIC_SCALES[sonicParams.scale] ? sonicParams.scale : 'major';
-  const scale = PIECE_SONIC_SCALES[scaleName];
-  const instrumentKey = PIECE_SONIC_INSTRUMENTS[sonicParams.instrument] ? sonicParams.instrument : 'synth';
-  const tempo = Math.max(40, Math.min(220, Number(sonicParams.tempo) || 90));
-  const minInterval = ((60 / tempo) * 1000) / 2;
-  const baseMidi = 48;
+  const pieceId = (pieceContext && pieceContext.pieceId != null) ? pieceContext.pieceId : null;
+  let engine = null, disposed = false;
 
-  let enabled = false, synth = null, disposed = false, lastNoteAt = 0, walk = 0;
-  let prevX = null, prevY = null, prevZ = null;
-  let rafId = null;
-  let lastMotionAt = 0;
-  const IDLE_GAP_MS = 2000; // how long the mover must sit still before idle notes resume
-
-  function motionTick() {
-    rafId = requestAnimationFrame(motionTick);
-    if (!enabled || !synth || disposed) return;
-    const now = performance.now();
-    const mover = typeof getMover === 'function' ? getMover() : null;
-    if (mover && mover.position) {
-      const x = mover.position.x, y = mover.position.y, z = mover.position.z;
-      if (prevX !== null) {
-        const dx = x - prevX, dy = y - prevY, dz = z - prevZ;
-        const speed = Math.hypot(dx, dy, dz);
-        if (speed >= 0.002) {
-          lastMotionAt = now;
-          if (now - lastNoteAt >= minInterval) {
-            lastNoteAt = now;
-            const degree = walk++ % scale.length;
-            const octave = Math.min(2, Math.floor(Math.abs(dy) * 25));
-            const midi = baseMidi + scale[degree] + 12 * octave;
-            try { synth.triggerAttackRelease(pieceSonicMidiToFreq(midi), '16n'); } catch (_e) {}
-          }
-        }
+  // Tell the host page which voices are visible for this piece (the parent
+  // has no direct access to sonicParams — it only relays postMessages) so
+  // its popover can hide the keyboard/hand-tracking controls accordingly.
+  (function notifyParentVoices() {
+    const voices = (sonicParams.extras && sonicParams.extras.voices) || {};
+    try {
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({
+          type: 'creatr-sound-voices',
+          voices: {
+            ambient: voices.ambient !== false,
+            movement: voices.movement !== false,
+            melodic: voices.melodic !== false,
+            hand_tracking: !!voices.hand_tracking,
+          },
+        }, '*');
       }
-      prevX = x; prevY = y; prevZ = z;
-    }
-    // Idle pattern: plain scale-walk notes once the mover (if any) has been
-    // still for a beat — or always, for engines with no motion signal at
-    // all — so toggled-on sound never sits in dead silence.
-    if (now - lastMotionAt >= IDLE_GAP_MS && now - lastNoteAt >= minInterval) {
-      lastNoteAt = now;
-      const degree = walk++ % scale.length;
-      const midi = baseMidi + scale[degree];
-      try { synth.triggerAttackRelease(pieceSonicMidiToFreq(midi), '16n'); } catch (_e) {}
-    }
-  }
+    } catch (_) {}
+  })();
 
-  function setEnabled(on) {
-    enabled = on;
+  async function ensureEnabled() {
+    if (disposed) return false;
+    if (engine && engine.isEnabled()) return true;
+    if (!engine) {
+      const CSC = await pieceLoadSonicControllerOnce();
+      if (disposed) return false;
+      engine = CSC.create(sonicParams, {
+        getMover: getMover || undefined,
+        toneSrc: (pieceContext && typeof pieceContext.toneSource === 'string' && pieceContext.toneSource !== '')
+          ? pieceContext.toneSource
+          : undefined,
+      });
+      if (!engine) return false;
+    }
+    const ok = await engine.enable();
+    if (ok) {
+      const overrides = readPieceVoiceInstrumentOverrides(pieceId);
+      Object.keys(overrides).forEach((voiceName) => {
+        engine.setVoiceInstrument(voiceName, overrides[voiceName]);
+      });
+    }
+    return ok;
   }
 
   function handleMessage(event) {
     if (!event || typeof event.data !== 'object') return;
     const data = event.data;
-    if (data.type !== 'creatr-sound-toggle') return;
     // Source check: message must be from this window's parent (the host page
     // hosting the iframe) or this window itself (standalone export).
     if (window.parent && event.source && event.source !== window.parent && event.source !== window) return;
-    const on = !!data.enabled;
-    if (on && !synth) {
-      // First unmute — load Tone.js + create synth. This fires from a
-      // postMessage originated by the user's click on the parent toggle,
-      // satisfying the autoplay policy's gesture requirement. toggleBtn is
-      // null when a host page owns the button (embedded /pieces/{id} view)
-      // instead of this iframe's own standalone fallback button.
+
+    if (data.type === 'creatr-sound-toggle') {
+      const on = !!data.enabled;
+      if (!on) {
+        engine?.disable();
+        notifyParentToggleState(false);
+        return;
+      }
       if (toggleBtn) toggleBtn.disabled = true;
-      pieceLoadToneOnce().then((Tone) => {
-        return Tone.start();
-      }).then(() => {
-        if (disposed) return;
-        const Ctor = window.Tone[PIECE_SONIC_INSTRUMENTS[instrumentKey]] || window.Tone.Synth;
-        synth = new Ctor().toDestination();
-        if (synth.volume) synth.volume.value = -6;
-        enabled = true;
-        lastMotionAt = 0; // let idle notes start immediately on unmute
-        if (!rafId) motionTick();
-        notifyParentToggleState(true);
+      ensureEnabled().then((ok) => {
+        notifyParentToggleState(ok, ok ? null : 'unavailable');
       }).catch(() => {
         notifyParentToggleState(false, 'unavailable');
       }).finally(() => {
@@ -182,15 +211,54 @@ function createPieceRuntimeAudioController(sonicParams, getMover) {
       });
       return;
     }
-    if (on && synth) {
-      enabled = true;
-      lastMotionAt = 0; // let idle notes start immediately on unmute
-      notifyParentToggleState(true);
+    if (data.type === 'creatr-sound-volume') {
+      engine?.setVolume(Number(data.percent));
       return;
     }
-    // Mute.
-    enabled = false;
-    notifyParentToggleState(false);
+    if (data.type === 'creatr-sound-input-mode') {
+      engine?.setInputMode(data.mode);
+      return;
+    }
+    if (data.type === 'creatr-sound-note') {
+      // Chromatic (piano-key) note, by semitone offset from the current
+      // octave's root — see triggerChromaticNote() in sonic-controller.js.
+      ensureEnabled().then((ok) => {
+        if (ok) engine?.triggerChromaticNote(Number(data.semitone) || 0);
+      });
+      return;
+    }
+    if (data.type === 'creatr-sound-octave') {
+      engine?.setOctave(Number(data.octave));
+      return;
+    }
+    if (data.type === 'creatr-sound-voice-instrument') {
+      if (engine && engine.setVoiceInstrument(data.voice, data.instrument)) {
+        writePieceVoiceInstrumentOverride(pieceId, data.voice, data.instrument);
+      }
+      return;
+    }
+    if (data.type === 'creatr-sound-hand-toggle') {
+      if (!data.enabled) {
+        engine?.disableHandTracking();
+        engine?.setInputMode('motion');
+        notifyParentHandState(false);
+        return;
+      }
+      ensureEnabled().then(async (ok) => {
+        const handOk = ok && engine ? await engine.enableHandTracking() : false;
+        if (handOk) engine.setInputMode('hand');
+        notifyParentHandState(handOk);
+      });
+      return;
+    }
+  }
+
+  function notifyParentHandState(on) {
+    try {
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({ type: 'creatr-sound-hand-state', enabled: !!on }, '*');
+      }
+    } catch (_) {}
   }
 
   function notifyParentToggleState(on, reason) {
@@ -204,28 +272,241 @@ function createPieceRuntimeAudioController(sonicParams, getMover) {
   // Inline sound toggle button for the standalone (file://) exported HTML,
   // where there is no parent hosting the iframe — root document owns UI.
   let toggleBtn = document.querySelector('[data-creatr-piece-sound-toggle]');
+  let standaloneKeyboardToggle = null, standaloneKeysWrap = null, standaloneOctaveDisplay = null;
+  let detachStandalonePianoKeys = null;
   if (!toggleBtn && window.parent === window) {
+    const pianoStyle = document.createElement('style');
+    pianoStyle.textContent = `
+      .runtime-key-white {
+        flex: 1 1 0;
+        height: 100%;
+        border: 1px solid rgba(0, 0, 0, 0.35);
+        border-radius: 0 0 0.3rem 0.3rem;
+        background: #f4f1e8;
+        cursor: pointer;
+        touch-action: none;
+      }
+      .runtime-key-white:hover {
+        background: #d8d4c4;
+      }
+      .runtime-key-white:active, .runtime-key-white.is-pressed {
+        background: #bbb7a8;
+      }
+      .runtime-key-black {
+        position: absolute;
+        top: 0;
+        width: 6%;
+        height: 62%;
+        transform: translateX(-50%);
+        border: 1px solid rgba(0, 0, 0, 0.6);
+        border-radius: 0 0 0.25rem 0.25rem;
+        background: #17161a;
+        cursor: pointer;
+        z-index: 2;
+        touch-action: none;
+      }
+      .runtime-key-black:hover {
+        background: #3a3942;
+      }
+      .runtime-key-black:active, .runtime-key-black.is-pressed {
+        background: #5c5a69;
+      }
+    `;
+    document.head.appendChild(pianoStyle);
+
+    const wrap = document.createElement('div');
+    Object.assign(wrap.style, {
+      position: 'fixed', top: 'calc(0.75rem + env(safe-area-inset-top))',
+      right: 'calc(0.75rem + env(safe-area-inset-right))',
+      zIndex: '200', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.5rem',
+    });
+
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:0.3rem;';
+
     toggleBtn = document.createElement('button');
     toggleBtn.type = 'button';
     toggleBtn.setAttribute('data-creatr-piece-sound-toggle', '');
     toggleBtn.setAttribute('aria-pressed', 'false');
     toggleBtn.setAttribute('aria-label', 'Unmute sound');
     Object.assign(toggleBtn.style, {
-      position: 'fixed', top: 'calc(0.75rem + env(safe-area-inset-top))',
-      right: 'calc(0.75rem + env(safe-area-inset-right))',
-      zIndex: '200', width: '2.75rem', height: '2.75rem',
+      width: '2.75rem', height: '2.75rem',
       display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
       borderRadius: '0.75rem', border: '1px solid rgba(255,255,255,0.15)',
       background: 'rgba(0,0,0,0.55)', color: '#fff', cursor: 'pointer',
       boxShadow: '0 4px 12px rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)',
     });
     toggleBtn.innerHTML = '<svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4z"/><line x1="22" y1="9" x2="16" y2="15"/><line x1="16" y1="9" x2="22" y2="15"/></svg>';
-    document.body.appendChild(toggleBtn);
+    row.appendChild(toggleBtn);
+
+    const panelTrigger = document.createElement('button');
+    panelTrigger.type = 'button';
+    panelTrigger.setAttribute('aria-haspopup', 'true');
+    panelTrigger.setAttribute('aria-expanded', 'false');
+    panelTrigger.setAttribute('aria-label', 'Sound settings');
+    Object.assign(panelTrigger.style, {
+      width: '2.75rem', height: '2.75rem',
+      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+      borderRadius: '0.75rem', border: '1px solid rgba(255,255,255,0.15)',
+      background: 'rgba(0,0,0,0.55)', color: '#fff', cursor: 'pointer', padding: '0',
+      boxShadow: '0 4px 12px rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)',
+    });
+    panelTrigger.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>';
+    row.appendChild(panelTrigger);
+
+    wrap.appendChild(row);
+
+    const panel = document.createElement('div');
+    Object.assign(panel.style, {
+      display: 'none', flexDirection: 'column', gap: '0.6rem', width: '13rem',
+      padding: '0.85rem', borderRadius: '1rem', border: '1px solid rgba(255,255,255,0.14)',
+      background: 'rgba(9,14,24,0.94)', boxShadow: '0 18px 40px rgba(0,0,0,0.4)',
+      backdropFilter: 'blur(8px)', color: '#fff', font: '12px/1.4 system-ui,sans-serif',
+    });
+    const volumeRow = document.createElement('div');
+    volumeRow.style.cssText = 'display:flex;align-items:center;gap:0.5rem;';
+    const volumeInput = document.createElement('input');
+    volumeInput.type = 'range'; volumeInput.min = '0'; volumeInput.max = '100'; volumeInput.value = '50';
+    volumeInput.style.cssText = 'width:100%;';
+    volumeRow.appendChild(Object.assign(document.createElement('label'), { textContent: 'Volume' }));
+    volumeRow.appendChild(volumeInput);
+
+    const keyboardRow = document.createElement('div');
+    keyboardRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:0.5rem;';
+    standaloneKeyboardToggle = document.createElement('button');
+    standaloneKeyboardToggle.type = 'button';
+    standaloneKeyboardToggle.textContent = 'Play notes';
+    standaloneKeyboardToggle.setAttribute('aria-pressed', 'false');
+    standaloneKeyboardToggle.style.cssText = 'border:1px solid rgba(255,255,255,0.18);border-radius:0.6rem;background:rgba(255,255,255,0.06);color:#fff;font:inherit;font-weight:600;padding:0.3rem 0.55rem;cursor:pointer;';
+    keyboardRow.appendChild(Object.assign(document.createElement('span'), { textContent: 'Keyboard' }));
+    keyboardRow.appendChild(standaloneKeyboardToggle);
+    const standaloneVoices = (sonicParams.extras && sonicParams.extras.voices) || {};
+    if (standaloneVoices.melodic === false) keyboardRow.style.display = 'none';
+
+    // Visitor-facing per-voice instrument picker — session-local only (see
+    // readPieceVoiceInstrumentOverrides()/writePieceVoiceInstrumentOverride()
+    // above), mirroring the parent-page popover's picker for the live view.
+    const voicePickerWrap = document.createElement('div');
+    voicePickerWrap.style.cssText = 'display:flex;flex-direction:column;gap:0.45rem;';
+    const voicePickerSelects = {};
+    [['ambient', 'Ambient'], ['movement', 'Movement'], ['melodic', 'Melodic']].forEach(([voiceName, label]) => {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:0.5rem;';
+      if (standaloneVoices[voiceName] === false) row.style.display = 'none';
+      const rowLabel = document.createElement('span');
+      rowLabel.textContent = label;
+      const select = document.createElement('select');
+      select.style.cssText = 'border:1px solid rgba(255,255,255,0.18);border-radius:0.6rem;background:rgba(255,255,255,0.06);color:#fff;font:inherit;padding:0.25rem 0.4rem;';
+      Object.keys(PIECE_SONIC_INSTRUMENTS).forEach((key) => {
+        const option = document.createElement('option');
+        option.value = key;
+        option.textContent = PIECE_SONIC_INSTRUMENTS[key];
+        select.appendChild(option);
+      });
+      select.value = readPieceVoiceInstrumentOverrides(pieceId)[voiceName] || sonicParams.instrument || 'synth';
+      select.addEventListener('change', () => {
+        ensureEnabled().then((ok) => {
+          if (ok && engine && engine.setVoiceInstrument(voiceName, select.value)) {
+            writePieceVoiceInstrumentOverride(pieceId, voiceName, select.value);
+          }
+        });
+      });
+      voicePickerSelects[voiceName] = select;
+      row.appendChild(rowLabel);
+      row.appendChild(select);
+      voicePickerWrap.appendChild(row);
+    });
+
+    const octaveRow = document.createElement('div');
+    octaveRow.style.cssText = 'display:none;align-items:center;justify-content:center;gap:0.5rem;';
+    const octaveDown = document.createElement('button'); octaveDown.type = 'button'; octaveDown.textContent = '−';
+    const octaveUp = document.createElement('button'); octaveUp.type = 'button'; octaveUp.textContent = '+';
+    standaloneOctaveDisplay = document.createElement('output'); standaloneOctaveDisplay.textContent = '3';
+    [octaveDown, octaveUp].forEach((b) => { b.style.cssText = 'height:1.6rem;width:1.6rem;border:1px solid rgba(255,255,255,0.18);border-radius:0.4rem;background:rgba(255,255,255,0.08);color:#fff;font:inherit;font-weight:700;cursor:pointer;'; });
+    octaveRow.appendChild(octaveDown); octaveRow.appendChild(standaloneOctaveDisplay); octaveRow.appendChild(octaveUp);
+
+    standaloneKeysWrap = document.createElement('div');
+    standaloneKeysWrap.style.cssText = 'display:none;position:relative;height:4rem;';
+    // 10 white keys (one octave plus a major third into the next), matching
+    // PIANO_KEY_MAP's physical-keyboard span above exactly.
+    const whiteSemitones = [0, 2, 4, 5, 7, 9, 11, 12, 14, 16];
+    const blackAfter = { 0: 1, 1: 3, 3: 6, 4: 8, 5: 10, 7: 13, 8: 15 };
+    const whiteRow = document.createElement('div');
+    whiteRow.style.cssText = 'display:flex;height:100%;';
+    whiteSemitones.forEach((semitone, i) => {
+      const key = document.createElement('button');
+      key.type = 'button';
+      key.dataset.semitone = String(semitone);
+      key.className = 'runtime-key-white';
+      whiteRow.appendChild(key);
+      if (blackAfter[i] !== undefined) {
+        const blackKey = document.createElement('button');
+        blackKey.type = 'button';
+        blackKey.dataset.semitone = String(blackAfter[i]);
+        blackKey.className = 'runtime-key-black';
+        blackKey.style.left = ((i + 1) * (100 / 10)) + '%';
+        standaloneKeysWrap.appendChild(blackKey);
+      }
+    });
+    standaloneKeysWrap.insertBefore(whiteRow, standaloneKeysWrap.firstChild);
+
+    panel.appendChild(volumeRow);
+    panel.appendChild(voicePickerWrap);
+    panel.appendChild(keyboardRow);
+    panel.appendChild(octaveRow);
+    panel.appendChild(standaloneKeysWrap);
+    wrap.appendChild(panel);
+    document.body.appendChild(wrap);
+
+    let panelOpen = false;
+    panelTrigger.addEventListener('click', () => {
+      panelOpen = !panelOpen;
+      panel.style.display = panelOpen ? 'flex' : 'none';
+      panelTrigger.setAttribute('aria-expanded', panelOpen ? 'true' : 'false');
+    });
+    volumeInput.addEventListener('input', () => { engine?.setVolume(Number(volumeInput.value)); });
+    standaloneKeyboardToggle.addEventListener('click', () => {
+      const nextOn = standaloneKeyboardToggle.getAttribute('aria-pressed') !== 'true';
+      standaloneKeyboardToggle.setAttribute('aria-pressed', nextOn ? 'true' : 'false');
+      octaveRow.style.display = nextOn ? 'flex' : 'none';
+      standaloneKeysWrap.style.display = nextOn ? 'block' : 'none';
+      if (nextOn) {
+        ensureEnabled().then(() => {
+          detachStandalonePianoKeys?.();
+          detachStandalonePianoKeys = window.CreatrSonicController
+            ? window.CreatrSonicController.attachPianoKeyListener(engine, (semitone, pressed) => {
+              const k = standaloneKeysWrap.querySelector('[data-semitone="' + semitone + '"]');
+              if (k) k.classList.toggle('is-pressed', pressed);
+            })
+            : null;
+        });
+      } else {
+        detachStandalonePianoKeys?.();
+        detachStandalonePianoKeys = null;
+        standaloneKeysWrap.querySelectorAll('[data-semitone]').forEach((k) => { k.classList.remove('is-pressed'); });
+      }
+      engine?.setInputMode(nextOn ? 'keyboard' : 'motion');
+    });
+    standaloneKeysWrap.addEventListener('click', (event) => {
+      const keyBtn = event.target instanceof Element ? event.target.closest('button[data-semitone]') : null;
+      if (!keyBtn) return;
+      ensureEnabled().then((ok) => { if (ok) engine?.triggerChromaticNote(Number(keyBtn.dataset.semitone || 0)); });
+    });
+    octaveDown.addEventListener('click', () => {
+      if (!engine) return;
+      engine.setOctave(engine.getOctave() - 1);
+      standaloneOctaveDisplay.textContent = String(engine.getOctave());
+    });
+    octaveUp.addEventListener('click', () => {
+      if (!engine) return;
+      engine.setOctave(engine.getOctave() + 1);
+      standaloneOctaveDisplay.textContent = String(engine.getOctave());
+    });
   }
   if (toggleBtn) {
     toggleBtn.addEventListener('click', () => {
       if (disposed) return;
-      handleMessage({ source: window, data: { type: 'creatr-sound-toggle', enabled: !enabled } });
+      handleMessage({ source: window, data: { type: 'creatr-sound-toggle', enabled: !(engine && engine.isEnabled()) } });
     });
   }
 
@@ -233,9 +514,9 @@ function createPieceRuntimeAudioController(sonicParams, getMover) {
 
   return {
     dispose() {
-      disposed = true; enabled = false;
-      if (rafId) cancelAnimationFrame(rafId);
-      try { synth?.dispose?.(); } catch (_e) {}
+      disposed = true;
+      detachStandalonePianoKeys?.();
+      engine?.dispose();
     },
   };
 }
@@ -470,10 +751,6 @@ function startFrame(callback) {
   requestAnimationFrame(tick);
 }
 function mapMovementKey(event) {
-  if (event.code === 'KeyW') return 'ArrowUp';
-  if (event.code === 'KeyS') return 'ArrowDown';
-  if (event.code === 'KeyA') return 'ArrowLeft';
-  if (event.code === 'KeyD') return 'ArrowRight';
   if (event.key === 'ArrowLeft' || event.key === 'ArrowRight' || event.key === 'ArrowUp' || event.key === 'ArrowDown') return event.key;
   return null;
 }
@@ -943,6 +1220,7 @@ function bootAFrame() {
   const script = document.createElement('script');
   script.src = new URL('/assets/js/aframe.min.js', runtimeScript).toString();
   script.onload = () => {
+    disableAFrameWASD();
     try {
       let scene = document.querySelector('a-scene#scene') || document.querySelector('a-scene');
       if (!scene) {

@@ -279,8 +279,17 @@ class PiecesAdminController
                     && !art_piece_sonic_params_equal($nextSonicParams, $currentVersion['sonic_params'] ?? null);
 
                 if ($currentVersion && !$codeChanged && !$sonicChanged) {
-                    // Code is unchanged (a metadata-only save) — leave the
-                    // current version's row and its AI attribution alone.
+                    // Code and AI-authored sonic content are both unchanged.
+                    // Audio-tab extras (voice visibility, volume, synth
+                    // tuning) are mechanical settings, not creative content —
+                    // update them in place on the current version row rather
+                    // than forking a new version, so routine tweaks don't
+                    // clutter version/AI-refine history.
+                    if (art_piece_sonic_params_supported() && $nextSonicParams !== ($currentVersion['sonic_params'] ?? null)) {
+                        PlatformArtPieceVersion::update((int) $currentVersion['id'], array_merge($currentVersion, [
+                            'sonic_params' => $nextSonicParams,
+                        ]));
+                    }
                 } else {
                     $generationMode = self::resolveVersionGenerationModeForUpdate($data['engine'], $currentVersion);
                     $versionCode = $codeChanged || !$currentVersion ? $code : [
@@ -701,7 +710,70 @@ class PiecesAdminController
         if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $decoded['enabled'] = isset($_POST['sound_playback_active']);
         }
-        return json_encode($decoded, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $aiJson = json_encode($decoded, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $extras = self::resolveSonicExtrasFromPost($decoded['extras'] ?? null);
+        return art_piece_sonic_json_merge_extras($aiJson, $extras);
+    }
+
+    // Audio tab fields: mechanical, non-AI-authored per-piece settings
+    // (public-visibility toggles per voice + admin-only synth tuning). Same
+    // "trust the POST on a real submission, fall back to what's already
+    // stored otherwise" pattern as sound_playback_active above.
+    private static function resolveSonicExtrasFromPost(mixed $fallbackExtras): array
+    {
+        if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+            return validate_art_piece_sonic_extras($fallbackExtras);
+        }
+        return validate_art_piece_sonic_extras([
+            'default_volume' => $_POST['sonic_default_volume'] ?? null,
+            'voices' => [
+                'ambient' => isset($_POST['sonic_voice_ambient']),
+                'movement' => isset($_POST['sonic_voice_movement']),
+                'melodic' => isset($_POST['sonic_voice_melodic']),
+                'hand_tracking' => isset($_POST['sonic_voice_hand_tracking']),
+            ],
+            'synth' => [
+                'octave_min' => $_POST['sonic_octave_min'] ?? null,
+                'octave_max' => $_POST['sonic_octave_max'] ?? null,
+                'filter_cutoff' => $_POST['sonic_filter_cutoff'] ?? null,
+                'filter_resonance' => $_POST['sonic_filter_resonance'] ?? null,
+                'filter_type' => $_POST['sonic_filter_type'] ?? null,
+                'effects' => [
+                    'distortion' => [
+                        'enabled' => isset($_POST['sonic_fx_distortion_enabled']),
+                        'amount' => $_POST['sonic_fx_distortion_amount'] ?? null,
+                    ],
+                    'chorus' => [
+                        'enabled' => isset($_POST['sonic_fx_chorus_enabled']),
+                        'depth' => $_POST['sonic_fx_chorus_depth'] ?? null,
+                        'rate' => $_POST['sonic_fx_chorus_rate'] ?? null,
+                    ],
+                    'tremolo' => [
+                        'enabled' => isset($_POST['sonic_fx_tremolo_enabled']),
+                        'depth' => $_POST['sonic_fx_tremolo_depth'] ?? null,
+                        'rate' => $_POST['sonic_fx_tremolo_rate'] ?? null,
+                    ],
+                    'pitch_shift' => [
+                        'enabled' => isset($_POST['sonic_fx_pitch_shift_enabled']),
+                        'semitones' => $_POST['sonic_fx_pitch_shift_semitones'] ?? null,
+                    ],
+                    'bitcrusher' => [
+                        'enabled' => isset($_POST['sonic_fx_bitcrusher_enabled']),
+                        'bits' => $_POST['sonic_fx_bitcrusher_bits'] ?? null,
+                    ],
+                    'flanger' => [
+                        'enabled' => isset($_POST['sonic_fx_flanger_enabled']),
+                        'depth' => $_POST['sonic_fx_flanger_depth'] ?? null,
+                        'rate' => $_POST['sonic_fx_flanger_rate'] ?? null,
+                        'feedback' => $_POST['sonic_fx_flanger_feedback'] ?? null,
+                    ],
+                    'ring_mod' => [
+                        'enabled' => isset($_POST['sonic_fx_ring_mod_enabled']),
+                        'frequency' => $_POST['sonic_fx_ring_mod_frequency'] ?? null,
+                    ],
+                ],
+            ],
+        ]);
     }
 
     private static function normalizeSonicParamsInput(mixed $value, ?string $fallback = null): ?string

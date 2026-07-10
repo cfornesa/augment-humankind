@@ -102,9 +102,16 @@ class PiecesController
 
         $surface = isset($_GET['surface']) ? strtolower(trim((string) $_GET['surface'])) : '';
         $viewState = isset($_GET['viewState']) ? trim((string) $_GET['viewState']) : '';
+        // Downloader-chosen optional sound panels (keyboard/hand-tracking),
+        // bounded by whatever the admin already enabled for this piece — see
+        // piece_export_apply_requested_voices(). Absent entirely (no param at
+        // all) means "use the admin's config as-is," matching every link
+        // that predates this feature.
+        $requestedVoices = isset($_GET['dl_voices']) ? trim((string) $_GET['dl_voices']) : null;
         $bundle = piece_export_bundle($data['piece'], $data['version'], [
             'surface' => $surface,
             'view_state' => $viewState,
+            'requested_voices' => $requestedVoices,
         ]);
         $filename = $bundle['filename'];
         $path = $bundle['path'];

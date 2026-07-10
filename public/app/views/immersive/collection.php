@@ -8,6 +8,10 @@ declare(strict_types=1);
 // cached copy of immersive-gallery.js indefinitely after a deploy.
 $galleryRuntimeVersion = (int) @filemtime(dirname(__DIR__, 3) . '/assets/js/immersive-gallery.js');
 $publicPieceScriptVersion = (int) @filemtime(dirname(__DIR__, 3) . '/assets/js/public-piece-download.js');
+// Same cache-busting need applies to sonic-controller.js/Tone.js — see the
+// matching comment in immersive/piece.php.
+$sonicControllerVersion = (int) @filemtime(dirname(__DIR__, 3) . '/assets/js/sonic-controller.js');
+$toneVersion = (int) @filemtime(dirname(__DIR__, 3) . '/assets/vendor/tone/Tone.js');
 
 // Hydrate fields for display
 $slug = $collection['slug'] ?? '';
@@ -833,6 +837,8 @@ html, body {
 
 <script src="/assets/js/public-piece-download.js?v=<?= $publicPieceScriptVersion ?>"></script>
 <script type="module">
+window.__creatrSonicControllerSrc = '/assets/js/sonic-controller.js?v=<?= $sonicControllerVersion ?>';
+window.__creatrToneSrc = '/assets/vendor/tone/Tone.js?v=<?= $toneVersion ?>';
 import { mountExhibitWall, setupImmersiveStageChrome } from '/assets/js/immersive-gallery.js?v=<?= $galleryRuntimeVersion ?>';
 
 // Setup full screen toggling variables
@@ -1073,6 +1079,7 @@ try {
             const activeIndex = immersiveViewer?.getActiveIndex?.() ?? 0;
             immersiveViewer?.openSlideshowAt?.(activeIndex);
         },
+        getAudioController: () => immersiveViewer?.getAudioController?.(),
     });
     const downloadPieceLink = document.querySelector('[data-collection-download-piece]');
     const downloadPngBtn = document.querySelector('[data-collection-download-png]');

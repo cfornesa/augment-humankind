@@ -42,6 +42,171 @@ function immersive_stage_toolbar_css(): string
 .immersive-stage-download-wrap {
   position: relative;
 }
+.immersive-stage-sound-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+.immersive-stage-sound-panel-trigger {
+  height: 1.7rem;
+  width: 1.5rem;
+  padding: 0;
+}
+.immersive-stage-sound-panel[hidden] {
+  display: none;
+}
+.immersive-stage-sound-panel {
+  position: absolute;
+  top: calc(100% + 0.55rem);
+  right: 0;
+  width: 17rem;
+  display: grid;
+  gap: 0.7rem;
+  padding: 0.85rem;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 1rem;
+  background: rgba(9, 14, 24, 0.94);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  z-index: 140;
+  color: #fff;
+}
+.immersive-stage-sound-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  font-size: 0.8rem;
+}
+.immersive-stage-sound-row[hidden] {
+  display: none !important;
+}
+.immersive-stage-sound-switch,
+.immersive-stage-sound-keyboard-toggle {
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 0.6rem;
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 0.35rem 0.6rem;
+  cursor: pointer;
+}
+.immersive-stage-sound-switch[aria-checked="true"],
+.immersive-stage-sound-keyboard-toggle[aria-pressed="true"] {
+  background: rgba(255, 255, 255, 0.22);
+  border-color: #fff;
+}
+.immersive-stage-sound-volume {
+  width: 100%;
+  accent-color: #fff;
+}
+.immersive-voice-picker {
+  display: grid;
+  gap: 0.45rem;
+}
+.immersive-voice-picker-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  font-size: 0.8rem;
+}
+.immersive-voice-picker-row[hidden] {
+  display: none !important;
+}
+.immersive-voice-picker-select {
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 0.6rem;
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  font: inherit;
+  font-size: 0.78rem;
+  padding: 0.3rem 0.5rem;
+}
+.immersive-piano-keys[hidden] {
+  display: none;
+}
+.immersive-piano-octave-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+}
+.immersive-piano-octave-btn {
+  height: 1.6rem;
+  width: 1.6rem;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 0.4rem;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  line-height: 1;
+}
+.immersive-piano-octave-btn:hover,
+.immersive-piano-octave-btn:focus-visible {
+  background: rgba(255, 255, 255, 0.22);
+  border-color: #fff;
+}
+.immersive-piano-octave-display {
+  min-width: 1.4rem;
+  text-align: center;
+  font-weight: 600;
+}
+.immersive-piano-keys {
+  position: relative;
+  height: 4.5rem;
+  display: flex;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.immersive-piano-key-white {
+  position: relative;
+  flex: 1 1 0;
+  height: 100%;
+  border: 1px solid rgba(0, 0, 0, 0.35);
+  border-radius: 0 0 0.3rem 0.3rem;
+  background: #f4f1e8;
+  cursor: pointer;
+  z-index: 1;
+  touch-action: none;
+}
+.immersive-piano-key-white:hover,
+.immersive-piano-key-white:focus-visible {
+  background: #d8d4c4;
+}
+.immersive-piano-key-white:active,
+.immersive-piano-key-white.is-pressed {
+  background: #bbb7a8;
+}
+.immersive-piano-key-black {
+  position: absolute;
+  top: 0;
+  width: 6%;
+  height: 62%;
+  transform: translateX(-50%);
+  border: 1px solid rgba(0, 0, 0, 0.6);
+  border-radius: 0 0 0.25rem 0.25rem;
+  background: #17161a;
+  cursor: pointer;
+  z-index: 2;
+  touch-action: none;
+}
+.immersive-piano-key-black:hover,
+.immersive-piano-key-black:focus-visible {
+  background: #3a3942;
+}
+.immersive-piano-key-black:active,
+.immersive-piano-key-black.is-pressed {
+  background: #5c5a69;
+}
 .immersive-stage-icon-btn,
 .fullscreen-toggle-btn {
   position: static;
@@ -143,6 +308,9 @@ function immersive_stage_toolbar_css(): string
     min-height: 2.55rem;
     font-size: 0.78rem;
   }
+  .immersive-stage-sound-panel {
+    width: min(17rem, calc(100vw - 2rem));
+  }
 }
 CSS;
 }
@@ -168,10 +336,108 @@ function immersive_stage_toolbar_icon_svg(string $icon): string
             return '<svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4z"/><line x1="22" y1="9" x2="16" y2="15"/><line x1="16" y1="9" x2="22" y2="15"/></svg>';
         case 'sound-on':
             return '<svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M16 9a4 4 0 0 1 0 6"/><path d="M19 6a8 8 0 0 1 0 12"/></svg>';
+        case 'chevron-down':
+            return '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>';
         case 'view':
         default:
             return '<svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="m7 15 3-3 2 2 3-4 2 3"></path></svg>';
     }
+}
+
+/**
+ * Renders `$count` note-trigger buttons for the sound panel's keyboard mode.
+ * A fixed count (rather than looking up the piece's actual scale length) keeps
+ * this markup helper independent of sonic_params — sonic-controller.js's
+ * triggerNote() wraps the degree index by modulo scale length client-side, so
+ * a 5-note pentatonic piece just repeats a couple of pitches across the 7
+ * buttons rather than needing the exact count threaded through here.
+ */
+/**
+ * Renders a one-octave piano keyboard (C to B, 7 white + 5 black keys) plus
+ * an octave display and up/down buttons, for the sound popover's keyboard
+ * mode. Plays chromatically (any semitone) through sonic-controller.js's
+ * triggerChromaticNote()/setOctave(), independent of the piece's configured
+ * scale (a piano plays any note, not just scale degrees).
+ *
+ * $cssPrefix/$dataPrefix let each surface (immersive popover, regular-view
+ * popover) render the same layout under its own class/attribute namespace,
+ * matching the parameterization pattern already used elsewhere in this file.
+ */
+function immersive_stage_piano_keyboard_markup(string $cssPrefix = 'immersive-piano', string $dataPrefix = 'data-immersive-piano'): string
+{
+    // 10 white keys (one octave plus a major third into the next) matching
+    // PIANO_KEY_MAP's physical-keyboard span (sonic-controller.js) exactly —
+    // a s d f g h j k l ; are all mapped to natural notes up to semitone 16,
+    // so the on-screen piano needs to cover the same range or physical keys
+    // beyond B would play notes with no corresponding visible key.
+    $whiteNotes = ['C', 'D', 'E', 'F', 'G', 'A', 'B', 'C', 'D', 'E'];
+    $whiteSemitones = [0, 2, 4, 5, 7, 9, 11, 12, 14, 16];
+    // White-key index => sharp label for the black key immediately after it.
+    // No black key after E (indexes 2, 9) or B (index 6) — real piano
+    // spacing, repeated once the octave rolls over at index 7 (C again).
+    $blackAfter = [0 => 'C♯', 1 => 'D♯', 3 => 'F♯', 4 => 'G♯', 5 => 'A♯', 7 => 'C♯', 8 => 'D♯'];
+
+    $html = '<div class="' . $cssPrefix . '-octave-row">';
+    $html .= '<button type="button" class="' . $cssPrefix . '-octave-btn" ' . $dataPrefix . '-octave-down aria-label="Octave down">−</button>';
+    $html .= '<output class="' . $cssPrefix . '-octave-display" ' . $dataPrefix . '-octave-display>3</output>';
+    $html .= '<button type="button" class="' . $cssPrefix . '-octave-btn" ' . $dataPrefix . '-octave-up aria-label="Octave up">+</button>';
+    $html .= '</div>';
+
+    $html .= '<div class="' . $cssPrefix . '-keys" ' . $dataPrefix . '-keys role="group" aria-label="Piano keyboard">';
+    foreach ($whiteSemitones as $i => $semitone) {
+        $html .= '<button type="button" class="' . $cssPrefix . '-key ' . $cssPrefix . '-key-white" ' . $dataPrefix . '-key data-semitone="' . $semitone . '" aria-label="Play ' . $whiteNotes[$i] . '"></button>';
+        if (isset($blackAfter[$i])) {
+            $blackSemitone = $semitone + 1;
+            $leftPercent = ($i + 1) * (100 / 10);
+            $html .= '<button type="button" class="' . $cssPrefix . '-key ' . $cssPrefix . '-key-black" ' . $dataPrefix . '-key data-semitone="' . $blackSemitone . '" style="left:' . $leftPercent . '%;" aria-label="Play ' . $blackAfter[$i] . '"></button>';
+        }
+    }
+    $html .= '</div>';
+    return $html;
+}
+
+/**
+ * Renders three <select> dropdowns (ambient/movement/melodic), one per
+ * sonification voice, letting a visitor pick their own per-voice instrument
+ * for THIS SESSION ONLY — never persisted server-side (see
+ * sonic-controller.js's setVoiceInstrument()/getVoiceInstrument()); the
+ * caller is responsible for stashing the choice in localStorage and
+ * restoring it. Each row is always present in the markup but should be
+ * hidden per-voice when that voice's public visibility is off, matching
+ * how the keyboard row already hides itself when extras.voices.melodic
+ * is off.
+ *
+ * Options mirror SONIC_INSTRUMENTS in sonic-controller.js as a literal PHP
+ * array (this file has no JS-parsing/build step available) — KEEP IN SYNC
+ * if that map ever changes.
+ *
+ * $cssPrefix/$dataPrefix follow the same per-surface parameterization
+ * pattern as immersive_stage_piano_keyboard_markup() above.
+ */
+function immersive_stage_voice_instrument_picker_markup(string $cssPrefix = 'immersive-voice-picker', string $dataPrefix = 'data-immersive-voice-picker'): string
+{
+    // KEEP IN SYNC with SONIC_INSTRUMENTS in public/assets/js/sonic-controller.js.
+    $instruments = [
+        'synth' => 'Synth', 'amsynth' => 'AM Synth', 'fmsynth' => 'FM Synth',
+        'membranesynth' => 'Membrane', 'metalsynth' => 'Metal', 'plucksynth' => 'Plucked String',
+        'duosynth' => 'Duo Synth',
+    ];
+    $voices = ['ambient' => 'Ambient', 'movement' => 'Movement', 'melodic' => 'Melodic'];
+
+    $html = '<div class="' . $cssPrefix . '">';
+    foreach ($voices as $voiceKey => $voiceLabel) {
+        $selectId = $cssPrefix . '-' . $voiceKey;
+        $html .= '<div class="' . $cssPrefix . '-row" ' . $dataPrefix . '-row="' . $voiceKey . '">';
+        $html .= '<label for="' . $selectId . '">' . $voiceLabel . '</label>';
+        $html .= '<select id="' . $selectId . '" class="' . $cssPrefix . '-select" ' . $dataPrefix . '-select data-voice="' . $voiceKey . '">';
+        foreach ($instruments as $key => $label) {
+            $html .= '<option value="' . $key . '">' . $label . '</option>';
+        }
+        $html .= '</select>';
+        $html .= '</div>';
+    }
+    $html .= '</div>';
+    return $html;
 }
 
 function immersive_stage_toolbar_attrs(array $attrs): string
@@ -204,9 +470,12 @@ function immersive_stage_toolbar_attrs(array $attrs): string
  * - fullscreen_onclick: string|null — inline handler; exports pass null and bind in JS.
  * - gyro_slot:          bool (default true) — reserves the slot the gyro ⟲ toggle mounts into.
  * - sound_action:        null (no sound button) | ['enabled' => bool] — renders the
- *   mute/unmute sound toggle. Only present when the piece carries sonification
- *   metadata. The button mounts into the right toolbar group, immediately left of
- *   fullscreen. `setupImmersiveStageChrome` wires its click handler.
+ *   mute/unmute sound toggle plus an adjacent small chevron that expands a
+ *   popover panel (volume slider, keyboard-mode toggle + note buttons). Only
+ *   present when the piece carries sonification metadata. Mounts into the
+ *   right toolbar group, immediately left of fullscreen. The mute button's
+ *   own click handler is owned by createAudioController() (immersive-gallery.js);
+ *   the panel is wired by `setupImmersiveStageChrome`'s `getAudioController` option.
  */
 function immersive_stage_toolbar_markup(array $opts = []): string
 {
@@ -277,9 +546,36 @@ function immersive_stage_toolbar_markup(array $opts = []): string
         $html .= '<div class="immersive-stage-toolbar-group immersive-stage-toolbar-right">';
 
         if (is_array($soundAction) && !empty($soundAction['enabled'])) {
+            $html .= '<div class="immersive-stage-sound-wrap">';
             $html .= '<button type="button" id="immersive-sound-toggle" class="immersive-stage-icon-btn" data-immersive-sound-toggle aria-pressed="false" aria-label="Unmute sound">'
                 . immersive_stage_toolbar_icon_svg('sound-off')
                 . '</button>';
+            $html .= '<button type="button" class="immersive-stage-icon-btn immersive-stage-sound-panel-trigger" data-immersive-sound-panel-trigger aria-haspopup="true" aria-expanded="false" aria-controls="immersive-sound-panel" aria-label="Sound settings">'
+                . immersive_stage_toolbar_icon_svg('chevron-down')
+                . '</button>';
+            $html .= '<div id="immersive-sound-panel" class="immersive-stage-sound-panel" data-immersive-sound-panel role="region" aria-label="Sound settings" hidden>';
+            $html .= '<div class="immersive-stage-sound-row">'
+                . '<span>Sound</span>'
+                . '<button type="button" class="immersive-stage-sound-switch" data-immersive-sound-mute-toggle role="switch" aria-checked="false">Off</button>'
+                . '</div>';
+            $html .= '<div class="immersive-stage-sound-row">'
+                . '<label for="immersive-sound-volume" style="flex:0 0 auto;">Volume</label>'
+                . '<input type="range" id="immersive-sound-volume" class="immersive-stage-sound-volume" data-immersive-sound-volume min="0" max="100" step="1" value="50" aria-label="Volume">'
+                . '</div>';
+            $html .= immersive_stage_voice_instrument_picker_markup();
+            $html .= '<div class="immersive-stage-sound-row" data-immersive-sound-keyboard-row>'
+                . '<span>Keyboard</span>'
+                . '<button type="button" class="immersive-stage-sound-keyboard-toggle" data-immersive-sound-keyboard-toggle aria-pressed="false">Play notes</button>'
+                . '</div>';
+            $html .= '<div class="immersive-piano-wrap" data-immersive-sound-keys hidden>'
+                . immersive_stage_piano_keyboard_markup()
+                . '</div>';
+            $html .= '<div class="immersive-stage-sound-row" data-immersive-sound-hand-row hidden>'
+                . '<span>Hand-tracking</span>'
+                . '<button type="button" class="immersive-stage-sound-keyboard-toggle" data-immersive-sound-hand-toggle aria-pressed="false">Camera theremin</button>'
+                . '</div>';
+            $html .= '</div>'; // .immersive-stage-sound-panel
+            $html .= '</div>'; // .immersive-stage-sound-wrap
         }
 
         if ($showFullscreen) {
