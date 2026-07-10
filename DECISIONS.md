@@ -2325,3 +2325,45 @@ Implemented a local-first with runtime CDN fallback strategy for downloaded art 
 - Ran the test suites and verified all checks pass:
   - `php tests/three-runtime-consistency.php` — **Passed: 114, Failed: 0**
   - `php tests/art-piece-generation.php` — **Passed: 142, Failed: 0**
+
+## 2026-07-10 — ALGORITHMS.md Audit, Full Gap Coverage, Restructure
+
+### Context
+User asked to verify ALGORITHMS.md accuracy, capture all algorithms in the
+codebase, re-evaluate all Potential improvements, and fill new sections to
+match the existing recipe format. Mid-session, the user redirected to adapt
+to three post-audit commits (573d524, 0e148f1, f21887f); the revised plan
+was approved via plan mode.
+
+### Agent loops (per AGENTS.md → Agent Use)
+- 2 Explore agents (parallel): PHP-side and JS-side algorithm inventory +
+  accuracy spot-check of 35 documented functions/constants.
+- 1 Explore agent: diff audit of the three post-baseline commits.
+
+### Decisions (user-approved via AskUserQuestion + plan approvals)
+- Scope: document everything found, restructured for readability (TOC;
+  new §11 AI Provider Client, §12 Movement Sonification, §13 Frontend
+  Presentation, §14 Platform Utilities; §3.6–3.8, §4.7–4.10 added).
+- New recipes get full Overview/Pseudocode/Instructions/Analysis blocks with
+  diagram placeholder paths (two pending PNGs: ai_provider_call_pipeline,
+  sonification_pipeline — to be generated via the user's diagram thread).
+- All existing Potential improvements reviewed; additions only, none stale.
+
+### Corrections made (doc-only; no code touched)
+- hasVisiblePixels attribution fixed (public-piece-download.js, not
+  immersive-gallery.js).
+- OBJ upload references removed (ALLOWED_MODEL_EXT is glb/gltf-only since
+  7ac6064); doc now states the deliberate OBJ exclusion rationale.
+- §12 rewritten for the sonic-controller.js voice architecture (ambient
+  voice is continuous — the old IDLE_GAP_MS stillness gate is gone; added
+  hand-tracking theremin §12.5, mic effects chain §12.6, extras schema
+  §12.7); §4.3 notes arrow-keys-only navigation (disableAFrameWASD);
+  §3.4 documents the export module-syntax guard; §7.3 adds the 32 MB
+  media_audio branch; §9.2 lists all rate-limit scopes; §9.6 documents
+  ensureEnumValue.
+
+### Verification
+- All function/file references in new text grep-verified at HEAD; zero
+  stale names (IDLE_GAP_MS/pieceLoadToneOnce/motionTick absent from doc).
+- All markdown links resolve except the two intentional diagram
+  placeholders; TOC anchors follow GitHub slug rules.

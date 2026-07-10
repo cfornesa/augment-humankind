@@ -47,6 +47,29 @@ break; *fail-open* = degrades and continues, *fail-closed* = stops with an
 error), **Efficiency** (cost profile as configured), and **Potential
 improvements** (upgrades, each honest about its trade-off).
 
+> **Publication note:** the PDF edition of this document is produced by a
+> CI-only workflow ([publish-algorithms-pdf.yml](.github/workflows/publish-algorithms-pdf.yml));
+> that pipeline is build tooling, not a codebase algorithm, and is therefore
+> not cataloged below.
+
+## Table of Contents
+
+1. [Site Search](#1-site-search)
+2. [Blog](#2-blog)
+3. [Art Pieces (AI art pipelines)](#3-art-pieces-ai-art-pipelines)
+4. [Immersive Gallery / Exhibits](#4-immersive-gallery--exhibits-immersive-galleryjs)
+5. [Collections (downloads / bundling)](#5-collections-downloads--bundling)
+6. [Comments & Reactions](#6-comments--reactions)
+7. [Content Management](#7-content-management-shared-by-blog-pieces-pages-exhibits-collections)
+8. [Syndication](#8-syndication-outbound-to-socialblog-platforms--libsyndication)
+9. [Security & Infrastructure](#9-security--infrastructure-supports-every-function-above)
+10. [Site Theme AI Generation](#10-site-theme-ai-generation-site-theme-generationphp)
+11. [AI Provider Client](#11-ai-provider-client-aiproviderclientphp)
+12. [Movement Sonification (Tone.js)](#12-movement-sonification-tonejs)
+13. [Frontend Presentation & Theme Runtime](#13-frontend-presentation--theme-runtime)
+14. [Platform Utilities](#14-platform-utilities)
+15. [Summary by algorithm type](#summary-by-algorithm-type-per-the-source-articles-taxonomy)
+
 ---
 
 ## 1. Site Search
@@ -474,14 +497,97 @@ NOTE   imported posts (Blog.FeedImport) carry source_feed_id, which
   — a small link-resolution/relocation algorithm, like a linker fixup pass).
   `piece_export_rewrite_media_refs()` rewrites `cms-media:` references through
   a resolver callback so exports carry their assets.
+- **Module-syntax guard:** the ES-module → classic-script conversion of the
+  bundled runtimes is verified, linker-style:
+  `piece_export_strip_module_syntax()` rewrites mid-file
+  `export function/const/class` to bare declarations, and
+  `piece_export_assert_no_module_syntax()` then asserts (anchored regex, so
+  `.export`/`exportFoo` can't false-positive) that no `import`/`export`
+  keyword survives — throwing at export-*generation* time, where the error
+  is actionable, rather than shipping a bundle that dies with a SyntaxError
+  in the visitor's browser. Wired into all three
+  `piece_export_*_global_source()` converters (three, OrbitControls,
+  GLTFLoader).
 - **Characteristics:** Fully deterministic given piece + version + options;
-  language-independent in structure (an assembly recipe).
+  language-independent in structure (an assembly recipe); the guard makes
+  the conversion fail-closed server-side.
 
-### 3.5 Canvas export with paint-readiness polling — export scripts in piece-render.php
-- **Type:** Bounded polling loop.
-- **Logic:** Before capturing a PNG, `hasVisiblePixels()` samples the canvas
-  and the loop waits/retries until non-blank or a retry cap is hit —
-  finiteness imposed on an inherently asynchronous render.
+### 3.5 Canvas export with paint-readiness polling and blank detection — [public-piece-download.js](public/assets/js/public-piece-download.js), [admin-piece-capture.js](public/assets/js/admin-piece-capture.js), embedded copies emitted by [piece-render.php](public/app/helpers/piece-render.php)
+- **Type:** Bounded polling loop + statistical classification heuristic.
+- **Logic:** Before capturing a PNG, `hasVisiblePixels()` (defined in
+  public-piece-download.js and duplicated into the export documents that
+  piece-render.php generates — it is *not* part of immersive-gallery.js)
+  samples the canvas and the loop waits/retries until non-blank or a retry
+  cap is hit — finiteness imposed on an inherently asynchronous render.
+- **Blank-frame classifier (admin capture):** admin-piece-capture.js goes
+  further than a boolean pixel test: it computes per-pixel alpha-weighted
+  luma, then `darkPixelRatio`, `nonDarkPixelRatio`, average luma, luma range,
+  and `lumaVariance`/std-dev over a sample, and combines them in a fixed
+  decision rule (e.g. ≥98.5% dark pixels with ≤0.2% non-dark and luma range
+  ≤ 10 ⇒ blank). A PNG-encoding size check serves as a second cheap blank
+  proxy — a near-empty canvas compresses to a tiny data URL. Readiness is
+  confirmed with `requestAnimationFrame` chaining (the capture reads a frame
+  that has actually presented) rather than the older fixed-interval poll.
+- **Characteristics:** All thresholds are constants, so the classifier is a
+  deterministic decision procedure; the statistical features only summarize
+  the pixel sample. O(sampled pixels) per check.
+
+### 3.6 Purpose-domain scoping — `art_piece_purpose_domain_header()` / `art_piece_normalize_purpose_domain()` / `art_piece_elide_out_of_scope_refs()` ([art-piece-generation.php](public/app/helpers/art-piece-generation.php))
+- **Type:** Three-state scope selector + conservative pattern-elision rewrite.
+- **Logic:** Every refine/regenerate request targets one of three purpose
+  domains — `visual` (sound out of scope, sonic params carried forward
+  unchanged), `audio` (visuals out of scope; no visual code shown, no visual
+  patches accepted), `audio_visual` (both in scope). The header builder emits
+  an explicit IN-SCOPE/OUT-OF-SCOPE directive per state;
+  `art_piece_normalize_purpose_domain()` coerces any untrusted value outside
+  the three-member set to `visual` (the historical default), so an unknown
+  input can never produce an empty or ambiguous directive. In audio-only mode,
+  `art_piece_elide_out_of_scope_refs()` rewrites visual asset references in
+  the *context* prompt — same-origin `/image/N` and `/media/N` paths, and bare
+  filenames with a visual/3D extension (png, jpg, glb, …) — into a labeled
+  placeholder ("visual asset reference elided; out of scope"). This keeps the
+  prose intelligible to the model while ensuring a tool-using provider proxy
+  never treats an out-of-scope filename as a file to fetch.
+- **Characteristics:** Unambiguous three-way dispatch; the elision is a pure
+  O(n) regex rewrite, deliberately conservative (never matches bare words like
+  `image` or extension-less names).
+
+### 3.7 Export media reference resolution — `piece_export_collect_media_refs()` / `piece_export_resolve_media_ref()` / `piece_export_media_zip_path()` ([piece-render.php](public/app/helpers/piece-render.php))
+- **Type:** Pattern harvest + multi-branch dispatch + collision-suffix probing.
+- **Logic:** One shared regex harvests every same-origin media reference
+  (`/image/N`, `/media/N`, `/media/{filename}`, `/api/media-assets/N`,
+  optional query string) from the piece's html/css/js, normalized and deduped
+  via a seen-set. `piece_export_resolve_media_ref()` dispatches on four path
+  shapes to the right storage lookup (image by id with an `image/*` MIME
+  guard, media by id, media-asset by filename, media-asset by id) and throws
+  on anything unresolvable. `piece_export_media_zip_path()` assigns each asset
+  a bundle path `media/{kind}-{id}.{ext}` and, on a name collision, probes
+  `-2`, `-3`, … until free — the same linear-probing idea as slug uniqueness
+  (§7.1) applied to zip entries. `piece_export_filename_extension()` resolves
+  the extension from the original filename first, falling back to a fixed
+  MIME→extension map (default `bin`). A-Frame documents additionally pass
+  through `piece_aframe_normalize_texture_assets()` /
+  `piece_aframe_add_crossorigin_to_asset_images()`, which rewrite `<a-assets>`
+  image entries and inject `crossorigin` so textures load in the sandbox.
+- **Characteristics:** Deterministic; fail-closed per unresolvable ref on the
+  piece-export path (contrast the collection bundle's placeholder fallback,
+  §5). O(code length) harvest + O(refs) resolution.
+
+### 3.8 Shared view-state encode/decode with sanitization — `piece_export_decode_view_state()` / `piece_export_sanitize_view_state()` ([piece-render.php](public/app/helpers/piece-render.php)); `readViewVector()` / `shellViewState()` / `encodeViewState()` ([immersive-gallery.js](public/assets/js/immersive-gallery.js))
+- **Type:** Validation chain (decode-then-clamp) over an untrusted encoding.
+- **Logic:** The JS side quantizes camera/target vectors to 5 decimals
+  (`shellViewState`) and encodes JSON → UTF-8 → base64 → URL-safe alphabet
+  (`+`→`-`, `/`→`_`, padding stripped). The PHP decode side is the security
+  boundary: reject anything empty, longer than 8192 chars, or outside the
+  URL-safe charset; re-pad and strict-`base64_decode`; JSON-decode; then
+  `piece_export_sanitize_view_state()` keeps only complete finite 3-vectors
+  clamped to ±100000 per axis and an `activeIndex` clamped to 0–10000 — a
+  crafted share URL cannot place the camera at garbage coordinates or index.
+  Note the asymmetry: encode lives in JS, decode in PHP (the immersive
+  collection view re-declares the JS encoder), so each side owns exactly the
+  direction it needs.
+- **Characteristics:** Fail-open by field — an invalid vector is dropped, not
+  fatal; output is always a well-formed (possibly empty) state. O(1).
 
 ### Recipe Overview — AI Art Piece Generation pipeline
 
@@ -543,7 +649,7 @@ STEP 5 — VALIDATE      (acceptance predicate — BOTH checks must pass)
   check_b ← every media URL IN code ∈ allowed set
                                      // a /media/{id} 3D-model ref is allowed
                                      // exactly like an image ref; the runtime
-                                     // provides THREE.GLTFLoader/OBJLoader so the
+                                     // provides THREE.GLTFLoader so the
                                      // code needs no forbidden import/fetch
   IF check_a fails OR check_b fails THEN
      → STEP 6 WITH exact failure_message    // first failure reported
@@ -551,12 +657,10 @@ STEP 5 — VALIDATE      (acceptance predicate — BOTH checks must pass)
      → STEP 7 WITH code
   END IF
 
-  // SIDE CHANNEL (optional, piece-sound feature): "Describe the feel" /
-  // "Tone Feel" guidance may produce a 4th ```sonic``` JSON block. When
-  // present, it is soft-validated SEPARATELY — coerced to nearest supported
-  // {tempo, scale, instrument} or dropped to null. It NEVER participates in
-  // the check_a/check_b accept/reject above, so a bad sonic block can't fail
-  // the code; it just means "no sound". Stored on the version as sonic_params.
+  // SIDE CHANNEL (optional, piece-sound feature): a 4th ```sonic``` JSON
+  // block may be present. It is soft-validated SEPARATELY (see §12) and
+  // NEVER participates in the check_a/check_b accept/reject above — a bad
+  // sonic block can't fail the code; it just means "no sound".
 
 STEP 6 — REPAIR-OR-STOP
   IN:    failure_message (← STEP 3/4/5), raw_response, attempt
@@ -628,6 +732,8 @@ STEP 7 — STORE
   attempts; adds streaming-parse complexity.
 - Persist failed attempts' messages per piece for offline prompt tuning;
   storage cost only.
+- Surface sonic-coercion decisions to the admin (e.g. "requested 'harp' →
+  using plucksynth") instead of coercing silently (§12); UI-only change.
 
 ### Recipe Overview — AI Art Piece Refinement pipeline
 
@@ -656,7 +762,11 @@ STEP 1 — RATE-GATE     rate_limit_consume('ai_refine_piece')   (6 / 15 min)
 
 STEP 2 — AI-CALL                                          [NON-DETERMINISTIC]
   IN:    refinement prompt + current code (INPUT, re-sent every attempt)
-  response ← call_provider()   → plan + SEARCH/REPLACE patches[]
+  prompt ← purpose-domain header (§3.6: visual | audio | audio_visual)
+           + original prompt AS CONTEXT (audio-only: out-of-scope media
+             refs elided per §3.6)
+           + refinement instruction + current in-scope code
+  response ← call_provider(prompt)   → plan + SEARCH/REPLACE patches[]
   → STEP 3 WITH patches[]
 
 STEP 3 — MATCH         art_piece_find_patch_match()
@@ -848,7 +958,10 @@ STEP 3 — PNG-CAPTURE   (separate on-demand entry point, browser side)
   derive a strafe vector by cross product, sum contributions of currently-held
   keys, scale by speed, and translate camera + orbit target together each
   frame. Key-state is a set updated by keydown/keyup with blur-clearing to
-  avoid stuck keys.
+  avoid stuck keys. Navigation is **arrow-keys-only**: `disableAFrameWASD()`
+  (here and in piece-runtime.js) neuters A-Frame's built-in `wasd-controls`
+  so letter keys stay free for the sonification piano mapping (§12) — the
+  two keyboard consumers are partitioned by key range rather than by focus.
 
 ### 4.4 Floor click-to-walk — `createFloorClickNavigation()`
 - **Type:** Ray casting (searching in 3D) + interpolation (easing loop).
@@ -870,6 +983,65 @@ STEP 3 — PNG-CAPTURE   (separate on-demand entry point, browser side)
 - **Type:** Geometric scaling ("contain" fit).
 - **Logic:** `scale = min(destW/srcW, destH/srcH)`, center the scaled content,
   fill the margins with a background color. O(1) math, O(pixels) draw.
+
+### 4.7 Greedy live-slot selection — `selectProgressiveExhibitSlots()`
+- **Type:** Greedy selection (partial sort by weighted distance).
+- **Logic:** The companion to §4.5's budget: for every piece-kind item, compute
+  squared distance from its wall-slot center to the camera target with the z
+  component down-weighted ×0.35 (depth matters less than lateral proximity on
+  a wall), sort ascending, and take the first k (the live budget) as the set
+  of live canvases. Non-piece items and items without centers never compete.
+- **Characteristics:** Deterministic given camera target; O(n log n) for the
+  sort, run only when the selection is refreshed — not per frame.
+
+### 4.8 Auto-fit subject isolation — `autoFitCamera()`
+- **Type:** Filtered spatial aggregation (bounding-box union with exclusion
+  heuristics).
+- **Logic:** Before framing generated Three.js content, traverse the scene and
+  union world-space bounding boxes of only the objects that plausibly *are*
+  the subject: skip helpers/lights/cameras/points, skip backface-only
+  materials (`side === 1`, typical of sky-box interiors), skip meshes whose
+  lowercased name matches environment words (sky, background, env, floor,
+  ground, grid, dome, space, star), and skip oversized geometry (any dimension
+  ≥ 30 world units; ≥ 15 for planes). The surviving union's center/size feed
+  `computeThreeAutoFitView` (§4.2), and near/far planes are derived from the
+  resulting distance. If the piece already positioned its camera, only the
+  orbit target is recentred. A deliberately duplicated sibling `autoFit()`
+  lives in [piece-runtime.js](public/assets/js/piece-runtime.js) for the
+  standalone piece view; the duplication contract is guarded by
+  [three-runtime-consistency.php](tests/three-runtime-consistency.php).
+- **Characteristics:** A heuristic classifier, not exact — name matching and
+  size thresholds can misjudge unusual scenes — but fail-soft: a wrong
+  exclusion only affects framing, never rendering. O(scene objects).
+
+### 4.9 Art-piece HTML sanitization and proxy-canvas mounting — `sanitizeArtPieceHtml()`, `normalizeCmsMediaPath()`
+- **Type:** Recursive tree rewrite with element/attribute allowlists.
+- **Logic:** `sanitizeArtPieceHtml()` walks the parsed DOM of a piece's HTML
+  recursively: only `DIV` and `CANVAS` elements survive (anything else is
+  unwrapped in place, preserving its children), and surviving elements keep
+  only `id`, `class`, `style`, `width`, `height`, and `data-*` attributes —
+  scripts, handlers, and every other vector are dropped structurally rather
+  than pattern-matched. Wall mounting then uses a proxy-canvas pattern: the
+  piece runs in a sandboxed `<iframe srcdoc>` or offscreen host, and its
+  output is repainted onto a 2D display canvas that a `THREE.CanvasTexture`
+  samples; SVG pieces are rasterized via a `data:image/svg+xml` Image draw.
+  `normalizeCmsMediaPath()` enforces a same-origin CMS-path regex before any
+  media URL is used as a texture source.
+- **Characteristics:** Allowlist-by-construction (the output can only contain
+  approved nodes/attributes — well-defined output in the strongest sense);
+  O(nodes) per sanitize.
+
+### 4.10 3D model loading via instrumented runtime — GLTFLoader wiring
+- **Type:** Capability injection (controlled dependency provision).
+- **Logic:** The gallery dynamically imports Three.js and `GLTFLoader` as ES
+  modules and attaches the loader to the *instrumented* `THREE` proxy handed
+  to generated code, so a piece that passed preflight can call
+  `new THREE.GLTFLoader().load('/media/{id}', …)` without any forbidden
+  `import`/`fetch` of its own — the allowlist validator (§3.2) still governs
+  which model URLs are permitted. The offline export path substitutes
+  blob-URL module sources (§3.4) so the same code runs with no network.
+- **Characteristics:** Deterministic wiring; the algorithmic content is the
+  contract — capabilities flow *to* validated code, never the reverse.
 
 ### Recipe Overview — Immersive viewing pipeline
 
@@ -915,7 +1087,9 @@ STEP 3 — CAMERA-FIT
 STEP 4 — RENDER-BUDGET (greedy)
   IN:    viewport width, static-mode flag (INPUT), items (← STEP 2)
   k ← live_budget(viewport width, static-mode)
-  nearest k items → live interactive canvases;  remainder → static textures
+  nearest k items → live interactive canvases (selectProgressiveExhibitSlots,
+                    §4.7: weighted-distance sort, slice to k)
+  remainder → static textures
   → STEP 5 WITH per-item render mode
 
 STEP 5 — INTERACTION-LOOP
@@ -933,19 +1107,14 @@ STEP 5 — INTERACTION-LOOP
         LEG C (gyro):
            IF permission granted THEN camera ← orientation
            // else this leg never activates
-        LEG D (audio — optional sonification):
+        LEG D (audio — optional sonification, full algorithm in §12):
            IF current version has sonic params AND user enabled sound THEN
               motion_delta ← camera.position − previous_frame_position
               Tone.js ← map(motion_delta) per {tempo, scale, instrument}
-           // Tone.js self-hosted + lazy-loaded on the enable gesture; reads the
-           // SAME per-frame motion as LEG A/B/C — a listener, not new tracking.
-           // Autoplay-gated ("Tap to enable sound"); else this leg never sounds.
-           // The regular /pieces/{id} view runs an identical LEG D inside its
-           // own iframe (piece-runtime.js, three/aframe only there — other
-           // engines have no camera motion on that surface) but the enable
-           // gesture is a click on a PARENT-page button, relayed in via
-           // postMessage rather than an in-page click; the leg itself is the
-           // same motion→Tone.js mapping either way.
+           // Reads the SAME per-frame motion as LEG A/B/C — a listener, not
+           // new tracking. Autoplay-gated; else this leg never sounds. The
+           // regular /pieces/{id} view runs the same mapping in its own
+           // iframe with the enable gesture relayed via postMessage (§12).
      END PARALLEL
      apply motion;  ease camera → walk_target UNTIL within epsilon;  render
      IF user requests capture THEN → STEP 6
@@ -954,6 +1123,7 @@ STEP 5 — INTERACTION-LOOP
 STEP 6 — CAPTURE       (on demand; returns to STEP 5)
   IN:    live canvas
   REPEAT visible ← hasVisiblePixels(canvas) UNTIL visible OR retry cap
+         // hasVisiblePixels: public-piece-download.js (§3.5), shared here
   IF visible THEN
      download( letterbox(canvas) );  → STEP 5
   ELSE
@@ -991,21 +1161,16 @@ STEP 6 — CAPTURE       (on demand; returns to STEP 5)
   pattern).
 - Devices without gyroscope permission → that input leg simply never
   activates.
-- Audio autoplay policy → the sonification leg (LEG D) stays silent until the
-  user taps "enable sound"; Tone.js is lazy-loaded then. The current version's
-  stored `sonic_params.feel` is documented as Sound Feel in both the regular
-  and immersive piece documentation blocks. If its (self-hosted) source fails
-  to load, model-free rendering is unaffected — same fail-open shape as the
-  gyro permission gate. Only the focused/active piece sonifies (in a
-  collection/exhibit wall, the audio controller is torn down and rebuilt
-  whenever camera focus moves to a different item).
-- Offline export parity → both standalone (`piece_export_document`) and
-  immersive/collection exports bundle Tone.js as an inlined Blob URL (same
-  technique already used for OrbitControls), so a sound-bearing exported
-  piece plays with zero network requests when opened via `file://` or a
-  static host.
+- Audio autoplay policy → LEG D stays silent until the user taps "enable
+  sound"; Tone.js is lazy-loaded then, and a failed load leaves rendering
+  unaffected — same fail-open shape as the gyro permission gate. Focus
+  handling, offline-export parity, and the full mapping algorithm are in §12.
 - Typing in form fields and window blur are filtered/cleared so the camera
   never moves unintentionally and keys never stick.
+- Toolbar affordances: PNG capture is a standalone always-visible screenshot
+  button (`screenshot_action` in immersive-chrome.php); a single download
+  item renders as a direct button, with a dropdown only when two or more
+  exist.
 
 **Failure points**
 - *Contained, per item:* WebGL context loss or an artwork whose code throws →
@@ -1022,7 +1187,10 @@ STEP 6 — CAPTURE       (on demand; returns to STEP 5)
 **Potential improvements**
 - Make the live budget dynamic: promote/demote items as the camera moves
   (distance-sorted priority queue) rather than fixing k at load; smoother
-  close-up experience, adds texture-swap churn.
+  close-up experience, adds texture-swap churn. If added, give §4.7's
+  selection hysteresis (a promote threshold tighter than the demote
+  threshold) so items near the budget boundary don't thrash between live
+  and static as the camera drifts.
 - Use measured frame time (not just viewport width) to size k — adapts to
   weak GPUs on large screens; needs a warm-up sampling window.
 - OffscreenCanvas for live items where supported, moving piece rendering off
@@ -1305,13 +1473,19 @@ STEP 5 — MUTATE           (state machine: active ⇄ trashed)
   client-supplied one), check it against an allowlist map, enforce a byte
   cap, then move to storage with a generated name. Fail-fast: the first
   failing check terminates with a specific error.
-- **3D model branch (`upload_model_media()`):** OBJ/GLTF/GLB are the one case
+- **3D model branch (`upload_model_media()`):** GLTF/GLB are the one case
   where content-sniffing is *unreliable* (`.glb`→`application/octet-stream`,
-  `.obj`→`text/plain`, `.gltf`→JSON/text), so they are routed by **file
-  extension** against `ALLOWED_MODEL_EXT` and then stored under a **canonical
-  `model/*` MIME** — an extension-keyed variant of the same allowlist decision,
-  chosen because the sniffed type cannot distinguish these formats. 64 MB cap;
-  gated on the `media_models` feature.
+  `.gltf`→JSON/text), so they are routed by **file extension** against
+  `ALLOWED_MODEL_EXT` and then stored under a **canonical `model/*` MIME** —
+  an extension-keyed variant of the same allowlist decision, chosen because
+  the sniffed type cannot distinguish these formats. GLTF/GLB only: OBJ is
+  deliberately unsupported (it typically needs companion .mtl/texture files
+  this single-file flow can't carry). 64 MB cap; gated on the `media_models`
+  feature.
+- **Audio branch:** mp3/ogg/wav route through the normal MIME-sniffed
+  allowlist (audio formats sniff reliably, unlike models) with a 32 MB cap,
+  gated on the `media_audio` feature — these feed the sonification ambient
+  sample (§12.7).
 
 ### 7.4 Navigation feature-gating — `ah_navigation_apply_feature_gating()` ([navigation.php](public/app/helpers/navigation.php))
 - **Type:** Filtering (linear scan with predicate).
@@ -1431,12 +1605,14 @@ STEP 2 — DETECT-MIME    upload_resolve_mime()
 
 STEP 3 — ROUTE          upload_media_auto()
   IN:    mime (← STEP 2), file extension, media_models feature flag
-  IF media_models enabled AND ext ∈ {glb, gltf, obj} THEN
+  IF media_models enabled AND ext ∈ {glb, gltf} THEN
      // 3D models: sniffed MIME is unreliable, so route by EXTENSION and
      // store a canonical model/* MIME.  cap ← 64 MB   (upload_model_media)
      rules ← model ext-allowlist;  cap ← 64 MB
   ELSE IF mime ∈ {mp4, webm, mov} THEN
      rules ← video allowlist;  cap ← 64 MB
+  ELSE IF media_audio enabled AND mime ∈ {mp3, ogg, wav} THEN
+     rules ← audio allowlist;  cap ← 32 MB
   ELSE
      rules ← image allowlist (jpg/png/gif/webp/avif);  cap ← 8 MB
   END IF
@@ -1464,9 +1640,9 @@ STEP 5 — STORE
 3. It determines the file's real type by inspecting its contents — not by
    trusting its name or extension. (3D models are the exception: because their
    real type cannot be told apart by inspection, they are recognized by their
-   `.glb`/`.gltf`/`.obj` extension and then stored under a standard 3D-model
-   type.)
-4. Videos and 3D models are allowed up to 64 MB; images up to 8 MB.
+   `.glb`/`.gltf` extension and then stored under a standard 3D-model type.)
+4. Videos and 3D models are allowed up to 64 MB; audio files up to 32 MB;
+   images up to 8 MB.
 5. If the type is not on the allowed list, or the file is too big, it is
    rejected with a clear message.
 6. Otherwise the file is stored, and the uploader gets back a permanent web
@@ -1499,6 +1675,10 @@ STEP 5 — STORE
   serving-path migration (Rule 3 territory).
 - Stream-hash the upload to detect duplicate media at STEP 5 and reuse the
   existing id; saves storage on repeat uploads.
+- Add a magic-byte check for `.glb` uploads (binary glTF always starts with
+  the 4-byte `glTF` header) — a cheap integrity check layered on the
+  extension routing that content-sniffing can't provide for models; `.gltf`
+  (JSON) has no equivalent signature.
 
 ### Recipe Overview — Content Reordering pipeline
 
@@ -1754,6 +1934,9 @@ STEP 3 — PER-CONNECTION DELIVERY
   `count ≤ max` for the scope's rule; `retry_after` = time to window end.
   Expired buckets are garbage-collected opportunistically. Fails **open**
   (allows) if the table is missing or errors — availability over strictness.
+  Configured scopes: `ai_generate_piece` 4/15 min, `ai_refine_piece` 6/15 min,
+  `ai_process_text` 12/15 min, `ai_describe_image` 12/15 min, plus the OAuth
+  scopes in §9.5; unknown scopes fall back to 10/5 min.
 - **Characteristics:** O(1) per request; the atomic upsert removes the
   read-modify-write race, which is what makes the output well-defined under
   concurrency.
@@ -1786,6 +1969,14 @@ STEP 3 — PER-CONNECTION DELIVERY
   to the same schema regardless of starting state. Runtime helpers use the
   same probe pattern (memoized per request) to degrade gracefully when a
   table hasn't been created yet.
+- **Probe family:** `ensureColumn`/`ensureIndex` probe existence;
+  `ensureEnumValue()` probes *content* — it reads the column's current
+  `COLUMN_TYPE` from `INFORMATION_SCHEMA`, string-scans it for each required
+  `'value'`, and runs a single `MODIFY` to the full target definition only
+  when one is missing. Idempotent like its siblings: a converged column is
+  never touched. (Caveat inherent to the design: the MODIFY rewrites the
+  whole ENUM list, so the manifest's `$fullDefinition` is the single source
+  of truth for value order.)
 - **Characteristics:** Idempotence = determinism of the *final state* rather
   than of the actions taken; finite (manifest is a fixed list).
 
@@ -2202,17 +2393,591 @@ STEP 6 — SNAPSHOT
 
 ---
 
+## 11. AI Provider Client ([AiProviderClient.php](public/app/lib/ai/AiProviderClient.php))
+
+The transport layer beneath every AI pipeline in this file (§3, §10, and the
+text/image AI helpers). It turns "call the configured model" into a
+well-defined operation across six vendors and four incompatible API shapes.
+
+### 11.1 Transport/endpoint selection — `getTransportAttempt()` and the OpenCode variants
+- **Type:** Strategy selection (nested dispatch: vendor → endpoint kind →
+  model-slug prefix).
+- **Logic:** The vendor maps directly to an endpoint for single-API vendors
+  (OpenRouter, DeepSeek, Mistral → chat-completions; Google →
+  generateContent). The OpenCode gateways multiplex several API families
+  behind one host, so their branch dispatches first on an explicit
+  `endpointKind` override, then on model-slug prefix conventions (`gpt-` →
+  OpenAI responses, `claude-` → Anthropic messages, `gemini-` → Google, a
+  prefix/member set for chat-completions models); an unrecognized slug throws
+  rather than guessing an endpoint.
+- **Characteristics:** Total, deterministic dispatch with an explicit failure
+  case — the unambiguity characteristic applied to routing. O(1).
+
+### 11.2 Model-id normalization — `normalizeModelForProvider()`, `isPrefixOf()`
+- **Type:** String normalization (prefix stripping / prefix classification).
+- **Logic:** Strips the `opencode-go/` namespace prefix before the id is sent
+  to the provider; `isPrefixOf()` is the shared prefix classifier the routing
+  above builds on.
+
+### 11.3 Per-vendor response-shape extraction — `extractChatCompletionText()` / `extractGoogleText()` / `extractOpenAiResponsesText()` / `extractAnthropicText()`
+- **Type:** Structural parsing (shape-tolerant tree walks).
+- **Logic:** One extractor per API family walks that family's response
+  structure (choices→message→content; candidates→content→parts;
+  output→content→output_text items; content→text items), tolerating both
+  string and array content forms, concatenating text parts, and returning
+  `null` — never a fabricated string — when the shape doesn't match.
+- **Characteristics:** Well-defined output: the caller receives either real
+  model text or an explicit absence. O(response size).
+
+### 11.4 Truncation detection — `extractFinishReason()` + `finishReasonMeansTruncated()`
+- **Type:** Cross-vocabulary classification (normalization to a boolean
+  predicate).
+- **Logic:** Each API family names its stop reason differently
+  (`finish_reason`, `stop_reason`, `finishReason`,
+  `incomplete_details.reason`/`status`); the extractor reads the right field
+  per kind, and the predicate maps the vendor vocabulary
+  {`length`, `max_tokens`, `max_output_tokens`, `incomplete`} to one meaning:
+  "cut off by the output-token limit." Callers use this to distinguish a
+  truncated response from a wrong one, and output budgets are set per vendor
+  (16384 tokens for DeepSeek/OpenCode, 8192 otherwise) to make truncation
+  rare in the first place.
+
+### Recipe Overview — AI provider call pipeline
+
+This recipe underpins every AI feature on the site — art generation, theme
+generation, text processing, image description. It exists so those features
+can treat "ask the model" as one dependable operation even though each vendor
+speaks a different protocol: it routes the request to the right endpoint for
+the configured vendor and model, translates the reply's vendor-specific shape
+into plain text, and reports precisely how the call ended — including whether
+the reply was cut short — so the calling pipeline can retry intelligently.
+
+### Recipe Pseudocode — AI provider call pipeline
+
+```
+RECIPE AiProvider.Call
+INPUT   system + user prompts; configured vendor, model, endpoint kind;
+        decrypted vendor key (← RECIPE Security.Secrets)
+OUTPUT  {ok, text, error, finishReason} — text is real model output or
+        absent, never fabricated
+
+STEP 1 — ROUTE          getTransportAttempt()
+  IN:    vendor, model, endpointKind (INPUT)
+  CASE vendor OF
+     single-API vendor:  transport ← its fixed endpoint
+     opencode gateway:   IF endpointKind set THEN transport ← that family
+                         ELSE transport ← by model-slug prefix
+                              (gpt-→responses, claude-→messages,
+                               gemini-→generate-content, known set→chat)
+                         IF slug unrecognized THEN ABORT "unknown model"
+  END CASE
+  → STEP 2 WITH transport
+
+STEP 2 — REQUEST                                          [NON-DETERMINISTIC]
+  IN:    transport (← STEP 1), prompts, key (INPUT)
+  model ← normalizeModelForProvider()        // strip gateway namespace
+  body  ← format prompts per transport.kind; max_tokens per vendor
+          (16384 deepseek/opencode | 8192 others)
+  response ← http_post(transport.url, body, key)
+  IF transport error THEN
+     RETURN {ok: false, error, finishReason: null}   // caller owns retries
+  ELSE
+     → STEP 3 WITH response
+  END IF
+
+STEP 3 — EXTRACT        per-family extractor
+  IN:    response, transport.kind (← STEP 2)
+  text ← walk response per kind's shape; join text parts
+  IF shape does not match THEN text ← null       // absence, not invention
+  finishReason ← kind-specific stop-reason field
+  → STEP 4 WITH text, finishReason
+
+STEP 4 — CLASSIFY-END   finishReasonMeansTruncated()
+  IN:    text, finishReason (← STEP 3)
+  truncated ← finishReason ∈ {length, max_tokens, max_output_tokens,
+                              incomplete}
+  RETURN {ok: text present, text, finishReason, truncated}
+         // consumers (§3, §10) fold this into their repair loops
+```
+
+### Recipe Instructions — AI provider call pipeline
+
+1. A feature (art generation, theme generation, and so on) asks for an AI
+   response, naming the configured provider and model.
+2. The system works out which of the provider's service addresses to call —
+   directly for simple providers, or by recognizing the model's name family
+   for gateway providers that host many kinds of models. An unrecognizable
+   model name stops the call rather than guessing.
+3. It formats the request the way that service expects, unlocks the stored
+   provider key, and sends it.
+4. It reads the reply using the matching format rules and pulls out the text.
+   If the reply doesn't look as expected, it reports "no text" rather than
+   inventing something.
+5. It also reads how the reply ended — in particular whether the provider cut
+   it off for being too long — and passes that along, so the calling feature
+   knows whether to retry, repair, or give up.
+
+### Recipe Diagram — AI provider call pipeline
+
+<!-- diagram pending — generate via the diagram thread -->
+![AI Provider Call Pipeline Diagram](diagrams/ai_provider_call_pipeline.png)
+
+### Analysis — AI provider call pipeline
+
+**Edge cases**
+- Array-form message content (some chat-completions providers) is joined
+  part-by-part, same as string content.
+- A gateway model slug with an explicit `endpointKind` override skips prefix
+  guessing entirely — the escape hatch for new model families.
+- An empty-but-well-formed reply returns `ok: false` with no text, which the
+  §3/§10 repair loops treat like any other failed attempt.
+
+**Failure points**
+- *Fail-closed:* unknown vendor or unrecognized gateway slug throws before
+  any network call.
+- *Fail-open to the caller:* HTTP and unexpected errors return a structured
+  `{ok: false, error}` rather than throwing — the calling pipeline's bounded
+  retry loop (§3.1) is the recovery mechanism.
+- *Vendor dependency:* a provider changing its response shape breaks only its
+  extractor; the others are untouched (same isolation argument as §8's
+  adapters).
+
+**Efficiency**
+- The network round trip dominates; routing and extraction are O(1) and
+  O(response size). No retries happen at this layer — retry cost is owned and
+  bounded by the callers.
+
+**Potential improvements**
+- Retry-on-truncation at this layer: when `truncated` is true, re-issue once
+  with a raised budget before returning — saves the caller a full repair
+  round trip; costs one extra paid call in the truncated case.
+- Provider fallback chains (try a configured secondary vendor when the
+  primary errors) — availability win; adds configuration surface and
+  divergent-model-behavior risk.
+- Cache identical (system, user, model) calls briefly for idempotent helper
+  uses like image description; inapplicable to creative generation where
+  fresh sampling is the point.
+
+---
+
+## 12. Movement Sonification (Tone.js)
+
+The piece-sound feature, end to end: an optional fourth ```sonic``` block from
+generation (§3), soft-validated and stored per version, then rendered at view
+time by a shared voice engine
+([sonic-controller.js](public/assets/js/sonic-controller.js)) that layers
+ambient, movement, melodic (keys + hand tracking), and live-mic voices.
+Consolidates the side-channel notes in §3 and §4 LEG D.
+
+### 12.1 Sonic-parameter validation — `validate_art_piece_sonic_params()` ([art-piece-generation.php](public/app/helpers/art-piece-generation.php))
+- **Type:** Soft-failing normalization (nearest-member coercion + clamping).
+- **Logic:** Decode the model's JSON; on anything unusable return `null` ("no
+  sound") — never an error, and never a veto over the code blocks (§3 STEP 5).
+  Instrument and scale are coerced to the nearest supported member: strip
+  non-alphanumerics, lowercase, exact match first, then bidirectional
+  substring match, else the default (`synth`/`major`). Tempo is rounded and
+  clamped to 40–220 BPM (default 90); the free-text `feel` is truncated to
+  400 chars. Output is a canonical JSON string, so equality of two parameter
+  sets is string equality (`art_piece_sonic_params_equal()`).
+- **Characteristics:** Total function — every input maps to a valid parameter
+  set or `null`; "approximate rather than fail" as a design rule. O(n).
+
+### 12.2 Feel-text heuristic — `art_piece_sonic_params_from_feel()`
+- **Type:** Keyword-matching heuristic (rule list, first match wins).
+- **Logic:** For admin-entered feel text without a model round trip: scan for
+  scale names (longest/most-specific first, so "mixolydian" wins over
+  "lydian" — the list is ordered to make substring shadowing impossible),
+  instrument synonyms (theremin→fmsynth, bell→metalsynth, drum→
+  membranesynth, …), and tempo — an explicit BPM number in 40–220 if present,
+  else mood words (slow/ambient/drone → 72; fast/urgent/energetic → 128;
+  default 90). The result is passed through §12.1, so the heuristic can never
+  emit an unsupported value.
+
+### 12.3 Shared voice engine — `CreatrSonicController.create()` ([sonic-controller.js](public/assets/js/sonic-controller.js))
+- **Type:** Concurrent independent voice loops (monophonic voices over one
+  master bus).
+- **Logic:** The audio engine — extracted from piece-runtime.js into this
+  shared file — runs up to four *voices* that layer and never suppress one
+  another:
+  - **Ambient** (`ambientStep()`): a continuous scale walk paced only by
+    tempo (`minInterval = (60/tempo)·1000/2`, eighth-note spacing). It is
+    *never* gated on stillness — enabled sound never sits silent, and a test
+    locks this in. Can optionally be replaced by an admin-uploaded audio
+    loop (`ambient_sample`, §12.7).
+  - **Movement** (`movementStep()`): mover displacement per frame gives
+    `speed = hypot(dx,dy,dz)`; below 0.002 nothing fires. Above it, notes
+    are rate-limited to `minInterval`, pitched by scale walk from base
+    MIDI 48 plus `12·octave` where `octave = min(2, floor(|dy|·25))` —
+    vertical motion lifts the register. The mover is the camera for
+    three/aframe, the pointer for interactive canvas pieces, absent
+    otherwise (those pieces get ambient only).
+  - **Melodic**: discrete notes from the on-screen piano keys / letter keys
+    (`attachPianoKeyListener()`) and the hand-tracking theremin (§12.5).
+  - **Mic**: the visitor's live microphone through an effects chain (§12.6).
+  Frequencies via the standard `440·2^((m−69)/12)`; per-voice instrument
+  overrides and octave/filter tuning come from the extras schema (§12.7).
+- **Characteristics:** Each voice is O(1) per tick and independently
+  fail-open; determinism holds per voice given its input trace (motion,
+  keys, hand landmarks), with the layering making the *mix* input-driven.
+
+### 12.4 Iframe relay and autoplay-gated lazy loading — `createPieceRuntimeAudioController()` / `pieceLoadSonicControllerOnce()` ([piece-runtime.js](public/assets/js/piece-runtime.js))
+- **Type:** Gated lazy initialization (once-only promise) over a
+  message-passing handshake.
+- **Logic:** `createPieceRuntimeAudioController()` is now a thin
+  relay/adapter: on first unmute it lazy-loads sonic-controller.js
+  (`pieceLoadSonicControllerOnce()`), which in turn lazy-loads Tone.js
+  (self-hosted; exports bundle both as blob URLs like OrbitControls, §3.4 —
+  with `PluckSynth`→`FMSynth` substituted in bundle mode where the worklet
+  is unavailable), then bridges parent↔iframe `postMessage` for the sound,
+  mic, and effect toggles. Message sources are verified to be the parent
+  window (or the window itself in standalone exports); because the messages
+  originate from a real user click, the browser's autoplay-gesture
+  requirement is satisfied inside the iframe. In exhibit walls only the
+  focused piece sonifies — the controller is torn down and rebuilt when
+  focus moves.
+
+### 12.5 Hand-tracking theremin — `handFrameStep()` / `loadHandLandmarkerOnce()` ([sonic-controller.js](public/assets/js/sonic-controller.js))
+- **Type:** Continuous signal mapping from vision-model landmarks (no
+  gesture classification).
+- **Logic:** MediaPipe `HandLandmarker` (self-hosted vendor bundle + WASM +
+  model under `public/assets/vendor/mediapipe-hands/`, with a CDN fallback
+  on local-load failure and a `creatr-hand-tracking-failed` event if both
+  fail) runs in video mode on one hand per rAF frame. Pitch comes from the
+  wrist's inverted vertical position spread across the configured octave
+  range — `midi = 12·(octaveMin+1) + clamp((1−wrist.y)·semitoneRange,
+  0, semitoneRange)` — and the melodic voice's volume from the wrist↔
+  middle-fingertip spread, mapped −30 dB → 0 dB over spread 0.05–0.35.
+  There is no landmark smoothing; continuity comes from an 80 ms frequency
+  `rampTo` glide, theremin-style. The note attacks when a hand enters the
+  frame and releases when it leaves. Gated on the `voices.hand_tracking`
+  extras flag plus a camera `getUserMedia` grant.
+- **Characteristics:** The vision model is a black-box classifier, but the
+  mapping around it is closed-form and clamped, so out-of-range landmarks
+  can only produce in-range notes. O(1) per frame beyond model inference.
+
+### 12.6 Live mic voice with effects chain — `enableMic()` / `createEffectNode()` / `rebuildMicChain()` ([sonic-controller.js](public/assets/js/sonic-controller.js))
+- **Type:** Audio-graph assembly (ordered pipeline rebuild).
+- **Logic:** A `Tone.UserMedia` node feeds an optional effects chain in a
+  fixed order — distortion, chorus, tremolo, pitch shift, bitcrusher,
+  flanger, ring mod — into the master bus directly (deliberately bypassing
+  the synth-tuned filter), mixing over the other voices. Toggling any
+  effect tears down and rebuilds the whole chain (`rebuildMicChain()`) so
+  ordering is always correct; `createEffectNode()` is the single factory
+  shared with the admin synth-effects chain so the two can't drift. There
+  is no level analysis or metering — a pure processing graph. Off by
+  default, never persisted (it never touches sonic params or the database);
+  unsupported browsers or a denied permission dispatch `creatr-mic-failed`
+  and everything else keeps playing.
+- **Characteristics:** Deterministic graph given the toggle set; rebuild is
+  O(effects). Fail-open by construction.
+
+### 12.7 Sonic extras schema — `validate_art_piece_sonic_extras()` ([art-piece-generation.php](public/app/helpers/art-piece-generation.php))
+- **Type:** Soft-failing normalization (same family as §12.1), for the
+  admin-tuned half of the sound design.
+- **Logic:** Separate from the AI-authored sonic params (§12.1, unchanged),
+  the extras block is admin-edited and validated the same way — every field
+  coerced or defaulted, never an error: `voices.hand_tracking` (default
+  false), a `synth.effects` block (the seven §12.6 effects, each disabled
+  by default with clamped parameters), and `synth.ambient_sample`
+  ({enabled, media_id}) whose media id must pass
+  `MediaFile::isActiveOfKind(id, 'audio')` or the sample soft-fails to off.
+  Audio uploads for the sample come through the §7.3 pipeline: a
+  MIME-sniffed mp3/ogg/wav allowlist, 32 MB cap, gated on the `media_audio`
+  feature flag.
+
+### Recipe Overview — Sonification pipeline
+
+This recipe gives an artwork a voice: as a visitor moves through a piece,
+plays its on-screen keys, raises a hand in front of their camera, or speaks
+into their microphone, sound is produced in a mood the piece's creator
+described in plain words. It exists so sound can be added safely and
+optionally: the description is reduced to a small set of musical parameters
+that are always valid, nothing plays until the visitor asks for it, camera
+and microphone are separate opt-ins, and a piece whose sound data is broken
+simply stays silent rather than failing.
+
+### Recipe Pseudocode — Sonification pipeline
+
+```
+RECIPE Sonic.FeelToSound
+INPUT   a ```sonic``` JSON block from generation (§3) OR admin feel text;
+        admin extras (voices, effects, ambient sample); at view time: the
+        piece's mover (camera | pointer | none), the visitor's toggle
+        gestures (sound, camera, mic)
+OUTPUT  per-version sonic_params + extras at rest; live layered voices
+        while sound is on — or silence, never an error
+
+STEP 1 — NORMALIZE      validate_art_piece_sonic_params() / _extras()
+  IN:    sonic JSON (INPUT; feel text is first mapped by the §12.2
+         keyword heuristic into candidate JSON); admin extras JSON
+  IF JSON unusable THEN RETURN null            // "no sound", never an error
+  instrument ← nearest supported member (exact, then substring, then default)
+  scale      ← nearest supported member (same rule)
+  tempo      ← clamp(round(tempo), 40, 220);  feel ← truncate(feel, 400)
+  extras ← coerce {voices.hand_tracking, synth.effects, ambient_sample}
+           (every field defaulted/clamped; bad media id → sample off)
+  → STEP 2 WITH canonical params + extras
+
+STEP 2 — STORE
+  IN:    canonical params + extras (← STEP 1)
+  version.sonic_params ← params      // column probed; absent column =
+                                     // feature off, no crash
+  → STEP 3 (at view time)
+
+STEP 3 — ARM            (visitor opens the piece; sound stays OFF)
+  IN:    version.sonic_params + extras, engine
+  mover ← camera (three/aframe) | pointer (interactive c2) | none
+  wait for sound-toggle postMessage FROM verified parent window
+  ON unmute: lazy-load sonic-controller.js, then Tone.js
+             (user gesture satisfies autoplay policy)
+  engine ← CreatrSonicController.create(params, extras, mover)
+  → STEP 4
+
+STEP 4 — VOICES         (independent concurrent legs, one tick per frame)
+  IN:    engine (← STEP 3); every note rate-limited to a half-beat
+         (minInterval = (60/tempo)·1000/2)
+  WHILE sound enabled DO
+     PARALLEL DO
+        LEG A (ambient):  midi ← 48 + scale[walk++ mod |scale|]
+                          play(midi)     // continuous, NEVER stillness-gated
+                          // or loop the admin ambient_sample instead
+        LEG B (movement): speed ← |position − previous position|
+                          IF speed ≥ 0.002 THEN
+                             midi ← 48 + scale[walk++ mod |scale|]
+                                    + 12·min(2, floor(|dy|·25))
+                             play(midi)
+                          END IF
+        LEG C (melodic):  piano keys → discrete notes;
+                          IF hand tracking enabled (opt-in camera) THEN
+                             pitch ← (1 − wrist.y) across octave range,
+                             volume ← finger spread, 80 ms glide (§12.5)
+                          END IF
+        LEG D (mic):      IF mic enabled (opt-in) THEN
+                             UserMedia → ordered effects chain → bus (§12.6)
+                          END IF
+     END PARALLEL
+  END WHILE
+  RETURN                          // mute/teardown disposes the voices
+```
+
+### Recipe Instructions — Sonification pipeline
+
+1. When an artwork is generated, the AI may also describe how movement
+   around it should sound — a tempo, a musical scale, and an instrument —
+   optionally guided by the creator's plain-language description of the feel.
+2. The system tidies that description into values it definitely supports:
+   unknown instruments or scales become the closest available ones, and the
+   tempo is kept within a sensible range. If the description is unusable, the
+   piece simply has no sound — that is never treated as an error.
+3. The tidied values are stored with that version of the artwork.
+4. The piece's creator can additionally tune the sound in the admin: turn on
+   hand tracking, enable audio effects, or upload a looping background
+   sample — each setting checked and corrected the same forgiving way.
+5. When a visitor views the piece, sound stays off until they press the sound
+   button; only then is the audio engine loaded and started.
+6. While sound is on, several independent layers play together: a gentle
+   continuous background pattern (or the uploaded sample), notes triggered
+   by the visitor's movement — rising to a higher register with vertical
+   motion — and notes the visitor plays on the on-screen keys.
+7. Two further layers are separate opt-ins with their own permission
+   prompts: raising a hand in front of the camera plays a continuous
+   theremin-like tone (hand height sets the pitch, finger spread the
+   volume), and the visitor's microphone can be mixed in through selectable
+   audio effects. Neither ever turns on by itself, and neither is recorded
+   or stored.
+8. Muting stops everything; in a gallery wall, only the artwork currently in
+   focus makes sound.
+
+### Recipe Diagram — Sonification pipeline
+
+<!-- diagram pending — generate via the diagram thread -->
+![Sonification Pipeline Diagram](diagrams/sonification_pipeline.png)
+
+### Analysis — Sonification pipeline
+
+**Edge cases**
+- Engines with no motion signal (p5, svg, plain canvas) skip the movement
+  voice entirely — the ambient voice is their base soundtrack, and the
+  melodic/mic voices still work.
+- A `sonic_params` column missing on a drifted deployment → the feature
+  reports unsupported and every piece is silent; no crash (probe pattern,
+  §9.6).
+- Scale-name shadowing ("lydian" inside "mixolydian") is prevented by
+  checking longer names first in the §12.2 heuristic.
+- Offline exports play with zero network: sonic-controller.js and Tone.js
+  ship in the bundle as blob URLs, with the one worklet-dependent instrument
+  substituted. Collection bundles can pass `exclude_hand_tracking` to keep
+  the ~19 MB MediaPipe payload out unless a piece actually enables it
+  (`piece_export_version_has_hand_tracking()`).
+- A-Frame's built-in WASD controls are disabled (`disableAFrameWASD()` in
+  both runtimes) so navigation is arrow-keys-only and letter keys are free
+  for the melodic voice's piano mapping — the input namespaces can't
+  collide.
+
+**Failure points**
+- *Fail-open everywhere:* malformed sonic JSON or extras → coerced or null;
+  Tone.js/sonic-controller.js failing to load → the toggle reports
+  unavailable and rendering is unaffected; MediaPipe failing locally falls
+  back to CDN and then to a `creatr-hand-tracking-failed` notice; a denied
+  mic permission dispatches `creatr-mic-failed`; a throwing note trigger is
+  swallowed. Sound can only ever degrade toward silence — it has no path to
+  break the visual piece.
+- *Privacy boundary:* camera frames and mic audio are processed live and
+  never persisted or transmitted; hand tracking and mic are separate
+  per-visitor opt-ins on top of the sound toggle.
+
+**Efficiency**
+- Each voice is O(1) per tick and notes are rate-limited to two per beat
+  regardless of frame rate. Hand tracking adds per-frame model inference —
+  by far the most expensive leg, which is why it is opt-in and single-hand.
+  Tone.js and the MediaPipe payload load once per iframe and only after
+  explicit gestures.
+
+**Potential improvements**
+- Map movement speed to velocity/volume (dynamics), not just note emission —
+  more expressive motion at the same O(1) cost.
+- Let the sonic block optionally specify a base octave/register; today the
+  C3 base is fixed and only vertical motion raises it.
+- Down-sample the hand-tracking inference (e.g. every 2nd–3rd frame with the
+  existing `rampTo` glide bridging the gap) — most of the theremin's
+  continuity already comes from the glide, so this trades little fidelity
+  for a large CPU saving on weak devices.
+- Add light landmark smoothing (one-euro filter) before the pitch mapping if
+  jitter proves audible; costs a small lag the glide currently hides.
+
+---
+
+## 13. Frontend Presentation & Theme Runtime
+
+Smaller client-side algorithms that shape presentation outside the immersive
+gallery. Entry-style: these are self-contained enough not to need full
+recipes, but each is a real algorithm with the standard characteristics.
+
+### 13.1 Celestial star field — [cosmos.js](public/assets/js/cosmos.js)
+- **Type:** Weighted random generation (categorical sampling) + staggered
+  scheduling.
+- **Logic:** Each generated star draws a uniform random number bucketed by
+  stellar-class weights — 8% blue-white (O/B), 14% white (A), 20% golden
+  (F/G), 30% orange (K), 28% red-orange (M) — approximating a real
+  spectral-class distribution, with color and glow per bucket.
+  `staggerGlows()` assigns each artwork card a per-index CSS
+  `animation-delay` of `(i·1.3) mod 11` seconds via injected one-off rules,
+  decorrelating glow pulses without per-card JS timers. The shooting-star
+  system keeps at most one star active and runs its rAF loop *only while a
+  star is alive* — an idle-cost-zero animation loop. All of it is skipped in
+  low-power mode.
+- **Note:** cosmos.js is example/theme content delivered via the database
+  (`custom_js`), not shipped site chrome — fresh deployments don't load it.
+
+### 13.2 Infinite-scroll batch loading — [main.js](public/assets/js/main.js)
+- **Type:** Sentinel-triggered incremental fetching (event-driven paging).
+- **Logic:** `responsiveBatchSize()` sizes each page from the viewport (wider
+  screens fetch bigger batches, keeping rows full); an `IntersectionObserver`
+  on a sentinel element fires the next fetch only when the sentinel scrolls
+  into view — no scroll-position polling — and appends until the source is
+  exhausted. The same file's carousel manages slide lifecycle (activate/
+  deactivate on index change) as a small state machine.
+
+### 13.3 Rich-text iframe embed normalization — [tiptap-editor.js](public/assets/js/tiptap-editor.js)
+- **Type:** Two-form input normalization + attribute allowlisting.
+- **Logic:** `normalizeIframeInput()` accepts either a bare URL or full
+  `<iframe …>` markup: markup is parsed with `DOMParser` and must contain a
+  readable iframe with a non-empty `src` (specific failure messages
+  otherwise); URLs must be site-relative or http(s) (`isIframeSourceUrl()` —
+  anything else, e.g. `javascript:`, is rejected by construction). Surviving
+  embeds keep only a fixed attribute set plus a marker class
+  (`buildIframeAttrs()`), the same allowlist-by-construction shape as §4.9.
+
+---
+
+## 14. Platform Utilities
+
+The small shared predicates and transforms the larger pipelines build on.
+Entry-style; the schema probes here are the primitives §9.6 composes.
+
+### 14.1 Dot-path config traversal — `public_copy_path_get()` / `public_copy_path_set()` ([public-copy.php](public/app/helpers/public-copy.php))
+- **Type:** Recursive descent by key path.
+- **Logic:** Split `a.b.c` on dots and walk the nested copy array; get
+  returns the leaf or a default, set autovivifies intermediate arrays. O(path
+  depth). What makes editable site copy addressable by stable keys (the
+  no-hardcoded-content project convention).
+
+### 14.2 Inline-HTML sanitizer — `public_copy_sanitize_inline_html()` / `public_copy_is_safe_href()`
+- **Type:** Recursive DOM rewrite with tag/attribute/scheme allowlists.
+- **Logic:** Parse into a wrapper DOM node, then post-order-walk: elements
+  outside {a, strong, em, b, i, br, p, span} are unwrapped (children
+  preserved); on kept elements, attributes are stripped except a vetted set,
+  and `href` survives only if site-relative, an anchor, or http(s)/mailto/tel
+  (`public_copy_is_safe_href()` — scheme allowlisting, so `javascript:` URLs
+  are structurally impossible). The PHP twin of §4.9's approach.
+
+### 14.3 Admin navigation gating — `admin_navigation_apply_feature_gating()` / `admin_navigation_is_active()` ([admin-navigation.php](public/app/helpers/admin-navigation.php))
+- **Type:** Predicate filtering + longest-prefix path matching.
+- **Logic:** The admin-side twin of §7.4: drop nav items whose feature flag is
+  disabled; `admin_navigation_is_active()` marks the current section by path
+  comparison so nesting resolves to the most specific match.
+
+### 14.4 Schema existence probes — `ah_table_exists()` / `ah_column_exists()` / `ah_existing_columns()` ([schema.php](public/app/helpers/schema.php))
+- **Type:** Memoized existence predicates (INFORMATION_SCHEMA lookups).
+- **Logic:** One query per probe, memoized per request. These are the runtime
+  half of the §9.6 convergence design: every feature that might predate its
+  table (comments §6, sonic params §12, rate limits §9.2) degrades gracefully
+  by asking these predicates instead of assuming schema.
+
+### 14.5 Connection-failure classification — `ah_is_pdo_connection_failure()` ([database-errors.php](public/app/helpers/database-errors.php))
+- **Type:** Exception classification by SQLSTATE.
+- **Logic:** Distinguishes "the database is unreachable" from "the query is
+  wrong" so callers can choose between a maintenance response and a real
+  error — the decision procedure behind several fail-open choices above.
+
+### 14.6 Env-file parsing — `ah_load_env_file()` ([env.php](public/app/helpers/env.php))
+- **Type:** Line-oriented parsing with precedence.
+- **Logic:** Parse `KEY=value` lines (comments/blanks skipped); process
+  environment always wins over file values — the deterministic precedence
+  that keeps `DB_NAME` overrides working through the shared loader.
+
+### Analysis — Platform utilities (shared)
+
+**Edge cases**
+- Sanitizers (14.2) unwrap rather than delete unknown elements, so pasted
+  content loses markup, not words.
+- Dot-path set (14.1) autovivifies — setting a deep key never requires the
+  intermediate structure to exist.
+
+**Failure points**
+- *Fail-open by design:* the schema probes (14.4) returning false is the
+  degrade signal every optional feature relies on; probe errors surface as
+  "feature absent", never as crashes.
+
+**Efficiency**
+- All O(input size) or O(1) with per-request memoization where a DB query is
+  involved. None of these appear on hot loops.
+
+**Potential improvements**
+- 14.2: use a shared sanitizer profile with §4.9 (one allowlist definition,
+  two renderers) so the PHP and JS sanitizers can't drift apart.
+- 14.4: batch the per-column probes into one `ah_existing_columns()` call at
+  bootstrap for features that check several columns; saves a few queries per
+  request on cold caches.
+
+---
+
 ## Summary by algorithm type (per the source article's taxonomy)
 
 | Type | Where used |
 |---|---|
-| Brute-force | Slug collision probing (§7.1), excerpt truncation (§2.1) |
-| Searching | FULLTEXT/LIKE retrieval (§1.2), snippet term scan (§1.3), patch matching (§3.3, §10), GUID dedup (§2.2), raycasting (§4.4) |
-| Sorting | Delegated to DB indexes (§6.1); single insertion step in reorder (§7.2) |
-| Recursive | Redaction traversal (§9.4), document assembly (§3.4) |
-| Greedy | Live-render budgeting (§4.5), post-text truncation under budget (§8.1), LIKE-branch trade-off (§1.2) |
-| Randomized | LLM generation (§3.1, §10), crypto IVs (§9.1) |
+| Brute-force | Slug collision probing (§7.1), excerpt truncation (§2.1), zip-path collision suffixing (§3.7) |
+| Searching | FULLTEXT/LIKE retrieval (§1.2), snippet term scan (§1.3), patch matching (§3.3, §10), GUID dedup (§2.2), raycasting (§4.4), media-ref harvest (§3.7) |
+| Sorting | Delegated to DB indexes (§6.1); single insertion step in reorder (§7.2); weighted-distance sort for live slots (§4.7) |
+| Recursive | Redaction traversal (§9.4), document assembly (§3.4), DOM sanitizers (§4.9, §13.3, §14.2), dot-path traversal (§14.1) |
+| Greedy | Live-render budgeting + slot selection (§4.5, §4.7), post-text truncation under budget (§8.1), LIKE-branch trade-off (§1.2) |
+| Randomized | LLM generation (§3.1, §10, §11), crypto IVs (§9.1), star-field categorical sampling (§13.1) |
 | Divide and combine | Collection bundle assembly (§5.1) |
 | Counting / windowing | Rate limiting (§9.2) |
-| Geometric (closed-form) | Gallery layout, camera fit, letterboxing (§4.1–4.6) |
-| Protocol / state machine | OAuth flow (§9.5), soft-delete lifecycle (§6.3), schema convergence (§9.6) |
+| Geometric (closed-form) | Gallery layout, camera fit, letterboxing (§4.1–4.6); auto-fit box union (§4.8) |
+| Protocol / state machine | OAuth flow (§9.5), soft-delete lifecycle (§6.3), schema convergence (§9.6), purpose-domain scoping (§3.6), sound-toggle handshake (§12.4) |
+| Strategy / dispatch | Syndication adapters (§8.2), provider transport routing (§11.1), export media-ref dispatch (§3.7), engine bootstrap selection (§3.4) |
+| Normalization / classification | Sonic-parameter coercion (§12.1–12.2), response-shape extraction + truncation classification (§11.3–11.4), model-id normalization (§11.2), blank-frame classifier (§3.5), connection-failure classification (§14.5) |
+| Validation chain | Upload pipeline (§7.3), view-state decode/clamp (§3.8), iframe embed normalization (§13.3) |
+| Heuristic / sampled mapping | Motion→note mapping (§12.3), hand-tracking theremin (§12.5), feel-text keywords (§12.2), auto-fit subject isolation (§4.8) |
+| Pipeline / graph assembly | Mic effects chain rebuild (§12.6), export module-syntax guard (§3.4) |

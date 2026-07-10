@@ -191,6 +191,15 @@ Source: DECISIONS.md 2026-07-03 C2.js Interactive pointer-coordinate fix.
 2026-07-05 DECISION The immersive stage toolbar is shared chrome: markup/CSS live in `public/app/helpers/immersive-chrome.php` (`immersive_stage_toolbar_markup()`/`_css()`), wiring in `setupImmersiveStageChrome()` (immersive-gallery.js). Any new immersive surface or export must use it rather than hand-rolling controls, and controls must stay TOP-anchored so they never overlap the bottom-center iOS "Enable Motion Controls" permission button; the gyro ⟲ toggle mounts into the toolbar's `data-immersive-gyro-slot`. View-button gating: collections=slideshow, p5/svg/non-interactive-c2=single-item overlay (slideshow shell, no Prev/Next), interactive c2=same overlay with interactive iframe, three/aframe=no view button. Export download menus are PNG-only.
 Source: DECISIONS.md 2026-07-05 Shared Top Stage Toolbar session.
 
+# Standing Decisions — Documentation
+
+2026-07-10 DECISION ALGORITHMS.md is the maintained algorithm catalog: new algorithmic code must get a matching section/recipe entry, and function moves/removals must be reflected there.
+The OBJ removal and the sonic-controller extraction had left it stale; source: DECISIONS.md 2026-07-10 audit session.
+
+2026-07-10 DECISION Sonification's audio engine lives in sonic-controller.js as four independent continuous voices; the old stillness-gated idle pattern is intentionally gone and a test locks that in.
+
+2026-07-10 CONSTRAINT ALGORITHMS.md diagrams are AI-generated PNGs from the user's diagram thread; agents leave placeholder paths + pending comments, never generate them.
+
 # Regression Watchlist
 
 2026-06-14 NOTE Admin-view bug pattern: `$content = function () ... ;` produces a Closure that `<?= $content ?>` can't stringify (fatal). Correct pattern: `ob_start(); ... $content = ob_get_clean();`.
