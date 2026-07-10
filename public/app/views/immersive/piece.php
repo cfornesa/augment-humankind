@@ -1095,11 +1095,15 @@ try {
         downloadPngBtn.addEventListener('click', async () => {
             if (downloadPngBtn.disabled) return;
             const filename = downloadPngBtn.dataset.downloadFilename || 'piece.png';
-            const labelEl = downloadPngBtn.querySelector('span') || downloadPngBtn;
-            const originalLabel = labelEl.textContent;
+            const labelEl = downloadPngBtn.querySelector('span');
+            const originalLabel = labelEl ? labelEl.textContent : '';
+            const originalAriaLabel = downloadPngBtn.getAttribute('aria-label') || 'Take screenshot';
             downloadPngBtn.disabled = true;
             downloadPngBtn.setAttribute('aria-busy', 'true');
-            labelEl.textContent = 'Preparing PNG...';
+            downloadPngBtn.setAttribute('aria-label', 'Preparing PNG...');
+            if (labelEl) {
+                labelEl.textContent = 'Preparing PNG...';
+            }
             try {
                 const exported = await captureImmersivePng();
                 const blob = await dl.canvasToBlob(exported);
@@ -1112,7 +1116,10 @@ try {
             } finally {
                 downloadPngBtn.disabled = false;
                 downloadPngBtn.removeAttribute('aria-busy');
-                labelEl.textContent = originalLabel;
+                downloadPngBtn.setAttribute('aria-label', originalAriaLabel);
+                if (labelEl) {
+                    labelEl.textContent = originalLabel;
+                }
             }
         });
     }

@@ -48,6 +48,14 @@ function feature_registry(): array
             'model' => null,
             'admin_href' => '/admin/media',
         ],
+        'media_audio' => [
+            'label' => 'Audio Files',
+            'description' => 'Allow MP3/OGG/WAV uploads in the media library, e.g. for use as a piece\'s ambient voice sample.',
+            'group' => 'pieces',
+            'requires' => [],
+            'model' => null,
+            'admin_href' => '/admin/media',
+        ],
         'exhibits' => [
             'label' => 'Exhibits',
             'description' => 'Native exhibits with carousel media.',

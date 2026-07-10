@@ -266,6 +266,7 @@ class MediaFile
         return match ($kind) {
             'image' => str_starts_with((string) ($row['mime_type'] ?? ''), 'image/'),
             'video' => str_starts_with((string) ($row['mime_type'] ?? ''), 'video/'),
+            'audio' => str_starts_with((string) ($row['mime_type'] ?? ''), 'audio/'),
             default => false,
         };
     }

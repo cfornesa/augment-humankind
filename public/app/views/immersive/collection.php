@@ -1119,11 +1119,15 @@ try {
             if (downloadPngBtn.disabled) return;
             const selected = immersiveViewer?.getSelectedItem?.();
             const filename = selected?.png_filename || downloadPngBtn.dataset.downloadFilename || 'collection-view.png';
-            const labelEl = downloadPngBtn.querySelector('span') || downloadPngBtn;
-            const originalLabel = labelEl.textContent;
+            const labelEl = downloadPngBtn.querySelector('span');
+            const originalLabel = labelEl ? labelEl.textContent : '';
+            const originalAriaLabel = downloadPngBtn.getAttribute('aria-label') || 'Take screenshot';
             downloadPngBtn.disabled = true;
             downloadPngBtn.setAttribute('aria-busy', 'true');
-            labelEl.textContent = 'Preparing PNG...';
+            downloadPngBtn.setAttribute('aria-label', 'Preparing PNG...');
+            if (labelEl) {
+                labelEl.textContent = 'Preparing PNG...';
+            }
             try {
                 const surface = immersiveViewer?.getCaptureSurface?.();
                 if (!surface?.canvas) throw new Error('No downloadable canvas is available yet.');
@@ -1141,7 +1145,10 @@ try {
             } finally {
                 downloadPngBtn.disabled = false;
                 downloadPngBtn.removeAttribute('aria-busy');
-                labelEl.textContent = originalLabel;
+                downloadPngBtn.setAttribute('aria-label', originalAriaLabel);
+                if (labelEl) {
+                    labelEl.textContent = originalLabel;
+                }
             }
         });
     }

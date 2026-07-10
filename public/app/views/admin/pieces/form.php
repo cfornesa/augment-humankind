@@ -675,6 +675,45 @@ if ($engineVal === 'p5') {
                             <input type="range" id="sonic_default_volume" name="sonic_default_volume" min="0" max="100" step="1" value="<?= (int) $sonicExtras['default_volume'] ?>">
                         </div>
 
+                        <?php if (function_exists('feature_enabled') && feature_enabled('media_audio')): ?>
+                        <fieldset class="form-fieldset">
+                            <legend>Ambient sample (admin only — never shown publicly)</legend>
+                            <p class="admin-hint" style="margin-top:0;">Loop an uploaded audio file for the ambient voice instead of a synthesized instrument. Movement and melodic voices are unaffected.</p>
+                            <label class="checkbox-label">
+                                <input type="checkbox" name="sonic_ambient_sample_enabled" value="1" id="sonic_ambient_sample_enabled" <?= $sonicExtras['synth']['ambient_sample']['enabled'] ? 'checked' : '' ?>>
+                                Use uploaded sample for ambient voice
+                            </label>
+                            <div class="field">
+                                <input type="hidden" name="sonic_ambient_sample_media_id" id="sonic_ambient_sample_media_id" value="<?= (int) ($sonicExtras['synth']['ambient_sample']['media_id'] ?? 0) ?>">
+                                <button type="button" class="admin-btn admin-btn-ghost" id="sonic_ambient_sample_choose">Choose audio file</button>
+                                <span id="sonic_ambient_sample_name"></span>
+                                <audio id="sonic_ambient_sample_preview" controls style="display:<?= $sonicExtras['synth']['ambient_sample']['media_id'] ? 'block' : 'none' ?>;margin-top:0.5rem;" <?= $sonicExtras['synth']['ambient_sample']['media_id'] ? 'src="/media/' . (int) $sonicExtras['synth']['ambient_sample']['media_id'] . '"' : '' ?>></audio>
+                            </div>
+                        </fieldset>
+                        <script>
+                        (function () {
+                            var chooseBtn = document.getElementById('sonic_ambient_sample_choose');
+                            var idField = document.getElementById('sonic_ambient_sample_media_id');
+                            var nameEl = document.getElementById('sonic_ambient_sample_name');
+                            var preview = document.getElementById('sonic_ambient_sample_preview');
+                            var enabledCheckbox = document.getElementById('sonic_ambient_sample_enabled');
+                            chooseBtn?.addEventListener('click', function () {
+                                if (!window.openMediaPicker) return;
+                                window.openMediaPicker(function (result) {
+                                    if (!result || !result.id) return;
+                                    idField.value = result.id;
+                                    if (nameEl) nameEl.textContent = result.title || ('Audio #' + result.id);
+                                    if (preview) {
+                                        preview.src = result.url || ('/media/' + result.id);
+                                        preview.style.display = 'block';
+                                    }
+                                    if (enabledCheckbox) enabledCheckbox.checked = true;
+                                }, 'select', { mode: 'audio' });
+                            });
+                        })();
+                        </script>
+                        <?php endif; ?>
+
                         <fieldset class="form-fieldset">
                             <legend>Synth controls (admin only — never shown publicly)</legend>
                             <div class="field-grid">

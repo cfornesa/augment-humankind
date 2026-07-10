@@ -1388,8 +1388,13 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
   const soundHandToggle = root.querySelector("[data-immersive-sound-hand-toggle]");
   const voicePickerRows = root.querySelectorAll("[data-immersive-voice-picker-row]");
   const voicePickerSelects = root.querySelectorAll("[data-immersive-voice-picker-select]");
+  const micRow = root.querySelector("[data-immersive-mic-row]");
+  const micToggle = root.querySelector("[data-immersive-mic-toggle]");
+  const micFxWrap = root.querySelector("[data-immersive-mic-fx]");
+  const micFxToggles = root.querySelectorAll("[data-immersive-mic-fx-toggle]");
   const getAudioController = typeof options.getAudioController === "function" ? options.getAudioController : () => null;
   let detachPianoKeyListener = null;
+  let micSupportChecked = false;
 
   function isSoundPanelOpen() {
     return !!soundPanel && !soundPanel.hidden;
@@ -1412,9 +1417,16 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
     if (pianoOctaveDisplay) pianoOctaveDisplay.textContent = String(ctrl.getOctave());
     if (soundHandRow) soundHandRow.hidden = !voices.hand_tracking;
     if (soundHandToggle) soundHandToggle.setAttribute("aria-pressed", ctrl.getInputMode() === "hand" ? "true" : "false");
+    if (!micSupportChecked) {
+      micSupportChecked = true;
+      if (micRow) micRow.hidden = !ctrl.isMicSupported();
+    }
+    if (micToggle) micToggle.setAttribute("aria-pressed", ctrl.isMicEnabled() ? "true" : "false");
+    if (micFxWrap) micFxWrap.hidden = !ctrl.isMicEnabled();
+    const ambientIsSample = ctrl.isAmbientSample();
     voicePickerRows.forEach((row) => {
       const voiceName = row.dataset.immersiveVoicePickerRow;
-      row.hidden = !voices[voiceName];
+      row.hidden = !voices[voiceName] || (voiceName === "ambient" && ambientIsSample);
     });
     voicePickerSelects.forEach((select) => {
       select.value = ctrl.getVoiceInstrument(select.dataset.voice);
@@ -1487,6 +1499,25 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
     syncSoundPanel();
   };
 
+  const onMicToggle = async () => {
+    const ctrl = getAudioController();
+    if (!ctrl) return;
+    if (ctrl.isMicEnabled()) {
+      ctrl.disableMic();
+    } else {
+      // getUserMedia's own permission prompt is the user gesture here; on
+      // denial/error this silently stays off, same as hand-tracking above.
+      await ctrl.enableMic();
+    }
+    syncSoundPanel();
+  };
+
+  const onMicFxToggle = (event) => {
+    const checkbox = event.target;
+    if (!(checkbox instanceof Element) || !checkbox.matches("[data-immersive-mic-fx-toggle]")) return;
+    getAudioController()?.setMicEffect(checkbox.dataset.effect, checkbox.checked);
+  };
+
   const onPianoKeysClick = (event) => {
     if (!(event.target instanceof Element)) return;
     const keyBtn = event.target.closest("[data-immersive-piano-key]");
@@ -1537,6 +1568,8 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
   pianoOctaveDown?.addEventListener("click", onPianoOctaveDown);
   pianoOctaveUp?.addEventListener("click", onPianoOctaveUp);
   soundHandToggle?.addEventListener("click", onSoundHandToggle);
+  micToggle?.addEventListener("click", onMicToggle);
+  micFxToggles.forEach((checkbox) => checkbox.addEventListener("change", onMicFxToggle));
   voicePickerSelects.forEach((select) => select.addEventListener("change", onVoicePickerChange));
   if (soundPanelTrigger && soundPanel) {
     document.addEventListener("pointerdown", onSoundDocumentPointerDown, { capture: true });
@@ -1563,6 +1596,8 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
       pianoOctaveDown?.removeEventListener("click", onPianoOctaveDown);
       pianoOctaveUp?.removeEventListener("click", onPianoOctaveUp);
       soundHandToggle?.removeEventListener("click", onSoundHandToggle);
+      micToggle?.removeEventListener("click", onMicToggle);
+      micFxToggles.forEach((checkbox) => checkbox.removeEventListener("change", onMicFxToggle));
       voicePickerSelects.forEach((select) => select.removeEventListener("change", onVoicePickerChange));
       detachPianoKeyListener?.();
       detachPianoKeyListener = null;
@@ -2280,6 +2315,13 @@ function createAudioController(sonicParams, stageEl, opts = {}) {
       const overrides = readVoiceInstrumentOverrides(pieceId);
       return overrides[voiceName] || (sonicParams && sonicParams.instrument) || "synth";
     },
+    // A sample-backed ambient voice has no meaningful synth-instrument
+    // choice — UI surfaces use this to hide/disable that dropdown outright.
+    isAmbientSample() {
+      if (engine) return engine.isAmbientSample();
+      const s = sonicParams && sonicParams.extras && sonicParams.extras.synth && sonicParams.extras.synth.ambient_sample;
+      return !!(s && s.enabled && s.media_id);
+    },
     attachPianoKeyListener(onNoteStateChange) { return engine ? window.CreatrSonicController.attachPianoKeyListener(engine, onNoteStateChange) : () => {}; },
     async enableHandTracking() {
       if (opts.allowHandTracking === false) return false;
@@ -2288,6 +2330,21 @@ function createAudioController(sonicParams, stageEl, opts = {}) {
       return engine.enableHandTracking();
     },
     disableHandTracking() { if (engine) engine.disableHandTracking(); },
+    // Live human-voice input (mic) — visitor-facing, off by default, never
+    // persisted. isMicSupported() is a plain feature check that works
+    // before the engine/Tone.js exist, so the UI can decide whether to
+    // reveal the toggle at all before the visitor has ever unmuted.
+    isMicSupported() {
+      return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+    },
+    isMicEnabled: () => (engine ? engine.isMicEnabled() : false),
+    async enableMic() {
+      const ok = await ensureEnabled();
+      if (!ok || !engine) return false;
+      return engine.enableMic();
+    },
+    disableMic() { if (engine) engine.disableMic(); },
+    setMicEffect(key, enabled, params) { return engine ? engine.setMicEffect(key, enabled, params) : false; },
     dispose() {
       disposed = true;
       if (attachListener && toggleBtn) toggleBtn.removeEventListener("click", toggleEnabled);

@@ -148,6 +148,7 @@ function createPieceRuntimeAudioController(sonicParams, getMover) {
   // its popover can hide the keyboard/hand-tracking controls accordingly.
   (function notifyParentVoices() {
     const voices = (sonicParams.extras && sonicParams.extras.voices) || {};
+    const ambientSample = (sonicParams.extras && sonicParams.extras.synth && sonicParams.extras.synth.ambient_sample) || {};
     try {
       if (window.parent && window.parent !== window) {
         window.parent.postMessage({
@@ -158,6 +159,8 @@ function createPieceRuntimeAudioController(sonicParams, getMover) {
             melodic: voices.melodic !== false,
             hand_tracking: !!voices.hand_tracking,
           },
+          ambientIsSample: !!(ambientSample.enabled && ambientSample.media_id),
+          micSupported: !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia),
         }, '*');
       }
     } catch (_) {}
@@ -251,12 +254,36 @@ function createPieceRuntimeAudioController(sonicParams, getMover) {
       });
       return;
     }
+    if (data.type === 'creatr-sound-mic-toggle') {
+      if (!data.enabled) {
+        engine?.disableMic();
+        notifyParentMicState(false);
+        return;
+      }
+      ensureEnabled().then(async (ok) => {
+        const micOk = ok && engine ? await engine.enableMic() : false;
+        notifyParentMicState(micOk);
+      });
+      return;
+    }
+    if (data.type === 'creatr-sound-mic-fx') {
+      engine?.setMicEffect(data.effect, data.enabled);
+      return;
+    }
   }
 
   function notifyParentHandState(on) {
     try {
       if (window.parent && window.parent !== window) {
         window.parent.postMessage({ type: 'creatr-sound-hand-state', enabled: !!on }, '*');
+      }
+    } catch (_) {}
+  }
+
+  function notifyParentMicState(on) {
+    try {
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({ type: 'creatr-sound-mic-state', enabled: !!on }, '*');
       }
     } catch (_) {}
   }
@@ -271,6 +298,12 @@ function createPieceRuntimeAudioController(sonicParams, getMover) {
 
   // Inline sound toggle button for the standalone (file://) exported HTML,
   // where there is no parent hosting the iframe — root document owns UI.
+  // Confirmed dead in practice: piece-runtime.js is only ever loaded inside
+  // an iframe in this codebase, so `window.parent === window` never holds
+  // and this whole branch never executes. Left as-is rather than deleted;
+  // NOT extended with mic UI — the real downloaded-export mic UI lives in
+  // piece_export_sonic_script()'s mountUi() in piece-render.php, which is
+  // what /pieces/{id}/download actually ships.
   let toggleBtn = document.querySelector('[data-creatr-piece-sound-toggle]');
   let standaloneKeyboardToggle = null, standaloneKeysWrap = null, standaloneOctaveDisplay = null;
   let detachStandalonePianoKeys = null;

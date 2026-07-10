@@ -650,6 +650,27 @@ function validate_art_piece_sonic_extras(mixed $decoded): array
     $ringModFreq = is_numeric($ringModFreq) ? (float) $ringModFreq : 440.0;
     $ringModFreq = max(1.0, min(5000.0, $ringModFreq));
 
+    // Admin-selected uploaded audio file to loop as the ambient voice,
+    // instead of a synthesized instrument (sonic-controller.js builds a
+    // Tone.Player for it when enabled). A separate field from `instrument`
+    // (not an overload of it) so every SONIC_INSTRUMENTS-keyed code path —
+    // the visitor-facing per-voice instrument picker, buildVoice(),
+    // localStorage overrides — stays untouched for movement/melodic and for
+    // any piece that doesn't opt in. media_id is only kept if it actually
+    // refers to an existing, active, audio-kind media file; otherwise
+    // silently dropped back to "off" rather than erroring, matching this
+    // function's general fail-safe-to-default posture.
+    $ambientSampleIn = is_array($synthIn['ambient_sample'] ?? null) ? $synthIn['ambient_sample'] : [];
+    $ambientSampleMediaId = $ambientSampleIn['media_id'] ?? null;
+    $ambientSampleMediaId = is_numeric($ambientSampleMediaId) ? (int) $ambientSampleMediaId : null;
+    if ($ambientSampleMediaId !== null && $ambientSampleMediaId <= 0) {
+        $ambientSampleMediaId = null;
+    }
+    if ($ambientSampleMediaId !== null && class_exists('MediaFile') && !MediaFile::isActiveOfKind($ambientSampleMediaId, 'audio')) {
+        $ambientSampleMediaId = null;
+    }
+    $ambientSampleEnabled = (bool) ($ambientSampleIn['enabled'] ?? false) && $ambientSampleMediaId !== null;
+
     return [
         'default_volume' => $volume,
         'voices' => [
@@ -672,6 +693,10 @@ function validate_art_piece_sonic_extras(mixed $decoded): array
                 'bitcrusher' => ['enabled' => (bool) ($bitcrusherIn['enabled'] ?? false), 'bits' => $bits],
                 'flanger' => ['enabled' => (bool) ($flangerIn['enabled'] ?? false), 'depth' => $flangerDepth, 'rate' => $flangerRate, 'feedback' => $flangerFeedback],
                 'ring_mod' => ['enabled' => (bool) ($ringModIn['enabled'] ?? false), 'frequency' => $ringModFreq],
+            ],
+            'ambient_sample' => [
+                'enabled' => $ambientSampleEnabled,
+                'media_id' => $ambientSampleMediaId,
             ],
         ],
     ];

@@ -127,6 +127,20 @@ function immersive_stage_toolbar_css(): string
   font-size: 0.78rem;
   padding: 0.3rem 0.5rem;
 }
+.immersive-mic-fx-wrap {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.3rem 0.6rem;
+}
+.immersive-mic-fx-wrap[hidden] {
+  display: none !important;
+}
+.immersive-mic-fx-label {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+}
 .immersive-piano-keys[hidden] {
   display: none;
 }
@@ -440,6 +454,38 @@ function immersive_stage_voice_instrument_picker_markup(string $cssPrefix = 'imm
     return $html;
 }
 
+/**
+ * Renders the live human-voice input (mic) row plus its effects sub-panel —
+ * a fourth audio layer mixed on top of the piece's own ambient/movement/
+ * melodic voices, purely visitor-facing (session-local, off by default,
+ * never persisted). Follows the same per-surface `$cssPrefix`/`$dataPrefix`
+ * parameterization as immersive_stage_voice_instrument_picker_markup()
+ * above so it can be reused verbatim in the regular view's popover.
+ * The mic row itself is always rendered `hidden` — JS reveals it only when
+ * CreatrSonicController's isMicSupported() check passes, so an unsupported
+ * browser (or, in principle, a `file://` context lacking
+ * navigator.mediaDevices) never shows a control that would just fail.
+ */
+function immersive_stage_mic_panel_markup(string $cssPrefix = 'immersive-mic', string $dataPrefix = 'data-immersive-mic', string $rowClass = 'immersive-stage-sound-row', string $toggleClass = 'immersive-stage-sound-keyboard-toggle'): string
+{
+    $effects = [
+        'distortion' => 'Distortion', 'chorus' => 'Chorus', 'tremolo' => 'Tremolo',
+        'pitch_shift' => 'Pitch shift', 'bitcrusher' => 'Bitcrusher',
+        'flanger' => 'Flanger', 'ring_mod' => 'Ring mod',
+    ];
+
+    $html = '<div class="' . $rowClass . '" ' . $dataPrefix . '-row hidden>'
+        . '<span>Microphone</span>'
+        . '<button type="button" class="' . $toggleClass . '" ' . $dataPrefix . '-toggle aria-pressed="false">Live mic</button>'
+        . '</div>';
+    $html .= '<div class="' . $cssPrefix . '-fx-wrap" ' . $dataPrefix . '-fx hidden>';
+    foreach ($effects as $key => $label) {
+        $html .= '<label class="' . $cssPrefix . '-fx-label"><input type="checkbox" ' . $dataPrefix . '-fx-toggle data-effect="' . $key . '"> ' . $label . '</label>';
+    }
+    $html .= '</div>';
+    return $html;
+}
+
 function immersive_stage_toolbar_attrs(array $attrs): string
 {
     $out = '';
@@ -574,6 +620,7 @@ function immersive_stage_toolbar_markup(array $opts = []): string
                 . '<span>Hand-tracking</span>'
                 . '<button type="button" class="immersive-stage-sound-keyboard-toggle" data-immersive-sound-hand-toggle aria-pressed="false">Camera theremin</button>'
                 . '</div>';
+            $html .= immersive_stage_mic_panel_markup();
             $html .= '</div>'; // .immersive-stage-sound-panel
             $html .= '</div>'; // .immersive-stage-sound-wrap
         }

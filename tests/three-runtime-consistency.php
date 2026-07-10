@@ -197,6 +197,18 @@ test('mountExhibitWall sonifies only the camera-focused item, rebinding as focus
     assert_contains($immersiveSrc, 'audioController?.dispose();');
 });
 
+test('ambient voice ticks continuously and is never gated behind a stillness timer', function () {
+    // Regression guard: ambientStep() previously suppressed all ambient
+    // notes for 2s of continued motion plus a 2s IDLE_GAP_MS cooldown after
+    // motion stopped. Both lastMotionAt and IDLE_GAP_MS were removed
+    // entirely so ambient always ticks on its own minInterval cadence,
+    // layered with (never suppressed by) the movement voice.
+    $sonicSrc = file_get_contents(__DIR__ . '/../public/assets/js/sonic-controller.js');
+    assert_not_contains($sonicSrc, 'lastMotionAt');
+    assert_not_contains($sonicSrc, 'IDLE_GAP_MS');
+    assert_contains($sonicSrc, 'if (now - lastIdleNoteAt >= minInterval) {');
+});
+
 test('collection views/exports pass each item\'s own sonicParams and gate the sound toggle on any item having one', function () {
     $collectionView = file_get_contents(__DIR__ . '/../public/app/views/immersive/collection.php');
     assert_contains($collectionView, '$sonicParamsDecoded = !empty($version[\'sonic_params\'])');
@@ -1002,6 +1014,44 @@ test('Three.js gyro controls wait for real angles and calibrate first yaw to the
     assert_contains($immersive, 'baselineQuat.copy(camera.quaternion)');
     assert_contains($immersive, 'if (hasDeviceOrientationAngles(deviceControls))');
     assert_contains($immersive, 'deviceControls.alphaOffset = bestOffset');
+});
+
+echo "\n=== live human-voice input (mic) — consistency across UI surfaces ===\n";
+
+test('sonic-controller.js exposes the mic engine API', function () {
+    $sonicSrc = file_get_contents(__DIR__ . '/../public/assets/js/sonic-controller.js');
+    assert_contains($sonicSrc, 'isMicSupported: function ()');
+    assert_contains($sonicSrc, 'enableMic: enableMic');
+    assert_contains($sonicSrc, 'disableMic: disableMic');
+    assert_contains($sonicSrc, 'setMicEffect: function (key, enabled, params)');
+    // Mic must default off and never be gated by inputMode/enabled state
+    // persistence — dispose() must always tear it down.
+    assert_contains($sonicSrc, 'disableMic();');
+});
+
+test('mic toggle + effects markup is present in both live UI surfaces (immersive-chrome.php shared markup and the ZIP export mountUi())', function () {
+    $chrome = file_get_contents(__DIR__ . '/../public/app/helpers/immersive-chrome.php');
+    assert_contains($chrome, 'function immersive_stage_mic_panel_markup');
+    assert_contains($chrome, "'-toggle aria-pressed=\"false\">Live mic</button>'");
+    assert_contains($chrome, 'immersive_stage_mic_panel_markup()'); // mounted in the immersive toolbar
+
+    $render = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
+    assert_contains($render, "micToggle.textContent = 'Live mic';");
+    assert_contains($render, 'engine.setMicEffect(key, checkbox.checked)');
+    assert_contains($render, 'micOk = ok && engine ? await engine.enableMic() : false;');
+
+    $show = file_get_contents(__DIR__ . '/../public/app/views/pieces/show.php');
+    assert_contains($show, "immersive_stage_mic_panel_markup('piece-mic', 'data-piece-mic'");
+});
+
+test('piece-runtime.js relays mic toggle/effect postMessages and reports mic support to the parent', function () {
+    $runtime = file_get_contents(__DIR__ . '/../public/assets/js/piece-runtime.js');
+    assert_contains($runtime, "data.type === 'creatr-sound-mic-toggle'");
+    assert_contains($runtime, "data.type === 'creatr-sound-mic-fx'");
+    assert_contains($runtime, 'micSupported:');
+    // The dead standalone-panel branch must stay dead — not silently grown
+    // a second mic implementation that could drift from the real one.
+    assert_contains($runtime, 'NOT extended with mic UI');
 });
 
 echo "\n=== Results ===\n";

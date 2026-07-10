@@ -124,6 +124,7 @@ $pieceFullscreenScriptVersion = (int) @filemtime(dirname(__DIR__, 3) . '/assets/
                             <button type="button" class="piece-sound-keyboard-toggle" data-piece-sound-hand-toggle aria-pressed="false">Camera theremin</button>
                         </div>
                         <?php endif; ?>
+                        <?= immersive_stage_mic_panel_markup('piece-mic', 'data-piece-mic', 'piece-sound-row', 'piece-sound-keyboard-toggle') ?>
                     </div>
                 </div>
                 <?php endif; ?>

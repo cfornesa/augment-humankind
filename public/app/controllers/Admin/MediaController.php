@@ -24,13 +24,14 @@ class MediaAdminController
         $id = (int) $file['id'];
         $mime = (string) ($file['mime_type'] ?? '');
         $isVideo = str_starts_with($mime, 'video/');
+        $isAudio = str_starts_with($mime, 'audio/');
         $isHtml = $mime === 'text/html' || str_starts_with($mime, 'iframe');
         $isModel = str_starts_with($mime, 'model/');
-        $posterUrl = $isVideo ? self::nativePosterUrl($file) : null;
+        $posterUrl = ($isVideo || $isAudio) ? self::nativePosterUrl($file) : null;
 
         return $file + [
             'source' => 'file',
-            'preview' => $isVideo ? $posterUrl : ($isHtml || $isModel ? null : '/image/' . $id),
+            'preview' => ($isVideo || $isAudio) ? $posterUrl : ($isHtml || $isModel ? null : '/image/' . $id),
             'direct_url' => '/media/' . $id,
             'label' => trim((string) ($file['title'] ?? '')) !== '' ? (string) $file['title'] : ('Asset #' . $id),
             'alt_text_supported' => MediaFile::supportsAltText(),
@@ -46,6 +47,8 @@ class MediaAdminController
         $mime = (string) ($file['mime_type'] ?? '');
         if (str_starts_with($mime, 'video/')) {
             $kind = 'video';
+        } elseif (str_starts_with($mime, 'audio/')) {
+            $kind = 'audio';
         } elseif ($mime === 'text/html' || str_starts_with($mime, 'iframe')) {
             $kind = 'iframe';
         } elseif (str_starts_with($mime, 'model/')) {
@@ -235,13 +238,14 @@ class MediaAdminController
 
         $posterMediaId = (int) ($_POST['poster_media_file_id'] ?? 0);
         $posterMediaId = $posterMediaId > 0 ? $posterMediaId : null;
-        if (str_starts_with((string) ($row['mime_type'] ?? ''), 'video/')) {
+        $rowMime = (string) ($row['mime_type'] ?? '');
+        if (str_starts_with($rowMime, 'video/') || str_starts_with($rowMime, 'audio/')) {
             if ($posterMediaId !== null && !MediaFile::supportsPosterMediaFileId()) {
-                echo json_encode(['ok' => false, 'error' => 'Video posters aren\'t supported until the media schema migration is applied.']);
+                echo json_encode(['ok' => false, 'error' => 'Posters aren\'t supported until the media schema migration is applied.']);
                 exit;
             }
             if ($posterMediaId !== null && !MediaFile::isActiveOfKind($posterMediaId, 'image')) {
-                echo json_encode(['ok' => false, 'error' => 'Video posters must be image assets.']);
+                echo json_encode(['ok' => false, 'error' => 'Posters must be image assets.']);
                 exit;
             }
         } else {
@@ -387,11 +391,12 @@ class MediaAdminController
             header('Location: /admin/media');
             exit;
         }
-        if (str_starts_with((string) ($row['mime_type'] ?? ''), 'video/')) {
+        $rowMime = (string) ($row['mime_type'] ?? '');
+        if (str_starts_with($rowMime, 'video/') || str_starts_with($rowMime, 'audio/')) {
             if ($posterMediaId !== null && !MediaFile::supportsPosterMediaFileId()) {
                 if (self::wantsJson()) {
                     header('Content-Type: application/json');
-                    echo json_encode(['ok' => false, 'error' => 'Video posters aren\'t supported until the media schema migration is applied.']);
+                    echo json_encode(['ok' => false, 'error' => 'Posters aren\'t supported until the media schema migration is applied.']);
                     exit;
                 }
                 header('Location: /admin/media?warning=' . urlencode('media-poster-unavailable'));
@@ -400,7 +405,7 @@ class MediaAdminController
             if ($posterMediaId !== null && !MediaFile::isActiveOfKind($posterMediaId, 'image')) {
                 if (self::wantsJson()) {
                     header('Content-Type: application/json');
-                    echo json_encode(['ok' => false, 'error' => 'Video posters must be image assets.']);
+                    echo json_encode(['ok' => false, 'error' => 'Posters must be image assets.']);
                     exit;
                 }
                 header('Location: /admin/media');

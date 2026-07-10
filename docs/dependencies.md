@@ -477,6 +477,11 @@
   entirely unaffected.
 - **Self-hosting alternative:** N/A — already self-hosted (not loaded from
   Google's `storage.googleapis.com`/CDN at runtime).
+- **Runtime Fallbacks (for downloaded exports):** When opened via `file://` or if local assets fail to load/fetch due to browser CORS or sandbox constraints, the runtime attempts a fallback to CORS-enabled public CDNs:
+  - Tone.js falls back to CDNjs: `https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js`
+  - MediaPipe Tasks-Vision falls back to jsDelivr: `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/...`
+  - MediaPipe Task Model falls back to Google: `https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task`
+  If both local and CDN paths fail (or if `getUserMedia` is blocked due to secure-context rules), a premium notification banner is displayed instructing the user on how to run a local HTTP server.
 - **Update procedure:** Re-download `vision_bundle.mjs`,
   `vision_wasm_internal.js`/`.wasm` from the pinned `@mediapipe/tasks-vision`
   npm version (via jsDelivr, e.g.
@@ -485,3 +490,4 @@
   `https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task`,
   replacing the files under `public/assets/vendor/mediapipe-hands/` and
   re-verifying the camera-permission flow and export bundling.
+

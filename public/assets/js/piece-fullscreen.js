@@ -162,6 +162,10 @@
     const pianoOctaveUp = root.querySelector('[data-piece-piano-octave-up]');
     const voicePickerRows = root.querySelectorAll('[data-piece-voice-picker-row]');
     const voicePickerSelects = root.querySelectorAll('[data-piece-voice-picker-select]');
+    const micRow = root.querySelector('[data-piece-mic-row]');
+    const micToggle = root.querySelector('[data-piece-mic-toggle]');
+    const micFxWrap = root.querySelector('[data-piece-mic-fx]');
+    const micFxToggles = root.querySelectorAll('[data-piece-mic-fx-toggle]');
     const pieceId = root.dataset.pieceId || null;
     if (!panelTrigger || !panel) {
         return;
@@ -203,7 +207,8 @@
         if (panelKeyboardRow) panelKeyboardRow.hidden = !event.data.voices.melodic;
         const overrides = readVoiceInstrumentOverrides();
         voicePickerRows.forEach((row) => {
-            row.hidden = !event.data.voices[row.dataset.pieceVoicePickerRow];
+            const voiceName = row.dataset.pieceVoicePickerRow;
+            row.hidden = !event.data.voices[voiceName] || (voiceName === 'ambient' && event.data.ambientIsSample);
         });
         voicePickerSelects.forEach((select) => {
             const voiceName = select.dataset.voice;
@@ -212,6 +217,7 @@
                 frame.contentWindow?.postMessage({ type: 'creatr-sound-voice-instrument', voice: voiceName, instrument: overrides[voiceName] }, '*');
             }
         });
+        if (micRow) micRow.hidden = !event.data.micSupported;
     });
 
     voicePickerSelects.forEach((select) => {
@@ -341,6 +347,27 @@
             return;
         }
         panelHandToggle?.setAttribute('aria-pressed', event.data.enabled ? 'true' : 'false');
+    });
+
+    // Live human-voice input (mic) — visitor-facing, off by default, never
+    // persisted. Same postMessage-relay pattern as hand-tracking above.
+    micToggle?.addEventListener('click', () => {
+        const nextOn = micToggle.getAttribute('aria-pressed') !== 'true';
+        frame.contentWindow?.postMessage({ type: 'creatr-sound-mic-toggle', enabled: nextOn }, '*');
+    });
+
+    micFxToggles.forEach((checkbox) => {
+        checkbox.addEventListener('change', () => {
+            frame.contentWindow?.postMessage({ type: 'creatr-sound-mic-fx', effect: checkbox.dataset.effect, enabled: checkbox.checked }, '*');
+        });
+    });
+
+    window.addEventListener('message', (event) => {
+        if (event.source !== frame.contentWindow || !event.data || event.data.type !== 'creatr-sound-mic-state') {
+            return;
+        }
+        micToggle?.setAttribute('aria-pressed', event.data.enabled ? 'true' : 'false');
+        if (micFxWrap) micFxWrap.hidden = !event.data.enabled;
     });
 
     document.addEventListener('pointerdown', (event) => {

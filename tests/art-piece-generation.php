@@ -1648,6 +1648,77 @@ test('piece export document keeps Three, A-Frame, and C2 interactive in download
     assert_contains($c2Document, 'window.sketch({ c2: window.c2, canvas, startFrame, loadImage, drawImage, drawImageCover })');
 });
 
+echo "\n=== validate_art_piece_sonic_extras (ambient_sample) ===\n";
+
+test('ambient_sample defaults to disabled with no media_id when absent', function () {
+    $extras = validate_art_piece_sonic_extras(null);
+    assert_true($extras['synth']['ambient_sample']['enabled'] === false, 'expected ambient_sample disabled by default');
+    assert_true($extras['synth']['ambient_sample']['media_id'] === null, 'expected null media_id by default');
+});
+
+test('ambient_sample coerces a numeric-string media_id to int', function () {
+    $extras = validate_art_piece_sonic_extras(['synth' => ['ambient_sample' => ['enabled' => true, 'media_id' => '42']]]);
+    assert_true($extras['synth']['ambient_sample']['media_id'] === 42, 'expected media_id coerced to int 42');
+});
+
+test('ambient_sample rejects a non-positive media_id', function () {
+    $extras = validate_art_piece_sonic_extras(['synth' => ['ambient_sample' => ['enabled' => true, 'media_id' => 0]]]);
+    assert_true($extras['synth']['ambient_sample']['media_id'] === null, 'expected zero media_id dropped to null');
+    assert_true($extras['synth']['ambient_sample']['enabled'] === false, 'expected enabled forced false when media_id is invalid');
+
+    $extrasNegative = validate_art_piece_sonic_extras(['synth' => ['ambient_sample' => ['enabled' => true, 'media_id' => -5]]]);
+    assert_true($extrasNegative['synth']['ambient_sample']['media_id'] === null, 'expected negative media_id dropped to null');
+});
+
+test('ambient_sample forces enabled false when media_id is missing even if enabled is truthy', function () {
+    $extras = validate_art_piece_sonic_extras(['synth' => ['ambient_sample' => ['enabled' => true]]]);
+    assert_true($extras['synth']['ambient_sample']['enabled'] === false, 'expected enabled forced false with no media_id');
+});
+
+test('ambient_sample rejects a non-numeric media_id', function () {
+    $extras = validate_art_piece_sonic_extras(['synth' => ['ambient_sample' => ['enabled' => true, 'media_id' => 'not-a-number']]]);
+    assert_true($extras['synth']['ambient_sample']['media_id'] === null, 'expected non-numeric media_id dropped to null');
+});
+
+test('hand-tracking bundle export includes MediaPipe, fallback loading, and troubleshooting banner', function () {
+    $piece = ['id' => 110, 'title' => 'Hand Tracking Bundle Piece', 'engine' => 'c2'];
+    $version = [
+        'engine' => 'c2',
+        'generation_mode' => 'c2_interactive',
+        'html_code' => '<canvas id="piece-canvas"></canvas>',
+        'css_code' => '#piece-canvas{width:100%;height:100%;}',
+        'generated_code' => 'window.sketch = ({ canvas, startFrame }) => { canvas.addEventListener("pointermove", () => {}); startFrame(() => {}); };',
+        'sonic_params' => '{"tempo":90,"scale":"minor","instrument":"synth","enabled":true,"extras":{"voices":{"hand_tracking":{"enabled":true}}}}',
+    ];
+
+    $bundle = piece_export_bundle($piece, $version);
+    $zip = new ZipArchive();
+    $zip->open($bundle['path']);
+    $index = $zip->getFromName('index.html');
+    $visionBundle = $zip->getFromName('runtime/mediapipe-hands/vision_bundle.mjs');
+    $sonicController = $zip->getFromName('runtime/sonic-controller.js');
+    $zip->close();
+    unlink($bundle['path']);
+
+    // Verify MediaPipe files are present in the ZIP
+    assert_true(is_string($visionBundle) && strlen($visionBundle) > 1000, 'Expected bundled vision_bundle.mjs runtime file.');
+
+    // Verify index.html contains event listeners and troubleshooting UI function
+    assert_contains($index, 'showOfflineTroubleshooting');
+    assert_contains($index, 'creatr-hand-tracking-failed');
+    assert_contains($index, 'creatr-mic-failed');
+    assert_contains($index, 'npx http-server .');
+
+    // Verify sonic-controller.js contains local-first Try/Catch block and fallbacks
+    assert_contains($sonicController, 'Local MediaPipe assets failed to load. Attempting CDN fallback...');
+    assert_contains($sonicController, 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/wasm/');
+    assert_contains($sonicController, 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/');
+    assert_contains($sonicController, 'creatr-hand-tracking-failed');
+    assert_contains($sonicController, 'creatr-mic-failed');
+    assert_contains($sonicController, 'Local Tone.js failed to load. Attempting CDN fallback...');
+    assert_contains($sonicController, 'https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js');
+});
+
 echo "\n=== Results ===\n";
 echo "Passed: {$passed}\n";
 echo "Failed: {$failed}\n";

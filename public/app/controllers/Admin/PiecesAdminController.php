@@ -772,6 +772,10 @@ class PiecesAdminController
                         'frequency' => $_POST['sonic_fx_ring_mod_frequency'] ?? null,
                     ],
                 ],
+                'ambient_sample' => [
+                    'enabled' => isset($_POST['sonic_ambient_sample_enabled']),
+                    'media_id' => $_POST['sonic_ambient_sample_media_id'] ?? null,
+                ],
             ],
         ]);
     }

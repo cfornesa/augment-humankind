@@ -1299,18 +1299,30 @@ function initMediaPicker() {
       }
     }
 
-    if (currentMode === 'media') {
-      // media_models (gated server-side via layout.php's data-media-models
-      // attribute on this same input) adds GLTF/GLB — self-contained
-      // single-file formats. OBJ is intentionally not offered: it typically
-      // needs companion .mtl/texture files this single-file upload flow
-      // doesn't support.
-      const modelsEnabled = fileInput?.dataset.mediaModels === '1'
+    if (currentMode === 'audio') {
       return {
-        accept: 'image/*,video/mp4,video/webm,video/quicktime' + (modelsEnabled ? ',.glb,.gltf,model/gltf-binary,model/gltf+json' : ''),
-        types: ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/avif', 'video/mp4', 'video/webm', 'video/quicktime'].concat(modelsEnabled ? ['model/gltf-binary', 'model/gltf+json'] : []),
+        accept: 'audio/mpeg,audio/ogg,audio/wav',
+        types: ['audio/mpeg', 'audio/ogg', 'audio/wav'],
+        limit: 32 * 1024 * 1024,
+        hint: 'MP3 · OGG · WAV · max 32 MB',
+        empty: 'No audio yet. Use Upload to add one.',
+      }
+    }
+
+    if (currentMode === 'media') {
+      // media_models/media_audio (gated server-side via layout.php's
+      // data-media-models/data-media-audio attributes on this same input)
+      // add GLTF/GLB and MP3/OGG/WAV respectively. GLTF/GLB are
+      // self-contained single-file formats — OBJ is intentionally not
+      // offered since it typically needs companion .mtl/texture files this
+      // single-file upload flow doesn't support.
+      const modelsEnabled = fileInput?.dataset.mediaModels === '1'
+      const audioEnabled = fileInput?.dataset.mediaAudio === '1'
+      return {
+        accept: 'image/*,video/mp4,video/webm,video/quicktime' + (modelsEnabled ? ',.glb,.gltf,model/gltf-binary,model/gltf+json' : '') + (audioEnabled ? ',audio/mpeg,audio/ogg,audio/wav' : ''),
+        types: ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/avif', 'video/mp4', 'video/webm', 'video/quicktime'].concat(modelsEnabled ? ['model/gltf-binary', 'model/gltf+json'] : []).concat(audioEnabled ? ['audio/mpeg', 'audio/ogg', 'audio/wav'] : []),
         limit: 64 * 1024 * 1024,
-        hint: 'Images max 8 MB · videos max 64 MB' + (modelsEnabled ? ' · GLB · GLTF' : ''),
+        hint: 'Images max 8 MB · videos max 64 MB' + (modelsEnabled ? ' · GLB · GLTF' : '') + (audioEnabled ? ' · MP3 · OGG · WAV' : ''),
         empty: 'No media yet. Use Upload or Import to add some.',
         extraExtensions: modelsEnabled ? ['.glb', '.gltf'] : [],
       }
@@ -1326,7 +1338,7 @@ function initMediaPicker() {
   }
 
   function clearConfirmPreview() {
-    confirmPreviewHost?.querySelectorAll('video.dynamic-media-preview, iframe.dynamic-media-preview, .media-picker-video-thumb').forEach(node => node.remove())
+    confirmPreviewHost?.querySelectorAll('video.dynamic-media-preview, audio.dynamic-media-preview, iframe.dynamic-media-preview, .media-picker-video-thumb').forEach(node => node.remove())
     confirmPreviewImg?.classList.add('is-hidden')
     confirmPreviewImg?.removeAttribute('src')
     if (confirmPreviewImg) confirmPreviewImg.alt = ''
@@ -1345,6 +1357,7 @@ function initMediaPicker() {
     if (!asset) return
 
     const isVideo = asset.kind === 'video' || (asset.mime_type || '').startsWith('video/')
+    const isAudio = asset.kind === 'audio' || (asset.mime_type || '').startsWith('audio/')
     const isImage = asset.kind === 'image' || (asset.mime_type || '').startsWith('image/')
     if (isVideo) {
       const video = document.createElement('video')
@@ -1354,6 +1367,15 @@ function initMediaPicker() {
       video.controls = true
       video.preload = 'metadata'
       confirmPreviewHost.appendChild(video)
+      return
+    }
+    if (isAudio) {
+      const audio = document.createElement('audio')
+      audio.className = 'dynamic-media-preview'
+      audio.src = asset.url || `/media/${asset.id}`
+      audio.controls = true
+      audio.preload = 'metadata'
+      confirmPreviewHost.appendChild(audio)
       return
     }
     if (isImage) {
@@ -1370,8 +1392,9 @@ function initMediaPicker() {
   function updateConfirmPosterUi() {
     if (!confirmPosterField || !confirmPosterUrl || !draftAsset) return
     const isVideo = draftAsset.kind === 'video' || (draftAsset.mime_type || '').startsWith('video/')
-    confirmPosterField.classList.toggle('is-hidden', !isVideo)
-    if (!isVideo) return
+    const isAudio = draftAsset.kind === 'audio' || (draftAsset.mime_type || '').startsWith('audio/')
+    confirmPosterField.classList.toggle('is-hidden', !isVideo && !isAudio)
+    if (!isVideo && !isAudio) return
     confirmPosterUrl.value = draftAsset.poster_url || ''
   }
 
@@ -1497,6 +1520,15 @@ function initMediaPicker() {
       } else {
         media = renderVideoThumb(null);
       }
+    } else if (f.kind === 'audio') {
+      if (f.poster_url) {
+        media = document.createElement('img');
+        media.src = f.poster_url;
+      } else {
+        media = document.createElement('div');
+        media.className = 'media-picker-video-thumb';
+        media.textContent = '♪ Audio';
+      }
     } else if (f.kind === 'iframe') {
       media = document.createElement('div');
       media.className = 'media-picker-iframe-thumb';
@@ -1578,7 +1610,11 @@ function initMediaPicker() {
       const files = await res.json()
       _pickerAllItems = files.filter(f => {
         if (currentMode === 'video') return f.kind === 'video'
-        if (currentMode === 'media') return f.kind === 'image' || f.kind === 'video' || f.kind === 'iframe'
+        if (currentMode === 'audio') return f.kind === 'audio'
+        if (currentMode === 'media') {
+          const audioEnabled = fileInput?.dataset.mediaAudio === '1'
+          return f.kind === 'image' || f.kind === 'video' || f.kind === 'iframe' || (audioEnabled && f.kind === 'audio')
+        }
         return f.kind === 'image'
       })
       if (!_pickerAllItems.length) { grid.innerHTML = `<p class="media-picker-empty">${pickerModeConfig().empty}</p>`; return }
@@ -1773,7 +1809,7 @@ function initMediaPicker() {
     setTabsVisible(true)
     tabs.forEach(tab => {
       if (tab.dataset.tab === 'import') {
-        tab.hidden = currentMode === 'video'
+        tab.hidden = currentMode === 'video' || currentMode === 'audio'
       } else {
         tab.hidden = false
       }
@@ -1870,7 +1906,7 @@ function initMediaPicker() {
     if (uploadHint) uploadHint.textContent = config.hint
     tabs.forEach(tab => {
       if (tab.dataset.tab === 'import') {
-        const hideImport = currentMode === 'video'
+        const hideImport = currentMode === 'video' || currentMode === 'audio'
         tab.hidden = hideImport
         if (hideImport && defaultTab === 'import') defaultTab = 'select'
       }

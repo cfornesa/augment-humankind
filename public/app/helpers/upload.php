@@ -16,6 +16,18 @@ const ALLOWED_VIDEO_MIME = [
     'video/quicktime' => 'mov',
 ];
 
+// Mirrors the extension mapping piece_export_filename_extension() already
+// uses for exported-piece asset filenames (piece-render.php) — kept
+// consistent so the two mappers don't drift, though they serve different
+// purposes (that one names export files; this one gates uploads).
+const ALLOWED_AUDIO_MIME = [
+    'audio/mpeg' => 'mp3',
+    'audio/ogg'  => 'ogg',
+    'audio/wav'  => 'wav',
+];
+
+const AUDIO_MAX_BYTES = 32 * 1024 * 1024;
+
 // 3D model formats are routed by file extension (finfo is unreliable for these:
 // .glb sniffs as application/octet-stream, .gltf as JSON/text), then stored
 // under a canonical model/* MIME so downstream classification and serving
@@ -167,6 +179,16 @@ function upload_media_auto(array $file, array $attributes = []): array
     }
 
     $mime = upload_resolve_mime($file);
+
+    // Audio, like video, is gated behind its own feature flag (unlike
+    // images, which are always allowed) — off by default, an admin opts in
+    // at /admin/media. finfo detects audio MIME types reliably, so this
+    // needs no extension-routing trick the way 3D models do.
+    $audioEnabled = !function_exists('feature_enabled') || feature_enabled('media_audio');
+    if ($audioEnabled && isset(ALLOWED_AUDIO_MIME[$mime])) {
+        return upload_media($file, ALLOWED_AUDIO_MIME, AUDIO_MAX_BYTES, 'Audio', $attributes);
+    }
+
     if (isset(ALLOWED_VIDEO_MIME[$mime])) {
         return upload_media($file, ALLOWED_VIDEO_MIME, 64 * 1024 * 1024, 'Video', $attributes);
     }

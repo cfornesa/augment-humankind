@@ -45,7 +45,22 @@
       var s = document.createElement('script');
       s.src = toneSrc || '/assets/vendor/tone/Tone.js';
       s.onload = function () { global.Tone ? resolve(global.Tone) : reject(new Error('Tone.js loaded but window.Tone missing')); };
-      s.onerror = function () { reject(new Error('Tone.js failed to load')); };
+      s.onerror = function () {
+        console.warn("Local Tone.js failed to load. Attempting CDN fallback...");
+        var fallbackScript = document.createElement('script');
+        fallbackScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js';
+        fallbackScript.onload = function () {
+          if (global.Tone) {
+            resolve(global.Tone);
+          } else {
+            reject(new Error('CDN Tone.js loaded but window.Tone missing'));
+          }
+        };
+        fallbackScript.onerror = function () {
+          reject(new Error('Tone.js failed to load from both local and CDN sources'));
+        };
+        document.head.appendChild(fallbackScript);
+      };
       document.head.appendChild(s);
     });
     return _toneLoadPromise;
@@ -141,6 +156,57 @@
     return ringGain;
   }
 
+  // Hand-built, worklet-free bitcrusher — Tone.js's native BitCrusher uses an
+  // AudioWorkletNode that fails to load under the file:// protocol due to
+  // browser security policies regarding Blob URLs/Workers. Instead, we use a
+  // native WaveShaperNode mapped to a step curve (discretizing amplitude to
+  // bits/quantization steps), which is 100% worklet-free and runs everywhere.
+  function createBitCrusherNode(Tone, cfg) {
+    var bits = cfg.bits !== undefined ? cfg.bits : 4;
+    var steps = Math.pow(2, bits);
+    var bufferSize = 4096;
+    var curve = new Float32Array(bufferSize);
+    for (var i = 0; i < bufferSize; i++) {
+      var x = (i * 2) / (bufferSize - 1) - 1;
+      curve[i] = Math.round(x * (steps / 2)) / (steps / 2);
+    }
+    return new Tone.WaveShaper(curve);
+  }
+
+  // Shared effect-node factory — used both for the admin-authored chain
+  // (ensureSynth()'s maybeAddEffect) and the visitor-facing live mic effects
+  // (enableMic()/setMicEffect()), so the two never drift into two different
+  // implementations of the same seven effects.
+  function createEffectNode(Tone, key, cfg) {
+    switch (key) {
+      case 'distortion': {
+        var amt = typeof cfg.amount === 'number' ? cfg.amount : (cfg.amount !== undefined ? parseFloat(cfg.amount) : 0.4);
+        return new Tone.Distortion({ distortion: isNaN(amt) ? 0.4 : amt });
+      }
+      case 'chorus': { var c = new Tone.Chorus(cfg.rate, 2.5, cfg.depth); c.start(); return c; }
+      case 'tremolo': { var t = new Tone.Tremolo(cfg.rate, cfg.depth); t.start(); return t; }
+      case 'pitch_shift': return new Tone.PitchShift(cfg.semitones);
+      case 'bitcrusher': return createBitCrusherNode(Tone, cfg);
+      case 'flanger': return createFlangerNode(Tone, cfg);
+      case 'ring_mod': return createRingModNode(Tone, cfg);
+      default: return null;
+    }
+  }
+
+  // Sensible defaults for each live mic effect, matching
+  // validate_art_piece_sonic_extras()'s admin-chain defaults, used when a
+  // visitor flips an effect on via a plain on/off toggle with no exposed
+  // parameter controls.
+  var MIC_EFFECT_DEFAULTS = {
+    distortion: { amount: 0.4 },
+    chorus: { depth: 0.5, rate: 1.5 },
+    tremolo: { depth: 0.5, rate: 5 },
+    pitch_shift: { semitones: 0 },
+    bitcrusher: { bits: 4 },
+    flanger: { depth: 0.006, rate: 0.25, feedback: 0.5 },
+    ring_mod: { frequency: 440 },
+  };
+
   /**
    * create(sonicParams, opts)
    *
@@ -160,12 +226,13 @@
    * instrument/scale/tempo — no schema fork), mixed through one shared
    * Tone.Volume bus so the single volume slider controls all of them
    * together:
-   *   - ambient: the idle scale-walk ticker, plays whenever the mover/camera
-   *     has been still for IDLE_GAP_MS. Always on while enabled.
+   *   - ambient: a steady scale-walk ticker, paced only by tempo. Always on
+   *     while enabled, runs continuously regardless of movement — it never
+   *     stops or waits for stillness.
    *   - movement: motion-triggered notes (getMover deltas or externally
    *     supplied update()). Always on while enabled, runs independently of
-   *     the ambient voice so a fast idle note and a motion note never fight
-   *     over one monophonic synth.
+   *     the ambient voice — the two layer on top of each other and never
+   *     suppress one another, since each has its own monophonic synth.
    *   - melodic: driven directly by triggerNote() (keyboard buttons, and
    *     eventually hand-tracking) — never touched by the idle/motion timers.
    * setInputMode() no longer mutes anything; it's a UI-facing "what's the
@@ -185,7 +252,6 @@
     var tempo = Math.max(40, Math.min(220, Number(sonicParams.tempo) || 90));
     var minInterval = ((60 / tempo) * 1000) / 2; // ~eighth-note spacing
     var baseMidi = 48; // C3
-    var IDLE_GAP_MS = 2000; // how long the mover/camera must sit still before idle notes resume
     var drivesSelf = typeof opts.getMover === 'function';
 
     // Mechanical, non-AI-authored settings (public voice-visibility toggles +
@@ -207,6 +273,11 @@
     // validate_art_piece_sonic_extras() in art-piece-generation.php for the
     // validated/clamped shape. Absent/malformed entries default to off.
     var effectsExtras = (synthExtras.effects && typeof synthExtras.effects === 'object') ? synthExtras.effects : {};
+    // Admin-selected uploaded audio file looped as the ambient voice instead
+    // of a synthesized instrument — see validate_art_piece_sonic_extras().
+    // Movement/melodic voices are always synths regardless of this.
+    var ambientSampleExtras = (synthExtras.ambient_sample && typeof synthExtras.ambient_sample === 'object') ? synthExtras.ambient_sample : {};
+    var ambientIsSample = !!(ambientSampleExtras.enabled && ambientSampleExtras.media_id);
 
     var enabled = false, disposed = false;
     var bus = null, filter = null, ambientSynth = null, movementSynth = null, melodicSynth = null;
@@ -214,7 +285,6 @@
     var handStream = null, handLandmarker = null, handVideoEl = null, handRafId = null, handNoteHeld = false;
     var lastIdleNoteAt = 0, lastMotionNoteAt = 0, walk = 0;
     var prevX = null, prevY = null, prevZ = null;
-    var lastMotionAt = 0;
     var volumePercent = Math.max(0, Math.min(100, Number(opts.defaultVolume)) || 50);
     var inputMode = 'motion'; // 'motion' | 'keyboard' | 'hand' — UI flag only, gates nothing audio-side
     var currentOctave = Math.max(octaveMin, Math.min(octaveMax, 3)); // 3 matches the legacy baseMidi=48 (C3) default
@@ -224,6 +294,12 @@
     // this engine never touches storage or the piece's authored sonicParams).
     // Missing keys mean "use the piece's authored instrumentKey".
     var voiceInstrumentOverrides = {};
+    // Live human-voice input (mic) — a fourth layer, purely visitor-facing,
+    // mixed on top of ambient/movement/melodic (connects straight to `bus`,
+    // not through the synth-tuned `filter`). Off by default; never touches
+    // sonicParams/the DB, and this engine holds no localStorage for it —
+    // callers are expected to never restore an "on" state across page loads.
+    var micNode = null, micEffectsState = {}, micEffectNodes = [];
 
     function applyVolume() {
       if (bus) bus.volume.value = percentToDb(volumePercent);
@@ -236,13 +312,18 @@
       try { voiceSynth.triggerAttackRelease(midiToFreq(midi), '16n'); } catch (_e) {}
     }
 
-    // Idle voice: plays a plain scale-walk pattern once the mover/camera has
-    // been still for a beat. Always active while enabled — never gated by
-    // inputMode, so it keeps sounding underneath keyboard/hand play. Skipped
-    // entirely when the admin has hidden the ambient voice for this piece.
+    // Idle voice: plays a plain scale-walk pattern on its own steady
+    // cadence, independent of motion — it never stops or waits for
+    // stillness, so it keeps sounding underneath movement, keyboard, and
+    // hand play alike. Skipped entirely when the admin has hidden the
+    // ambient voice for this piece. When ambientIsSample is true, the
+    // "ambient voice" is a looping Tone.Player instead of a note-triggered
+    // synth (started once in ensureLoopStarted()/enable(), not here) — a
+    // player doesn't take frequency/duration the way triggerAttackRelease
+    // does, so this function has nothing to do in that mode.
     function ambientStep(now) {
-      if (!voiceAmbient) return;
-      if (now - lastMotionAt >= IDLE_GAP_MS && now - lastIdleNoteAt >= minInterval) {
+      if (!voiceAmbient || ambientIsSample) return;
+      if (now - lastIdleNoteAt >= minInterval) {
         lastIdleNoteAt = now;
         playOn(ambientSynth, walk++, 0);
       }
@@ -262,7 +343,6 @@
         var dx = x - prevX, dy = y - prevY, dz = z - prevZ;
         var speed = Math.hypot(dx, dy, dz);
         if (speed >= 0.002) {
-          lastMotionAt = now;
           if (now - lastMotionNoteAt >= minInterval) {
             lastMotionNoteAt = now;
             var octave = Math.min(2, Math.floor(Math.abs(dy) * 25));
@@ -310,16 +390,37 @@
         var visionSrc = opts.mediaPipeVisionSrc || '/assets/vendor/mediapipe-hands/vision_bundle.mjs';
         var wasmDir = opts.mediaPipeWasmDir || '/assets/vendor/mediapipe-hands/';
         var modelSrc = opts.mediaPipeModelSrc || '/assets/vendor/mediapipe-hands/hand_landmarker.task';
-        // Dynamic import() works even from a classic (non type="module")
-        // script in evergreen browsers — avoids needing a UMD/global build,
-        // which MediaPipe's tasks-vision package doesn't ship.
-        var vision = await import(visionSrc);
-        var fileset = await vision.FilesetResolver.forVisionTasks(wasmDir);
-        return vision.HandLandmarker.createFromOptions(fileset, {
-          baseOptions: { modelAssetPath: modelSrc },
-          runningMode: 'VIDEO',
-          numHands: 1,
-        });
+
+        try {
+          var vision = await import(visionSrc);
+          var fileset = await vision.FilesetResolver.forVisionTasks(wasmDir);
+          return await vision.HandLandmarker.createFromOptions(fileset, {
+            baseOptions: { modelAssetPath: modelSrc },
+            runningMode: 'VIDEO',
+            numHands: 1,
+          });
+        } catch (localError) {
+          console.warn("Local MediaPipe assets failed to load. Attempting CDN fallback...", localError);
+          try {
+            var cdnVisionSrc = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/vision_bundle.mjs';
+            var cdnWasmDir = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/wasm/';
+            var cdnModelSrc = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
+
+            var vision = await import(cdnVisionSrc);
+            var fileset = await vision.FilesetResolver.forVisionTasks(cdnWasmDir);
+            return await vision.HandLandmarker.createFromOptions(fileset, {
+              baseOptions: { modelAssetPath: cdnModelSrc },
+              runningMode: 'VIDEO',
+              numHands: 1,
+            });
+          } catch (cdnError) {
+            console.error("CDN fallback also failed.", cdnError);
+            document.dispatchEvent(new CustomEvent('creatr-hand-tracking-failed', {
+              detail: { localError: localError.message, cdnError: cdnError.message }
+            }));
+            throw cdnError;
+          }
+        }
       })();
       return _handLandmarkerPromise;
     }
@@ -362,7 +463,7 @@
         handLandmarker = await loadHandLandmarkerOnce();
         if (disposed) return false;
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-          return false;
+          throw new Error('navigator.mediaDevices.getUserMedia not supported or blocked');
         }
         handStream = await navigator.mediaDevices.getUserMedia({ video: true });
         if (disposed) { handStream.getTracks().forEach(function (t) { t.stop(); }); return false; }
@@ -375,6 +476,9 @@
         return true;
       } catch (_e) {
         disableHandTracking();
+        document.dispatchEvent(new CustomEvent('creatr-hand-tracking-failed', {
+          detail: { error: _e.message || String(_e) }
+        }));
         return false;
       }
     }
@@ -403,27 +507,100 @@
         // and bus. Only constructed for effects the admin actually turned
         // on, so a piece with no effects pays no extra audio-node cost.
         var chainTail = filter;
-        function maybeAddEffect(key, factory) {
+        ['distortion', 'chorus', 'tremolo', 'pitch_shift', 'bitcrusher', 'flanger', 'ring_mod'].forEach(function (key) {
           var cfg = effectsExtras[key];
           if (!cfg || !cfg.enabled) return;
-          var node = factory(cfg);
+          var node = createEffectNode(Tone, key, cfg);
           chainTail.connect(node);
           chainTail = node;
           effectNodes.push(node);
-        }
-        maybeAddEffect('distortion', function (cfg) { return new Tone.Distortion(cfg.amount); });
-        maybeAddEffect('chorus', function (cfg) { var c = new Tone.Chorus(cfg.rate, 2.5, cfg.depth).start(); return c; });
-        maybeAddEffect('tremolo', function (cfg) { var t = new Tone.Tremolo(cfg.rate, cfg.depth).start(); return t; });
-        maybeAddEffect('pitch_shift', function (cfg) { return new Tone.PitchShift(cfg.semitones); });
-        maybeAddEffect('bitcrusher', function (cfg) { return new Tone.BitCrusher(cfg.bits); });
-        maybeAddEffect('flanger', function (cfg) { return createFlangerNode(Tone, cfg); });
-        maybeAddEffect('ring_mod', function (cfg) { return createRingModNode(Tone, cfg); });
+        });
         chainTail.connect(bus);
-        ambientSynth = buildVoice(Tone, instrumentCtorName).connect(filter);
+        ambientSynth = ambientIsSample
+          ? new Tone.Player({
+              url: '/media/' + ambientSampleExtras.media_id,
+              loop: true,
+              autostart: false,
+              onerror: function () {}, // approximate rather than fail — piece plays on without the sample
+              // The buffer loads asynchronously; if enable() already ran by
+              // the time it's ready, start it now rather than waiting for
+              // the next enable() call.
+              onload: function () { if (enabled) { try { ambientSynth.start(); } catch (_e) {} } },
+            }).connect(filter)
+          : buildVoice(Tone, instrumentCtorName).connect(filter);
         movementSynth = buildVoice(Tone, instrumentCtorName).connect(filter);
         melodicSynth = buildVoice(Tone, instrumentCtorName).connect(filter);
       }
       return ambientSynth;
+    }
+
+    // Tears down and rebuilds the mic's effects chain from micEffectsState,
+    // then reconnects straight into `bus`. Rebuilding wholesale (rather than
+    // surgically inserting/removing one node) keeps ordering simple and
+    // correct no matter what sequence effects are toggled in.
+    function rebuildMicChain(Tone) {
+      if (!micNode) return;
+      try { micNode.disconnect(); } catch (_e) {}
+      micEffectNodes.forEach(function (node) {
+        try { node.disconnect(); } catch (_e) {}
+        try { node.dispose && node.dispose(); } catch (_e) {}
+      });
+      micEffectNodes = [];
+      var chainTail = micNode;
+      ['distortion', 'chorus', 'tremolo', 'pitch_shift', 'bitcrusher', 'flanger', 'ring_mod'].forEach(function (key) {
+        var cfg = micEffectsState[key];
+        if (!cfg || !cfg.enabled) return;
+        var node = createEffectNode(Tone, key, cfg);
+        chainTail.connect(node);
+        chainTail = node;
+        micEffectNodes.push(node);
+      });
+      chainTail.connect(bus);
+    }
+
+    async function enableMic() {
+      if (disposed || micNode) return !!micNode;
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        document.dispatchEvent(new CustomEvent('creatr-mic-failed', {
+          detail: { error: 'navigator.mediaDevices.getUserMedia not supported or blocked' }
+        }));
+        return false;
+      }
+      await ensureSynth();
+      if (disposed || !bus) return false;
+      var Tone = global.Tone;
+      if (!Tone || !Tone.UserMedia || !Tone.UserMedia.supported) {
+        document.dispatchEvent(new CustomEvent('creatr-mic-failed', {
+          detail: { error: 'Tone.UserMedia not supported or blocked' }
+        }));
+        return false;
+      }
+      try {
+        var node = new Tone.UserMedia();
+        await node.open();
+        if (disposed) { try { node.close(); } catch (_e) {} try { node.dispose(); } catch (_e) {} return false; }
+        micNode = node;
+        rebuildMicChain(Tone);
+        return true;
+      } catch (_e) {
+        micNode = null;
+        document.dispatchEvent(new CustomEvent('creatr-mic-failed', {
+          detail: { error: _e.message || String(_e) }
+        }));
+        return false;
+      }
+    }
+
+    function disableMic() {
+      if (!micNode) return;
+      micEffectNodes.forEach(function (node) {
+        try { node.disconnect(); } catch (_e) {}
+        try { node.dispose && node.dispose(); } catch (_e) {}
+      });
+      micEffectNodes = [];
+      try { micNode.close(); } catch (_e) {}
+      try { micNode.dispose(); } catch (_e) {}
+      micNode = null;
     }
 
     return {
@@ -432,12 +609,17 @@
         await ensureSynth();
         if (disposed || !ambientSynth) return false;
         enabled = true;
-        lastMotionAt = 0; // let idle/motion notes start immediately on unmute
+        if (ambientIsSample && ambientSynth.loaded) {
+          try { ambientSynth.start(); } catch (_e) {}
+        }
         ensureLoopStarted();
         return true;
       },
       disable() {
         enabled = false;
+        if (ambientIsSample && ambientSynth) {
+          try { ambientSynth.stop(); } catch (_e) {}
+        }
       },
       isEnabled: function () { return enabled; },
       update: function (motion) {
@@ -448,8 +630,7 @@
         var dx = (motion && motion.dx) || 0, dy = (motion && motion.dy) || 0, dz = (motion && motion.dz) || 0;
         var speed = Math.hypot(dx, dy, dz);
         if (speed < 0.002) return;
-        lastMotionAt = performance.now();
-        var now = lastMotionAt;
+        var now = performance.now();
         if (now - lastMotionNoteAt < minInterval) return;
         lastMotionNoteAt = now;
         var octave = Math.min(2, Math.floor(Math.abs(dy) * 25));
@@ -490,6 +671,10 @@
       // choice (e.g. localStorage) across page loads. No-ops until the
       // engine has been enabled at least once (ensureSynth() must have run).
       setVoiceInstrument: function (voiceName, instrumentKey) {
+        // A sample-backed ambient voice (Tone.Player) has no meaningful
+        // synth-instrument choice — refuse the override rather than
+        // silently swapping the admin-authored sample out from under it.
+        if (voiceName === 'ambient' && ambientIsSample) return false;
         if (!SONIC_INSTRUMENTS[instrumentKey] || disposed || !ambientSynth) return false;
         var Tone = global.Tone;
         if (!Tone) return false;
@@ -514,17 +699,47 @@
       getVoiceInstrument: function (voiceName) {
         return voiceInstrumentOverrides[voiceName] || instrumentKey;
       },
+      // Lets UI surfaces hide/disable the ambient instrument dropdown
+      // outright rather than relying on setVoiceInstrument()'s refusal.
+      isAmbientSample: function () { return ambientIsSample; },
       // Hand-tracking is only offered when extras.voices.hand_tracking is
       // true for this piece (enableHandTracking() itself also refuses
       // otherwise, as defense in depth against a caller that doesn't check).
       isHandTrackingAllowed: function () { return !!voices.hand_tracking; },
       enableHandTracking: enableHandTracking,
       disableHandTracking: disableHandTracking,
+      // Live human-voice input (mic) — visitor-facing, off by default, never
+      // persisted by this engine. isMicSupported() is a plain feature check
+      // (doesn't require Tone.js to be loaded yet) so UI surfaces can decide
+      // whether to render the toggle as clickable before the visitor has
+      // ever unmuted anything.
+      isMicSupported: function () {
+        return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+      },
+      isMicEnabled: function () { return !!micNode; },
+      enableMic: enableMic,
+      disableMic: disableMic,
+      // key: 'distortion'|'chorus'|'tremolo'|'pitch_shift'|'bitcrusher'|
+      // 'flanger'|'ring_mod'. params optional — falls back to
+      // MIC_EFFECT_DEFAULTS. No-ops (returns false) until the mic is on.
+      setMicEffect: function (key, enabled, params) {
+        if (!micNode || !MIC_EFFECT_DEFAULTS[key]) return false;
+        var Tone = global.Tone;
+        if (!Tone) return false;
+        var defaults = MIC_EFFECT_DEFAULTS[key];
+        var cfg = {};
+        for (var k in defaults) { cfg[k] = (params && params[k] !== undefined) ? params[k] : defaults[k]; }
+        cfg.enabled = !!enabled;
+        micEffectsState[key] = cfg;
+        rebuildMicChain(Tone);
+        return true;
+      },
       dispose: function () {
         disposed = true; enabled = false;
         if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
         if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
         disableHandTracking();
+        disableMic();
         try { handLandmarker && handLandmarker.close && handLandmarker.close(); } catch (_e) {}
         try { ambientSynth && ambientSynth.dispose && ambientSynth.dispose(); } catch (_e) {}
         try { movementSynth && movementSynth.dispose && movementSynth.dispose(); } catch (_e) {}

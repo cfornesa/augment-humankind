@@ -382,6 +382,7 @@ function piece_export_sonic_script(string $engine, string $sonicParamsJson, stri
     handLabel.textContent = 'Hand-tracking';
     var handToggle = document.createElement('button');
     handToggle.type = 'button';
+    handToggle.className = 'offline-sound-btn';
     handToggle.textContent = 'Camera theremin';
     handToggle.setAttribute('aria-pressed', 'false');
     handToggle.style.cssText = 'border:1px solid rgba(255,255,255,0.18);border-radius:0.6rem;background:rgba(255,255,255,0.06);color:#fff;font:inherit;font-weight:600;padding:0.3rem 0.55rem;cursor:pointer;';
@@ -414,6 +415,8 @@ JS;
     }
 
     return <<<HTML
+<script src="{$toneSrc}"></script>
+<script src="{$sonicControllerSrc}"></script>
 <script>
 window.__creatrToneSrc = {$toneSrcJson};
 window.__creatrMediaPipeVisionSrc = {$mediaPipeVisionSrcJson};
@@ -479,6 +482,7 @@ window.__creatrMediaPipeModelSrc = {$mediaPipeModelSrcJson};
 
     var btn = document.createElement('button');
     btn.type = 'button';
+    btn.className = 'offline-sound-btn';
     btn.setAttribute('aria-pressed', 'false');
     btn.setAttribute('aria-label', 'Unmute sound');
     Object.assign(btn.style, {
@@ -492,6 +496,7 @@ window.__creatrMediaPipeModelSrc = {$mediaPipeModelSrcJson};
 
     var panelTrigger = document.createElement('button');
     panelTrigger.type = 'button';
+    panelTrigger.className = 'offline-sound-btn';
     panelTrigger.setAttribute('aria-haspopup', 'true');
     panelTrigger.setAttribute('aria-expanded', 'false');
     panelTrigger.setAttribute('aria-label', 'Sound settings');
@@ -514,6 +519,16 @@ window.__creatrMediaPipeModelSrc = {$mediaPipeModelSrcJson};
 
     var style = document.createElement('style');
     style.textContent = `
+      .offline-sound-btn {
+        transition: background-color 0.15s ease, border-color 0.15s ease;
+      }
+      .offline-sound-btn:hover {
+        background: rgba(255, 255, 255, 0.12) !important;
+      }
+      .offline-sound-btn[aria-pressed="true"] {
+        background: rgba(255, 255, 255, 0.22) !important;
+        border-color: #fff !important;
+      }
       .offline-piano-keys {
         touch-action: none;
         user-select: none;
@@ -571,6 +586,7 @@ window.__creatrMediaPipeModelSrc = {$mediaPipeModelSrcJson};
     keyboardLabel.textContent = 'Keyboard';
     var keyboardToggle = document.createElement('button');
     keyboardToggle.type = 'button';
+    keyboardToggle.className = 'offline-sound-btn';
     keyboardToggle.textContent = 'Play notes';
     keyboardToggle.setAttribute('aria-pressed', 'false');
     keyboardToggle.style.cssText = 'border:1px solid rgba(255,255,255,0.18);border-radius:0.6rem;background:rgba(255,255,255,0.06);color:#fff;font:inherit;font-weight:600;padding:0.3rem 0.55rem;cursor:pointer;';
@@ -584,6 +600,8 @@ window.__creatrMediaPipeModelSrc = {$mediaPipeModelSrcJson};
     // picker (immersive_stage_voice_instrument_picker_markup() in
     // immersive-chrome.php).
     var instrumentOptions = {$instrumentOptionsJson};
+    var ambientSampleConfig = (sonicParams.extras && sonicParams.extras.synth && sonicParams.extras.synth.ambient_sample) || {};
+    var ambientIsSample = !!(ambientSampleConfig.enabled && ambientSampleConfig.media_id);
     var voicePickerWrap = document.createElement('div');
     voicePickerWrap.style.cssText = 'display:flex;flex-direction:column;gap:0.45rem;';
     var voicePickerSelects = {};
@@ -591,7 +609,10 @@ window.__creatrMediaPipeModelSrc = {$mediaPipeModelSrcJson};
       var voiceName = pair[0], label = pair[1];
       var pickerRow = document.createElement('div');
       pickerRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:0.5rem;';
-      if (voicesConfig[voiceName] === false) pickerRow.style.display = 'none';
+      // A sample-backed ambient voice has no meaningful synth-instrument
+      // choice — hide the row outright rather than letting the visitor pick
+      // something setVoiceInstrument() will just refuse.
+      if (voicesConfig[voiceName] === false || (voiceName === 'ambient' && ambientIsSample)) pickerRow.style.display = 'none';
       var pickerLabel = document.createElement('span');
       pickerLabel.textContent = label;
       var select = document.createElement('select');
@@ -614,6 +635,52 @@ window.__creatrMediaPipeModelSrc = {$mediaPipeModelSrcJson};
       pickerRow.appendChild(pickerLabel);
       pickerRow.appendChild(select);
       voicePickerWrap.appendChild(pickerRow);
+    });
+
+    // Live human-voice input (mic) — a fourth layer mixed on top of the
+    // piece's own voices, purely visitor-facing (session-local, off by
+    // default, never persisted). Hidden outright when unsupported rather
+    // than left clickable and failing silently on click.
+    var micSupported = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+    var micRow = document.createElement('div');
+    micRow.style.cssText = 'display:' + (micSupported ? 'flex' : 'none') + ';align-items:center;justify-content:space-between;gap:0.5rem;';
+    var micToggle = document.createElement('button');
+    micToggle.type = 'button';
+    micToggle.className = 'offline-sound-btn';
+    micToggle.textContent = 'Live mic';
+    micToggle.setAttribute('aria-pressed', 'false');
+    micToggle.style.cssText = 'border:1px solid rgba(255,255,255,0.18);border-radius:0.6rem;background:rgba(255,255,255,0.06);color:#fff;font:inherit;font-weight:600;padding:0.3rem 0.55rem;cursor:pointer;';
+    micRow.appendChild(Object.assign(document.createElement('span'), { textContent: 'Microphone' }));
+    micRow.appendChild(micToggle);
+
+    var micFxWrap = document.createElement('div');
+    micFxWrap.style.cssText = 'display:none;grid-template-columns:1fr 1fr;gap:0.3rem 0.6rem;';
+    var micFxCheckboxes = {};
+    [['distortion', 'Distortion'], ['chorus', 'Chorus'], ['tremolo', 'Tremolo'], ['pitch_shift', 'Pitch shift'], ['bitcrusher', 'Bitcrusher'], ['flanger', 'Flanger'], ['ring_mod', 'Ring mod']].forEach(function (pair) {
+      var key = pair[0], label = pair[1];
+      var fxLabel = document.createElement('label');
+      fxLabel.style.cssText = 'display:flex;align-items:center;gap:0.35rem;font-size:0.75rem;';
+      var checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.addEventListener('change', function () {
+        if (engine) engine.setMicEffect(key, checkbox.checked);
+      });
+      micFxCheckboxes[key] = checkbox;
+      fxLabel.appendChild(checkbox);
+      fxLabel.appendChild(document.createTextNode(label));
+      micFxWrap.appendChild(fxLabel);
+    });
+    micToggle.addEventListener('click', async function () {
+      if (engine && engine.isMicEnabled()) {
+        engine.disableMic();
+        micToggle.setAttribute('aria-pressed', 'false');
+        micFxWrap.style.display = 'none';
+        return;
+      }
+      var ok = await ensureEnabled();
+      var micOk = ok && engine ? await engine.enableMic() : false;
+      micToggle.setAttribute('aria-pressed', micOk ? 'true' : 'false');
+      micFxWrap.style.display = micOk ? 'grid' : 'none';
     });
 
     var octaveRow = document.createElement('div');
@@ -661,6 +728,8 @@ window.__creatrMediaPipeModelSrc = {$mediaPipeModelSrcJson};
     panel.appendChild(octaveRow);
     panel.appendChild(keysWrap);
 {$handRowAppendScript}
+    panel.appendChild(micRow);
+    panel.appendChild(micFxWrap);
     row.appendChild(btn);
     row.appendChild(panelTrigger);
     wrap.appendChild(row);
@@ -773,6 +842,153 @@ window.__creatrMediaPipeModelSrc = {$mediaPipeModelSrcJson};
       panel.style.display = 'none';
     }, { capture: true });
   }
+
+  function showOfflineTroubleshooting(mode, errorDetail) {
+    if (document.getElementById('creatr-offline-warning')) return;
+
+    var banner = document.createElement('div');
+    banner.id = 'creatr-offline-warning';
+    Object.assign(banner.style, {
+      position: 'fixed',
+      bottom: '1rem',
+      left: '50%',
+      transform: 'translateX(-50%)',
+      width: 'calc(100% - 2rem)',
+      maxWidth: '32rem',
+      backgroundColor: 'rgba(15, 23, 42, 0.96)',
+      border: '1px solid rgba(248, 113, 113, 0.3)',
+      borderRadius: '1rem',
+      padding: '1.25rem',
+      boxShadow: '0 20px 25px -5px rgba(0,0,0,0.5), 0 10px 10px -5px rgba(0,0,0,0.5)',
+      color: '#f8fafc',
+      fontFamily: 'system-ui, -apple-system, sans-serif',
+      fontSize: '13px',
+      lineHeight: '1.5',
+      zIndex: '99999',
+      backdropFilter: 'blur(12px)',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '0.75rem',
+      animation: 'creatrSlideUp 0.3s ease-out'
+    });
+
+    if (!document.getElementById('creatr-banner-styles')) {
+      var styleEl = document.createElement('style');
+      styleEl.id = 'creatr-banner-styles';
+      styleEl.textContent = `
+        @keyframes creatrSlideUp {
+          from { transform: translate(-50%, 2rem); opacity: 0; }
+          to { transform: translate(-50%, 0); opacity: 1; }
+        }
+        .creatr-code-box {
+          background: rgba(0,0,0,0.4);
+          border: 1px solid rgba(255,255,255,0.1);
+          border-radius: 0.5rem;
+          padding: 0.5rem;
+          font-family: ui-monospace, monospace;
+          font-size: 11px;
+          color: #38bdf8;
+          word-break: break-all;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+        .creatr-copy-btn {
+          background: rgba(255,255,255,0.12);
+          border: none;
+          border-radius: 0.25rem;
+          color: #fff;
+          padding: 0.25rem 0.5rem;
+          cursor: pointer;
+          font-family: inherit;
+          font-size: 10px;
+          font-weight: 600;
+        }
+        .creatr-copy-btn:hover { background: rgba(255,255,255,0.22); }
+      `;
+      document.head.appendChild(styleEl);
+    }
+
+    var header = document.createElement('div');
+    header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;font-weight:600;color:#f87171;font-size:14px;';
+    header.innerHTML = '<span>⚠️ Browser Security Restriction</span>';
+
+    var closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.innerHTML = '✕';
+    closeBtn.style.cssText = 'background:none;border:none;color:#94a3b8;cursor:pointer;font-size:16px;padding:0;line-height:1;';
+    closeBtn.addEventListener('click', function() { banner.remove(); });
+    header.appendChild(closeBtn);
+
+    var body = document.createElement('div');
+    var isFile = window.location.protocol === 'file:';
+    var featureName = mode === 'mic' ? 'microphone (human voice)' : 'camera (theremin)';
+    var text = '';
+    if (isFile) {
+      text = 'This page was opened directly via the <code>file://</code> protocol. Browsers restrict ' + featureName + ' access and local WebAssembly worker loading in this offline sandbox mode.';
+    } else {
+      text = 'Access to the ' + featureName + ' was blocked or is not supported in this browser context.';
+    }
+    if (errorDetail) {
+      text += ' <span style="color:#94a3b8;font-size:11px;">(' + errorDetail + ')</span>';
+    }
+    body.innerHTML = text + '<br><br><strong>Solution:</strong> Serve this folder using a local web server to run it in a secure context:';
+
+    var cmdTitle1 = document.createElement('div');
+    cmdTitle1.style.cssText = 'font-weight:600;margin-top:0.25rem;color:#cbd5e1;';
+    cmdTitle1.textContent = 'Using Node.js (recommended):';
+    
+    var cmdBox1 = document.createElement('div');
+    cmdBox1.className = 'creatr-code-box';
+    cmdBox1.innerHTML = '<span>npx http-server .</span>';
+    var copyBtn1 = document.createElement('button');
+    copyBtn1.className = 'creatr-copy-btn';
+    copyBtn1.textContent = 'Copy';
+    copyBtn1.addEventListener('click', function() {
+      navigator.clipboard.writeText('npx http-server .');
+      copyBtn1.textContent = 'Copied!';
+      setTimeout(function() { copyBtn1.textContent = 'Copy'; }, 2000);
+    });
+    cmdBox1.appendChild(copyBtn1);
+
+    var cmdTitle2 = document.createElement('div');
+    cmdTitle2.style.cssText = 'font-weight:600;color:#cbd5e1;';
+    cmdTitle2.textContent = 'Using Python:';
+
+    var cmdBox2 = document.createElement('div');
+    cmdBox2.className = 'creatr-code-box';
+    cmdBox2.innerHTML = '<span>python -m http.server 8000</span>';
+    var copyBtn2 = document.createElement('button');
+    copyBtn2.className = 'creatr-copy-btn';
+    copyBtn2.textContent = 'Copy';
+    copyBtn2.addEventListener('click', function() {
+      navigator.clipboard.writeText('python -m http.server 8000');
+      copyBtn2.textContent = 'Copied!';
+      setTimeout(function() { copyBtn2.textContent = 'Copy'; }, 2000);
+    });
+    cmdBox2.appendChild(copyBtn2);
+
+    var instructions = document.createElement('div');
+    instructions.style.cssText = 'font-size:11px;color:#94a3b8;margin-top:0.25rem;';
+    instructions.innerHTML = 'After running either command, open the local address (e.g. <code>http://localhost:8080</code> or <code>http://localhost:8000</code>) in your browser.';
+
+    banner.appendChild(header);
+    banner.appendChild(body);
+    banner.appendChild(cmdTitle1);
+    banner.appendChild(cmdBox1);
+    banner.appendChild(cmdTitle2);
+    banner.appendChild(cmdBox2);
+    banner.appendChild(instructions);
+
+    document.body.appendChild(banner);
+  }
+
+  document.addEventListener('creatr-hand-tracking-failed', function(e) {
+    showOfflineTroubleshooting('hand_tracking', e.detail.error || e.detail.cdnError);
+  });
+  document.addEventListener('creatr-mic-failed', function(e) {
+    showOfflineTroubleshooting('mic', e.detail.error);
+  });
 
   if (document.body) mountUi();
   else document.addEventListener('DOMContentLoaded', mountUi, { once: true });
@@ -1093,10 +1309,15 @@ function exportCanvas(canvas) {
 }
 pngBtn?.addEventListener('click', async () => {
   if (pngBtn.disabled) return;
-  const labelEl = pngBtn.querySelector('span') || pngBtn;
-  const label = labelEl.textContent;
+  const labelEl = pngBtn.querySelector('span');
+  const label = labelEl ? labelEl.textContent : '';
+  const originalAriaLabel = pngBtn.getAttribute('aria-label') || 'Take screenshot';
   pngBtn.disabled = true;
-  labelEl.textContent = 'Preparing PNG...';
+  pngBtn.setAttribute('aria-busy', 'true');
+  pngBtn.setAttribute('aria-label', 'Preparing PNG...');
+  if (labelEl) {
+    labelEl.textContent = 'Preparing PNG...';
+  }
   try {
     let surface = null;
     // Full-view overlay open: snapshot the user's current state from the
@@ -1125,7 +1346,11 @@ pngBtn?.addEventListener('click', async () => {
     showPieceError(error);
   } finally {
     pngBtn.disabled = false;
-    labelEl.textContent = label;
+    pngBtn.removeAttribute('aria-busy');
+    pngBtn.setAttribute('aria-label', originalAriaLabel);
+    if (labelEl) {
+      labelEl.textContent = label;
+    }
   }
 });
 </script>
@@ -2957,10 +3182,15 @@ function downloadBlob(blob, filename) {
 }
 pngBtn?.addEventListener('click', async () => {
   if (pngBtn.disabled) return;
-  const labelEl = pngBtn.querySelector('span') || pngBtn;
-  const label = labelEl.textContent;
+  const labelEl = pngBtn.querySelector('span');
+  const label = labelEl ? labelEl.textContent : '';
+  const originalAriaLabel = pngBtn.getAttribute('aria-label') || 'Take screenshot';
   pngBtn.disabled = true;
-  labelEl.textContent = 'Preparing PNG...';
+  pngBtn.setAttribute('aria-busy', 'true');
+  pngBtn.setAttribute('aria-label', 'Preparing PNG...');
+  if (labelEl) {
+    labelEl.textContent = 'Preparing PNG...';
+  }
   try {
     const capture = viewer?.getCaptureSurface?.();
     capture?.beforeCapture?.();
@@ -2978,7 +3208,11 @@ pngBtn?.addEventListener('click', async () => {
     showCollectionError(error);
   } finally {
     pngBtn.disabled = false;
-    labelEl.textContent = label;
+    pngBtn.removeAttribute('aria-busy');
+    pngBtn.setAttribute('aria-label', originalAriaLabel);
+    if (labelEl) {
+      labelEl.textContent = label;
+    }
   }
 });
 </script>

@@ -2303,3 +2303,25 @@ existed, per explicit user instruction.
 - `art_piece_sonic_params_equal()` confirmed (direct execution) to return
   `true` across two JSON blobs differing only in `extras`, verifying
   Audio-tab-only saves cannot fork a spurious new version.
+
+## 2026-07-10 — Offline Art Piece Hand-tracking & Mic Fallbacks
+
+### Decision
+
+Implemented a local-first with runtime CDN fallback strategy for downloaded art pieces to resolve errors under the `file://` protocol (CORS blocks on local asset loads/fetches and browser sandbox blocks on Web Workers/WASM resolver):
+
+- **MediaPipe (Camera Theremin) Fallback:** Modified `loadHandLandmarkerOnce` in `sonic-controller.js` to catch failures loading local files from `runtime/mediapipe-hands/...`. When a failure is caught, it falls back to loading `@mediapipe/tasks-vision@0.10.8` from jsDelivr and Google's static storage bucket.
+- **Tone.js Fallback:** Modified `loadToneOnce` in `sonic-controller.js` to catch script errors when loading local `runtime/tone/Tone.js` and fall back to loading Tone.js from CDNjs.
+- **Troubleshooting Notice Drawer:** Dispatched custom `creatr-hand-tracking-failed` and `creatr-mic-failed` events from `sonic-controller.js` on permission or script failures. Added event listeners inside `piece-render.php`'s offline sonic script to slide up a beautiful, glassmorphic banner under `file://` (or on blocks like Safari's secure context restriction). The banner explains the restriction and provides copy-pasteable terminal commands to run a local HTTP server (`npx http-server .` or `python -m http.server 8000`).
+- **Worklet-Free Custom BitCrusher:** Replaced the native `Tone.BitCrusher` with a custom `Tone.WaveShaper` based implementation. This avoids browser sandbox blocks against Web Workers/AudioWorklets instantiated from dynamic Blob URLs under the `file://` protocol, keeping the microphone input fully active when the effect is toggled.
+- **Static Script Loading to Preserve User Gestures:** Modified script injection in `piece-render.php` to output static script tags for Tone.js and `sonic-controller.js` in the exported HTML. Pre-loading the scripts ensures the audio controller initializes synchronously inside user click event handlers, preserving the browser's user gesture context so camera and mic prompts are not blocked by the browser.
+- **Toggle Button Highlights:** Added `.offline-sound-btn` CSS classes and highlight rules for active `[aria-pressed="true"]` buttons in the exported page stylesheet to visually match the active toggles on the live site.
+- **Screenshot Icon Disappearing Fix:** Corrected click handlers in `piece-render.php`, `collection.php`, and `piece.php` to conditionally check for a nested `span` inside screenshot buttons before attempting to set their text content. This prevents the browser from replacing the inner SVG template (the camera icon) on icon-only buttons.
+- **dependencies.md Update:** Documented the CDN endpoints and fallback conditions per the pre-write check rules.
+
+### Verification
+
+- Added automated test `hand-tracking bundle export includes MediaPipe, fallback loading, and troubleshooting banner` to `tests/art-piece-generation.php`.
+- Ran the test suites and verified all checks pass:
+  - `php tests/three-runtime-consistency.php` — **Passed: 114, Failed: 0**
+  - `php tests/art-piece-generation.php` — **Passed: 142, Failed: 0**
