@@ -458,9 +458,23 @@
       if (forceRetry) _handLandmarkerPromise = null;
       if (_handLandmarkerPromise) return _handLandmarkerPromise;
       _handLandmarkerPromise = (async function () {
-        var visionSrc = opts.mediaPipeVisionSrc || '/assets/vendor/mediapipe-hands/vision_bundle.mjs';
+        // Version the default URLs with this script's own ?v= (set from file
+        // mtime by piece-render.php). This is not cosmetic cache-busting:
+        // hosts that once served .mjs as text/plain left browsers with a
+        // poisoned cache entry whose Content-Type survives every 304
+        // revalidation, permanently failing module import — only a changed
+        // URL recovers. Callers that pass explicit opts version their own.
+        var assetVersion = '';
+        try {
+          var scriptTags = document.getElementsByTagName('script');
+          for (var si = scriptTags.length - 1; si >= 0; si--) {
+            var versionMatch = /sonic-controller\.js\?v=([^&#]+)/.exec(scriptTags[si].src || '');
+            if (versionMatch) { assetVersion = '?v=' + versionMatch[1]; break; }
+          }
+        } catch (_e) {}
+        var visionSrc = opts.mediaPipeVisionSrc || ('/assets/vendor/mediapipe-hands/vision_bundle.mjs' + assetVersion);
         var wasmDir = opts.mediaPipeWasmDir || '/assets/vendor/mediapipe-hands/';
-        var modelSrc = opts.mediaPipeModelSrc || '/assets/vendor/mediapipe-hands/hand_landmarker.task';
+        var modelSrc = opts.mediaPipeModelSrc || ('/assets/vendor/mediapipe-hands/hand_landmarker.task' + assetVersion);
 
         try {
           sonicDebug('hand model local start', visionSrc);

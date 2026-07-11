@@ -344,15 +344,21 @@ function piece_export_sonic_script(string $engine, string $sonicParamsJson, stri
     $sonicControllerSrc = $isBundle
         ? 'runtime/sonic-controller.js'
         : rtrim(piece_request_origin(), '/') . '/assets/js/sonic-controller.js?v=' . (int) @filemtime(dirname(__DIR__, 2) . '/assets/js/sonic-controller.js');
+    // The ?v= on vision_bundle.mjs matters beyond ordinary cache-busting:
+    // browsers that cached it while a host served .mjs as text/plain keep
+    // failing module import off 304 revalidations forever (a 304 preserves
+    // the stored Content-Type), so the URL itself must change to recover.
+    // The wasm dir is a bare prefix (FilesetResolver appends filenames) and
+    // cannot carry a version; its consumers tolerate a stale cached type.
     $mediaPipeVisionSrc = $isBundle
         ? 'runtime/mediapipe-hands/vision_bundle.mjs'
-        : rtrim(piece_request_origin(), '/') . '/assets/vendor/mediapipe-hands/vision_bundle.mjs';
+        : rtrim(piece_request_origin(), '/') . '/assets/vendor/mediapipe-hands/vision_bundle.mjs?v=' . (int) @filemtime(dirname(__DIR__, 2) . '/assets/vendor/mediapipe-hands/vision_bundle.mjs');
     $mediaPipeWasmDir = $isBundle
         ? 'runtime/mediapipe-hands/'
         : rtrim(piece_request_origin(), '/') . '/assets/vendor/mediapipe-hands/';
     $mediaPipeModelSrc = $isBundle
         ? 'runtime/mediapipe-hands/hand_landmarker.task'
-        : rtrim(piece_request_origin(), '/') . '/assets/vendor/mediapipe-hands/hand_landmarker.task';
+        : rtrim(piece_request_origin(), '/') . '/assets/vendor/mediapipe-hands/hand_landmarker.task?v=' . (int) @filemtime(dirname(__DIR__, 2) . '/assets/vendor/mediapipe-hands/hand_landmarker.task');
     $toneSrcJson = json_encode($toneSrc);
     $sonicControllerSrcJson = json_encode($sonicControllerSrc);
     $mediaPipeVisionSrcJson = json_encode($mediaPipeVisionSrc);

@@ -2527,3 +2527,35 @@ commit. No schema, route, feature flag, public endpoint, or vendor changed;
   Chrome on macOS (mic enable + effects panel, hand assets loading locally).
 - Post-deploy check: `curl -sI https://augmenthumankind.com/assets/vendor/mediapipe-hands/vision_bundle.mjs`
   must report `content-type: text/javascript`.
+
+## 2026-07-11 — Version MediaPipe Asset URLs to Recover Poisoned Caches
+
+### Decision
+
+After the MIME-type fix deployed, ChromeOS testing against production showed
+hand tracking still failing with the same "Failed to fetch dynamically
+imported module" error. In-browser measurement isolated why: the browser's
+HTTP cache still held `vision_bundle.mjs` with the old `text/plain` type, and
+because the file's ETag never changed, the server answered 304 on every
+revalidation — and a 304 preserves the stored Content-Type. Any browser that
+visited while the host served the wrong type keeps failing indefinitely on
+the unversioned URL.
+
+Fix: the MediaPipe module and model URLs are now versioned like Tone.js and
+sonic-controller.js already were. sonic-controller.js's built-in defaults
+(used by live piece iframes and immersive views, which pass no explicit
+paths) reuse the `?v=` from its own script tag; piece-render.php's
+standalone/export paths append `?v=filemtime`. Bundle/ZIP paths stay
+unversioned (ZIP-local copies). The wasm directory is a bare prefix that
+FilesetResolver appends filenames to and cannot carry a version; its files
+tolerate a stale cached type (classic script + ArrayBuffer fallback). No
+schema, route, feature flag, public endpoint, or vendor changed.
+
+### Verification
+
+- Chrome on macOS against 127.0.0.1: clicking Camera theremin fetched
+  `vision_bundle.mjs?v=<mtime>` and `hand_landmarker.task?v=<mtime>` plus both
+  wasm files (observed via the iframe's resource timing); no failure events.
+- ChromeOS against production confirmed the poisoned-cache mechanism:
+  same-URL fetch returned cached `text/plain` while `cache:'reload'` returned
+  `text/javascript`.
