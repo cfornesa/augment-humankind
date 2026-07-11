@@ -15,9 +15,9 @@ $cv = $piece['current_version'] ?? [];
 $soundControlsAvailable = function_exists('art_piece_sonic_params_supported') && art_piece_sonic_params_supported();
 $currentSonicFeel = $soundControlsAvailable ? art_piece_sonic_feel($cv['sonic_params'] ?? null) : '';
 $currentSonicEnabled = $soundControlsAvailable && !empty($cv['sonic_params']);
-$audioTabAvailable = $currentSonicEnabled;
+$audioTabAvailable = $soundControlsAvailable;
 $sonicExtras = $audioTabAvailable && function_exists('validate_art_piece_sonic_extras')
-    ? validate_art_piece_sonic_extras((json_decode((string) $cv['sonic_params'], true) ?: [])['extras'] ?? null)
+    ? validate_art_piece_sonic_extras((json_decode((string) ($cv['sonic_params'] ?? ''), true) ?: [])['extras'] ?? null)
     : null;
 ?>
 <style>
@@ -414,7 +414,7 @@ $sonicExtras = $audioTabAvailable && function_exists('validate_art_piece_sonic_e
                             <button type="button" class="admin-tab" data-tab="ai" role="tab" aria-selected="false" style="border-color: var(--yellow); background: rgba(254, 224, 72, 0.1);">AI Refine ✨</button>
                         <?php endif ?>
                         <?php if ($audioTabAvailable): ?>
-                            <button type="button" class="admin-tab" data-tab="audio" role="tab" aria-selected="false">Audio</button>
+                            <button type="button" class="admin-tab" data-tab="audio" role="tab" aria-selected="false">Interact</button>
                         <?php endif ?>
                     </div>
 
@@ -493,11 +493,41 @@ $sonicExtras = $audioTabAvailable && function_exists('validate_art_piece_sonic_e
                             <?php endif ?>
                         </div>
 
-                        <div id="sound-playback-toggle-wrap" class="field" <?= empty($cv['sonic_params']) ? 'style="display:none;"' : '' ?>>
+                        <?php if (function_exists('art_piece_camera_overlay_supported') && art_piece_camera_overlay_supported()): ?>
+                        <div class="field">
                             <?php
-                            $sonicDecoded = !empty($cv['sonic_params']) ? json_decode((string) $cv['sonic_params'], true) : null;
+                            $cameraOverlayMode = art_piece_version_generation_mode($cv, $piece);
+                            $cameraOverlayStored = isset($cv['camera_overlay']) && $cv['camera_overlay'] !== null && $cv['camera_overlay'] !== ''
+                                ? (int) $cv['camera_overlay']
+                                : art_piece_camera_overlay_default($cameraOverlayMode);
+                            $cameraOverlayValue = $cameraOverlayStored !== null ? (string) $cameraOverlayStored : '';
+                            ?>
+                            <label for="camera_overlay">Camera overlay</label>
+                            <select id="camera_overlay" name="camera_overlay">
+                                <option value="" <?= $cameraOverlayValue === '' ? 'selected' : '' ?>>Default (follow hand-tracking)</option>
+                                <option value="1" <?= $cameraOverlayValue === '1' ? 'selected' : '' ?>>On</option>
+                                <option value="0" <?= $cameraOverlayValue === '0' ? 'selected' : '' ?>>Off</option>
+                            </select>
+                            <small class="admin-hint" style="display: block; margin-top: 0.25rem;">
+                                Lets visitors show their camera behind/over the piece (with their permission). On by default for P5.js, plain C2.js, and SVG; authors can explicitly turn it off. On steerable engines it also unlocks hand control (camera steering).
+                            </small>
+                        </div>
+                        <?php endif; ?>
+
+                        <?php // Rendered only when a sound design exists — a hidden-but-
+                              // submitting checkbox here is what once let a plain save
+                              // fabricate sonic_params on sound-less pieces. ?>
+                        <?php if (!empty($cv['sonic_params'])): ?>
+                        <div id="sound-playback-toggle-wrap" class="field">
+                            <?php
+                            $sonicDecoded = json_decode((string) $cv['sonic_params'], true);
                             $soundPlayEnabled = !is_array($sonicDecoded) || ($sonicDecoded['enabled'] ?? true) !== false;
                             ?>
+                            <?php // Presence marker: lets the controller tell "checkbox
+                                  // rendered but unchecked" (persist enabled=false) apart
+                                  // from "checkbox not rendered at all" (preserve stored
+                                  // value) — e.g. a save right after AI Refine adds sound. ?>
+                            <input type="hidden" name="sound_playback_present" value="1">
                             <label class="checkbox-label">
                                 <input type="checkbox" id="sound_playback_active" name="sound_playback_active" value="1"
                                        <?= $soundPlayEnabled ? 'checked' : '' ?>>
@@ -507,6 +537,7 @@ $sonicExtras = $audioTabAvailable && function_exists('validate_art_piece_sonic_e
                                 This piece has an AI-generated sound design. Unchecking this disables sound playback globally on all public and immersive surfaces.
                             </small>
                         </div>
+                        <?php endif; ?>
 
                         <div class="field">
                             <label class="checkbox-label">
@@ -649,6 +680,13 @@ if ($engineVal === 'p5') {
 
                     <?php if ($audioTabAvailable): ?>
                     <div id="tab-audio" class="piece-tab-panel is-hidden" role="tabpanel">
+                        <?php if ($currentSonicEnabled): ?>
+                        <?php // Presence marker (same pattern as sound_playback_present):
+                              // these fieldsets' values live in sonic extras; when they
+                              // were never rendered, the controller must preserve the
+                              // stored extras instead of reading absent checkboxes as
+                              // "everything off". ?>
+                        <input type="hidden" name="sonic_extras_present" value="1">
                         <fieldset class="form-fieldset">
                             <legend>Public sound controls</legend>
                             <p class="admin-hint" style="margin-top:0;">Which of the sonification voices are exposed to visitors on the sound popover. Volume and the on/off toggle are always shown regardless of these.</p>
@@ -670,6 +708,22 @@ if ($engineVal === 'p5') {
                             </label>
                         </fieldset>
 
+                        <fieldset class="form-fieldset">
+                            <legend>Public camera controls</legend>
+                            <p class="admin-hint" style="margin-top:0;">Camera steering for visitors on steerable engines (Three.js, A-Frame, interactive C2). Available whenever the camera overlay (Metadata tab) or hand-tracking above unlocks it.</p>
+                            <label class="checkbox-label">
+                                <input type="checkbox" name="sonic_voice_hand_control" value="1" <?= ($sonicExtras['voices']['hand_control'] ?? true) ? 'checked' : '' ?>>
+                                Hand control (camera steering / tilt fallback)
+                            </label>
+                        </fieldset>
+                        <?php else: ?>
+                        <fieldset class="form-fieldset">
+                            <legend>Public camera controls</legend>
+                            <p class="admin-hint" style="margin-top:0;">This piece has no sound design, so there are no voice settings here. The camera overlay permission lives on the Metadata tab; when it is on, visitors on steerable engines (Three.js, A-Frame, interactive C2) automatically get hand control (camera steering with a device-tilt fallback).</p>
+                        </fieldset>
+                        <?php endif; ?>
+
+                        <?php if ($currentSonicEnabled): ?>
                         <div class="field">
                             <label for="sonic_default_volume">Default volume</label>
                             <input type="range" id="sonic_default_volume" name="sonic_default_volume" min="0" max="100" step="1" value="<?= (int) $sonicExtras['default_volume'] ?>">
@@ -813,6 +867,7 @@ if ($engineVal === 'p5') {
                                 </div>
                             </div>
                         </fieldset>
+                        <?php endif; ?>
                     </div>
                     <?php endif ?>
 
@@ -867,6 +922,8 @@ if ($engineVal === 'p5') {
     var cssField = document.getElementById('css_code');
     var jsField = document.getElementById('generated_code');
     var engineField = document.getElementById('engine');
+    var cameraOverlayField = document.getElementById('camera_overlay');
+    var cameraOverlayWasChanged = false;
     var titleField = document.getElementById('title');
     var previewStage = document.getElementById('preview-stage-wrapper');
     var currentPieceId = <?= $isEdit ? (int) $piece['id'] : 'null' ?>;
@@ -1088,12 +1145,23 @@ if ($engineVal === 'p5') {
         }
     }
 
+    function updateNewPieceCameraDefault(engine) {
+        if (isEditMode || !cameraOverlayField || cameraOverlayWasChanged) return;
+        cameraOverlayField.value = ['p5', 'c2', 'svg'].includes(engine || 'p5') ? '1' : '';
+    }
+
     // Hook listeners
     htmlField.addEventListener('input', queuePreviewUpdate);
     cssField.addEventListener('input', queuePreviewUpdate);
     jsField.addEventListener('input', queuePreviewUpdate);
+    if (cameraOverlayField) {
+        cameraOverlayField.addEventListener('change', function () {
+            cameraOverlayWasChanged = true;
+        });
+    }
     engineField.addEventListener('change', function () {
         updateEngineHtmlVisibility(engineField.value);
+        updateNewPieceCameraDefault(engineField.value);
         updateLivePreview();
     });
     titleField.addEventListener('input', queuePreviewUpdate);

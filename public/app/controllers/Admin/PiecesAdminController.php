@@ -202,6 +202,7 @@ class PiecesAdminController
                     'generation_attempt_count' => 0,
                     'notes' => null,
                     'sonic_params' => $data['sonic_params'] ?? null,
+                    'camera_overlay' => self::resolveCameraOverlayFromPost(null, $generationMode),
                 ]);
                 PlatformArtPiece::updateCurrentVersion($pieceId, $versionId);
             }
@@ -270,6 +271,12 @@ class PiecesAdminController
             if (self::hasAnyVersionCode($code)) {
                 $currentVersion = $existing['current_version'] ?? null;
                 $nextSonicParams = self::resolveSonicParamsFromPost($currentVersion['sonic_params'] ?? null);
+                $currentCameraOverlay = isset($currentVersion['camera_overlay']) && $currentVersion['camera_overlay'] !== null
+                    ? (int) $currentVersion['camera_overlay']
+                    : null;
+                $cameraGenerationMode = self::requestedGenerationModeFromPost($data['engine']);
+                $nextCameraOverlay = self::resolveCameraOverlayFromPost($currentCameraOverlay, $cameraGenerationMode);
+                $cameraOverlayChanged = art_piece_camera_overlay_supported() && $nextCameraOverlay !== $currentCameraOverlay;
                 $codeChanged = !$currentVersion
                     || self::normalizeCode($code['html_code']) !== self::normalizeCode($currentVersion['html_code'] ?? null)
                     || self::normalizeCode($code['css_code']) !== self::normalizeCode($currentVersion['css_code'] ?? null)
@@ -281,14 +288,20 @@ class PiecesAdminController
                 if ($currentVersion && !$codeChanged && !$sonicChanged) {
                     // Code and AI-authored sonic content are both unchanged.
                     // Audio-tab extras (voice visibility, volume, synth
-                    // tuning) are mechanical settings, not creative content —
-                    // update them in place on the current version row rather
-                    // than forking a new version, so routine tweaks don't
-                    // clutter version/AI-refine history.
+                    // tuning) and the camera overlay permission are
+                    // mechanical settings, not creative content — update
+                    // them in place on the current version row rather than
+                    // forking a new version, so routine tweaks don't clutter
+                    // version/AI-refine history.
+                    $inPlace = [];
                     if (art_piece_sonic_params_supported() && $nextSonicParams !== ($currentVersion['sonic_params'] ?? null)) {
-                        PlatformArtPieceVersion::update((int) $currentVersion['id'], array_merge($currentVersion, [
-                            'sonic_params' => $nextSonicParams,
-                        ]));
+                        $inPlace['sonic_params'] = $nextSonicParams;
+                    }
+                    if ($cameraOverlayChanged) {
+                        $inPlace['camera_overlay'] = $nextCameraOverlay;
+                    }
+                    if ($inPlace !== []) {
+                        PlatformArtPieceVersion::update((int) $currentVersion['id'], array_merge($currentVersion, $inPlace));
                     }
                 } else {
                     $generationMode = self::resolveVersionGenerationModeForUpdate($data['engine'], $currentVersion);
@@ -331,6 +344,7 @@ class PiecesAdminController
                         'ai_profile_id' => $data['ai_profile_id'] ?? null,
                         'ai_persona_id' => $data['ai_persona_id'] ?? null,
                         'sonic_params' => $nextSonicParams,
+                        'camera_overlay' => $nextCameraOverlay,
                     ]);
                     PlatformArtPiece::updateCurrentVersion((int) $id, $versionId);
                 }
@@ -611,10 +625,17 @@ class PiecesAdminController
             'comments_enabled' => isset($_POST['comments_enabled']) ? 1 : ($existing['comments_enabled'] ?? 0),
             'category_ids' => array_map('intval', $_POST['category_ids'] ?? ($existing ? PlatformArtPiece::categoryIds((int) $existing['id']) : [])),
         ];
+        $existingCameraOverlay = isset($existing['current_version']['camera_overlay']) && $existing['current_version']['camera_overlay'] !== null
+            ? (int) $existing['current_version']['camera_overlay']
+            : null;
+        $draftGenerationMode = self::requestedGenerationModeFromPost((string) ($_POST['engine'] ?? ($existing['engine'] ?? 'p5')));
         $draft['current_version'] = array_merge(
             $existing['current_version'] ?? [],
             self::resolveVersionCodeFromPost(),
-            ['sonic_params' => self::resolveSonicParamsFromPost($existing['current_version']['sonic_params'] ?? null)]
+            [
+                'sonic_params' => self::resolveSonicParamsFromPost($existing['current_version']['sonic_params'] ?? null),
+                'camera_overlay' => self::resolveCameraOverlayFromPost($existingCameraOverlay, $draftGenerationMode),
+            ]
         );
         return $draft;
     }
@@ -652,6 +673,8 @@ class PiecesAdminController
             $html = self::getStandardHtmlForEngine($engine);
         }
 
+        $generationMode = self::requestedGenerationModeFromPost($engine);
+
         return [
             'art_piece_id' => $pieceId,
             'version_number' => PlatformArtPieceVersion::nextVersionNumber($pieceId),
@@ -663,13 +686,14 @@ class PiecesAdminController
             'engine' => $engine,
             'generation_vendor' => trim($_POST['generation_vendor'] ?? '') ?: null,
             'generation_model' => trim($_POST['generation_model'] ?? '') ?: null,
-            'generation_mode' => self::requestedGenerationModeFromPost($engine),
+            'generation_mode' => $generationMode,
             'validation_status' => $_POST['validation_status'] ?? 'validated',
             'generation_attempt_count' => (int) ($_POST['generation_attempt_count'] ?? 1),
             'notes' => trim($_POST['notes'] ?? '') ?: null,
             'ai_profile_id' => (int) ($_POST['ai_profile_id'] ?? 0) ?: null,
             'ai_persona_id' => (int) ($_POST['ai_persona_id'] ?? 0) ?: null,
             'sonic_params' => self::resolveSonicParamsFromPost(),
+            'camera_overlay' => self::resolveCameraOverlayFromPost(null, $generationMode),
         ];
     }
 
@@ -694,12 +718,38 @@ class PiecesAdminController
         ];
     }
 
+    // Metadata-tab camera overlay permission: '1'/'0' are explicit. A blank
+    // choice resolves through the generation-mode default: On for p5/plain
+    // C2/SVG, NULL for legacy hand-tracking behavior on steerable engines.
+    // Same "trust the POST on a real submission, fall back otherwise"
+    // pattern as the sonic resolvers below.
+    private static function resolveCameraOverlayFromPost(?int $fallback = null, ?string $generationMode = null): ?int
+    {
+        if (!art_piece_camera_overlay_supported()) {
+            return $fallback;
+        }
+        if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !array_key_exists('camera_overlay', $_POST)) {
+            return $fallback;
+        }
+        $raw = trim((string) $_POST['camera_overlay']);
+        if ($raw === '') {
+            return $generationMode !== null
+                ? art_piece_camera_overlay_default($generationMode)
+                : null;
+        }
+        return $raw === '1' ? 1 : 0;
+    }
+
     // The manual Metadata-tab sound toggle was removed (generation and AI
     // Refine are the only paths that create/update sonic_params now), so the
     // main Save Changes form never submits sound_enabled/sound_feel — this
     // just preserves whatever the version already had.
     private static function resolveSonicParamsFromPost(?string $fallback = null): ?string
     {
+        // Never fabricate a sonic block for a piece that has none — a plain
+        // admin save must not turn a sound-less piece into a "sound" piece
+        // (the Interact tab's sound checkboxes only render when sonic_params
+        // exists, but hidden inputs would still submit).
         if (!art_piece_sonic_params_supported() || $fallback === null || trim($fallback) === '') {
             return null;
         }
@@ -707,7 +757,11 @@ class PiecesAdminController
         if (!is_array($decoded)) {
             return null;
         }
-        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+        // Only trust the POST when the checkbox was actually rendered (the
+        // sound_playback_present marker) — its absence means the form never
+        // offered the toggle (e.g. sound added by AI Refine since page
+        // load), so the stored value must be preserved.
+        if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['sound_playback_present'])) {
             $decoded['enabled'] = isset($_POST['sound_playback_active']);
         }
         $aiJson = json_encode($decoded, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
@@ -721,7 +775,10 @@ class PiecesAdminController
     // stored otherwise" pattern as sound_playback_active above.
     private static function resolveSonicExtrasFromPost(mixed $fallbackExtras): array
     {
-        if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+        // sonic_extras_present mirrors sound_playback_present above: absent
+        // checkboxes only mean "off" when the fieldsets were actually
+        // rendered into the submitting form.
+        if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !isset($_POST['sonic_extras_present'])) {
             return validate_art_piece_sonic_extras($fallbackExtras);
         }
         return validate_art_piece_sonic_extras([
@@ -731,6 +788,7 @@ class PiecesAdminController
                 'movement' => isset($_POST['sonic_voice_movement']),
                 'melodic' => isset($_POST['sonic_voice_melodic']),
                 'hand_tracking' => isset($_POST['sonic_voice_hand_tracking']),
+                'hand_control' => isset($_POST['sonic_voice_hand_control']),
             ],
             'synth' => [
                 'octave_min' => $_POST['sonic_octave_min'] ?? null,

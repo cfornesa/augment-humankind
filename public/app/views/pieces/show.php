@@ -12,16 +12,26 @@ $sonicFeel = is_array($version) ? art_piece_sonic_feel($version['sonic_params'] 
 // motion, c2_interactive sonifies pointer motion, everything else gets the
 // idle random-note pattern (see createPieceRuntimeAudioController).
 $sonicParamsDecoded = !empty($version['sonic_params']) ? json_decode((string) $version['sonic_params'], true) : null;
-$soundToggleAvailable = is_array($version)
-    && !empty($version['sonic_params'])
-    && (!is_array($sonicParamsDecoded) || ($sonicParamsDecoded['enabled'] ?? true) !== false);
-$handTrackingAvailable = $soundToggleAvailable && !empty($sonicParamsDecoded['extras']['voices']['hand_tracking']);
+$pieceGenerationMode = is_array($version) ? art_piece_version_generation_mode($version, $piece) : 'p5';
+$pieceControlCapabilities = is_array($version)
+    ? piece_sound_capability_contract(
+        $pieceGenerationMode,
+        is_array($sonicParamsDecoded) ? $sonicParamsDecoded : [],
+        piece_camera_overlay_enabled($version)
+    )
+    : [];
+// The contract owns the "no sonic_params means no sound" rule.
+$soundToggleAvailable = !empty($pieceControlCapabilities['sound']);
+$handTrackingAvailable = !empty($pieceControlCapabilities['hand_tracking']);
+$handControlAvailable = !empty($pieceControlCapabilities['hand_control']);
+$cameraViewAvailable = !empty($pieceControlCapabilities['camera_view']);
+$pieceControlsAvailable = $soundToggleAvailable || $cameraViewAvailable || $handControlAvailable;
 // Which optional sound panels the admin has allowed for this piece, offered
 // to the downloader as a ceiling-bounded choice for their own ZIP (see
 // piece_export_apply_requested_voices() in piece-render.php) — never
 // expandable past what's checked here.
 $downloadVoiceOptions = [];
-if ($soundToggleAvailable && (($sonicParamsDecoded['extras']['voices']['melodic'] ?? true) !== false)) {
+if (!empty($pieceControlCapabilities['keyboard'])) {
     $downloadVoiceOptions['melodic'] = 'Keyboard (piano)';
 }
 if ($handTrackingAvailable) {
@@ -95,19 +105,22 @@ $pieceFullscreenScriptVersion = (int) @filemtime(dirname(__DIR__, 3) . '/assets/
                 </div>
                 <?= piece_render_iframe($piece, $version, 560, array_filter([
                     'data-piece-download-frame' => 'true',
-                    'allow' => $handTrackingAvailable ? 'camera; microphone' : 'microphone',
+                    'allow' => ($handTrackingAvailable || $cameraViewAvailable || $handControlAvailable) ? 'camera; microphone' : 'microphone',
                 ])) ?>
-                <?php if ($soundToggleAvailable): ?>
+                <?php if ($pieceControlsAvailable): ?>
                 <div class="piece-sound-controls">
                     <div class="piece-sound-buttons">
+                        <?php if ($soundToggleAvailable): ?>
                         <button type="button" class="piece-sound-toggle" data-piece-sound-toggle aria-pressed="false" aria-label="Unmute sound">
                             <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4z"/><line x1="22" y1="9" x2="16" y2="15"/><line x1="16" y1="9" x2="22" y2="15"/></svg>
                         </button>
-                        <button type="button" class="piece-sound-panel-trigger" data-piece-sound-panel-trigger aria-haspopup="true" aria-expanded="false" aria-controls="piece-sound-panel" aria-label="Sound settings">
+                        <?php endif; ?>
+                        <button type="button" class="piece-sound-panel-trigger" data-piece-sound-panel-trigger aria-haspopup="true" aria-expanded="false" aria-controls="piece-sound-panel" aria-label="Piece controls">
                             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
                         </button>
                     </div>
-                    <div id="piece-sound-panel" class="piece-sound-panel" data-piece-sound-panel role="region" aria-label="Sound settings" hidden>
+                    <div id="piece-sound-panel" class="piece-sound-panel" data-piece-sound-panel role="region" aria-label="Piece controls" hidden>
+                        <?php if ($soundToggleAvailable): ?>
                         <div class="piece-sound-row">
                             <span>Sound</span>
                             <button type="button" class="piece-sound-switch" data-piece-sound-mute-toggle role="switch" aria-checked="false">Off</button>
@@ -124,24 +137,39 @@ $pieceFullscreenScriptVersion = (int) @filemtime(dirname(__DIR__, 3) . '/assets/
                         <div class="piece-piano-wrap" data-piece-sound-keys hidden>
                             <?= immersive_stage_piano_keyboard_markup('piece-piano', 'data-piece-piano') ?>
                         </div>
+                        <?php endif; ?>
                         <?php if ($handTrackingAvailable): ?>
                         <div class="piece-sound-row" data-piece-sound-hand-row>
                             <span>Hand-tracking</span>
                             <button type="button" class="piece-sound-keyboard-toggle" data-piece-sound-hand-toggle aria-pressed="false">Camera theremin</button>
                         </div>
-                        <?php // Engine-dependent camera features: unhidden by the iframe's
-                              // capability handshake (creatr-sound-voices) when the active
-                              // engine registered the matching interaction hook. ?>
+                        <?php endif; ?>
+                        <?php if ($handControlAvailable): ?>
+                        <?php // Hand control (camera steering + tilt fallback) rides the
+                              // camera permission or hand-tracking voice — see the
+                              // capability contract. Hidden until the iframe's handshake
+                              // confirms the engine registered a handPoint hook. ?>
                         <div class="piece-sound-row" data-piece-sound-hand-control-row hidden>
                             <span>Hand control</span>
                             <button type="button" class="piece-sound-keyboard-toggle" data-piece-sound-hand-control-toggle aria-pressed="false">Steer the piece</button>
                         </div>
+                        <?php endif; ?>
+                        <?php if ($cameraViewAvailable): ?>
+                        <?php // Camera overlay: its own per-piece permission (Metadata tab),
+                              // no longer tied to the hand-tracking voice. Rows stay hidden
+                              // until the iframe's handshake confirms hook support. ?>
                         <div class="piece-sound-row" data-piece-sound-camera-bg-row hidden>
                             <span>Camera view</span>
                             <button type="button" class="piece-sound-keyboard-toggle" data-piece-sound-camera-bg-toggle aria-pressed="false">Show camera</button>
                         </div>
+                        <div class="piece-sound-row" data-piece-sound-camera-opacity-row hidden>
+                            <label for="piece-camera-opacity">Camera opacity</label>
+                            <input id="piece-camera-opacity" type="range" min="0" max="100" value="35" data-piece-sound-camera-opacity aria-label="Camera overlay opacity">
+                        </div>
                         <?php endif; ?>
+                        <?php if ($soundToggleAvailable): ?>
                         <?= immersive_stage_mic_panel_markup('piece-mic', 'data-piece-mic', 'piece-sound-row', 'piece-sound-keyboard-toggle') ?>
+                        <?php endif; ?>
                     </div>
                 </div>
                 <?php endif; ?>

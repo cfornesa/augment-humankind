@@ -508,9 +508,21 @@ NOTE   imported posts (Blog.FeedImport) carry source_feed_id, which
   in the visitor's browser. Wired into all three
   `piece_export_*_global_source()` converters (three, OrbitControls,
   GLTFLoader).
+- **Opaque-runtime preparation:** `piece_export_strip_source_maps()` removes
+  only standalone source-map directive lines, never comment-shaped substrings
+  inside executable strings. `piece_export_prepare_aframe_runtime()` then
+  replaces A-Frame's single empty audio-source cleanup with a direct-file-safe
+  resource release; an exact occurrence-count assertion makes vendor drift a
+  fail-closed export error instead of an unchecked text rewrite.
+- **Artifact boundary:** `piece_export_validate_manifest()` walks the final
+  document, editable bundle files, and runtime files after all transformations.
+  It rejects empty documents/scripts, empty HTML/CSS resource references, and
+  module syntax in files classified as classic scripts before ZIP assembly;
+  nested collection pieces pass through the same boundary independently.
 - **Characteristics:** Fully deterministic given piece + version + options;
-  language-independent in structure (an assembly recipe); the guard makes
-  the conversion fail-closed server-side.
+  language-independent in structure (an assembly recipe); the guards make
+  transformation and packaging fail-closed server-side. Manifest validation
+  is O(f + n), where f is packaged file count and n is validated text size.
 
 ### 3.5 Canvas export with paint-readiness polling and blank detection — [public-piece-download.js](public/assets/js/public-piece-download.js), [admin-piece-capture.js](public/assets/js/admin-piece-capture.js), embedded copies emitted by [piece-render.php](public/app/helpers/piece-render.php)
 - **Type:** Bounded polling loop + statistical classification heuristic.
@@ -609,6 +621,56 @@ NOTE   imported posts (Blog.FeedImport) carry source_feed_id, which
 - **Characteristics:** Pure O(number of choices), currently O(2). Database
   state and the passed version remain unchanged; only the per-request export
   copy is narrowed.
+
+### 3.10 Piece control capability contract — `piece_sound_capability_contract()` ([piece-render.php](public/app/helpers/piece-render.php))
+- **Type:** Engine×configuration capability matrix.
+- **Logic:** One descriptor derives Sound, Keyboard, microphone, Hand-tracking,
+  Hand control, Camera view, and camera-opacity eligibility from the effective
+  generation mode, the administrator-bounded sonic voice configuration, and the
+  version's own `camera_overlay` permission (`piece_camera_overlay_enabled()`).
+  `sound` is `false` outright whenever the version carries no `sonic_params` at
+  all — the single source of truth for "does this piece have anything to
+  mute/unmute" — and `keyboard`/`microphone` are gated behind it in turn, so a
+  sound-less piece never surfaces a piano or mic toggle. `camera_view` reads
+  the dedicated `camera_overlay` column when explicitly set (1/0), falling
+  back to the legacy rule (follow the hand-tracking voice on
+  `three`/`aframe`/`c2_interactive`) only when the column is `NULL`; camera
+  permission is independent of sound design, so a piece with no `sonic_params`
+  can still offer a camera overlay. `hand_control` (steer the piece via wrist
+  position or device tilt) is available whenever the piece is a steerable
+  engine (`three`/`aframe`/`c2_interactive`) **and** either the hand-tracking
+  voice or the camera permission is on, **and** the admin hasn't explicitly
+  disabled it (`extras.voices.hand_control`, default `true`) — it no longer
+  requires a sound design, so a camera-only piece with no audio can still
+  expose hand control, with `sonic-controller.js` running a silent,
+  audio-free engine instance (`opts.allowHandControl`) rather than refusing.
+  `camera_opacity` equals `camera_view` — every camera surface blends now
+  (2D DOM overlay opacity, 3D camera-attached blended quad, immersive
+  gallery-wall material), so the slider is offered wherever the camera is.
+  Live regular, immersive (including the exported immersive document, whose
+  toolbar and stage chrome receive the same `camera_view`/`hand_control`
+  flags), and standalone export assembly consume this contract; browser
+  runtime handshakes remain the final check for APIs such as `getUserMedia`.
+- **2D authoring default:** `art_piece_camera_overlay_default()` returns On
+  for p5, plain C2, and SVG, whose camera is a visitor-activated DOM overlay
+  with opacity control. New versions persist that explicit value; the
+  dual-shipped backfill changes only NULL rows for those modes. Explicit Off
+  values and the Three/A-Frame/C2-Interactive legacy NULL rule are preserved.
+- **Export/live parity:** `piece_export_sonic_script()` and
+  `piece_export_bootstrap()` consume the same contract, so a camera-only
+  steerable piece's ZIP bundles `runtime/mediapipe-hands/*` whenever
+  `hand_tracking` **or** `hand_control` is true (not hand-tracking alone),
+  keeping the offline "Steer the piece" button functional instead of dead
+  weight; collection exports force `hand_control` off alongside
+  `hand_tracking` (`piece_export_force_voice_off()`) to keep wall-ZIP sizes
+  bounded. The DOM overlay/compose script (mirrored `<video>` + capture
+  compositing) is emitted once by `piece_export_dom_camera_overlay_script()`
+  for the p5/C2/SVG export bootstraps, mirroring the single live
+  `createDomCameraOverlayHooks()` twin in `piece-runtime.js` rather than
+  duplicating it per engine.
+- **Characteristics:** Deterministic O(1). The contract prevents surface code
+  from independently guessing which rows should exist while still allowing a
+  browser to hide a nominal capability it cannot execute.
 
 ### Recipe Overview — AI Art Piece Generation pipeline
 
@@ -2753,16 +2815,43 @@ Consolidates the side-channel notes in §3 and §4 LEG D.
     canvas, driving the piece's own pointer handlers (and the movement voice
     for free). Theremin and control can run simultaneously off one camera.
   - **Camera background ("Show camera"):** `acquireCameraFeed()` hands the
-    shared hidden `<video>` to the bootstrap's `setBackgroundVideo` hook,
-    which swaps the Three.js scene background for a `THREE.VideoTexture`
-    (previous background saved and restored on toggle-off). Registered for
-    Three.js (live + export twins) and A-Frame (live); other engines have
-    opaque canvases and no scene object, so their rows never appear — the
-    parent UI shows each row only after the iframe's capability handshake
-    (`handControlSupported`/`cameraBgSupported`) confirms the hook exists.
-    Mounted immersive Three.js/A-Frame viewers expose the same two capabilities
-    through `getPieceInteractionController()`, and standalone exports register
-    the same hook contract for both engines.
+    shared hidden `<video>` to the bootstrap's `setBackgroundVideo` hook.
+    Every surface supports adjustable opacity now. Three.js and A-Frame
+    render a mirrored `THREE.VideoTexture` on a **camera-attached blended
+    quad** — a full-frustum plane parented to the piece camera, drawn first
+    (`renderOrder −1`, no depth test/write) so the piece renders over it;
+    `MeshBasicMaterial` with `transparent: true` gives the opacity slider
+    real blending, and at opacity 1 it looks identical to the old opaque
+    `scene.background` swap (which could not blend and was replaced —
+    `createCameraBlendQuadHooks()` in piece-runtime.js, its export twin
+    `piece_export_camera_blend_quad_members()`, and the immersive twin
+    `createCameraBlendQuadController()` in immersive-gallery.js). The quad
+    refits to the frustum in `onBeforeRender` every frame since pieces own
+    their render loops and may animate fov/aspect. p5, plain/interactive C2,
+    and SVG register a mirrored, pointer-transparent DOM video overlay. The
+    parent UI shows each row only after the iframe's handshake
+    (`handControlSupported`/`cameraBgSupported`) confirms the hook exists,
+    and the `creatr-sound-camera-bg-state` reply carries the hook's current
+    opacity so sliders initialize to the real default (0.35 for the DOM
+    overlay, 1.0 for the quad and gallery wall). Mounted immersive Three.js/
+    A-Frame viewers expose the same capabilities through
+    `getPieceInteractionController()`; the mounted **gallery room** (p5/C2/
+    SVG immersive views) projects the mirrored feed onto the room's back
+    wall instead (`createGalleryWallCameraController()` — the wall material's
+    map is swapped for the `VideoTexture`, blended by opacity over the
+    room's ambient color, and restored exactly on toggle-off), so the framed
+    piece reads as hanging in the visitor's own space; being in-scene, the
+    room screenshot captures it with no extra compositing. Standalone and
+    immersive exports register the same hook contract for every engine.
+  - **2D camera composition:** live and standalone p5, C2, and SVG runtimes
+    register the same hook contract. The overlay defaults to 35% opacity
+    without changing the artwork bitmap, pointer rectangle, or generated draw
+    loop. `window.__creatrComposeCapture` creates an explicit temporary canvas
+    containing the artwork plus the current mirrored camera frame;
+    capture fails clearly while an active video has no ready frame rather than
+    silently omitting the visitor-visible layer. Every PNG entry point,
+    including the downloaded document's self-mounted camera button, invokes
+    this composition hook before validation/encoding.
 - **Mounted-view ownership:** while hand steering is enabled, its interaction
   controller exclusively owns the camera. Three.js pauses OrbitControls,
   arrow/click/wheel/viewer-button navigation, and the shared gyro controller;
@@ -2770,8 +2859,9 @@ Consolidates the side-channel notes in §3 and §4 LEG D.
   Disabling steering restores exactly the control modes that were active but
   keeps the hand-steered camera pose; gyro recalibrates from that pose rather
   than snapping back. Failure and viewer teardown clear the landmark subscriber,
-  release the shared camera reference, restore controls, restore the previous
-  scene background, and dispose the `VideoTexture`.
+  release the shared camera reference, restore controls, remove the blended
+  camera quad (or restore the gallery wall material), and dispose the
+  `VideoTexture`.
 - **Privacy:** frames are processed live for landmarks/texture only — never
   recorded, persisted, or transmitted; both toggles are per-visitor opt-ins
   on top of the sound toggle.

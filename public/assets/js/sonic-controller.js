@@ -302,6 +302,45 @@
    *
    * Returns null when sonicParams is missing/invalid — callers no-op safely.
    */
+
+  // One shared getUserMedia stream + hidden <video> for the whole document,
+  // ref-counted at module scope so every consumer — engine instances (hand
+  // theremin, hand control, camera feed) AND the standalone
+  // CreatrSonicController.cameraFeed used by pieces with no sound at all —
+  // shares a single camera pipeline. MUST be the FIRST await in any
+  // user-gesture-initiated enable path: WebKit's transient-activation window
+  // is short, so getUserMedia has to run before Tone.js or the MediaPipe
+  // model are loaded, not after. The video element is appended to the DOM
+  // (hidden) — WebKit decodes detached video elements unreliably.
+  var sharedCameraStream = null, sharedCameraVideo = null, sharedCameraRefs = 0;
+  async function acquireSharedCamera() {
+    if (sharedCameraVideo && sharedCameraStream) { sharedCameraRefs += 1; return sharedCameraVideo; }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      throw new Error('navigator.mediaDevices.getUserMedia not supported or blocked');
+    }
+    var stream = await navigator.mediaDevices.getUserMedia({ video: true });
+    sonicDebug('camera acquired', stream.getVideoTracks().map(function (t) { return t.readyState; }).join(','));
+    sharedCameraStream = stream;
+    sharedCameraVideo = document.createElement('video');
+    sharedCameraVideo.muted = true;
+    sharedCameraVideo.playsInline = true;
+    sharedCameraVideo.setAttribute('playsinline', '');
+    sharedCameraVideo.setAttribute('muted', '');
+    sharedCameraVideo.style.cssText = 'position:fixed;width:1px;height:1px;opacity:0;pointer-events:none;left:-10px;top:-10px;';
+    sharedCameraVideo.srcObject = sharedCameraStream;
+    (document.body || document.documentElement).appendChild(sharedCameraVideo);
+    await sharedCameraVideo.play();
+    sonicDebug('camera video playing', sharedCameraVideo.videoWidth + 'x' + sharedCameraVideo.videoHeight + ' ready=' + sharedCameraVideo.readyState);
+    sharedCameraRefs = 1;
+    return sharedCameraVideo;
+  }
+  function releaseSharedCamera() {
+    sharedCameraRefs = Math.max(0, sharedCameraRefs - 1);
+    if (sharedCameraRefs > 0) return;
+    if (sharedCameraStream) { try { sharedCameraStream.getTracks().forEach(function (t) { t.stop(); }); } catch (_e) {} sharedCameraStream = null; }
+    if (sharedCameraVideo) { try { sharedCameraVideo.remove(); } catch (_e) {} sharedCameraVideo = null; }
+  }
+
   function create(sonicParams, opts) {
     opts = opts || {};
     if (!sonicParams || typeof sonicParams !== 'object') return null;
@@ -344,13 +383,15 @@
     var enabled = false, disposed = false;
     var bus = null, filter = null, ambientSynth = null, movementSynth = null, melodicSynth = null;
     var effectNodes = [];
-    var handStream = null, handLandmarker = null, handVideoEl = null, handRafId = null, handNoteHeld = false;
-    // The camera is a shared resource: the theremin, the hand-control
-    // subscriber, and the camera-feed consumer each hold a reference; the
-    // stream/video pair is opened once and torn down when the last holder
-    // releases. handThereminOn gates the theremin mapping inside
-    // handFrameStep(); handControlOn keeps the landmark loop alive for the
-    // onHandFrame subscriber even with the theremin off.
+    var handLandmarker = null, handRafId = null, handNoteHeld = false;
+    // The camera is a shared resource (module-scoped acquireSharedCamera):
+    // the theremin, the hand-control subscriber, and the camera-feed
+    // consumer each hold a reference; the stream/video pair is opened once
+    // and torn down when the last holder releases. handCameraRefs counts
+    // THIS instance's holds so dispose() can drop exactly what it took.
+    // handThereminOn gates the theremin mapping inside handFrameStep();
+    // handControlOn keeps the landmark loop alive for the onHandFrame
+    // subscriber even with the theremin off.
     var handCameraRefs = 0, handThereminOn = false, handControlOn = false;
     var handFrameSubscriber = null;
     var lastIdleNoteAt = 0, lastMotionNoteAt = 0, walk = 0;
@@ -529,40 +570,20 @@
       }
     }
 
-    // Opens (or re-references) the single shared camera stream + hidden
-    // <video>. MUST be the FIRST await in any user-gesture-initiated enable
-    // path: WebKit's transient-activation window is short, so getUserMedia
-    // has to run before Tone.js or the MediaPipe model are loaded, not
-    // after. The video element is appended to the DOM (hidden) — WebKit
-    // decodes detached video elements unreliably.
+    // Thin instance wrappers over the module-scoped shared camera (see
+    // acquireSharedCamera above): count this instance's holds so dispose()
+    // can drop exactly what it acquired, never other consumers' references.
     async function acquireHandCamera() {
-      if (handVideoEl && handStream) { handCameraRefs += 1; return handVideoEl; }
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        throw new Error('navigator.mediaDevices.getUserMedia not supported or blocked');
-      }
-      var stream = await navigator.mediaDevices.getUserMedia({ video: true });
-      sonicDebug('camera acquired', stream.getVideoTracks().map(function (t) { return t.readyState; }).join(','));
-      if (disposed) { stream.getTracks().forEach(function (t) { t.stop(); }); throw new Error('disposed'); }
-      handStream = stream;
-      handVideoEl = document.createElement('video');
-      handVideoEl.muted = true;
-      handVideoEl.playsInline = true;
-      handVideoEl.setAttribute('playsinline', '');
-      handVideoEl.setAttribute('muted', '');
-      handVideoEl.style.cssText = 'position:fixed;width:1px;height:1px;opacity:0;pointer-events:none;left:-10px;top:-10px;';
-      handVideoEl.srcObject = handStream;
-      (document.body || document.documentElement).appendChild(handVideoEl);
-      await handVideoEl.play();
-      sonicDebug('camera video playing', handVideoEl.videoWidth + 'x' + handVideoEl.videoHeight + ' ready=' + handVideoEl.readyState);
-      handCameraRefs = 1;
-      return handVideoEl;
+      var video = await acquireSharedCamera();
+      if (disposed) { releaseSharedCamera(); throw new Error('disposed'); }
+      handCameraRefs += 1;
+      return video;
     }
 
     function releaseHandCamera() {
-      handCameraRefs = Math.max(0, handCameraRefs - 1);
-      if (handCameraRefs > 0) return;
-      if (handStream) { try { handStream.getTracks().forEach(function (t) { t.stop(); }); } catch (_e) {} handStream = null; }
-      if (handVideoEl) { try { handVideoEl.remove(); } catch (_e) {} handVideoEl = null; }
+      if (handCameraRefs <= 0) return;
+      handCameraRefs -= 1;
+      releaseSharedCamera();
     }
 
     function stopHandLoopIfIdle() {
@@ -595,16 +616,16 @@
           handInferenceContext = handInferenceCanvas.getContext('2d', { alpha: false });
         }
         if (!handInferenceContext) throw new Error('Canvas 2D context unavailable for hand fallback');
-        handInferenceContext.drawImage(handVideoEl, 0, 0, 256, 256);
+        handInferenceContext.drawImage(sharedCameraVideo, 0, 0, 256, 256);
         return handLandmarker.detectForVideo(handInferenceCanvas, timestamp);
       }
-      return handLandmarker.detectForVideo(handVideoEl, timestamp);
+      return handLandmarker.detectForVideo(sharedCameraVideo, timestamp);
     }
 
     function handFrameStep() {
       handRafId = requestAnimationFrame(handFrameStep);
-      if (!handLandmarker || !handVideoEl || handVideoEl.readyState < 2) return;
-      if (handVideoEl.videoWidth === 0 || handVideoEl.videoHeight === 0) return;
+      if (!handLandmarker || !sharedCameraVideo || sharedCameraVideo.readyState < 2) return;
+      if (sharedCameraVideo.videoWidth === 0 || sharedCameraVideo.videoHeight === 0) return;
       
       var timestamp = performance.now();
       if (timestamp <= lastHandTimestamp) {
@@ -698,8 +719,11 @@
     // the onHandFrame subscriber, so a host surface can drive piece
     // interaction (orbit / pointer) from the same single camera pipeline
     // the theremin uses. Needs no audio — ensureSynth() is not called.
+    // Unlocked by the hand-tracking voice OR opts.allowHandControl (set by
+    // callers whose server-side contract granted hand control via the
+    // camera permission — including silent engines on sound-less pieces).
     async function enableHandControl() {
-      if (disposed || !voices.hand_tracking) return false;
+      if (disposed || !(voices.hand_tracking || opts.allowHandControl)) return false;
       if (handControlOn) return true;
       var cameraHeld = false;
       try {
@@ -735,10 +759,14 @@
       stopHandLoopIfIdle();
     }
 
-    // Camera-feed consumer (e.g. a VideoTexture piece background): holds a
-    // reference on the shared stream and hands back the hidden <video>.
+    // Camera-feed consumer (e.g. a VideoTexture piece background or DOM
+    // overlay): holds a reference on the shared stream and hands back the
+    // hidden <video>. Deliberately NOT gated on voices.hand_tracking — the
+    // camera overlay is its own per-piece permission now (camera_overlay
+    // column), enforced server-side by the capability contract; only the
+    // MediaPipe paths (enableHandTracking/enableHandControl) stay gated.
     async function acquireCameraFeed() {
-      if (disposed || !voices.hand_tracking) throw new Error('camera not available for this piece');
+      if (disposed) throw new Error('camera not available for this piece');
       return acquireHandCamera();
     }
 
@@ -1050,7 +1078,7 @@
       onHandFrame: function (cb) { handFrameSubscriber = (typeof cb === 'function') ? cb : null; },
       acquireCameraFeed: acquireCameraFeed,
       releaseCameraFeed: releaseCameraFeed,
-      getHandVideoElement: function () { return handVideoEl; },
+      getHandVideoElement: function () { return sharedCameraVideo; },
       // Live human-voice input (mic) — visitor-facing, off by default, never
       // persisted by this engine. isMicSupported() is a plain feature check
       // (doesn't require Tone.js to be loaded yet) so UI surfaces can decide
@@ -1083,7 +1111,7 @@
         if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
         disableHandTracking();
         disableHandControl();
-        handCameraRefs = 0; releaseHandCamera(); // force-drop any feed holders
+        while (handCameraRefs > 0) releaseHandCamera(); // drop this instance's remaining feed holds
         disableMic();
         try { handLandmarker && handLandmarker.close && handLandmarker.close(); } catch (_e) {}
         try { ambientSynth && ambientSynth.dispose && ambientSynth.dispose(); } catch (_e) {}
@@ -1152,6 +1180,15 @@
   global.CreatrSonicController = {
     create: create,
     createDeviceTiltController: createDeviceTiltController,
+    // Standalone camera feed for pieces with a camera overlay but no sound
+    // at all (no sonic engine instance): same ref-counted shared stream the
+    // engines use, so live-mixing camera + sound later never double-opens
+    // the camera. acquire() MUST be the first await in the invoking gesture.
+    cameraFeed: {
+      acquire: acquireSharedCamera,
+      release: releaseSharedCamera,
+      getVideo: function () { return sharedCameraVideo; },
+    },
     SONIC_SCALES: SONIC_SCALES,
     SONIC_INSTRUMENTS: SONIC_INSTRUMENTS,
     midiToFreq: midiToFreq,

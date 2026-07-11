@@ -442,6 +442,52 @@ function manifest(): array
             ensureColumn($ctx, 'art_piece_versions', 'sonic_params', 'LONGTEXT NULL AFTER notes');
         }],
 
+        ['art piece version camera overlay (2026-07-11)', function (Ctx $ctx): void {
+            ensureColumn($ctx, 'art_piece_versions', 'camera_overlay', 'TINYINT(1) NULL AFTER sonic_params');
+        }],
+
+        ['default 2D piece camera overlay (2026-07-11)', function (Ctx $ctx): void {
+            // Mirrors docs/migrations/2026-07-11-default-2d-camera-overlay.sql.
+            // Explicit Off values and the steerable-engine NULL contract are
+            // preserved. Idempotent: matching rows become 1 on the first run.
+            if (
+                !tableExists($ctx->pdo, 'art_piece_versions')
+                || !columnExists($ctx->pdo, 'art_piece_versions', 'camera_overlay')
+            ) {
+                return;
+            }
+            runBackfill(
+                $ctx,
+                "UPDATE art_piece_versions
+                 SET camera_overlay = 1
+                 WHERE camera_overlay IS NULL
+                   AND COALESCE(NULLIF(generation_mode, ''), engine) IN ('p5', 'c2', 'svg')",
+                'default p5/plain-c2/svg camera overlays on'
+            );
+        }],
+
+        ['null fabricated sonic params (2026-07-11)', function (Ctx $ctx): void {
+            // See docs/migrations/2026-07-11-null-fabricated-sonic-params.sql:
+            // a since-fixed admin-save bug materialized {enabled, extras}
+            // sonic blocks on pieces with no AI sound design. Real designs
+            // always carry tempo/scale/instrument; rows lacking all three
+            // are fabricated. Idempotent (matching rows become NULL).
+            if (!tableExists($ctx->pdo, 'art_piece_versions') || !columnExists($ctx->pdo, 'art_piece_versions', 'sonic_params')) {
+                return;
+            }
+            runBackfill(
+                $ctx,
+                "UPDATE art_piece_versions
+                 SET sonic_params = NULL
+                 WHERE sonic_params IS NOT NULL
+                   AND JSON_VALID(sonic_params)
+                   AND JSON_EXTRACT(sonic_params, '$.tempo') IS NULL
+                   AND JSON_EXTRACT(sonic_params, '$.scale') IS NULL
+                   AND JSON_EXTRACT(sonic_params, '$.instrument') IS NULL",
+                'null fabricated sonic_params blocks'
+            );
+        }],
+
         ['exhibit media kind model (2026-07-08)', function (Ctx $ctx): void {
             ensureEnumValue(
                 $ctx,

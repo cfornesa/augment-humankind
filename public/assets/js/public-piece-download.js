@@ -197,6 +197,10 @@
     }
 
     async function exportCanvasWithValidation(doc, canvas) {
+        const composeCapture = doc.defaultView && doc.defaultView.__creatrComposeCapture;
+        if (typeof composeCapture === 'function') {
+            canvas = await composeCapture(canvas);
+        }
         tryForceAframeRender(doc, canvas);
         const first = await exportCanvas(canvas);
         if (!hasVisiblePixels(first)) {
@@ -262,9 +266,14 @@
             throw new Error('No downloadable canvas or SVG is available yet.');
         }
 
-        return surface.type === 'svg'
-            ? exportSvg(surface.node)
-            : exportCanvasWithValidation(doc, surface.node);
+        if (surface.type === 'svg') {
+            let svgCanvas = await exportSvg(surface.node);
+            if (typeof doc.defaultView.__creatrComposeCapture === 'function') {
+                svgCanvas = await doc.defaultView.__creatrComposeCapture(svgCanvas);
+            }
+            return svgCanvas;
+        }
+        return exportCanvasWithValidation(doc, surface.node);
     }
 
     async function handleDownload(button) {

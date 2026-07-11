@@ -642,12 +642,17 @@ class PlatformArtPiece
 
     private static function versionSelectColumns(): string
     {
-        return art_piece_version_select_columns(self::versionHasGenerationMode(), false, false, self::versionHasSonicParamsColumn());
+        return art_piece_version_select_columns(self::versionHasGenerationMode(), false, false, self::versionHasSonicParamsColumn(), self::versionHasCameraOverlayColumn());
     }
 
     private static function versionHasSonicParamsColumn(): bool
     {
         return ah_column_exists('art_piece_versions', 'sonic_params');
+    }
+
+    private static function versionHasCameraOverlayColumn(): bool
+    {
+        return ah_column_exists('art_piece_versions', 'camera_overlay');
     }
 
     private static function versionHasGenerationMode(): bool

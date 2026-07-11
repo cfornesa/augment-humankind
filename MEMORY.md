@@ -75,7 +75,21 @@ Source: DECISIONS.md 2026-07-06 Public Copy Subtabs, Footer Consolidation, Widen
 
 # Standing Decisions — Art Pieces, AI Generation & Immersive
 
+2026-07-11 DECISION Live and downloaded piece views derive sensible controls and capture behavior from one engine-aware capability matrix; screenshots must include all active visible composition layers.
+2026-07-11 CORRECTION Fixed a corrupted multi-line comment close tag in public/app/helpers/piece-render.php (which had been accidentally modified to "nfunction" in a prior session, commenting out 1,800 lines of helper code and throwing "Call to undefined function" errors on live views).
+2026-07-11 DECISION Split the Audio tab in the piece edit panel (/admin/pieces/[id]/edit) into two separate fieldsets: "Public sound controls" and "Public camera controls", making camera steering (hand control) independent of the hand-tracking audio voice.
+2026-07-11 DECISION Renamed the Audio tab to "Interact" in form.php (still always accessible when the schema supports sound), and wrapped all audio-specific UI controls and settings (sound controls, default volume, ambient sample, synth settings, and effects) inside checks for `$currentSonicEnabled` to hide them when a piece has no associated audio.
+
+2026-07-11 CORRECTION resolveSonicParamsFromPost() must NEVER fabricate a sonic_params block for a piece without one (a brief regression constructed ['enabled' => false] payloads, which made silent pieces render the sound panel and play idle notes; the 2026-07-11 null-fabricated-sonic-params migration cleans the affected rows). Only generation/AI Refine create sonic_params; admin saves only mutate existing blocks, guarded by sound_playback_present/sonic_extras_present form markers so unrendered fields never read as "off".
+
+2026-07-11 DECISION Hand control (camera steering + device-tilt fallback) is granted by piece_sound_capability_contract() as: steerable engine (three/aframe/c2_interactive) AND (hand-tracking voice OR camera_view permission) AND voices.hand_control (default true everywhere). Sound-less pieces get it via a silent engine (CreatrSonicController.create({}, {allowHandControl: true}) — ensureEnabled() refuses audio on them); exports bundle MediaPipe whenever hand_tracking OR hand_control is offered, and collection exports force both off to bound ZIP size.
 2026-07-11 DECISION Hand-tracking theremin (and hand controls) and live microphone features in sonic-controller.js are stabilized for cross-browser runtime safety: video width/height guards protect against warmup zero-dimension frame exceptions; MediaPipe detectForVideo calls use strictly monotonic timestamps to avoid WebGL/WASM and MediaPipe crashes; and Tone.connect connects the native mic stream node recursively to Tone.js nodes to resolve browser TypeErrors.
+
+2026-07-11 DECISION Registered camera video overlay layers and composed capture routines inside P5.js and SVG (default) offline bootstrap scripts to provide webcam overlay features and correct PNG capture composition offline under the `file://` protocol.
+
+2026-07-11 DECISION P5.js, plain C2.js, and SVG camera overlays default On but remain visitor-activated and author-disableable; camera approval and opacity share the regular-view Piece controls menu.
+
+2026-07-11 DECISION Ported the `isIPhoneWebKitBrowser()` check, CSS pseudo-fullscreen layout fallbacks, and the Escape key exit handlers directly to exported/downloaded piece documents so fullscreen transitions operate cleanly on mobile Safari without browser window failures.
 
 2026-07-10 DECISION iOS hand features use retryable MediaPipe initialization, direct-video then throttled-canvas inference, and explicitly labeled device tilt as the final steering fallback; live mic uses one granted stream through createMediaStreamSource() and never raw-monitors on failure.
 

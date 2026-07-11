@@ -72,6 +72,15 @@ const pieceDisableMotion = pieceContext.disableMotion === true;
 // else has no motion signal here and gets the idle random-note pattern only.
 const PIECE_SONIC = (pieceContext && pieceContext.sonic && typeof pieceContext.sonic === 'object') ? pieceContext.sonic : null;
 const PIECE_C2_INTERACTIVE = pieceContext.c2Interactive === true;
+// Per-piece camera overlay permission, resolved server-side by
+// piece_sound_capability_contract() (Metadata-tab camera_overlay column,
+// with a legacy fallback to the hand-tracking voice) — independent of
+// PIECE_SONIC, so a piece with no sound at all can still offer the camera.
+const PIECE_CAMERA_OVERLAY = pieceContext.cameraOverlay === true;
+// Hand control (camera steering + device-tilt fallback), resolved server-side
+// by the capability contract: available on steerable engines when the camera
+// permission or the hand-tracking voice unlocks it — independent of sound.
+const PIECE_HAND_CONTROL = pieceContext.handControl === true;
 
 let _pieceSonicControllerPromise = null;
 function pieceLoadSonicControllerOnce() {
@@ -137,7 +146,13 @@ function writePieceVoiceInstrumentOverride(pieceId, voiceName, instrumentKey) {
 }
 
 function createPieceRuntimeAudioController(sonicParams, getMover) {
-  if (!sonicParams || typeof sonicParams !== 'object') return null;
+  // sonicParams may be null for a camera-only piece (camera overlay and/or
+  // hand control enabled, no sound design): the controller still mounts to
+  // run the postMessage bridge and camera/steering toggles, it just never
+  // creates an AUDIBLE engine — see createEngineWith.
+  const soundActive = !!(sonicParams && typeof sonicParams === 'object');
+  if (!soundActive && !PIECE_CAMERA_OVERLAY && !PIECE_HAND_CONTROL) return null;
+  if (!soundActive) sonicParams = null;
   if (getMover != null && typeof getMover !== 'function') return null;
 
   const pieceId = (pieceContext && pieceContext.pieceId != null) ? pieceContext.pieceId : null;
@@ -148,24 +163,30 @@ function createPieceRuntimeAudioController(sonicParams, getMover) {
   // has no direct access to sonicParams — it only relays postMessages) so
   // its popover can hide the keyboard/hand-tracking controls accordingly.
   (function notifyParentVoices() {
-    const voices = (sonicParams.extras && sonicParams.extras.voices) || {};
-    const ambientSample = (sonicParams.extras && sonicParams.extras.synth && sonicParams.extras.synth.ambient_sample) || {};
+    const voices = (soundActive && sonicParams.extras && sonicParams.extras.voices) || {};
+    const ambientSample = (soundActive && sonicParams.extras && sonicParams.extras.synth && sonicParams.extras.synth.ambient_sample) || {};
     try {
       if (window.parent && window.parent !== window) {
         window.parent.postMessage({
           type: 'creatr-sound-voices',
           voices: {
-            ambient: voices.ambient !== false,
-            movement: voices.movement !== false,
-            melodic: voices.melodic !== false,
-            hand_tracking: !!voices.hand_tracking,
+            ambient: soundActive && voices.ambient !== false,
+            movement: soundActive && voices.movement !== false,
+            melodic: soundActive && voices.melodic !== false,
+            hand_tracking: !!(soundActive && voices.hand_tracking),
           },
           ambientIsSample: !!(ambientSample.enabled && ambientSample.media_id),
-          micSupported: !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia),
+          micSupported: !!(soundActive && navigator.mediaDevices && navigator.mediaDevices.getUserMedia),
           // Engine-dependent camera capabilities (hooks are registered by
-          // the active bootstrap before this controller is created).
-          handControlSupported: !!(voices.hand_tracking && window.__pieceHandHooks && window.__pieceHandHooks.handPoint),
-          cameraBgSupported: !!(voices.hand_tracking && window.__pieceHandHooks && window.__pieceHandHooks.setBackgroundVideo),
+          // the active bootstrap before this controller is created). The
+          // camera overlay is its own permission (PIECE_CAMERA_OVERLAY),
+          // no longer implied by the hand-tracking voice.
+          // Hand control rides the camera permission or hand-tracking voice
+          // (PIECE_HAND_CONTROL reflects the server-side contract), not the
+          // sound design — a sound-less piece can still steer.
+          handControlSupported: !!(PIECE_HAND_CONTROL && window.__pieceHandHooks && window.__pieceHandHooks.handPoint),
+          cameraBgSupported: !!(PIECE_CAMERA_OVERLAY && window.__pieceHandHooks && window.__pieceHandHooks.setBackgroundVideo),
+          cameraOpacitySupported: !!(PIECE_CAMERA_OVERLAY && window.__pieceHandHooks && typeof window.__pieceHandHooks.setBackgroundOpacity === 'function'),
         }, '*');
       }
     } catch (_) {}
@@ -178,8 +199,15 @@ function createPieceRuntimeAudioController(sonicParams, getMover) {
   pieceLoadSonicControllerOnce().catch(() => {});
 
   function createEngineWith(CSC) {
-    return CSC.create(sonicParams, {
+    // Sound-less pieces with hand control get a SILENT engine ({} params):
+    // enableHandControl() never touches audio, and ensureEnabled() below
+    // refuses to enable() it, so it can only ever run the camera/landmark
+    // pipeline. Camera-only-without-hand-control pieces need no engine at
+    // all (the overlay uses the static cameraFeed).
+    if (!soundActive && !PIECE_HAND_CONTROL) return null;
+    return CSC.create(soundActive ? sonicParams : {}, {
       getMover: getMover || undefined,
+      allowHandControl: PIECE_HAND_CONTROL,
       toneSrc: (pieceContext && typeof pieceContext.toneSource === 'string' && pieceContext.toneSource !== '')
         ? pieceContext.toneSource
         : undefined,
@@ -198,7 +226,10 @@ function createPieceRuntimeAudioController(sonicParams, getMover) {
   }
 
   async function ensureEnabled() {
-    if (disposed) return false;
+    // A sound-less piece must never play audio, even if a forged
+    // creatr-sound-toggle message arrives — its engine (if any) exists only
+    // for hand control.
+    if (disposed || !soundActive) return false;
     if (engine && engine.isEnabled()) return true;
     if (!engine) {
       const CSC = await pieceLoadSonicControllerOnce();
@@ -278,6 +309,10 @@ function createPieceRuntimeAudioController(sonicParams, getMover) {
       handleCameraBackgroundToggle(!!data.enabled);
       return;
     }
+    if (data.type === 'creatr-sound-camera-bg-opacity') {
+      window.__pieceHandHooks?.setBackgroundOpacity?.(Number(data.value));
+      return;
+    }
     if (data.type === 'creatr-sound-mic-toggle') {
       handleMicToggle(!!data.enabled);
       return;
@@ -326,6 +361,13 @@ function createPieceRuntimeAudioController(sonicParams, getMover) {
   }
 
   function handleHandControlToggle(on) {
+    if (on && !PIECE_HAND_CONTROL) {
+      // Same defense-in-depth as the camera toggle below: a forged
+      // postMessage must not open the camera on a piece that doesn't allow
+      // steering.
+      notifyParentHandControlState(false);
+      return;
+    }
     if (!on) {
       handControlBinding.detach();
       engine?.disableHandControl();
@@ -359,18 +401,41 @@ function createPieceRuntimeAudioController(sonicParams, getMover) {
     if (!ok) notifyParentCapabilityState({ capability: 'hand_control', state: 'unavailable', reason: 'Device motion permission denied' });
   }
 
+  // The overlay uses the module-level shared camera feed directly (same
+  // ref-counted stream the hand pipeline uses) rather than the audio
+  // engine, so it works on camera-only pieces where no engine ever exists.
+  // getUserMedia must be the first await in the invoking gesture task — the
+  // controller script is prefetched above so CSC is normally already here.
+  let cameraFeedHeld = false;
   function handleCameraBackgroundToggle(on) {
-    if (!on) {
-      cameraBackgroundBinding.detach();
-      engine?.releaseCameraFeed();
+    if (on && !PIECE_CAMERA_OVERLAY) {
+      // Defense in depth: the host page never shows the toggle unless the
+      // capability handshake advertised it, but a forged postMessage must
+      // not be able to open the camera on a piece that doesn't allow it.
       notifyParentCameraBgState(false);
       return;
     }
-    const eng = ensureEngineSync();
-    Promise.resolve(eng ? eng.acquireCameraFeed() : Promise.reject(new Error('unavailable')))
+    if (!on) {
+      cameraBackgroundBinding.detach();
+      if (cameraFeedHeld) {
+        cameraFeedHeld = false;
+        try { window.CreatrSonicController?.cameraFeed.release(); } catch (_) {}
+      }
+      notifyParentCameraBgState(false);
+      return;
+    }
+    const CSC = window.CreatrSonicController;
+    const acquire = CSC
+      ? CSC.cameraFeed.acquire()
+      : pieceLoadSonicControllerOnce().then((loaded) => loaded.cameraFeed.acquire());
+    Promise.resolve(acquire)
       .then((video) => {
+        cameraFeedHeld = true;
         const shown = cameraBackgroundBinding.attach(video);
-        if (!shown) engine?.releaseCameraFeed();
+        if (!shown) {
+          cameraFeedHeld = false;
+          try { window.CreatrSonicController?.cameraFeed.release(); } catch (_) {}
+        }
         notifyParentCameraBgState(shown);
       })
       .catch(() => notifyParentCameraBgState(false));
@@ -422,7 +487,17 @@ function createPieceRuntimeAudioController(sonicParams, getMover) {
   function notifyParentCameraBgState(on) {
     try {
       if (window.parent && window.parent !== window) {
-        window.parent.postMessage({ type: 'creatr-sound-camera-bg-state', enabled: !!on }, '*');
+        window.parent.postMessage({
+          type: 'creatr-sound-camera-bg-state',
+          enabled: !!on,
+          opacitySupported: typeof window.__pieceHandHooks?.setBackgroundOpacity === 'function',
+          // Lets the host initialize its slider to the hook's real default
+          // (0.35 for the 2D DOM overlay, 1.0 for the 3D blended quad)
+          // instead of assuming a hardcoded value.
+          opacity: typeof window.__pieceHandHooks?.getBackgroundOpacity === 'function'
+            ? window.__pieceHandHooks.getBackgroundOpacity()
+            : null,
+        }, '*');
       }
     } catch (_) {}
   }
@@ -743,6 +818,10 @@ function createPieceRuntimeAudioController(sonicParams, getMover) {
       detachStandalonePianoKeys?.();
       handControlBinding.detach();
       cameraBackgroundBinding.detach();
+      if (cameraFeedHeld) {
+        cameraFeedHeld = false;
+        try { window.CreatrSonicController?.cameraFeed.release(); } catch (_) {}
+      }
       tiltController?.disable();
       document.removeEventListener('creatr-sonic-capability-state', onCapabilityState);
       engine?.dispose();
@@ -750,6 +829,172 @@ function createPieceRuntimeAudioController(sonicParams, getMover) {
   };
 }
 let pieceAudioController = null;
+
+// Shared DOM camera overlay for the 2D-surface engines (p5, plain c2,
+// c2_interactive, svg): a mirrored <video> absolutely positioned over the
+// piece surface, plus the capture-compositing hook downloads use to bake
+// the overlay into exported PNGs. Three/A-Frame keep their own
+// scene-background (VideoTexture / <a-videosphere>-style) hooks instead.
+// getSurface is a function so engines whose surface appears asynchronously
+// (p5's canvas) can register before it exists.
+function createDomCameraOverlayHooks(getSurface) {
+  const hooks = {
+    _cameraOverlay: null,
+    _cameraOpacity: 0.35,
+    setBackgroundVideo(video) {
+      const surface = getSurface();
+      if (!video || !surface || !surface.parentElement) return false;
+      this.clearBackgroundVideo();
+      const parent = surface.parentElement;
+      if (getComputedStyle(parent).position === 'static') parent.style.position = 'relative';
+      const overlay = document.createElement('video');
+      overlay.autoplay = true;
+      overlay.muted = true;
+      overlay.playsInline = true;
+      overlay.srcObject = video.srcObject;
+      overlay.style.cssText = 'position:absolute;z-index:2;transform:scaleX(-1);pointer-events:none;';
+      overlay.style.objectFit = 'cover';
+      overlay.style.opacity = String(this._cameraOpacity);
+      parent.appendChild(overlay);
+      this._cameraOverlay = overlay;
+      this.syncBackgroundVideoBox();
+      overlay.play().catch(() => {});
+      return true;
+    },
+    syncBackgroundVideoBox() {
+      const overlay = this._cameraOverlay;
+      const surface = getSurface();
+      if (!overlay || !surface || !surface.parentElement) return;
+      // Rect-based (not offsetLeft/offsetWidth) so it also works for <svg>
+      // roots, which have no HTMLElement offset geometry.
+      const rect = surface.getBoundingClientRect();
+      const parentRect = surface.parentElement.getBoundingClientRect();
+      overlay.style.left = (rect.left - parentRect.left) + 'px';
+      overlay.style.top = (rect.top - parentRect.top) + 'px';
+      overlay.style.width = rect.width + 'px';
+      overlay.style.height = rect.height + 'px';
+    },
+    clearBackgroundVideo() {
+      this._cameraOverlay?.remove();
+      this._cameraOverlay = null;
+    },
+    setBackgroundOpacity(value) {
+      this._cameraOpacity = Math.max(0, Math.min(1, Number(value)));
+      if (this._cameraOverlay) this._cameraOverlay.style.opacity = String(this._cameraOpacity);
+    },
+    getBackgroundOpacity() {
+      return this._cameraOpacity;
+    },
+  };
+  // Capture compositing: downloads pass the (already-rasterized, for svg)
+  // base canvas; the mirrored live camera frame is drawn over it at the
+  // current overlay opacity so the PNG matches what's on screen.
+  window.__creatrComposeCapture = async (baseCanvas) => {
+    const overlay = hooks._cameraOverlay;
+    if (!overlay) return baseCanvas;
+    if (overlay.readyState < 2 || !overlay.videoWidth) throw new Error('The camera frame is not ready to capture yet.');
+    const composed = document.createElement('canvas');
+    composed.width = baseCanvas.width;
+    composed.height = baseCanvas.height;
+    const ctx = composed.getContext('2d');
+    ctx.drawImage(baseCanvas, 0, 0);
+    ctx.save();
+    ctx.globalAlpha = hooks._cameraOpacity;
+    ctx.translate(composed.width, 0);
+    ctx.scale(-1, 1);
+    ctx.drawImage(overlay, 0, 0, composed.width, composed.height);
+    ctx.restore();
+    return composed;
+  };
+  window.addEventListener('resize', () => hooks.syncBackgroundVideoBox());
+  return hooks;
+}
+
+// Merges the DOM overlay hooks into window.__pieceHandHooks (creating it if
+// no interaction hooks were registered) when this piece allows the camera.
+function registerDomCameraOverlay(getSurface) {
+  if (!PIECE_CAMERA_OVERLAY) return;
+  window.__pieceHandHooks = Object.assign(window.__pieceHandHooks || {}, createDomCameraOverlayHooks(getSurface));
+}
+
+// Camera feed as a blended, camera-attached background quad for the 3D
+// engines (Three.js, A-Frame). Unlike the old `scene.background =
+// VideoTexture` approach this supports opacity: a mirrored full-frustum
+// plane parented to the active camera, drawn first (renderOrder -1, no
+// depth) so the piece's own scene renders over it — at opacity 1 it looks
+// exactly like the old opaque background swap, and the slider blends it
+// against whatever the piece renders behind (its own background/clear
+// color). Being in-scene, screenshots capture it with no extra compositing.
+function createCameraBlendQuadHooks(THREE_NS, getScene, getCamera) {
+  return {
+    _cameraQuad: null,
+    _videoTexture: null,
+    _cameraOpacity: 1,
+    setBackgroundVideo(video) {
+      const scene = getScene();
+      const camera = getCamera();
+      if (!video || !scene || !camera || !THREE_NS || !THREE_NS.VideoTexture) return false;
+      this.clearBackgroundVideo();
+      const texture = new THREE_NS.VideoTexture(video);
+      if (THREE_NS.SRGBColorSpace) texture.colorSpace = THREE_NS.SRGBColorSpace;
+      // Mirror horizontally — matches the 2D overlay's selfie-style view.
+      texture.wrapS = THREE_NS.RepeatWrapping;
+      texture.repeat.x = -1;
+      texture.offset.x = 1;
+      const material = new THREE_NS.MeshBasicMaterial({
+        map: texture,
+        transparent: true,
+        opacity: this._cameraOpacity,
+        depthTest: false,
+        depthWrite: false,
+        // The quad must never react to the piece's lights or tone mapping.
+        toneMapped: false,
+        fog: false,
+      });
+      const quad = new THREE_NS.Mesh(new THREE_NS.PlaneGeometry(1, 1), material);
+      quad.renderOrder = -1;
+      quad.frustumCulled = false;
+      // Refit to the camera frustum every frame — pieces own their render
+      // loops and may animate fov/aspect/near, so a one-time fit would drift.
+      quad.onBeforeRender = (_renderer, _scene, renderCamera) => {
+        const cam = renderCamera && renderCamera.isPerspectiveCamera ? renderCamera : null;
+        if (!cam) return;
+        const dist = Math.max(cam.near * 2, 0.05);
+        quad.position.set(0, 0, -dist);
+        const height = 2 * dist * Math.tan((cam.fov * Math.PI) / 360);
+        quad.scale.set(height * (cam.aspect || 1), height, 1);
+      };
+      // Camera children only render when the camera itself is in the scene
+      // graph — harmless if the piece already added it.
+      if (!camera.parent) scene.add(camera);
+      camera.add(quad);
+      this._cameraQuad = quad;
+      this._videoTexture = texture;
+      return true;
+    },
+    clearBackgroundVideo() {
+      const quad = this._cameraQuad;
+      if (quad) {
+        try { quad.parent && quad.parent.remove(quad); } catch (_) {}
+        try { quad.geometry.dispose(); } catch (_) {}
+        try { quad.material.dispose(); } catch (_) {}
+        this._cameraQuad = null;
+      }
+      if (this._videoTexture) {
+        try { this._videoTexture.dispose(); } catch (_) {}
+        this._videoTexture = null;
+      }
+    },
+    setBackgroundOpacity(value) {
+      this._cameraOpacity = Math.max(0, Math.min(1, Number(value)));
+      if (this._cameraQuad) this._cameraQuad.material.opacity = this._cameraOpacity;
+    },
+    getBackgroundOpacity() {
+      return this._cameraOpacity;
+    },
+  };
+}
+
 function runPieceCode() {
   try {
     const fn = new Function(PIECE_CODE + "\n//# sourceURL=piece-runtime.js");
@@ -1280,7 +1525,7 @@ function bootCanvasRuntime(extra) {
     sizeCanvas(canvas);
     if (PIECE_ENGINE === 'c2') fitCanvasBox(canvas);
   });
-  if (PIECE_ENGINE === 'c2' && PIECE_SONIC) {
+  if (PIECE_ENGINE === 'c2' && (PIECE_SONIC || PIECE_CAMERA_OVERLAY || PIECE_HAND_CONTROL)) {
     if (PIECE_C2_INTERACTIVE) {
       // Pointer position over the canvas, normalized to ~0..1 so deltas are
       // the same order of magnitude as the three/aframe camera-position
@@ -1299,8 +1544,9 @@ function bootCanvasRuntime(extra) {
       }, { passive: true });
       // Hand control for interactive c2: the wrist becomes a synthetic
       // pointer over the canvas, driving both the piece's own pointer
-      // handlers and (via updateC2Mover) the movement voice. No camera
-      // background here — the 2D canvas is opaque with no scene object.
+      // handlers and (via updateC2Mover) the movement voice. The DOM camera
+      // overlay hooks are merged in separately below when the piece allows
+      // the camera.
       window.__pieceHandHooks = {
         engine: 'c2_interactive',
         handPoint(nx, ny) {
@@ -1320,9 +1566,12 @@ function bootCanvasRuntime(extra) {
           }
         },
       };
+      registerDomCameraOverlay(() => canvas);
       pieceAudioController = createPieceRuntimeAudioController(PIECE_SONIC, () => c2Mover);
     } else {
-      // Plain (non-interactive) c2 has no motion signal — idle-only pattern.
+      // Plain (non-interactive) c2 has no motion signal — idle-only pattern
+      // when sound exists; the camera overlay works either way.
+      registerDomCameraOverlay(() => canvas);
       pieceAudioController = createPieceRuntimeAudioController(PIECE_SONIC, null);
     }
   }
@@ -1450,7 +1699,8 @@ function bootP5() {
       }
       // p5 has no camera/pointer motion signal on this view — idle-only
       // random-note pattern when sound is unmuted (see createPieceRuntimeAudioController).
-      if (PIECE_SONIC) {
+      if (PIECE_SONIC || PIECE_CAMERA_OVERLAY) {
+        registerDomCameraOverlay(() => document.querySelector('#runtime-root canvas') || document.querySelector('canvas'));
         pieceAudioController = createPieceRuntimeAudioController(PIECE_SONIC, null);
       }
     } catch (error) { showPieceError(error); }
@@ -1669,36 +1919,32 @@ function bootAFrame() {
         bindAFramePointerControls();
         requestAnimationFrame(() => requestAnimationFrame(signalAFrameReadyOnce));
         // Hooks first (capability handshake) — see the three bootstrap twin.
-        window.__pieceHandHooks = {
-          engine: 'aframe',
-          handPoint(nx, ny) {
-            const cameraObject = getAFrameCameraObject();
-            if (!cameraObject) return;
-            const desiredYaw = (0.5 - nx) * Math.PI * 1.5;
-            const desiredPitch = (0.5 - ny) * Math.PI * 0.6;
-            cameraObject.rotation.y += (desiredYaw - cameraObject.rotation.y) * 0.12;
-            cameraObject.rotation.x += (desiredPitch - cameraObject.rotation.x) * 0.12;
+        // Camera feed renders as a blended camera-attached quad (opacity
+        // slider support) rather than an opaque scene.background swap.
+        window.__pieceHandHooks = Object.assign(
+          {
+            engine: 'aframe',
+            handPoint(nx, ny) {
+              const cameraObject = getAFrameCameraObject();
+              if (!cameraObject) return;
+              const desiredYaw = (0.5 - nx) * Math.PI * 1.5;
+              const desiredPitch = (0.5 - ny) * Math.PI * 0.6;
+              cameraObject.rotation.y += (desiredYaw - cameraObject.rotation.y) * 0.12;
+              cameraObject.rotation.x += (desiredPitch - cameraObject.rotation.x) * 0.12;
+            },
           },
-          _prevBackground: undefined,
-          _videoTexture: null,
-          setBackgroundVideo(video) {
-            const THREE = window.AFRAME && window.AFRAME.THREE;
-            const object3D = scene && scene.object3D;
-            if (!THREE || !THREE.VideoTexture || !object3D) return false;
-            this._prevBackground = object3D.background ?? null;
-            this._videoTexture = new THREE.VideoTexture(video);
-            if (THREE.SRGBColorSpace) this._videoTexture.colorSpace = THREE.SRGBColorSpace;
-            object3D.background = this._videoTexture;
-            return true;
-          },
-          clearBackgroundVideo() {
-            const object3D = scene && scene.object3D;
-            if (object3D) object3D.background = this._prevBackground ?? null;
-            if (this._videoTexture) { try { this._videoTexture.dispose(); } catch (_) {} this._videoTexture = null; }
-          },
-        };
+          createCameraBlendQuadHooks(
+            window.AFRAME && window.AFRAME.THREE,
+            () => scene && scene.object3D,
+            () => scene && scene.camera
+          )
+        );
         if (PIECE_SONIC) {
           pieceAudioController = createPieceRuntimeAudioController(PIECE_SONIC, () => getAFrameCameraMover());
+        } else if (PIECE_CAMERA_OVERLAY || PIECE_HAND_CONTROL) {
+          // Camera-only piece: mount the controller for the camera toggle's
+          // message bridge even though no audio engine will ever exist.
+          pieceAudioController = createPieceRuntimeAudioController(null, null);
         }
       }, { once: true });
       frameId = requestAnimationFrame(animateAFramePointerNavigation);
@@ -2104,46 +2350,41 @@ async function bootThree() {
 
     // Interaction/camera hooks for the shared hand-tracking pipeline —
     // registered BEFORE the audio controller so its capability handshake
-    // (notifyParentVoices) can advertise them to the host page.
-    window.__pieceHandHooks = {
-      engine: 'three',
-      // Wrist position (mirrored x, raw y in 0..1) steers the orbit like a
-      // continuous drag: desired spherical angles around the current orbit
-      // target, eased per frame so tracking jitter doesn't jolt the camera.
-      handPoint(nx, ny) {
-        if (!controls || !state.camera) return;
-        const target = controls.target;
-        const offset = state.camera.position.clone().sub(target);
-        const sph = new mod.Spherical().setFromVector3(offset);
-        const desiredTheta = (nx - 0.5) * Math.PI * 1.5;
-        const desiredPhi = Math.PI / 2 + (ny - 0.5) * Math.PI * 0.7;
-        sph.theta += (desiredTheta - sph.theta) * 0.12;
-        sph.phi += (desiredPhi - sph.phi) * 0.12;
-        sph.phi = Math.max(0.15, Math.min(Math.PI - 0.15, sph.phi));
-        offset.setFromSpherical(sph);
-        state.camera.position.copy(target).add(offset);
-        controls.update();
+    // (notifyParentVoices) can advertise them to the host page. Camera feed
+    // renders as a blended camera-attached quad (opacity slider support)
+    // rather than an opaque scene.background swap.
+    window.__pieceHandHooks = Object.assign(
+      {
+        engine: 'three',
+        // Wrist position (mirrored x, raw y in 0..1) steers the orbit like a
+        // continuous drag: desired spherical angles around the current orbit
+        // target, eased per frame so tracking jitter doesn't jolt the camera.
+        handPoint(nx, ny) {
+          if (!controls || !state.camera) return;
+          const target = controls.target;
+          const offset = state.camera.position.clone().sub(target);
+          const sph = new mod.Spherical().setFromVector3(offset);
+          const desiredTheta = (nx - 0.5) * Math.PI * 1.5;
+          const desiredPhi = Math.PI / 2 + (ny - 0.5) * Math.PI * 0.7;
+          sph.theta += (desiredTheta - sph.theta) * 0.12;
+          sph.phi += (desiredPhi - sph.phi) * 0.12;
+          sph.phi = Math.max(0.15, Math.min(Math.PI - 0.15, sph.phi));
+          offset.setFromSpherical(sph);
+          state.camera.position.copy(target).add(offset);
+          controls.update();
+        },
       },
-      _prevBackground: undefined,
-      _videoTexture: null,
-      setBackgroundVideo(video) {
-        if (!state.scene || !mod.VideoTexture) return false;
-        this._prevBackground = state.scene.background ?? null;
-        this._videoTexture = new mod.VideoTexture(video);
-        if (mod.SRGBColorSpace) this._videoTexture.colorSpace = mod.SRGBColorSpace;
-        state.scene.background = this._videoTexture;
-        return true;
-      },
-      clearBackgroundVideo() {
-        if (state.scene) state.scene.background = this._prevBackground ?? null;
-        if (this._videoTexture) { try { this._videoTexture.dispose(); } catch (_) {} this._videoTexture = null; }
-      },
-    };
+      createCameraBlendQuadHooks(mod, () => state.scene, () => state.camera)
+    );
 
     // Per-piece Tone.js sonification: muted by default, unmuted via a
     // postMessage from the parent page's sound toggle (no master switch).
+    // Camera-only pieces (no sonic block) still mount the controller so the
+    // camera toggle's message bridge exists.
     if (PIECE_SONIC && state.camera) {
       pieceAudioController = createPieceRuntimeAudioController(PIECE_SONIC, () => state.camera);
+    } else if (PIECE_CAMERA_OVERLAY || PIECE_HAND_CONTROL) {
+      pieceAudioController = createPieceRuntimeAudioController(null, null);
     }
 
     window.addEventListener('resize', () => {
@@ -2186,8 +2427,11 @@ if (PIECE_ENGINE === 'p5') {
     ready.markRendered('svg-document');
   }
   // SVG has no camera/pointer motion signal on this view — idle-only
-  // random-note pattern when sound is unmuted.
-  if (PIECE_SONIC) {
+  // random-note pattern when sound is unmuted. The camera overlay layers a
+  // mirrored <video> over the <svg> root; capture compositing happens after
+  // the downloader rasterizes the SVG to a canvas.
+  if (PIECE_SONIC || PIECE_CAMERA_OVERLAY) {
+    registerDomCameraOverlay(() => document.querySelector('svg'));
     pieceAudioController = createPieceRuntimeAudioController(PIECE_SONIC, null);
   }
 }

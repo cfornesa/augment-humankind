@@ -323,6 +323,124 @@ export function createKeyboardNavigation(controls, options = {}) {
   return { update, dispose, clearKeys };
 }
 
+// Camera feed as a blended, camera-attached background quad for the mounted
+// Three.js/A-Frame viewers — the immersive twin of piece-runtime.js's
+// createCameraBlendQuadHooks(). Supports the opacity slider (the old
+// `scene.background = VideoTexture` swap could not blend); at opacity 1 it
+// looks identical to the old opaque swap. Getters (not captured refs) so
+// A-Frame can hand over its scene/camera lazily.
+function createCameraBlendQuadController(getThree, getScene, getCamera) {
+  let cameraQuad = null;
+  let videoTexture = null;
+  let cameraOpacity = 1;
+  return {
+    setBackgroundVideo(video) {
+      const T = getThree();
+      const scene = getScene();
+      const camera = getCamera();
+      if (!video || !scene || !camera || !T?.VideoTexture) return false;
+      this.clearBackgroundVideo();
+      videoTexture = new T.VideoTexture(video);
+      if (T.SRGBColorSpace) videoTexture.colorSpace = T.SRGBColorSpace;
+      // Mirror horizontally — matches the regular view's selfie-style overlay.
+      videoTexture.wrapS = T.RepeatWrapping;
+      videoTexture.repeat.x = -1;
+      videoTexture.offset.x = 1;
+      const material = new T.MeshBasicMaterial({
+        map: videoTexture, transparent: true, opacity: cameraOpacity,
+        depthTest: false, depthWrite: false, toneMapped: false, fog: false,
+      });
+      cameraQuad = new T.Mesh(new T.PlaneGeometry(1, 1), material);
+      cameraQuad.renderOrder = -1;
+      cameraQuad.frustumCulled = false;
+      cameraQuad.onBeforeRender = (_renderer, _scene, renderCamera) => {
+        const cam = renderCamera && renderCamera.isPerspectiveCamera ? renderCamera : null;
+        if (!cam) return;
+        const dist = Math.max(cam.near * 2, 0.05);
+        cameraQuad.position.set(0, 0, -dist);
+        const quadHeight = 2 * dist * Math.tan((cam.fov * Math.PI) / 360);
+        cameraQuad.scale.set(quadHeight * (cam.aspect || 1), quadHeight, 1);
+      };
+      if (!camera.parent) scene.add(camera);
+      camera.add(cameraQuad);
+      return true;
+    },
+    clearBackgroundVideo() {
+      if (cameraQuad) {
+        try { cameraQuad.parent?.remove(cameraQuad); } catch (_) {}
+        try { cameraQuad.geometry.dispose(); } catch (_) {}
+        try { cameraQuad.material.dispose(); } catch (_) {}
+        cameraQuad = null;
+      }
+      if (videoTexture) {
+        try { videoTexture.dispose(); } catch (_) {}
+        videoTexture = null;
+      }
+    },
+    setBackgroundOpacity(value) {
+      cameraOpacity = Math.max(0, Math.min(1, Number(value)));
+      if (cameraQuad) cameraQuad.material.opacity = cameraOpacity;
+    },
+    getBackgroundOpacity() { return cameraOpacity; },
+  };
+}
+
+// Camera feed projected onto the mounted gallery room's back wall (the
+// user-facing framing: the framed piece hangs in the visitor's own space).
+// The mirrored VideoTexture replaces the wall material's map, blended over
+// the original wall color by opacity; toggle-off restores the wall exactly.
+function createGalleryWallCameraController(shell) {
+  let videoTexture = null;
+  let savedWall = null;
+  let cameraOpacity = 1;
+  return {
+    setBackgroundVideo(video) {
+      const material = shell?.backWall?.material;
+      if (!video || !material) return false;
+      this.clearBackgroundVideo();
+      videoTexture = new THREE.VideoTexture(video);
+      if (THREE.SRGBColorSpace) videoTexture.colorSpace = THREE.SRGBColorSpace;
+      videoTexture.wrapS = THREE.RepeatWrapping;
+      videoTexture.repeat.x = -1;
+      videoTexture.offset.x = 1;
+      savedWall = {
+        map: material.map ?? null,
+        color: material.color?.clone?.() ?? null,
+        transparent: material.transparent,
+        opacity: material.opacity,
+      };
+      material.map = videoTexture;
+      // A tinted wall would color-cast the feed; white keeps it faithful.
+      material.color?.set?.('#ffffff');
+      material.transparent = true;
+      material.opacity = cameraOpacity;
+      material.needsUpdate = true;
+      return true;
+    },
+    clearBackgroundVideo() {
+      const material = shell?.backWall?.material;
+      if (material && savedWall) {
+        material.map = savedWall.map;
+        if (savedWall.color) material.color?.copy?.(savedWall.color);
+        material.transparent = savedWall.transparent;
+        material.opacity = savedWall.opacity;
+        material.needsUpdate = true;
+        savedWall = null;
+      }
+      if (videoTexture) {
+        try { videoTexture.dispose(); } catch (_) {}
+        videoTexture = null;
+      }
+    },
+    setBackgroundOpacity(value) {
+      cameraOpacity = Math.max(0, Math.min(1, Number(value)));
+      const material = shell?.backWall?.material;
+      if (material && videoTexture) material.opacity = cameraOpacity;
+    },
+    getBackgroundOpacity() { return cameraOpacity; },
+  };
+}
+
 export function createMountedGalleryShell(stage, aspect, profile = {}) {
   const layout = computeMountedArtworkLayout(aspect, profile);
   const canvas = document.createElement("canvas");
@@ -1420,6 +1538,8 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
   const handControlToggle = root.querySelector("[data-immersive-sound-hand-control-toggle]");
   const cameraBgRow = root.querySelector("[data-immersive-sound-camera-bg-row]");
   const cameraBgToggle = root.querySelector("[data-immersive-sound-camera-bg-toggle]");
+  const cameraOpacityRow = root.querySelector("[data-immersive-sound-camera-opacity-row]");
+  const cameraOpacityInput = root.querySelector("[data-immersive-sound-camera-opacity]");
   const voicePickerRows = root.querySelectorAll("[data-immersive-voice-picker-row]");
   const voicePickerSelects = root.querySelectorAll("[data-immersive-voice-picker-select]");
   const micRow = root.querySelector("[data-immersive-mic-row]");
@@ -1440,7 +1560,59 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
     return !!soundPanel && !soundPanel.hidden;
   }
 
+  // Camera overlay permission — its own per-piece flag (Metadata tab), no
+  // longer implied by the hand-tracking voice, and valid without any audio
+  // controller at all (camera-only pieces). handControlAllowed mirrors the
+  // server contract's hand_control capability the same way; surfaces that
+  // don't pass it keep the legacy hand_tracking-voice gating below.
+  const cameraOverlayAllowed = options.cameraOverlayAllowed === true;
+  const handControlAllowed = options.handControlAllowed === true;
+  // Silent engine for hand control on pieces with no audio controller
+  // (sound-less pieces): enableHandControl never touches audio.
+  let silentHandEngine = null;
+  async function getHandControlEngine() {
+    const ctrl = getAudioController();
+    if (ctrl) return ctrl;
+    if (!silentHandEngine) {
+      const CSC = window.CreatrSonicController || await loadSonicControllerOnce();
+      silentHandEngine = CSC.create({}, {
+        allowHandControl: true,
+        mediaPipeVisionSrc: window.__creatrMediaPipeVisionSrc,
+        mediaPipeWasmDir: window.__creatrMediaPipeWasmDir,
+        mediaPipeModelSrc: window.__creatrMediaPipeModelSrc,
+      });
+    }
+    return silentHandEngine;
+  }
+
+  function syncCameraRow() {
+    const interaction = getPieceInteractionController();
+    if (cameraBgRow) cameraBgRow.hidden = !cameraOverlayAllowed || !interaction?.supportsCameraBackground;
+    if (cameraBgToggle) cameraBgToggle.setAttribute("aria-pressed", cameraBgActive ? "true" : "false");
+    if (cameraOpacityRow) {
+      const opacitySupported = typeof interaction?.setBackgroundOpacity === "function";
+      cameraOpacityRow.hidden = !cameraBgActive || !opacitySupported;
+      // Initialize the slider from the controller's real default (1.0 for
+      // wall projection / blended quad) whenever the camera is active.
+      if (cameraBgActive && opacitySupported && cameraOpacityInput && typeof interaction.getBackgroundOpacity === "function") {
+        cameraOpacityInput.value = String(Math.round(interaction.getBackgroundOpacity() * 100));
+      }
+    }
+    if (handControlRow && handControlAllowed) {
+      handControlRow.hidden = !interaction?.supportsHandControl;
+    }
+    if (handControlToggle) handControlToggle.setAttribute("aria-pressed", handControlActive ? "true" : "false");
+  }
+
+  const onCameraOpacityInput = () => {
+    const interaction = getPieceInteractionController();
+    if (cameraOpacityInput && typeof interaction?.setBackgroundOpacity === "function") {
+      interaction.setBackgroundOpacity(Number(cameraOpacityInput.value) / 100);
+    }
+  };
+
   function syncSoundPanel() {
+    syncCameraRow();
     const ctrl = getAudioController();
     if (!ctrl) return;
     const enabled = ctrl.isEnabled();
@@ -1458,10 +1630,12 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
     if (soundHandRow) soundHandRow.hidden = !voices.hand_tracking;
     if (soundHandToggle) soundHandToggle.setAttribute("aria-pressed", ctrl.getInputMode() === "hand" ? "true" : "false");
     const interaction = getPieceInteractionController();
-    if (handControlRow) handControlRow.hidden = !voices.hand_tracking || !interaction?.supportsHandControl;
-    if (cameraBgRow) cameraBgRow.hidden = !voices.hand_tracking || !interaction?.supportsCameraBackground;
-    if (handControlToggle) handControlToggle.setAttribute("aria-pressed", handControlActive ? "true" : "false");
-    if (cameraBgToggle) cameraBgToggle.setAttribute("aria-pressed", cameraBgActive ? "true" : "false");
+    // handControlAllowed (server contract) wins when passed; legacy
+    // surfaces without the flag keep the hand_tracking-voice gate. The
+    // allowed case is synced in syncCameraRow() (also runs ctrl-less).
+    if (handControlRow && !handControlAllowed) {
+      handControlRow.hidden = !voices.hand_tracking || !interaction?.supportsHandControl;
+    }
     if (!micSupportChecked) {
       micSupportChecked = true;
       if (micRow) micRow.hidden = !ctrl.isMicSupported();
@@ -1545,9 +1719,8 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
   };
 
   const onHandControlToggle = async () => {
-    const ctrl = getAudioController();
     const interaction = getPieceInteractionController();
-    if (!ctrl || !interaction?.supportsHandControl) return;
+    if (!interaction?.supportsHandControl) return;
     if (handControlToggle?.dataset.capabilityFallback === "device_tilt") {
       if (tiltFallbackActive) {
         interaction.disableTiltFallback?.();
@@ -1560,12 +1733,17 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
     }
     if (handControlActive) {
       handControlActive = false;
-      ctrl.onHandFrame(null);
-      ctrl.disableHandControl();
+      const ctrl = getAudioController() || silentHandEngine;
+      ctrl?.onHandFrame(null);
+      ctrl?.disableHandControl();
       interaction.setHandSteering(false);
       syncSoundPanel();
       return;
     }
+    // Audio controller when the piece has sound, silent engine otherwise —
+    // hand control itself never needs audio.
+    const ctrl = await getHandControlEngine();
+    if (!ctrl) return;
     const ok = await ctrl.enableHandControl();
     if (!ok) {
       interaction.setHandSteering(false);
@@ -1582,20 +1760,24 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
   };
 
   const onCameraBgToggle = async () => {
-    const ctrl = getAudioController();
     const interaction = getPieceInteractionController();
-    if (!ctrl || !interaction?.supportsCameraBackground) return;
+    if (!cameraOverlayAllowed || !interaction?.supportsCameraBackground) return;
+    // Module-level shared camera feed (CreatrSonicController.cameraFeed) —
+    // same ref-counted stream the hand pipeline uses, but usable with no
+    // audio controller at all (camera-only pieces). Acquire is the first
+    // await in this gesture task, per the WebKit activation rule.
     if (cameraBgActive) {
       cameraBgActive = false;
       interaction.clearBackgroundVideo();
-      ctrl.releaseCameraFeed();
+      try { window.CreatrSonicController?.cameraFeed.release(); } catch (_) {}
       syncSoundPanel();
       return;
     }
     try {
-      const video = await ctrl.acquireCameraFeed();
+      const CSC = window.CreatrSonicController || await loadSonicControllerOnce();
+      const video = await CSC.cameraFeed.acquire();
       cameraBgActive = !!interaction.setBackgroundVideo(video);
-      if (!cameraBgActive) ctrl.releaseCameraFeed();
+      if (!cameraBgActive) CSC.cameraFeed.release();
     } catch (_) {
       cameraBgActive = false;
     }
@@ -1701,6 +1883,7 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
   soundHandToggle?.addEventListener("click", onSoundHandToggle);
   handControlToggle?.addEventListener("click", onHandControlToggle);
   cameraBgToggle?.addEventListener("click", onCameraBgToggle);
+  cameraOpacityInput?.addEventListener("input", onCameraOpacityInput);
   micToggle?.addEventListener("click", onMicToggle);
   micFxToggles.forEach((checkbox) => checkbox.addEventListener("change", onMicFxToggle));
   voicePickerSelects.forEach((select) => select.addEventListener("change", onVoicePickerChange));
@@ -1732,16 +1915,22 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
       soundHandToggle?.removeEventListener("click", onSoundHandToggle);
       handControlToggle?.removeEventListener("click", onHandControlToggle);
       cameraBgToggle?.removeEventListener("click", onCameraBgToggle);
+      cameraOpacityInput?.removeEventListener("input", onCameraOpacityInput);
       if (handControlActive) {
         handControlActive = false;
-        getAudioController()?.onHandFrame(null);
-        getAudioController()?.disableHandControl();
+        const handCtrl = getAudioController() || silentHandEngine;
+        handCtrl?.onHandFrame(null);
+        handCtrl?.disableHandControl();
         getPieceInteractionController()?.setHandSteering(false);
+      }
+      if (silentHandEngine) {
+        try { silentHandEngine.dispose(); } catch (_) {}
+        silentHandEngine = null;
       }
       if (cameraBgActive) {
         cameraBgActive = false;
         getPieceInteractionController()?.clearBackgroundVideo();
-        getAudioController()?.releaseCameraFeed();
+        try { window.CreatrSonicController?.cameraFeed.release(); } catch (_) {}
       }
       micToggle?.removeEventListener("click", onMicToggle);
       micFxToggles.forEach((checkbox) => checkbox.removeEventListener("change", onMicFxToggle));
@@ -2314,6 +2503,7 @@ function createAudioController(sonicParams, stageEl, opts = {}) {
     const CSC = window.CreatrSonicController;
     if (!CSC) return null;
     engine = CSC.create(sonicParams, {
+      allowHandControl: opts.allowHandControl === true,
       toneSrc: window.__creatrToneSrc,
       mediaPipeVisionSrc: window.__creatrMediaPipeVisionSrc,
       mediaPipeWasmDir: window.__creatrMediaPipeWasmDir,
@@ -2379,6 +2569,7 @@ function createAudioController(sonicParams, stageEl, opts = {}) {
         // bootstrap script, points Tone.js loading at the bundle-local
         // runtime/tone/Tone.js copy instead of the live site's vendor path.
         engine = CSC.create(sonicParams, {
+          allowHandControl: opts.allowHandControl === true,
           toneSrc: window.__creatrToneSrc,
           mediaPipeVisionSrc: window.__creatrMediaPipeVisionSrc,
           mediaPipeWasmDir: window.__creatrMediaPipeWasmDir,
@@ -2711,9 +2902,7 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
   let viewerControls = null;
   let handSteeringExclusive = false;
   let controlsEnabledBeforeHand = true;
-  let immersivePreviousBackground;
-  let immersiveVideoTexture = null;
-  const audioController = createAudioController(options.sonicParams, stageEl, { pieceId: options.pieceId });
+  const audioController = createAudioController(options.sonicParams, stageEl, { pieceId: options.pieceId, allowHandControl: options.handControl === true });
   const _audioPrevPos = new THREE.Vector3();
   let _audioPrevInit = false;
   const _orbitCamPos = new THREE.Vector3();
@@ -3112,7 +3301,9 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
           if (cmp && cmp.trim() !== "" && cmp.trim() !== "transparent" && cmp.trim() !== "rgba(0, 0, 0, 0)") { bg = cmp; break; }
         }
         bg = bg ?? "#000000";
-        if (!immersiveVideoTexture) syncThreeRendererBackground(state.renderer, state.scene, bg);
+        // The camera feed is a camera-attached quad now (never
+        // scene.background), so this sync can no longer clobber it.
+        syncThreeRendererBackground(state.renderer, state.scene, bg);
         // When the piece drives its own startFrame render loop (the documented
         // contract), it already calls renderer.render() every frame — rendering
         // here too would just duplicate that full-scene draw every tick. The
@@ -3284,22 +3475,7 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
         saveOrbitState();
         userHasInteracted = true;
       },
-      setBackgroundVideo(video) {
-        if (!video || !state.scene) return false;
-        if (immersiveVideoTexture) this.clearBackgroundVideo();
-        immersivePreviousBackground = state.scene.background ?? null;
-        immersiveVideoTexture = new THREE.VideoTexture(video);
-        if (THREE.SRGBColorSpace) immersiveVideoTexture.colorSpace = THREE.SRGBColorSpace;
-        state.scene.background = immersiveVideoTexture;
-        return true;
-      },
-      clearBackgroundVideo() {
-        if (!immersiveVideoTexture) return;
-        if (state.scene) state.scene.background = immersivePreviousBackground ?? null;
-        immersiveVideoTexture?.dispose?.();
-        immersiveVideoTexture = null;
-        immersivePreviousBackground = undefined;
-      },
+      ...createCameraBlendQuadController(() => THREE, () => state.scene, () => state.camera),
     };
 
     const destroy = () => {
@@ -3387,10 +3563,8 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
   let frameId = 0;
   let handSteeringExclusive = false;
   let aframeControlsBeforeHand = [];
-  let aframePreviousBackground;
-  let aframeVideoTexture = null;
   let aframeTiltController = null;
-  const audioController = createAudioController(options.sonicParams, stageEl, { pieceId: options.pieceId });
+  const audioController = createAudioController(options.sonicParams, stageEl, { pieceId: options.pieceId, allowHandControl: options.handControl === true });
   let _aframeAudioPrev = null;
   const stopFrameHandles = [];
   const aframeNav = {
@@ -3781,23 +3955,7 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
       cameraObject.rotation.x += (desiredPitch - cameraObject.rotation.x) * 0.12;
       cameraObject.rotation.x = Math.max(-Math.PI * 0.45, Math.min(Math.PI * 0.45, cameraObject.rotation.x));
     },
-    setBackgroundVideo(video) {
-      const THREE_NS = getAFrameThree();
-      if (!video || !scene?.object3D || !THREE_NS?.VideoTexture) return false;
-      if (aframeVideoTexture) this.clearBackgroundVideo();
-      aframePreviousBackground = scene.object3D.background ?? null;
-      aframeVideoTexture = new THREE_NS.VideoTexture(video);
-      if (THREE_NS.SRGBColorSpace) aframeVideoTexture.colorSpace = THREE_NS.SRGBColorSpace;
-      scene.object3D.background = aframeVideoTexture;
-      return true;
-    },
-    clearBackgroundVideo() {
-      if (!aframeVideoTexture) return;
-      if (scene?.object3D) scene.object3D.background = aframePreviousBackground ?? null;
-      aframeVideoTexture?.dispose?.();
-      aframeVideoTexture = null;
-      aframePreviousBackground = undefined;
-    },
+    ...createCameraBlendQuadController(() => getAFrameThree(), () => scene?.object3D, () => scene?.camera),
   };
 
   const destroy = () => {
@@ -3875,7 +4033,7 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
   let viewerControls = null;
   let readOnlyOverlay = null;
   let gyroController = null;
-  const audioController = createAudioController(options.sonicParams, stageEl, { pieceId: options.pieceId });
+  const audioController = createAudioController(options.sonicParams, stageEl, { pieceId: options.pieceId, allowHandControl: options.handControl === true });
   const _galleryAudioPrevPos = new THREE.Vector3();
   let _galleryAudioPrevInit = false;
   const galleryButtonForward = new THREE.Vector3();
@@ -4272,8 +4430,19 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
   const resizeObserver = new ResizeObserver(() => fitMountedGalleryCamera(shell, stageEl, undefined, false));
   resizeObserver.observe(stageEl);
 
+  // Camera view for the gallery room: the visitor's mirrored feed projects
+  // onto the room's back wall behind the framed piece (blended by opacity),
+  // so the art reads as hanging in their own space. No hand steering here —
+  // the room has no piece-pointer surface (the mounted piece is a texture).
+  const pieceInteractionController = {
+    supportsHandControl: false,
+    supportsCameraBackground: true,
+    ...createGalleryWallCameraController(shell),
+  };
+
   function destroy() {
     disposed = true;
+    pieceInteractionController.clearBackgroundVideo();
     resizeObserver.disconnect();
     if (detectCanvasTimer) window.clearTimeout(detectCanvasTimer);
     cancelAnimationFrame(frameId);
@@ -4325,6 +4494,7 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
     }),
     getViewState: () => shellViewState(shell),
     getAudioController: () => audioController,
+    getPieceInteractionController: () => pieceInteractionController,
   };
 }
 

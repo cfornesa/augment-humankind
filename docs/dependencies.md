@@ -381,10 +381,13 @@
   `sonic_params` created via generation or AI Refine (tempo/scale/instrument/
   feel) plus a mechanical, non-AI-authored `extras` sub-object (per-voice
   public-visibility toggles, default volume, and admin-only octave range/
-  filter cutoff/resonance — edited in the piece admin's Audio tab, never sent
-  to the AI). Live in the immersive viewer (every engine) and the regular
-  `/pieces/[id]` view (Three.js/A-Frame/c2_interactive, since other engines
-  have no motion signal there); bundled into standalone, immersive, and
+  filter cutoff/resonance — edited in the piece admin's "Interact" tab
+  (renders only when the version has `sonic_params`), never sent to the AI).
+  Live in the immersive viewer (every engine) and the regular `/pieces/[id]`
+  view (every engine can carry `sonic_params`; Three.js/A-Frame sonify camera
+  motion, c2_interactive sonifies pointer motion, p5/plain C2/SVG have no
+  motion signal there and get an idle random-note pattern); bundled into
+  standalone, immersive, and
   collection exports for fully offline playback. The plucked-string
   instrument (`plucksynth`) is a hand-built Karplus-Strong voice (noise burst
   through a feedback delay/filter loop) rather than Tone's own `PluckSynth`,
@@ -424,20 +427,34 @@
 
 ## MediaPipe HandLandmarker (self-hosted)
 
-- **Purpose:** Camera-driven "theremin" input mode for `sonic-controller.js`'s
-  melodic voice — tracks one hand via the device camera; wrist height
-  controls pitch (continuously, gliding rather than discrete note triggers)
-  and wrist-to-fingertip spread controls that voice's volume. Enabled per
-  piece by the admin (Audio tab, "Hand-tracking" voice toggle) and, when
-  enabled, exposed to visitors as a toggle in the sound popover on the
-  regular `/pieces/[id]` view, the mounted immersive single-piece view, and
-  standalone Three.js/A-Frame ZIP exports. The same camera pipeline also
-  powers independent “Steer the piece” and “Show camera” controls on those
-  Three.js/A-Frame surfaces; interactive C2 supports steering as pointer input
-  but not camera backgrounds. These controls are never enabled for the
-  exhibit-wall/gallery-room multiplex (performance: no running
-  parallel inference for every wall thumbnail; UX: no camera prompts firing
-  on an unfocused tile).
+- **Purpose:** Camera-driven hand tracking, powering two independent
+  controls. (1) A "theremin" input mode for `sonic-controller.js`'s melodic
+  voice — tracks one hand via the device camera; wrist height controls pitch
+  (continuously, gliding rather than discrete note triggers) and
+  wrist-to-fingertip spread controls that voice's volume. Enabled per piece
+  by the admin (piece editor's "Interact" tab, "Public sound controls"
+  fieldset, "Hand-tracking" checkbox) — a sound-voice setting, so it only
+  exists on pieces that have a sound design. (2) "Hand control" — camera-
+  steered navigation (with a device-tilt fallback needing no MediaPipe) on
+  the steerable engines (Three.js, A-Frame, interactive C2). Hand control is
+  a *camera* capability, not a sound one: it's available whenever either the
+  hand-tracking voice above **or** the piece's independent `camera_overlay`
+  permission (Metadata tab) is on, so a piece with no sound design at all can
+  still offer camera steering — the admin can turn it off per piece via the
+  "Public camera controls" fieldset's checkbox (default on). Both are exposed
+  to visitors as toggles in the "Piece controls" popover on the regular
+  `/pieces/[id]` view, the mounted immersive single-piece view, and
+  standalone ZIP exports of steerable pieces. A third, independent capability
+  — the "Show camera" mirrored video feed with an opacity slider — needs no
+  MediaPipe at all (it is a raw `getUserMedia` feed with no inference), works
+  on every engine and surface (p5/C2/SVG regular views get a DOM-positioned
+  overlay; Three.js/A-Frame render it on a camera-attached blended quad
+  behind the scene; the mounted immersive gallery room projects it onto the
+  room's back wall behind the framed art), and is gated purely by
+  `camera_overlay`; see `piece_sound_capability_contract()` in ALGORITHMS.md
+  §3.10. These controls are never enabled for the exhibit-wall/collection
+  multiplex (performance: no running parallel inference for every wall
+  thumbnail; UX: no camera prompts firing on an unfocused tile).
 - **Package:** `@mediapipe/tasks-vision` (WASM inference engine) +
   Google's pre-trained `hand_landmarker` (float16) model.
 - **Delivery:** **Self-hosted / vendored** at
@@ -447,28 +464,36 @@
   total**. `sonic-controller.js` loads the `.mjs` bundle via a dynamic
   `import()` (valid even from a classic, non-module script in evergreen
   browsers, avoiding the need for a UMD build MediaPipe doesn't ship), lazy,
-  only when a user actually activates hand-tracking mode. **Works in both the
-  live regular and mounted immersive pages plus single-piece ZIP exports**
-  (immersive and non-immersive/standalone alike) —
-  `piece_export_sonic_script()`'s self-built popover (used for standalone
-  single-piece exports) mirrors the live keyboard/hand/steering/background
-  toggle, and both export paths bundle `runtime/mediapipe-hands/*` only when
-  that piece's hand-tracking voice is enabled
-  (`piece_export_version_has_hand_tracking()` in `piece-render.php`). The
-  downloader-facing "choose what's in my ZIP" picker on the regular
+  only when a user actually activates hand-tracking or hand-control mode; a
+  sound-less piece's hand-control engine instance runs `sonic-controller.js`
+  silently (`opts.allowHandControl`, no Tone.js load) purely for the shared
+  camera + landmark pipeline. **Works in both the live regular and mounted
+  immersive pages plus single-piece ZIP exports** (immersive and
+  non-immersive/standalone alike) — `piece_export_sonic_script()`'s
+  self-built popover (used for standalone single-piece exports) mirrors the
+  live keyboard/hand/steering/background toggle, and both export paths
+  bundle `runtime/mediapipe-hands/*` whenever *either* capability needs it —
+  `piece_export_version_has_hand_tracking($version) ||
+  $capabilities['hand_control']` — so a camera-only steerable piece's
+  offline "Steer the piece" button isn't dead weight for lack of the model.
+  The downloader-facing "choose what's in my ZIP" picker on the regular
   `/pieces/[id]` view (`piece_export_apply_requested_voices()`) offers a
   hand-tracking checkbox whenever the admin allowed it, narrowing (never
   expanding) that ceiling for the downloader's specific ZIP.
   **Collection (exhibit-wall) ZIP exports are the one exception**: every
-  piece inside a collection ZIP has hand-tracking forced off regardless of
-  its own admin config (`piece_export_force_voice_off()`, set via
-  `collection_export_build_manifest()`'s `'exclude_hand_tracking' => true`) —
-  a solo single-piece download of that same piece still gets it. This is a
-  deliberate simplicity/size tradeoff: each piece would otherwise duplicate
-  its own ~19.4MB copy inside the collection ZIP (a real bug once found —
-  a handful of hand-tracking-enabled pieces in one collection would blow
-  past 100MB), and collection-root deduplication was judged more engineering
-  than the feature is worth there.
+  piece inside a collection ZIP has both hand-tracking and hand control
+  forced off regardless of its own admin config
+  (`piece_export_force_voice_off()`, set via
+  `collection_export_build_manifest()`'s `'exclude_hand_tracking' => true`,
+  which forces off both voices together since either alone would still pull
+  in the model) — a solo single-piece download of that same piece still gets
+  them. This is a deliberate simplicity/size tradeoff: each piece would
+  otherwise duplicate its own ~19.4MB copy inside the collection ZIP (a real
+  bug once found — a handful of hand-tracking-enabled pieces in one
+  collection would blow past 100MB), and collection-root deduplication was
+  judged more engineering than the feature is worth there. The camera
+  overlay itself (no model needed) stays available in collection exports
+  regardless.
 - **Data sent off-domain:** None at runtime — video frames are processed
   entirely client-side inside the browser's WASM sandbox and never leave the
   device; only the vendored model/WASM assets are fetched, and those come

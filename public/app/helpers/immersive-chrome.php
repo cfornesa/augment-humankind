@@ -558,6 +558,14 @@ function immersive_stage_toolbar_markup(array $opts = []): string
     $fullscreenOnclick = $opts['fullscreen_onclick'] ?? null;
     $gyroSlot = $opts['gyro_slot'] ?? true;
     $soundAction = $opts['sound_action'] ?? null;
+    // Camera overlay permission (Metadata-tab camera_overlay column) — its
+    // own flag, independent of the sound design, so a sound-less piece can
+    // still get a controls panel with just the camera rows.
+    $cameraView = !empty($opts['camera_view']);
+    // Hand control (camera steering + tilt fallback) — from the capability
+    // contract: unlocked by the camera permission OR the hand-tracking
+    // voice on steerable engines, admin-toggleable.
+    $handControl = !empty($opts['hand_control']);
 
     $html = '<div class="immersive-stage-toolbar" aria-label="Immersive piece controls">';
     $html .= '<div class="immersive-stage-toolbar-group immersive-stage-toolbar-group-left" role="toolbar" aria-label="Piece view and download controls">';
@@ -637,47 +645,62 @@ function immersive_stage_toolbar_markup(array $opts = []): string
 
     $html .= '</div>';
 
-    if ($showFullscreen || is_array($soundAction)) {
+    $soundEnabled = is_array($soundAction) && !empty($soundAction['enabled']);
+    if ($showFullscreen || $soundEnabled || $cameraView || $handControl) {
         $html .= '<div class="immersive-stage-toolbar-group immersive-stage-toolbar-right">';
 
-        if (is_array($soundAction) && !empty($soundAction['enabled'])) {
+        if ($soundEnabled || $cameraView || $handControl) {
             $html .= '<div class="immersive-stage-sound-wrap">';
-            $html .= '<button type="button" id="immersive-sound-toggle" class="immersive-stage-icon-btn" data-immersive-sound-toggle aria-pressed="false" aria-label="Unmute sound">'
-                . immersive_stage_toolbar_icon_svg('sound-off')
-                . '</button>';
-            $html .= '<button type="button" class="immersive-stage-icon-btn immersive-stage-sound-panel-trigger" data-immersive-sound-panel-trigger aria-haspopup="true" aria-expanded="false" aria-controls="immersive-sound-panel" aria-label="Sound settings">'
+            if ($soundEnabled) {
+                $html .= '<button type="button" id="immersive-sound-toggle" class="immersive-stage-icon-btn" data-immersive-sound-toggle aria-pressed="false" aria-label="Unmute sound">'
+                    . immersive_stage_toolbar_icon_svg('sound-off')
+                    . '</button>';
+            }
+            $html .= '<button type="button" class="immersive-stage-icon-btn immersive-stage-sound-panel-trigger" data-immersive-sound-panel-trigger aria-haspopup="true" aria-expanded="false" aria-controls="immersive-sound-panel" aria-label="Piece controls">'
                 . immersive_stage_toolbar_icon_svg('chevron-down')
                 . '</button>';
-            $html .= '<div id="immersive-sound-panel" class="immersive-stage-sound-panel" data-immersive-sound-panel role="region" aria-label="Sound settings" hidden>';
-            $html .= '<div class="immersive-stage-sound-row">'
-                . '<span>Sound</span>'
-                . '<button type="button" class="immersive-stage-sound-switch" data-immersive-sound-mute-toggle role="switch" aria-checked="false">Off</button>'
-                . '</div>';
-            $html .= '<div class="immersive-stage-sound-row">'
-                . '<label for="immersive-sound-volume" style="flex:0 0 auto;">Volume</label>'
-                . '<input type="range" id="immersive-sound-volume" class="immersive-stage-sound-volume" data-immersive-sound-volume min="0" max="100" step="1" value="50" aria-label="Volume">'
-                . '</div>';
-            $html .= immersive_stage_voice_instrument_picker_markup();
-            $html .= '<div class="immersive-stage-sound-row" data-immersive-sound-keyboard-row>'
-                . '<span>Keyboard</span>'
-                . '<button type="button" class="immersive-stage-sound-keyboard-toggle" data-immersive-sound-keyboard-toggle aria-pressed="false">Play notes</button>'
-                . '</div>';
-            $html .= '<div class="immersive-piano-wrap" data-immersive-sound-keys hidden>'
-                . immersive_stage_piano_keyboard_markup()
-                . '</div>';
-            $html .= '<div class="immersive-stage-sound-row" data-immersive-sound-hand-row hidden>'
-                . '<span>Hand-tracking</span>'
-                . '<button type="button" class="immersive-stage-sound-keyboard-toggle" data-immersive-sound-hand-toggle aria-pressed="false">Camera theremin</button>'
-                . '</div>';
-            $html .= '<div class="immersive-stage-sound-row" data-immersive-sound-hand-control-row hidden>'
-                . '<span>Hand control</span>'
-                . '<button type="button" class="immersive-stage-sound-keyboard-toggle" data-immersive-sound-hand-control-toggle aria-pressed="false">Steer the piece</button>'
-                . '</div>';
-            $html .= '<div class="immersive-stage-sound-row" data-immersive-sound-camera-bg-row hidden>'
-                . '<span>Camera view</span>'
-                . '<button type="button" class="immersive-stage-sound-keyboard-toggle" data-immersive-sound-camera-bg-toggle aria-pressed="false">Show camera</button>'
-                . '</div>';
-            $html .= immersive_stage_mic_panel_markup();
+            $html .= '<div id="immersive-sound-panel" class="immersive-stage-sound-panel" data-immersive-sound-panel role="region" aria-label="Piece controls" hidden>';
+            if ($soundEnabled) {
+                $html .= '<div class="immersive-stage-sound-row">'
+                    . '<span>Sound</span>'
+                    . '<button type="button" class="immersive-stage-sound-switch" data-immersive-sound-mute-toggle role="switch" aria-checked="false">Off</button>'
+                    . '</div>';
+                $html .= '<div class="immersive-stage-sound-row">'
+                    . '<label for="immersive-sound-volume" style="flex:0 0 auto;">Volume</label>'
+                    . '<input type="range" id="immersive-sound-volume" class="immersive-stage-sound-volume" data-immersive-sound-volume min="0" max="100" step="1" value="50" aria-label="Volume">'
+                    . '</div>';
+                $html .= immersive_stage_voice_instrument_picker_markup();
+                $html .= '<div class="immersive-stage-sound-row" data-immersive-sound-keyboard-row>'
+                    . '<span>Keyboard</span>'
+                    . '<button type="button" class="immersive-stage-sound-keyboard-toggle" data-immersive-sound-keyboard-toggle aria-pressed="false">Play notes</button>'
+                    . '</div>';
+                $html .= '<div class="immersive-piano-wrap" data-immersive-sound-keys hidden>'
+                    . immersive_stage_piano_keyboard_markup()
+                    . '</div>';
+                $html .= '<div class="immersive-stage-sound-row" data-immersive-sound-hand-row hidden>'
+                    . '<span>Hand-tracking</span>'
+                    . '<button type="button" class="immersive-stage-sound-keyboard-toggle" data-immersive-sound-hand-toggle aria-pressed="false">Camera theremin</button>'
+                    . '</div>';
+            }
+            if ($handControl) {
+                $html .= '<div class="immersive-stage-sound-row" data-immersive-sound-hand-control-row hidden>'
+                    . '<span>Hand control</span>'
+                    . '<button type="button" class="immersive-stage-sound-keyboard-toggle" data-immersive-sound-hand-control-toggle aria-pressed="false">Steer the piece</button>'
+                    . '</div>';
+            }
+            if ($cameraView) {
+                $html .= '<div class="immersive-stage-sound-row" data-immersive-sound-camera-bg-row hidden>'
+                    . '<span>Camera view</span>'
+                    . '<button type="button" class="immersive-stage-sound-keyboard-toggle" data-immersive-sound-camera-bg-toggle aria-pressed="false">Show camera</button>'
+                    . '</div>';
+                $html .= '<div class="immersive-stage-sound-row" data-immersive-sound-camera-opacity-row hidden>'
+                    . '<label for="immersive-camera-opacity" style="flex:0 0 auto;">Camera opacity</label>'
+                    . '<input type="range" id="immersive-camera-opacity" class="immersive-stage-sound-volume" data-immersive-sound-camera-opacity min="0" max="100" step="1" value="100" aria-label="Camera overlay opacity">'
+                    . '</div>';
+            }
+            if ($soundEnabled) {
+                $html .= immersive_stage_mic_panel_markup();
+            }
             $html .= '</div>'; // .immersive-stage-sound-panel
             $html .= '</div>'; // .immersive-stage-sound-wrap
         }

@@ -243,7 +243,7 @@ test('piece_render_document injects sonic_params into the iframe context', funct
 test('pieces/show.php renders a gated sound toggle and posts creatr-sound-toggle to the iframe', function () {
     $show = file_get_contents(__DIR__ . '/../public/app/views/pieces/show.php');
     assert_contains($show, 'data-piece-sound-toggle');
-    assert_contains($show, '$soundToggleAvailable = is_array($version)');
+    assert_contains($show, 'piece_sound_capability_contract');
 
     $fullscreenScript = file_get_contents(__DIR__ . '/../public/assets/js/piece-fullscreen.js');
     assert_contains($fullscreenScript, "type: 'creatr-sound-toggle'");
@@ -252,8 +252,9 @@ test('pieces/show.php renders a gated sound toggle and posts creatr-sound-toggle
 
 test('piece_export_document (non-immersive export) inlines a self-contained sound controller', function () {
     $render = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
-    assert_contains($render, 'function piece_export_sonic_script(string $engine, string $sonicParamsJson, string $runtimeMode, int $pieceId = 0): string');
-    assert_contains($render, "trim(\$sonicParamsJson) === ''");
+    assert_contains($render, 'function piece_sound_capability_contract');
+    assert_contains($render, 'function piece_export_sonic_script(string $engine, string $sonicParamsJson, string $runtimeMode, int $pieceId = 0, string $generationMode = \'\', ?bool $cameraOverlay = null): string');
+    assert_contains($render, "\$decoded = json_decode(\$sonicParamsJson, true);");
     // Bundle mode must load Tone.js from the ZIP, not from a blob:null script URL.
     assert_contains($render, "'runtime/tone/Tone.js'");
     assert_not_contains($render, '__creatrToneInlineSource');
@@ -821,11 +822,11 @@ test('saved versions and immersive surfaces treat persisted generation mode as p
     $pieceModel = file_get_contents(__DIR__ . '/../public/app/models/PlatformArtPiece.php');
     $immersivePiece = file_get_contents(__DIR__ . '/../public/app/views/immersive/piece.php');
     $immersiveCollection = file_get_contents(__DIR__ . '/../public/app/views/immersive/collection.php');
-    assert_contains($versionModel, 'art_piece_version_select_columns(self::hasGenerationModeColumn(), true, true, self::hasSonicParamsColumn())');
-    assert_contains($versionModel, 'art_piece_version_storage_columns(self::hasGenerationModeColumn(), self::hasSonicParamsColumn())');
+    assert_contains($versionModel, 'art_piece_version_select_columns(self::hasGenerationModeColumn(), true, true, self::hasSonicParamsColumn(), self::hasCameraOverlayColumn())');
+    assert_contains($versionModel, 'art_piece_version_storage_columns(self::hasGenerationModeColumn(), self::hasSonicParamsColumn(), self::hasCameraOverlayColumn())');
     assert_contains($versionModel, 'if (self::hasGenerationModeColumn())');
     assert_contains($versionModel, "return ah_column_exists('art_piece_versions', 'generation_mode');");
-    assert_contains($pieceModel, 'art_piece_version_select_columns(self::versionHasGenerationMode(), false, false, self::versionHasSonicParamsColumn())');
+    assert_contains($pieceModel, 'art_piece_version_select_columns(self::versionHasGenerationMode(), false, false, self::versionHasSonicParamsColumn(), self::versionHasCameraOverlayColumn())');
     assert_contains($pieceModel, "return ah_column_exists('art_piece_versions', 'generation_mode');");
     assert_contains($pieceModel, 'public static function searchFilteredByGenerationMode(');
     assert_contains($immersivePiece, '$generationMode = art_piece_version_generation_mode($version, $piece);');
@@ -1127,9 +1128,11 @@ test('mounted Three.js and A-Frame viewers expose hand/camera interaction contro
 test('A-Frame standalone exports register the shared hand hooks and receive both camera rows', function () {
     $render = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
     assert_contains($render, "engine: 'aframe'");
-    assert_contains($render, "if (\$engine === 'three' || \$engine === 'aframe')");
+    assert_contains($render, "\$capabilities['hand_control']");
     assert_contains($render, "cameraObject.rotation.order = 'YXZ'");
-    assert_contains($render, 'scene.object3D.background = this._videoTexture');
+    // Camera feed renders as a blended camera-attached quad (opacity
+    // support), not an opaque scene.background swap.
+    assert_contains($render, 'piece_export_camera_blend_quad_members');
     assert_contains($render, "window.addEventListener('pagehide'");
 });
 
@@ -1154,7 +1157,7 @@ test('iOS hand tracking retries failed model initialization and falls back from 
     assert_contains($sonicSrc, 'async function loadHandLandmarkerWithRetry()');
     assert_contains($sonicSrc, "handInferenceMode = 'canvas'");
     assert_contains($sonicSrc, 'handInferenceFrame % 3 !== 0');
-    assert_contains($sonicSrc, 'handInferenceContext.drawImage(handVideoEl');
+    assert_contains($sonicSrc, 'handInferenceContext.drawImage(sharedCameraVideo');
     assert_contains($sonicSrc, "capabilityState('hand_control', 'unavailable'");
     assert_not_contains($sonicSrc, 'detectForVideo(handVideoEl, performance.now()); } catch (_e) { return; }');
 });
@@ -1237,6 +1240,47 @@ test('PNG capture busy state preserves icon markup and restores its accessible l
     assert_contains($download, "button.setAttribute('aria-label', originalAriaLabel)");
     assert_not_contains($download, "button.textContent = 'Preparing PNG...'");
     assert_not_contains($download, 'button.textContent = originalLabel');
+});
+
+test('piece capability contract and C2 camera composition stay aligned across live and export runtimes', function () {
+    if (!function_exists('piece_sound_capability_contract')) {
+        require_once __DIR__ . '/../public/app/helpers/immersive-chrome.php';
+        require_once __DIR__ . '/../public/app/helpers/piece-render.php';
+    }
+    $render = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
+    $runtime = file_get_contents(__DIR__ . '/../public/assets/js/piece-runtime.js');
+    $download = file_get_contents(__DIR__ . '/../public/assets/js/public-piece-download.js');
+    assert_contains($render, "'hand_control' => \$steerableEngine && (\$handTracking || \$cameraView) && (\$voices['hand_control'] ?? true) !== false");
+    assert_contains($render, "'camera_opacity' => \$cameraView");
+    $check = static function (bool $condition, string $label): void {
+        if (!$condition) {
+            throw new Exception('Capability contract assertion failed: ' . $label);
+        }
+    };
+    // Camera-only pieces (camera_overlay=1, no sonic block): no sound, but
+    // camera + hand control on steerable engines only — the standalone
+    // camera/tilt path the admin checkbox and Metadata permission unlock.
+    $cameraOnlyThree = piece_sound_capability_contract('three', [], true);
+    $check(!$cameraOnlyThree['sound'] && !$cameraOnlyThree['keyboard'] && !$cameraOnlyThree['microphone'], 'camera-only three has no sound capabilities');
+    $check($cameraOnlyThree['camera_view'] && $cameraOnlyThree['hand_control'] && $cameraOnlyThree['camera_opacity'], 'camera-only three gets camera + hand control + opacity');
+    $cameraOnlyAframe = piece_sound_capability_contract('aframe', [], true);
+    $check($cameraOnlyAframe['camera_view'] && $cameraOnlyAframe['hand_control'] && !$cameraOnlyAframe['sound'], 'camera-only aframe gets camera + hand control');
+    $cameraOnlySvg = piece_sound_capability_contract('svg', [], true);
+    $check($cameraOnlySvg['camera_view'] && $cameraOnlySvg['camera_opacity'] && !$cameraOnlySvg['hand_control'] && !$cameraOnlySvg['sound'], 'camera-only svg gets overlay + opacity, no hand control');
+    // Explicit Off wins over the hand-tracking legacy rule for the overlay,
+    // but hand control stays available through the hand-tracking voice.
+    $handTrackingCameraOff = piece_sound_capability_contract('three', ['enabled' => true, 'extras' => ['voices' => ['hand_tracking' => true]]], false);
+    $check(!$handTrackingCameraOff['camera_view'] && $handTrackingCameraOff['hand_control'] && $handTrackingCameraOff['hand_tracking'], 'camera Off keeps hand control via hand-tracking voice');
+    // Legacy NULL: identical to the old hand-tracking-driven behavior.
+    $legacy = piece_sound_capability_contract('three', ['enabled' => true, 'extras' => ['voices' => ['hand_tracking' => true]]], null);
+    $check($legacy['camera_view'] && $legacy['hand_control'], 'legacy NULL follows hand-tracking');
+    $legacyOff = piece_sound_capability_contract('three', ['enabled' => true], null);
+    $check(!$legacyOff['camera_view'] && !$legacyOff['hand_control'], 'legacy NULL without hand-tracking stays off');
+    assert_contains($runtime, "engine: 'c2_interactive'");
+    assert_contains($runtime, 'setBackgroundOpacity(value)');
+    assert_contains($runtime, 'window.__creatrComposeCapture = async');
+    assert_contains($download, 'doc.defaultView.__creatrComposeCapture');
+    assert_contains($render, 'surface = await window.__creatrComposeCapture(surface)');
 });
 
 echo "\n=== Results ===\n";

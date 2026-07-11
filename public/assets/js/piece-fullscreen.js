@@ -96,9 +96,11 @@
 // engine.
 (function () {
     const root = document.querySelector('[data-piece-download-root]');
+    // toggle is null on camera-only pieces (camera overlay allowed, no sound
+    // design) — the panel/camera wiring below must still run for them.
     const toggle = root && root.querySelector('[data-piece-sound-toggle]');
     const frame = root && root.querySelector('[data-piece-download-frame]');
-    if (!toggle || !frame) {
+    if (!root || !frame) {
         return;
     }
 
@@ -109,9 +111,11 @@
 
     function setVisualState(on) {
         enabled = on;
-        toggle.setAttribute('aria-pressed', on ? 'true' : 'false');
-        toggle.setAttribute('aria-label', on ? 'Mute sound' : 'Unmute sound');
-        toggle.innerHTML = on ? ICON_ON : ICON_OFF;
+        if (toggle) {
+            toggle.setAttribute('aria-pressed', on ? 'true' : 'false');
+            toggle.setAttribute('aria-label', on ? 'Mute sound' : 'Unmute sound');
+            toggle.innerHTML = on ? ICON_ON : ICON_OFF;
+        }
         if (panelMuteToggle) {
             panelMuteToggle.setAttribute('aria-checked', on ? 'true' : 'false');
             panelMuteToggle.textContent = on ? 'On' : 'Off';
@@ -129,7 +133,7 @@
         setVisualState(nextEnabled);
     }
 
-    toggle.addEventListener('click', () => requestToggle(!enabled));
+    toggle?.addEventListener('click', () => requestToggle(!enabled));
 
     window.addEventListener('message', (event) => {
         if (event.source !== frame.contentWindow || !event.data || event.data.type !== 'creatr-sound-state') {
@@ -363,6 +367,8 @@
     // supports them.
     const handControlToggle = root.querySelector('[data-piece-sound-hand-control-toggle]');
     const cameraBgToggle = root.querySelector('[data-piece-sound-camera-bg-toggle]');
+    const cameraOpacityRow = root.querySelector('[data-piece-sound-camera-opacity-row]');
+    const cameraOpacity = root.querySelector('[data-piece-sound-camera-opacity]');
 
     handControlToggle?.addEventListener('click', () => {
         const nextOn = handControlToggle.getAttribute('aria-pressed') !== 'true';
@@ -376,6 +382,9 @@
         const nextOn = cameraBgToggle.getAttribute('aria-pressed') !== 'true';
         gestureCall('toggleCameraBackground', nextOn, 'creatr-sound-camera-bg-toggle');
     });
+    cameraOpacity?.addEventListener('input', () => {
+        frame.contentWindow?.postMessage({ type: 'creatr-sound-camera-bg-opacity', value: Number(cameraOpacity.value) / 100 }, '*');
+    });
     window.addEventListener('message', (event) => {
         if (event.source !== frame.contentWindow || !event.data) return;
         if (event.data.type === 'creatr-sound-hand-control-state') {
@@ -386,6 +395,12 @@
             }
         } else if (event.data.type === 'creatr-sound-camera-bg-state') {
             cameraBgToggle?.setAttribute('aria-pressed', event.data.enabled ? 'true' : 'false');
+            if (cameraOpacityRow) cameraOpacityRow.hidden = !event.data.enabled || !event.data.opacitySupported;
+            // Initialize the slider from the hook's real default (0.35 for
+            // the 2D DOM overlay, 1.0 for the 3D blended quad).
+            if (cameraOpacity && event.data.enabled && typeof event.data.opacity === 'number') {
+                cameraOpacity.value = String(Math.round(event.data.opacity * 100));
+            }
         }
     });
 

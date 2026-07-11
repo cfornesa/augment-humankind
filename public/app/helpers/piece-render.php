@@ -48,6 +48,13 @@ function piece_render_document(array $piece, array $version, array $options = []
     $jsonEngine = json_encode($engine);
     $jsonHtml = json_encode($html, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     $jsonCss = json_encode($css, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    $contextGenerationMode = art_piece_version_generation_mode($version, $piece);
+    $contextSonicDecoded = !empty($version['sonic_params']) ? json_decode((string) $version['sonic_params'], true) : null;
+    $contextCapabilities = piece_sound_capability_contract(
+        $contextGenerationMode,
+        is_array($contextSonicDecoded) ? $contextSonicDecoded : [],
+        piece_camera_overlay_enabled($version)
+    );
     $jsonContext = json_encode([
         'pieceId' => (int) ($piece['id'] ?? 0),
         'viewerMode' => (string) ($options['viewer_mode'] ?? 'default'),
@@ -57,7 +64,18 @@ function piece_render_document(array $piece, array $version, array $options = []
         // of viewer_mode/interactive above (that option controls unrelated
         // chrome), so the runtime needs this separately to know whether
         // pointer movement is a meaningful sonification signal for a c2 piece.
-        'c2Interactive' => art_piece_version_generation_mode($version, $piece) === 'c2_interactive',
+        'c2Interactive' => $contextGenerationMode === 'c2_interactive',
+        // Camera overlay is a per-piece Metadata-tab permission now (see
+        // piece_camera_overlay_enabled), no longer implied by the audio
+        // hand-tracking voice — the runtime must know it even when sonic
+        // is null so camera-only pieces still get the message bridge.
+        'cameraOverlay' => !empty($contextCapabilities['camera_view']),
+        'cameraOpacity' => !empty($contextCapabilities['camera_opacity']),
+        // Hand control (camera steering + tilt fallback) rides the camera
+        // permission or hand-tracking voice — see the capability contract;
+        // needed even when sonic is null so steering works on sound-less
+        // pieces.
+        'handControl' => !empty($contextCapabilities['hand_control']),
         // Sound is gated per-piece (no master switch), not per-engine — every
         // engine can carry sonic_params now. Three.js/A-Frame sonify camera
         // motion, c2_interactive sonifies pointer motion, everything else
@@ -252,7 +270,7 @@ function piece_export_document(array $piece, array $version, array $options = []
     $imports = piece_export_imports($engine, $runtimeMode);
     $inlineRuntime = $runtimeMode === 'bundle' ? piece_export_inline_runtime_markup($engine) : '';
     $aframeCaptureShim = $engine === 'aframe' ? piece_aframe_capture_context_shim() : '';
-    $sonicScript = piece_export_sonic_script($engine, (string) ($version['sonic_params'] ?? ''), $runtimeMode, (int) ($piece['id'] ?? 0));
+    $sonicScript = piece_export_sonic_script($engine, (string) ($version['sonic_params'] ?? ''), $runtimeMode, (int) ($piece['id'] ?? 0), $generationMode, piece_camera_overlay_enabled($version));
     $bootstrap = piece_export_bootstrap($engine, $generationMode, $runtimeMode);
     $exportOverlayCss = piece_export_screenshot_overlay_css($generationMode);
     $exportOverlayMarkup = piece_export_screenshot_overlay_markup($generationMode);
@@ -317,23 +335,72 @@ HTML;
  * so direct-open file:// exports do not depend on the live site; in cdn
  * mode they load from the same self-hosted paths the live view uses.
  */
-function piece_export_sonic_script(string $engine, string $sonicParamsJson, string $runtimeMode, int $pieceId = 0): string
+/**
+ * Resolves the per-piece camera overlay permission. camera_overlay is a
+ * dedicated version column (Metadata tab), decoupled from the audio
+ * hand-tracking voice: 1 = on, 0 = off, NULL/absent = legacy behavior where
+ * the camera followed hand_tracking for three/aframe/c2_interactive.
+ */
+function piece_camera_overlay_enabled(array $version): ?bool
+{
+    $raw = $version['camera_overlay'] ?? null;
+    if ($raw !== null && $raw !== '') {
+        return (int) $raw === 1;
+    }
+
+    return null;
+}
+
+function piece_sound_capability_contract(string $generationMode, array $sonicParams, ?bool $cameraOverlay = null): array
+{
+    $voices = is_array($sonicParams['extras']['voices'] ?? null) ? $sonicParams['extras']['voices'] : [];
+    $handTracking = !empty($voices['hand_tracking']);
+    $interactiveC2 = $generationMode === 'c2_interactive';
+    // NULL camera_overlay = legacy rule (camera followed hand-tracking on the
+    // engines that supported it); an explicit 1/0 wins for every engine.
+    $legacyCameraView = $handTracking && (in_array($generationMode, ['three', 'aframe'], true) || $interactiveC2);
+    $cameraView = $cameraOverlay ?? $legacyCameraView;
+    // No sonic content at all means no sound capability, full stop — this is
+    // the single place that rule lives; callers must not re-derive it.
+    $sound = $sonicParams !== [] && ($sonicParams['enabled'] ?? true) !== false;
+    // Hand control (camera steering + tilt fallback) rides the camera
+    // permission or the hand-tracking voice — not the sound design — on the
+    // engines that register a handPoint hook. The admin's hand_control
+    // checkbox (default on) can turn it off.
+    $steerableEngine = in_array($generationMode, ['three', 'aframe'], true) || $interactiveC2;
+    return [
+        'sound' => $sound,
+        'keyboard' => $sound && ($voices['melodic'] ?? true) !== false,
+        'hand_tracking' => $handTracking,
+        'hand_control' => $steerableEngine && ($handTracking || $cameraView) && ($voices['hand_control'] ?? true) !== false,
+        'camera_view' => $cameraView,
+        // Every camera surface blends now: 2D engines via the DOM <video>
+        // overlay's opacity, three/aframe via a camera-attached blended quad,
+        // the immersive gallery room via the wall-projection material.
+        'camera_opacity' => $cameraView,
+        'microphone' => $sound,
+    ];
+}
+
+function piece_export_sonic_script(string $engine, string $sonicParamsJson, string $runtimeMode, int $pieceId = 0, string $generationMode = '', ?bool $cameraOverlay = null): string
 {
     // Every engine can carry sonic_params (matches the live regular-view
     // gate in piece_render_document()). three/aframe get camera-driven
     // sonification via __creatrSonicSetMover (wired in piece_export_bootstrap);
     // p5/c2/svg have no motion signal in this export and get the idle
     // random-note pattern only (create()'s getMover-optional handling).
-    if (trim($sonicParamsJson) === '') {
-        return '';
+    $decoded = json_decode($sonicParamsJson, true);
+    if (!is_array($decoded)) {
+        $decoded = ['enabled' => false];
     }
 
-    $decoded = json_decode($sonicParamsJson, true);
-    if (!is_array($decoded) || ($decoded['enabled'] ?? true) === false) {
+    $capabilities = piece_sound_capability_contract($generationMode !== '' ? $generationMode : $engine, $decoded, $cameraOverlay);
+    if (!$capabilities['sound'] && !$capabilities['camera_view'] && !$capabilities['hand_control']) {
         return '';
     }
 
     $sonicJson = json_encode($decoded, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    $capabilitiesJson = json_encode($capabilities);
     $isBundle = $runtimeMode === 'bundle';
     // Cache-busted by file mtime in the live (non-bundle) case — see the
     // matching comment in piece_render_document(). Bundle mode always
@@ -371,16 +438,13 @@ function piece_export_sonic_script(string $engine, string $sonicParamsJson, stri
         ['membranesynth', 'Membrane'], ['metalsynth', 'Metal'], ['plucksynth', 'Plucked String'],
         ['duosynth', 'Duo Synth'],
     ]);
-    // Hand-tracking's row/toggle only exist in the generated markup at all
-    // when the admin enabled it for this piece — unlike the always-present
-    // keyboard row (which only toggles CSS visibility client-side), there is
-    // no reason to ship this JS/UI to a piece that will never use it.
-    $handTrackingEnabledForPiece = !empty($decoded['extras']['voices']['hand_tracking']);
+
     $handRowElementsScript = '';
     $handRowAppendScript = '';
     $handRowWiringScript = '';
-    if ($handTrackingEnabledForPiece) {
-        $handRowElementsScript = <<<'JS'
+
+    if ($capabilities['hand_tracking']) {
+        $handRowElementsScript .= <<<'JS'
 
     var handRow = document.createElement('div');
     handRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:0.5rem;';
@@ -395,41 +459,8 @@ function piece_export_sonic_script(string $engine, string $sonicParamsJson, stri
     handRow.appendChild(handLabel); handRow.appendChild(handToggle);
 
 JS;
-        $handRowAppendScript = '    panel.appendChild(handRow);';
-        // Hand-control (steer the piece) and camera-background rows: the
-        // Three.js and A-Frame export bootstraps both register the shared
-        // hand-control/camera-background hook contract.
-        if ($engine === 'three' || $engine === 'aframe') {
-            $handRowElementsScript .= <<<'JS'
-
-    var handControlRow = document.createElement('div');
-    handControlRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:0.5rem;';
-    var handControlLabel = document.createElement('span');
-    handControlLabel.textContent = 'Hand control';
-    var handControlToggle = document.createElement('button');
-    handControlToggle.type = 'button';
-    handControlToggle.className = 'offline-sound-btn';
-    handControlToggle.textContent = 'Steer the piece';
-    handControlToggle.setAttribute('aria-pressed', 'false');
-    handControlToggle.style.cssText = 'border:1px solid rgba(255,255,255,0.18);border-radius:0.6rem;background:rgba(255,255,255,0.06);color:#fff;font:inherit;font-weight:600;padding:0.3rem 0.55rem;cursor:pointer;';
-    handControlRow.appendChild(handControlLabel); handControlRow.appendChild(handControlToggle);
-
-    var cameraBgRow = document.createElement('div');
-    cameraBgRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:0.5rem;';
-    var cameraBgLabel = document.createElement('span');
-    cameraBgLabel.textContent = 'Camera view';
-    var cameraBgToggle = document.createElement('button');
-    cameraBgToggle.type = 'button';
-    cameraBgToggle.className = 'offline-sound-btn';
-    cameraBgToggle.textContent = 'Show camera';
-    cameraBgToggle.setAttribute('aria-pressed', 'false');
-    cameraBgToggle.style.cssText = handControlToggle.style.cssText;
-    cameraBgRow.appendChild(cameraBgLabel); cameraBgRow.appendChild(cameraBgToggle);
-
-JS;
-            $handRowAppendScript .= "\n    panel.appendChild(handControlRow);\n    panel.appendChild(cameraBgRow);";
-        }
-        $handRowWiringScript = <<<'JS'
+        $handRowAppendScript .= "\n    panel.appendChild(handRow);";
+        $handRowWiringScript .= <<<'JS'
 
     handToggle.addEventListener('click', async function () {
       var turningOn = !engine || engine.getInputMode() !== 'hand';
@@ -443,6 +474,7 @@ JS;
         if (!engine && window.CreatrSonicController) {
           engine = window.CreatrSonicController.create(sonicParams, {
             getMover: function () { return getMover ? getMover() : null; },
+            allowHandControl: !!capabilities.hand_control,
             toneSrc: window.__creatrToneSrc,
             mediaPipeVisionSrc: window.__creatrMediaPipeVisionSrc,
             mediaPipeWasmDir: window.__creatrMediaPipeWasmDir,
@@ -464,13 +496,20 @@ JS;
     });
 
 JS;
-        if ($engine === 'three' || $engine === 'aframe') {
-            $handRowWiringScript .= <<<'JS'
+    }
+
+    if ($capabilities['hand_control'] || $capabilities['camera_view']) {
+        $handRowWiringScript .= <<<'JS'
 
     function createEngineSyncForCamera() {
       if (engine || !window.CreatrSonicController) return engine;
+      // sonicParams may be a sound-less {enabled:false} stub here — the
+      // engine then exists purely for the camera/hand-control pipeline
+      // (allowHandControl mirrors the server contract), never audio:
+      // ensureEnabled() refuses when !capabilities.sound.
       engine = window.CreatrSonicController.create(sonicParams, {
         getMover: function () { return getMover ? getMover() : null; },
+        allowHandControl: !!capabilities.hand_control,
         toneSrc: window.__creatrToneSrc,
         mediaPipeVisionSrc: window.__creatrMediaPipeVisionSrc,
         mediaPipeWasmDir: window.__creatrMediaPipeWasmDir,
@@ -478,6 +517,28 @@ JS;
       });
       return engine;
     }
+
+JS;
+    }
+
+    if ($capabilities['hand_control']) {
+        $handRowElementsScript .= <<<'JS'
+
+    var handControlRow = document.createElement('div');
+    handControlRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:0.5rem;';
+    var handControlLabel = document.createElement('span');
+    handControlLabel.textContent = 'Hand control';
+    var handControlToggle = document.createElement('button');
+    handControlToggle.type = 'button';
+    handControlToggle.className = 'offline-sound-btn';
+    handControlToggle.textContent = 'Steer the piece';
+    handControlToggle.setAttribute('aria-pressed', 'false');
+    handControlToggle.style.cssText = 'border:1px solid rgba(255,255,255,0.18);border-radius:0.6rem;background:rgba(255,255,255,0.06);color:#fff;font:inherit;font-weight:600;padding:0.3rem 0.55rem;cursor:pointer;';
+    handControlRow.appendChild(handControlLabel); handControlRow.appendChild(handControlToggle);
+
+JS;
+        $handRowAppendScript .= "\n    panel.appendChild(handControlRow);";
+        $handRowWiringScript .= <<<'JS'
 
     var handControlActive = false;
     var tiltController = null;
@@ -515,46 +576,98 @@ JS;
       }
     });
 
+JS;
+    }
+
+    if ($capabilities['camera_view']) {
+        $handRowElementsScript .= <<<'JS'
+
+    var cameraBgRow = document.createElement('div');
+    cameraBgRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:0.5rem;';
+    var cameraBgLabel = document.createElement('span');
+    cameraBgLabel.textContent = 'Camera view';
+    var cameraBgToggle = document.createElement('button');
+    cameraBgToggle.type = 'button';
+    cameraBgToggle.className = 'offline-sound-btn';
+    cameraBgToggle.textContent = 'Show camera';
+    cameraBgToggle.setAttribute('aria-pressed', 'false');
+    cameraBgToggle.style.cssText = 'border:1px solid rgba(255,255,255,0.18);border-radius:0.6rem;background:rgba(255,255,255,0.06);color:#fff;font:inherit;font-weight:600;padding:0.3rem 0.55rem;cursor:pointer;';
+    cameraBgRow.appendChild(cameraBgLabel); cameraBgRow.appendChild(cameraBgToggle);
+    var cameraOpacityRow = document.createElement('div');
+    cameraOpacityRow.style.cssText = 'display:none;align-items:center;gap:0.5rem;';
+    var cameraOpacityLabel = document.createElement('label'); cameraOpacityLabel.textContent = 'Camera opacity';
+    var cameraOpacityInput = document.createElement('input');
+    cameraOpacityInput.type = 'range'; cameraOpacityInput.min = '0'; cameraOpacityInput.max = '100'; cameraOpacityInput.value = '35';
+    cameraOpacityInput.setAttribute('aria-label', 'Camera overlay opacity'); cameraOpacityInput.style.cssText = 'width:100%;';
+    cameraOpacityRow.appendChild(cameraOpacityLabel); cameraOpacityRow.appendChild(cameraOpacityInput);
+
+JS;
+        $handRowAppendScript .= "\n    panel.appendChild(cameraBgRow);\n    panel.appendChild(cameraOpacityRow);";
+        $handRowWiringScript .= <<<'JS'
+
     cameraBgToggle.addEventListener('click', async function () {
       var turningOn = cameraBgToggle.getAttribute('aria-pressed') !== 'true';
       var hooks = window.__pieceHandHooks;
       if (!turningOn) {
         if (hooks && hooks.clearBackgroundVideo) { try { hooks.clearBackgroundVideo(); } catch (_e) {} }
-        if (engine) engine.releaseCameraFeed();
+        try { window.CreatrSonicController?.cameraFeed.release(); } catch (_) {}
         cameraBgToggle.setAttribute('aria-pressed', 'false');
+        cameraOpacityRow.style.display = 'none';
         return;
       }
-      var eng = createEngineSyncForCamera();
-      if (!eng || !hooks || !hooks.setBackgroundVideo) return;
+      if (!hooks || !hooks.setBackgroundVideo) return;
       try {
-        var video = await eng.acquireCameraFeed();
+        var CSC = await loadSonicControllerOnce();
+        var video = await CSC.cameraFeed.acquire();
         var shown = !!hooks.setBackgroundVideo(video);
-        if (!shown) { eng.releaseCameraFeed(); return; }
+        if (!shown) { CSC.cameraFeed.release(); return; }
         cameraBgToggle.setAttribute('aria-pressed', 'true');
+        cameraOpacityRow.style.display = typeof hooks.setBackgroundOpacity === 'function' ? 'flex' : 'none';
+        // Initialize the slider from the hook's real default (0.35 for the
+        // 2D DOM overlay, 1.0 for the 3D blended quad).
+        if (typeof hooks.getBackgroundOpacity === 'function') {
+          cameraOpacityInput.value = String(Math.round(hooks.getBackgroundOpacity() * 100));
+        }
       } catch (_e) {}
     });
+    cameraOpacityInput.addEventListener('input', function () {
+      var hooks = window.__pieceHandHooks;
+      if (hooks && typeof hooks.setBackgroundOpacity === 'function') hooks.setBackgroundOpacity(Number(cameraOpacityInput.value) / 100);
+    });
+
+JS;
+    }
+
+    if ($capabilities['hand_control'] || $capabilities['camera_view']) {
+        $handRowWiringScript .= <<<'JS'
 
     window.addEventListener('pagehide', function () {
-      handControlActive = false;
-      if (engine) {
-        engine.onHandFrame(null);
-        engine.disableHandControl();
-      }
       var hooks = window.__pieceHandHooks;
       if (hooks && hooks.clearBackgroundVideo) { try { hooks.clearBackgroundVideo(); } catch (_e) {} }
-      if (cameraBgToggle.getAttribute('aria-pressed') === 'true' && engine) engine.releaseCameraFeed();
-      if (tiltController) tiltController.disable();
+      if (typeof handControlActive !== 'undefined') handControlActive = false;
+      if (engine) {
+        try { engine.onHandFrame(null); } catch(_e) {}
+        try { engine.disableHandControl(); } catch(_e) {}
+      }
+      // The camera toggle acquires via the static cameraFeed (not the
+      // engine), so release the same way.
+      if (typeof cameraBgToggle !== 'undefined' && cameraBgToggle.getAttribute('aria-pressed') === 'true') {
+        try { window.CreatrSonicController?.cameraFeed.release(); } catch (_e) {}
+      }
+      if (typeof tiltController !== 'undefined' && tiltController) tiltController.disable();
     }, { once: true });
 
 JS;
-        }
+    }
+
+    if ($capabilities['hand_tracking'] || $capabilities['hand_control']) {
         $handRowWiringScript .= <<<'JS'
 
     document.addEventListener('creatr-sonic-capability-state', function(event) {
       var detail = event.detail || {};
-      var target = detail.capability === 'hand_tracking' ? handToggle
+      var target = detail.capability === 'hand_tracking' && typeof handToggle !== 'undefined' ? handToggle
         : detail.capability === 'hand_control' && typeof handControlToggle !== 'undefined' ? handControlToggle
-        : detail.capability === 'mic' ? micToggle : null;
+        : detail.capability === 'mic' && typeof micToggle !== 'undefined' ? micToggle : null;
       if (!target) return;
       target.dataset.capabilityState = detail.state || '';
       target.setAttribute('aria-busy', detail.state === 'loading' ? 'true' : 'false');
@@ -586,6 +699,7 @@ window.__creatrMediaPipeVisionSrc = {$mediaPipeVisionSrcJson};
 window.__creatrMediaPipeWasmDir = {$mediaPipeWasmDirJson};
 window.__creatrMediaPipeModelSrc = {$mediaPipeModelSrcJson};
 (function () {
+  var capabilities = {$capabilitiesJson};
   var sonicParams = {$sonicJson};
   if (!sonicParams) return;
   var pieceId = {$pieceIdJson};
@@ -643,26 +757,29 @@ window.__creatrMediaPipeModelSrc = {$mediaPipeModelSrcJson};
     var row = document.createElement('div');
     row.style.cssText = 'display:flex;align-items:center;gap:0.3rem;';
 
-    var btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'offline-sound-btn';
-    btn.setAttribute('aria-pressed', 'false');
-    btn.setAttribute('aria-label', 'Unmute sound');
-    Object.assign(btn.style, {
-      width: '2.75rem', height: '2.75rem',
-      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-      borderRadius: '0.75rem', border: '1px solid rgba(255,255,255,0.15)',
-      background: 'rgba(0,0,0,0.55)', color: '#fff', cursor: 'pointer',
-      boxShadow: '0 4px 12px rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)',
-    });
-    btn.innerHTML = ICON_OFF;
+    var btn = null;
+    if (capabilities.sound) {
+      btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'offline-sound-btn';
+      btn.setAttribute('aria-pressed', 'false');
+      btn.setAttribute('aria-label', 'Unmute sound');
+      Object.assign(btn.style, {
+        width: '2.75rem', height: '2.75rem',
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        borderRadius: '0.75rem', border: '1px solid rgba(255,255,255,0.15)',
+        background: 'rgba(0,0,0,0.55)', color: '#fff', cursor: 'pointer',
+        boxShadow: '0 4px 12px rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)',
+      });
+      btn.innerHTML = ICON_OFF;
+    }
 
     var panelTrigger = document.createElement('button');
     panelTrigger.type = 'button';
     panelTrigger.className = 'offline-sound-btn';
     panelTrigger.setAttribute('aria-haspopup', 'true');
     panelTrigger.setAttribute('aria-expanded', 'false');
-    panelTrigger.setAttribute('aria-label', 'Sound settings');
+    panelTrigger.setAttribute('aria-label', 'Piece controls');
     Object.assign(panelTrigger.style, {
       width: '2.75rem', height: '2.75rem',
       display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
@@ -673,8 +790,12 @@ window.__creatrMediaPipeModelSrc = {$mediaPipeModelSrcJson};
     panelTrigger.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>';
 
     var panel = document.createElement('div');
+    panel.id = 'piece-sound-panel';
+    panel.setAttribute('role', 'region');
+    panel.setAttribute('aria-label', 'Piece controls');
     Object.assign(panel.style, {
       display: 'none', flexDirection: 'column', gap: '0.6rem', width: '13rem',
+      maxHeight: 'calc(100dvh - 5rem)', overflowY: 'auto',
       padding: '0.85rem', borderRadius: '1rem', border: '1px solid rgba(255,255,255,0.14)',
       background: 'rgba(9,14,24,0.94)', boxShadow: '0 18px 40px rgba(0,0,0,0.4)',
       backdropFilter: 'blur(8px)', color: '#fff', font: '12px/1.4 system-ui,sans-serif',
@@ -733,6 +854,14 @@ window.__creatrMediaPipeModelSrc = {$mediaPipeModelSrcJson};
       }
     `;
     document.head.appendChild(style);
+
+    var soundRow = document.createElement('div');
+    soundRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:0.5rem;';
+    var soundLabel = document.createElement('span'); soundLabel.textContent = 'Sound';
+    var soundSwitch = document.createElement('button'); soundSwitch.type = 'button'; soundSwitch.className = 'offline-sound-btn';
+    soundSwitch.textContent = 'Off'; soundSwitch.setAttribute('role', 'switch'); soundSwitch.setAttribute('aria-checked', 'false');
+    soundSwitch.style.cssText = 'border:1px solid rgba(255,255,255,0.18);border-radius:0.6rem;background:rgba(255,255,255,0.06);color:#fff;font:inherit;font-weight:600;padding:0.3rem 0.55rem;cursor:pointer;';
+    soundRow.appendChild(soundLabel); soundRow.appendChild(soundSwitch);
 
     var volumeRow = document.createElement('div');
     volumeRow.style.cssText = 'display:flex;align-items:center;gap:0.5rem;';
@@ -884,24 +1013,35 @@ window.__creatrMediaPipeModelSrc = {$mediaPipeModelSrcJson};
       if (!keyBtn) return;
       playChromaticNote(Number(keyBtn.dataset.semitone || 0));
     });
+
 {$handRowElementsScript}
-    panel.appendChild(volumeRow);
-    panel.appendChild(voicePickerWrap);
-    panel.appendChild(keyboardRow);
-    panel.appendChild(octaveRow);
-    panel.appendChild(keysWrap);
+
+    if (capabilities.sound) {
+      panel.appendChild(soundRow);
+      panel.appendChild(volumeRow);
+      panel.appendChild(voicePickerWrap);
+      panel.appendChild(keyboardRow);
+      panel.appendChild(octaveRow);
+      panel.appendChild(keysWrap);
+    }
 {$handRowAppendScript}
-    panel.appendChild(micRow);
-    panel.appendChild(micFxWrap);
-    row.appendChild(btn);
+    if (capabilities.sound) {
+      panel.appendChild(micRow);
+      panel.appendChild(micFxWrap);
+    }
+
+    if (btn) {
+      row.appendChild(btn);
+    }
     row.appendChild(panelTrigger);
     wrap.appendChild(row);
     wrap.appendChild(panel);
     document.body.appendChild(wrap);
 
     async function ensureEnabled() {
+      if (!capabilities.sound) return false;
       if (engine && engine.isEnabled()) return true;
-      btn.disabled = true;
+      if (btn) btn.disabled = true;
       try {
         if (!engine) {
           var CSC = await loadSonicControllerOnce();
@@ -916,24 +1056,29 @@ window.__creatrMediaPipeModelSrc = {$mediaPipeModelSrcJson};
         }
         var ok = await engine.enable();
         if (ok) {
-          btn.setAttribute('aria-pressed', 'true');
-          btn.setAttribute('aria-label', 'Mute sound');
-          btn.innerHTML = ICON_ON;
-          volumeInput.value = String(engine.getVolume());
+          if (btn) {
+            btn.setAttribute('aria-pressed', 'true');
+            btn.setAttribute('aria-label', 'Mute sound');
+            btn.innerHTML = ICON_ON;
+          }
+          if (soundSwitch) {
+            soundSwitch.textContent = 'On'; soundSwitch.setAttribute('aria-checked', 'true');
+          }
+          if (volumeInput) volumeInput.value = String(engine.getVolume());
           var storedOverrides = readVoiceInstrumentOverrides();
           Object.keys(storedOverrides).forEach(function (voiceName) {
             engine.setVoiceInstrument(voiceName, storedOverrides[voiceName]);
             if (voicePickerSelects[voiceName]) voicePickerSelects[voiceName].value = storedOverrides[voiceName];
           });
         } else {
-          btn.setAttribute('aria-label', 'Sound unavailable');
+          if (btn) btn.setAttribute('aria-label', 'Sound unavailable');
         }
         return ok;
       } catch (_e) {
-        btn.setAttribute('aria-label', 'Sound unavailable');
+        if (btn) btn.setAttribute('aria-label', 'Sound unavailable');
         return false;
       } finally {
-        btn.disabled = false;
+        if (btn) btn.disabled = false;
       }
     }
 
@@ -944,16 +1089,24 @@ window.__creatrMediaPipeModelSrc = {$mediaPipeModelSrcJson};
 
     var detachPianoKeys = null;
 
-    btn.addEventListener('click', async function () {
-      if (engine && engine.isEnabled()) {
-        engine.disable();
-        btn.setAttribute('aria-pressed', 'false');
-        btn.setAttribute('aria-label', 'Unmute sound');
-        btn.innerHTML = ICON_OFF;
-        return;
-      }
-      await ensureEnabled();
-    });
+    if (btn) {
+      btn.addEventListener('click', async function () {
+        if (engine && engine.isEnabled()) {
+          engine.disable();
+          btn.setAttribute('aria-pressed', 'false');
+          btn.setAttribute('aria-label', 'Unmute sound');
+          btn.innerHTML = ICON_OFF;
+          if (soundSwitch) {
+            soundSwitch.textContent = 'Off'; soundSwitch.setAttribute('aria-checked', 'false');
+          }
+          return;
+        }
+        await ensureEnabled();
+      });
+    }
+    if (soundSwitch && btn) {
+      soundSwitch.addEventListener('click', function () { btn.click(); });
+    }
 
     var panelOpen = false;
     panelTrigger.addEventListener('click', function () {
@@ -986,7 +1139,9 @@ window.__creatrMediaPipeModelSrc = {$mediaPipeModelSrcJson};
       }
       if (engine) engine.setInputMode(next);
     });
+
 {$handRowWiringScript}
+
     octaveDown.addEventListener('click', function () {
       if (!engine) return;
       engine.setOctave(engine.getOctave() - 1);
@@ -1300,11 +1455,23 @@ function piece_export_immersive_document(array $piece, array $version, array $op
     $hasSonic = $sonicDecoded && ($sonicDecoded['enabled'] ?? true) !== false;
     $jsonSonic = json_encode($hasSonic ? $sonicDecoded : null, $jsonFlags);
     $jsonPieceId = json_encode((int) ($piece['id'] ?? 0), $jsonFlags);
+    // Camera/hand capabilities from the same contract as the live immersive
+    // view, so the exported toolbar and chrome offer the same rows offline.
+    $exportCapabilities = piece_sound_capability_contract(
+        $generationMode,
+        is_array($sonicDecoded) ? $sonicDecoded : [],
+        piece_camera_overlay_enabled($version)
+    );
+    $exportCameraView = !empty($exportCapabilities['camera_view']);
+    $exportHandControl = !empty($exportCapabilities['hand_control']);
+    $jsonCameraView = json_encode($exportCameraView, $jsonFlags);
+    $jsonHandControl = json_encode($exportHandControl, $jsonFlags);
 
     // Shared top toolbar — identical placement/appearance to the live
     // immersive surfaces. Three/A-Frame pieces have no gallery full view, so
     // they render no view button; the download menu is PNG-only because a
-    // standalone export cannot re-download itself offline.
+    // standalone export cannot re-download itself offline. Camera/hand rows
+    // follow $exportCapabilities (computed above with the JSON flags).
     $isInteractiveC2 = $generationMode === 'c2_interactive';
     $toolbarCss = immersive_stage_toolbar_css();
     $toolbarMarkup = immersive_stage_toolbar_markup([
@@ -1320,6 +1487,8 @@ function piece_export_immersive_document(array $piece, array $version, array $op
             ],
         ],
         'sound_action' => $hasSonic ? ['enabled' => true] : null,
+        'camera_view' => $exportCameraView,
+        'hand_control' => $exportHandControl,
         'show_fullscreen' => true,
         'fullscreen_onclick' => null,
     ]);
@@ -1385,7 +1554,9 @@ const piece = {
   initialViewState: {$jsonViewState},
   pngFilename: {$pngFilename},
   sonicParams: {$jsonSonic},
-  pieceId: {$jsonPieceId}
+  pieceId: {$jsonPieceId},
+  cameraOverlay: {$jsonCameraView},
+  handControl: {$jsonHandControl}
 };
 const stage = document.getElementById('immersive-stage');
 const fullscreenBtn = document.getElementById('fullscreen-toggle-btn');
@@ -1414,6 +1585,8 @@ try {
     },
     getAudioController: () => viewer?.getAudioController?.(),
     getPieceInteractionController: () => viewer?.getPieceInteractionController?.(),
+    cameraOverlayAllowed: piece.cameraOverlay,
+    handControlAllowed: piece.handControl,
   });
 } catch (error) {
   showPieceError(error);
@@ -1755,7 +1928,11 @@ function piece_export_runtime_inline_source(string $engine): string
         throw new RuntimeException('Missing vendored runtime source for piece export: ' . $path);
     }
 
-    return $source;
+    $source = piece_export_strip_source_maps($source);
+
+    return strtolower($engine) === 'aframe'
+        ? piece_export_prepare_aframe_runtime($source)
+        : $source;
 }
 
 function piece_export_runtime_source_file(string $relativePath): string
@@ -1767,7 +1944,11 @@ function piece_export_runtime_source_file(string $relativePath): string
         throw new RuntimeException('Missing vendored runtime source for piece export: ' . $path);
     }
 
-    return piece_export_strip_source_maps($source);
+    $source = piece_export_strip_source_maps($source);
+
+    return ltrim($relativePath, '/') === 'assets/js/aframe.min.js'
+        ? piece_export_prepare_aframe_runtime($source)
+        : $source;
 }
 
 /**
@@ -1778,11 +1959,41 @@ function piece_export_runtime_source_file(string $relativePath): string
  */
 function piece_export_strip_source_maps(string $source): string
 {
+    // Directives are comments occupying their own physical line. Do not
+    // search for comment-shaped substrings anywhere in the source: minified
+    // A-Frame contains `/*# sourceMappingURL=... */` inside an executable JS
+    // string, and the previous unanchored block-comment branch deleted that
+    // string fragment and made every exported A-Frame runtime invalid.
     return preg_replace(
-        '/(?:\r?\n|^)\s*\/\/#\s*sourceMappingURL=[^\r\n]*|\/\*\s*#\s*sourceMappingURL=[^*]*\*\//',
+        '/^[\t ]*(?:\/\/[#@][\t ]*sourceMappingURL=[^\r\n]*|\/\*[#@][\t ]*sourceMappingURL=.*?\*\/)[\t ]*(?:\r?\n|$)/m',
         '',
         $source
     ) ?? $source;
+}
+
+/**
+ * Applies the direct-file compatibility fix required by A-Frame 1.6.0.
+ *
+ * Its bundled audio release path assigns `audio.src = ""`. Under file://,
+ * WebKit resolves that empty URL to index.html and rejects the self-load as a
+ * unique-origin request. Keep this count-asserted so an A-Frame upgrade stops
+ * export with a useful diagnostic instead of silently shipping an unreviewed
+ * or partially patched runtime.
+ */
+function piece_export_prepare_aframe_runtime(string $source): string
+{
+    $needle = 'this.release=function(){e.pause(),e.src=""}';
+    $replacement = 'this.release=function(){e.pause(),e.removeAttribute("src"),e.load()}';
+    $matches = substr_count($source, $needle);
+    if ($matches !== 1) {
+        throw new RuntimeException(
+            'A-Frame export compatibility check failed: expected exactly one empty audio source cleanup, found '
+            . $matches
+            . '. Review the vendored A-Frame runtime before exporting it.'
+        );
+    }
+
+    return str_replace($needle, $replacement, $source);
 }
 
 /**
@@ -1999,15 +2210,15 @@ function piece_export_download_bridge_script(): string
  * the three/aframe camera-position deltas createPieceRuntimeAudioController
  * was tuned against) wired to window.__creatrSonicSetMover, so a downloaded
  * c2_interactive piece with sound enabled gets pointer-modulated pitch
- * offline, not just the idle random-note pattern. Plain c2 has no motion
- * signal and is left exactly as before.
- */
+ * offline, not just the idle random-note pattern. Plain c2 skips the pointer
+ * mover (no motion signal) but still gets the DOM camera overlay hooks. */
 function piece_export_c2_bootstrap_script(bool $interactive): string
 {
+    $domCameraOverlayScript = piece_export_dom_camera_overlay_script('canvas');
     $pointerWiring = $interactive ? <<<'JS'
   if (window.__creatrSonicSetMover) {
     const c2Mover = { position: { x: 0, y: 0, z: 0 } };
-    const updateC2Mover = (clientX, clientY) => {
+    updateC2Mover = (clientX, clientY) => {
       const rect = canvas.getBoundingClientRect();
       if (!rect.width || !rect.height) return;
       c2Mover.position.x = (clientX - rect.left) / rect.width;
@@ -2020,7 +2231,6 @@ function piece_export_c2_bootstrap_script(bool $interactive): string
     }, { passive: true });
     window.__creatrSonicSetMover(() => c2Mover);
   }
-
 JS
         : '';
 
@@ -2095,14 +2305,177 @@ try {
   canvas.style.touchAction = 'none';
   sizeCanvas();
   window.addEventListener('resize', sizeCanvas);
-{$pointerWiring}  if (typeof window.sketch === 'function') window.sketch({ c2: window.c2, canvas, startFrame, loadImage, drawImage, drawImageCover });
+  let updateC2Mover = null;
+  {$pointerWiring}
+  window.__pieceHandHooks = {
+    engine: 'c2_interactive',
+    handPoint(nx, ny) {
+      const rect = canvas.getBoundingClientRect();
+      if (!rect.width || !rect.height) return;
+      const clientX = rect.left + nx * rect.width;
+      const clientY = rect.top + ny * rect.height;
+      if (typeof updateC2Mover === 'function') {
+        updateC2Mover(clientX, clientY);
+      }
+      try { canvas.dispatchEvent(new PointerEvent('pointermove', { clientX, clientY, bubbles: true })); } catch (_) {}
+    },
+  };
+{$domCameraOverlayScript}
+  if (typeof window.sketch === 'function') window.sketch({ c2: window.c2, canvas, startFrame, loadImage, drawImage, drawImageCover });
 } catch (error) { showPieceError(error); }
 </script>
 HTML;
 }
 
+
+/**
+ * Shared DOM camera overlay for the 2D-surface export bootstraps (p5, c2,
+ * c2_interactive, svg): merges the overlay members into the bootstrap's
+ * already-created window.__pieceHandHooks (engine/handPoint) and installs
+ * __creatrComposeCapture. $getSurfaceExpr is a JS expression evaluating to
+ * the piece's surface element. Export twin of createDomCameraOverlayHooks()
+ * in piece-runtime.js — keep the behavior in sync.
+ */
+function piece_export_dom_camera_overlay_script(string $getSurfaceExpr): string
+{
+    return <<<JS
+  (function () {
+    var getSurface = function () { return {$getSurfaceExpr}; };
+    var cameraOverlay = null;
+    var cameraOpacity = 0.35;
+    function syncCameraOverlayBox() {
+      var surface = getSurface();
+      if (!cameraOverlay || !surface || !surface.parentElement) return;
+      // Rect-based (not offsetLeft/offsetWidth) so it also works for <svg>
+      // roots, which have no HTMLElement offset geometry.
+      var rect = surface.getBoundingClientRect();
+      var parentRect = surface.parentElement.getBoundingClientRect();
+      cameraOverlay.style.left = (rect.left - parentRect.left) + 'px';
+      cameraOverlay.style.top = (rect.top - parentRect.top) + 'px';
+      cameraOverlay.style.width = rect.width + 'px';
+      cameraOverlay.style.height = rect.height + 'px';
+    }
+    window.__pieceHandHooks = Object.assign(window.__pieceHandHooks || {}, {
+      setBackgroundVideo: function (video) {
+        var surface = getSurface();
+        if (!video || !surface || !surface.parentElement) return false;
+        this.clearBackgroundVideo();
+        var parent = surface.parentElement;
+        if (getComputedStyle(parent).position === 'static') parent.style.position = 'relative';
+        cameraOverlay = document.createElement('video');
+        cameraOverlay.autoplay = true; cameraOverlay.muted = true; cameraOverlay.playsInline = true;
+        cameraOverlay.srcObject = video.srcObject;
+        cameraOverlay.style.cssText = 'position:absolute;z-index:2;transform:scaleX(-1);pointer-events:none;';
+        cameraOverlay.style.objectFit = 'cover';
+        cameraOverlay.style.opacity = String(cameraOpacity);
+        parent.appendChild(cameraOverlay);
+        syncCameraOverlayBox();
+        cameraOverlay.play().catch(function () {});
+        return true;
+      },
+      clearBackgroundVideo: function () { if (cameraOverlay) { cameraOverlay.remove(); cameraOverlay = null; } },
+      setBackgroundOpacity: function (value) {
+        cameraOpacity = Math.max(0, Math.min(1, Number(value)));
+        if (cameraOverlay) cameraOverlay.style.opacity = String(cameraOpacity);
+      },
+      getBackgroundOpacity: function () { return cameraOpacity; },
+    });
+    window.__creatrComposeCapture = async function (baseCanvas) {
+      if (!cameraOverlay) return baseCanvas;
+      if (cameraOverlay.readyState < 2 || !cameraOverlay.videoWidth) throw new Error('The camera frame is not ready to capture yet.');
+      var composed = document.createElement('canvas');
+      composed.width = baseCanvas.width; composed.height = baseCanvas.height;
+      var ctx = composed.getContext('2d');
+      ctx.drawImage(baseCanvas, 0, 0);
+      ctx.save(); ctx.globalAlpha = cameraOpacity; ctx.translate(composed.width, 0); ctx.scale(-1, 1);
+      ctx.drawImage(cameraOverlay, 0, 0, composed.width, composed.height); ctx.restore();
+      return composed;
+    };
+    window.addEventListener('resize', syncCameraOverlayBox);
+  })();
+JS;
+}
+
+/**
+ * Camera-feed hook members for the 3D export bootstraps (Three.js/A-Frame):
+ * a mirrored, blended, camera-attached background quad — the export twin of
+ * piece-runtime.js's createCameraBlendQuadHooks(). Returned as object-literal
+ * members so each bootstrap splices them into its own __pieceHandHooks.
+ * $afterChangeJs lets the three bootstraps keep their `userHasInteracted`
+ * bookkeeping on every camera state change.
+ */
+function piece_export_camera_blend_quad_members(string $threeExpr, string $sceneExpr, string $cameraExpr, string $afterChangeJs = ''): string
+{
+    return <<<JS
+      _cameraQuad: null,
+      _videoTexture: null,
+      _cameraOpacity: 1,
+      setBackgroundVideo(video) {
+        const T = {$threeExpr};
+        const scene = {$sceneExpr};
+        const camera = {$cameraExpr};
+        if (!video || !scene || !camera || !T || !T.VideoTexture) return false;
+        this.clearBackgroundVideo();
+        const texture = new T.VideoTexture(video);
+        if (T.SRGBColorSpace) texture.colorSpace = T.SRGBColorSpace;
+        texture.wrapS = T.RepeatWrapping;
+        texture.repeat.x = -1;
+        texture.offset.x = 1;
+        const material = new T.MeshBasicMaterial({
+          map: texture, transparent: true, opacity: this._cameraOpacity,
+          depthTest: false, depthWrite: false, toneMapped: false, fog: false,
+        });
+        const quad = new T.Mesh(new T.PlaneGeometry(1, 1), material);
+        quad.renderOrder = -1;
+        quad.frustumCulled = false;
+        quad.onBeforeRender = (_renderer, _scene, renderCamera) => {
+          const cam = renderCamera && renderCamera.isPerspectiveCamera ? renderCamera : null;
+          if (!cam) return;
+          const dist = Math.max(cam.near * 2, 0.05);
+          quad.position.set(0, 0, -dist);
+          const height = 2 * dist * Math.tan((cam.fov * Math.PI) / 360);
+          quad.scale.set(height * (cam.aspect || 1), height, 1);
+        };
+        if (!camera.parent) scene.add(camera);
+        camera.add(quad);
+        this._cameraQuad = quad;
+        this._videoTexture = texture;{$afterChangeJs}
+        return true;
+      },
+      clearBackgroundVideo() {
+        const quad = this._cameraQuad;
+        if (quad) {
+          try { quad.parent && quad.parent.remove(quad); } catch (_e) {}
+          try { quad.geometry.dispose(); } catch (_e) {}
+          try { quad.material.dispose(); } catch (_e) {}
+          this._cameraQuad = null;
+        }
+        if (this._videoTexture) {
+          try { this._videoTexture.dispose(); } catch (_e) {}
+          this._videoTexture = null;
+        }{$afterChangeJs}
+      },
+      setBackgroundOpacity(value) {
+        this._cameraOpacity = Math.max(0, Math.min(1, Number(value)));
+        if (this._cameraQuad) this._cameraQuad.material.opacity = this._cameraOpacity;
+      },
+      getBackgroundOpacity() { return this._cameraOpacity; },
+JS;
+}
+
 function piece_export_bootstrap(string $engine, string $generationMode = '', string $runtimeMode = 'cdn'): string
 {
+    $threeCameraQuadMembers = piece_export_camera_blend_quad_members(
+        'window.THREE',
+        'state.scene',
+        'state.camera',
+        "\n        userHasInteracted = true;"
+    );
+    $aframeCameraQuadMembers = piece_export_camera_blend_quad_members(
+        'getAFrameThree()',
+        'scene && scene.object3D',
+        'scene && scene.camera'
+    );
     if ($engine === 'three' && $runtimeMode === 'bundle') {
         return <<<HTML
 <script>
@@ -2440,23 +2813,7 @@ try {
         controls.update();
         userHasInteracted = true;
       },
-      _prevBackground: undefined,
-      _videoTexture: null,
-      setBackgroundVideo(video) {
-        const T = window.THREE;
-        if (!state.scene || !T || !T.VideoTexture) return false;
-        this._prevBackground = state.scene.background ?? null;
-        this._videoTexture = new T.VideoTexture(video);
-        if (T.SRGBColorSpace) this._videoTexture.colorSpace = T.SRGBColorSpace;
-        state.scene.background = this._videoTexture;
-        userHasInteracted = true;
-        return true;
-      },
-      clearBackgroundVideo() {
-        if (state.scene) state.scene.background = this._prevBackground ?? null;
-        if (this._videoTexture) { try { this._videoTexture.dispose(); } catch (_) {} this._videoTexture = null; }
-        userHasInteracted = true;
-      },
+{$threeCameraQuadMembers}
     };
   }
   window.addEventListener('resize', () => {
@@ -2472,12 +2829,19 @@ try {
 HTML;
     }
 
-    return match ($engine) {
-        'p5' => <<<'HTML'
+    $p5OverlayScript = piece_export_dom_camera_overlay_script("parent.querySelector('canvas') || parent");
+    $svgOverlayScript = piece_export_dom_camera_overlay_script("parent.querySelector('svg') || parent");
+
+    // The three-cdn and aframe arms below are nowdocs (their JS is full of
+    // interpolation-hostile syntax), so the shared camera-quad members are
+    // spliced in by placeholder after the match instead of `{$...}`.
+    $bootstrap = match ($engine) {
+        'p5' => <<<HTML
 <script>
 try {
   const parent = document.getElementById('canvas-container') || document.getElementById('runtime-root');
   if (typeof window.sketch === 'function' && typeof window.p5 === 'function') new window.p5(window.sketch, parent);
+{$p5OverlayScript}
 } catch (error) { showPieceError(error); }
 </script>
 HTML,
@@ -2819,23 +3183,7 @@ try {
         controls.update();
         userHasInteracted = true;
       },
-      _prevBackground: undefined,
-      _videoTexture: null,
-      setBackgroundVideo(video) {
-        const T = window.THREE;
-        if (!state.scene || !T || !T.VideoTexture) return false;
-        this._prevBackground = state.scene.background ?? null;
-        this._videoTexture = new T.VideoTexture(video);
-        if (T.SRGBColorSpace) this._videoTexture.colorSpace = T.SRGBColorSpace;
-        state.scene.background = this._videoTexture;
-        userHasInteracted = true;
-        return true;
-      },
-      clearBackgroundVideo() {
-        if (state.scene) state.scene.background = this._prevBackground ?? null;
-        if (this._videoTexture) { try { this._videoTexture.dispose(); } catch (_) {} this._videoTexture = null; }
-        userHasInteracted = true;
-      },
+{$threeCameraQuadMembers}
     };
   }
   window.addEventListener('resize', () => {
@@ -3023,8 +3371,6 @@ try {
     }, { once: true });
     window.__pieceHandHooks = {
       engine: 'aframe',
-      _previousBackground: undefined,
-      _videoTexture: null,
       handPoint(nx, ny) {
         const cameraObject = getAFrameCameraObject();
         if (!cameraObject) return;
@@ -3035,23 +3381,7 @@ try {
         cameraObject.rotation.x += (desiredPitch - cameraObject.rotation.x) * 0.12;
         cameraObject.rotation.x = Math.max(-Math.PI * 0.45, Math.min(Math.PI * 0.45, cameraObject.rotation.x));
       },
-      setBackgroundVideo(video) {
-        const THREE_NS = getAFrameThree();
-        if (!video || !scene.object3D || !THREE_NS?.VideoTexture) return false;
-        if (this._videoTexture) this.clearBackgroundVideo();
-        this._previousBackground = scene.object3D.background ?? null;
-        this._videoTexture = new THREE_NS.VideoTexture(video);
-        if (THREE_NS.SRGBColorSpace) this._videoTexture.colorSpace = THREE_NS.SRGBColorSpace;
-        scene.object3D.background = this._videoTexture;
-        return true;
-      },
-      clearBackgroundVideo() {
-        if (!this._videoTexture) return;
-        if (scene.object3D) scene.object3D.background = this._previousBackground ?? null;
-        if (this._videoTexture) { try { this._videoTexture.dispose(); } catch (_e) {} }
-        this._videoTexture = null;
-        this._previousBackground = undefined;
-      },
+{$aframeCameraQuadMembers}
     };
     scene.addEventListener('renderstart', bindAFramePointerControls, { once: true });
     frameId = requestAnimationFrame(animateAFramePointerNavigation);
@@ -3060,12 +3390,26 @@ try {
 } catch (error) { showPieceError(error); }
 </script>
 HTML,
-        default => <<<'HTML'
+        default => <<<HTML
 <script>
-try { if (typeof window.sketch === 'function') window.sketch(); } catch (error) { showPieceError(error); }
+try {
+  if (typeof window.sketch === 'function') window.sketch();
+
+  const parent = document.getElementById('canvas-container') || document.getElementById('runtime-root');
+{$svgOverlayScript}
+} catch (error) { showPieceError(error); }
 </script>
 HTML,
     };
+
+    // Splice the shared camera-quad members into the nowdoc arms (the
+    // literal `{$...}` text inside them is the placeholder; the interpolating
+    // three-bundle arm above already resolved its copy natively).
+    return str_replace(
+        ['{$threeCameraQuadMembers}', '{$aframeCameraQuadMembers}'],
+        [$threeCameraQuadMembers, $aframeCameraQuadMembers],
+        $bootstrap
+    );
 }
 
 function piece_export_bundle(array $piece, array $version, array $options = []): array
@@ -3255,11 +3599,15 @@ function collection_export_build_manifest(array $collection, array $items, array
         }
     }
 
-    return [
+    $manifest = [
         'document' => collection_export_document($collection, $items, $options),
         'bundle_files' => $bundleFiles,
         'runtime_files' => collection_export_runtime_files(),
     ];
+
+    piece_export_validate_manifest($manifest, 'collection export');
+
+    return $manifest;
 }
 
 function collection_export_readme(array $collection): string
@@ -3699,6 +4047,16 @@ function piece_export_build_manifest(array $piece, array $version, array $option
     // hand-tracking-enabled pieces it contains.
     if (!empty($options['exclude_hand_tracking'])) {
         $version = piece_export_force_voice_off($version, 'hand_tracking');
+        // Hand control's primary path is MediaPipe too — excluding one but
+        // not the other would silently reintroduce the ~19.4MB payload per
+        // collection piece. The camera overlay itself (no model needed)
+        // stays available regardless. Sound-less pieces have no sonic block
+        // for force_voice_off to write into, so give them an in-memory
+        // (never persisted) stub carrying just the exclusion.
+        if (trim((string) ($version['sonic_params'] ?? '')) === '') {
+            $version['sonic_params'] = '{"enabled":false,"extras":{"voices":{"hand_control":false}}}';
+        }
+        $version = piece_export_force_voice_off($version, 'hand_control');
     }
 
     $htmlCode = (string) ($version['html_code'] ?? '');
@@ -3720,11 +4078,24 @@ function piece_export_build_manifest(array $piece, array $version, array $option
     $surface = strtolower(trim((string) ($options['surface'] ?? '')));
     $immersive = $surface === 'immersive';
     $viewState = $immersive ? piece_export_decode_view_state((string) ($options['view_state'] ?? '')) : [];
+    $generationMode = art_piece_version_generation_mode($version, $piece);
+    $decodedSonic = json_decode((string) ($version['sonic_params'] ?? ''), true);
+    if (!is_array($decodedSonic)) {
+        $decodedSonic = ['enabled' => false];
+    }
+    $capabilities = piece_sound_capability_contract($generationMode, $decodedSonic, piece_camera_overlay_enabled($version));
+    $cameraView = !empty($capabilities['camera_view']);
+    // MediaPipe is needed by BOTH camera-based capabilities: the theremin
+    // (hand_tracking voice) and hand control (camera steering) — which the
+    // contract can grant via the camera permission on sound-less pieces.
+    // The device-tilt fallback needs no assets; the primary path does.
+    $needsMediaPipe = piece_export_version_has_hand_tracking($version) || !empty($capabilities['hand_control']);
+
     $runtimeFiles = $immersive
-        ? piece_export_immersive_runtime_files((string) ($version['engine'] ?? $piece['engine'] ?? 'p5'), piece_export_version_has_hand_tracking($version))
+        ? piece_export_immersive_runtime_files((string) ($version['engine'] ?? $piece['engine'] ?? 'p5'), $needsMediaPipe)
         : piece_export_runtime_files((string) ($version['engine'] ?? $piece['engine'] ?? 'p5'));
 
-    if (!$immersive && piece_export_version_has_enabled_sonic($version)) {
+    if (!$immersive && (piece_export_version_has_enabled_sonic($version) || $cameraView || !empty($capabilities['hand_control']))) {
         $runtimeFiles[] = [
             'source_path' => dirname(__DIR__, 2) . '/assets/vendor/tone/Tone.js',
             'zip_path' => 'runtime/tone/Tone.js',
@@ -3735,20 +4106,18 @@ function piece_export_build_manifest(array $piece, array $version, array $option
             'zip_path' => 'runtime/sonic-controller.js',
             'data' => piece_export_runtime_source_file('assets/js/sonic-controller.js'),
         ];
-        // piece_export_sonic_script() now wires a real hand-tracking toggle
-        // for this non-immersive export path too, gated the same way its own
-        // markup is (extras.voices.hand_tracking). Collections force this
-        // voice off via 'exclude_hand_tracking' above (see
-        // collection_export_build_manifest()), so piece_export_version_has_hand_tracking()
-        // naturally returns false there and this never bundles — that's what
-        // keeps a collection ZIP's size bounded regardless of how many
-        // hand-tracking-enabled pieces it contains.
-        if (piece_export_version_has_hand_tracking($version)) {
+        // Bundled for the theremin (hand_tracking voice) AND for hand
+        // control (camera steering), which the contract can grant without
+        // any sound design. Collections force the hand-tracking voice off
+        // via 'exclude_hand_tracking' (see collection_export_build_manifest())
+        // to keep collection ZIP sizes bounded; single-piece ZIPs accept the
+        // model whenever either capability is offered.
+        if ($needsMediaPipe) {
             $runtimeFiles = array_merge($runtimeFiles, piece_export_mediapipe_hands_runtime_files());
         }
     }
 
-    return [
+    $manifest = [
         'document' => $immersive
             ? piece_export_immersive_document($piece, $version, [
                 'media_map' => $mediaMap,
@@ -3766,6 +4135,101 @@ function piece_export_build_manifest(array $piece, array $version, array $option
         'runtime_files' => $runtimeFiles,
         'media_files' => $mediaFiles,
     ];
+
+    piece_export_validate_manifest(
+        $manifest,
+        'piece export ' . (int) ($piece['id'] ?? 0)
+    );
+
+    return $manifest;
+}
+
+/**
+ * Fail-closed validation for the final artifact manifest. This deliberately
+ * validates emitted files rather than only stored piece code: runtime source
+ * transforms and collection nesting happen after authored-code preflight and
+ * can otherwise introduce download-only failures.
+ */
+function piece_export_validate_manifest(array $manifest, string $label = 'piece export'): void
+{
+    $document = (string) ($manifest['document'] ?? '');
+    if (trim($document) === '') {
+        throw new RuntimeException("Invalid {$label}: index.html is empty.");
+    }
+    piece_export_assert_no_empty_resource_references($document, "{$label} index.html", 'html');
+
+    foreach (['bundle_files', 'runtime_files'] as $group) {
+        foreach (($manifest[$group] ?? []) as $file) {
+            $zipPath = ltrim((string) ($file['zip_path'] ?? ''), '/');
+            if ($zipPath === '') {
+                throw new RuntimeException("Invalid {$label}: a packaged file has no ZIP path.");
+            }
+
+            $extension = strtolower((string) pathinfo($zipPath, PATHINFO_EXTENSION));
+            $isScript = in_array($extension, ['js', 'mjs'], true);
+            $isHtml = in_array($extension, ['html', 'htm'], true);
+            $isCss = $extension === 'css';
+            if (!$isScript && !$isHtml && !$isCss) {
+                continue;
+            }
+
+            if (array_key_exists('data', $file)) {
+                $data = (string) $file['data'];
+            } else {
+                $sourcePath = (string) ($file['source_path'] ?? '');
+                $data = $sourcePath !== '' ? (string) @file_get_contents($sourcePath) : '';
+            }
+            if (trim($data) === '') {
+                throw new RuntimeException("Invalid {$label}: packaged {$zipPath} is empty.");
+            }
+
+            if ($isHtml) {
+                piece_export_assert_no_empty_resource_references($data, "{$label} {$zipPath}", 'html');
+            } elseif ($isCss) {
+                piece_export_assert_no_empty_resource_references($data, "{$label} {$zipPath}", 'css');
+            } elseif (piece_export_runtime_is_classic_script($zipPath)) {
+                piece_export_assert_no_module_syntax($data, $zipPath);
+            }
+        }
+    }
+}
+
+function piece_export_runtime_is_classic_script(string $zipPath): bool
+{
+    $normalized = strtolower(str_replace('\\', '/', $zipPath));
+    if (str_ends_with($normalized, '.mjs')) {
+        return false;
+    }
+
+    foreach ([
+        '/three/three.module.js',
+        '/three/gltfloader.js',
+        '/three/utils/buffergeometryutils.js',
+        '/three/addons/controls/orbitcontrols.js',
+        '/immersive-gallery.js',
+        '/three-device-orientation-controls.js',
+        '/mediapipe-hands/vision_wasm_internal.js',
+    ] as $moduleSuffix) {
+        if (str_ends_with($normalized, $moduleSuffix)) {
+            return false;
+        }
+    }
+
+    return str_ends_with($normalized, '.js');
+}
+
+function piece_export_assert_no_empty_resource_references(string $source, string $label, string $type): void
+{
+    if ($type === 'html' && preg_match('/\b(?:src|href|xlink:href)\s*=\s*(["\'])\s*\1/i', $source)) {
+        throw new RuntimeException("Invalid {$label}: empty resource URL attributes are not allowed.");
+    }
+
+    if ($type === 'css' && (
+        preg_match('/\burl\s*\(\s*\)/i', $source)
+        || preg_match('/\burl\s*\(\s*(["\'])\s*\1\s*\)/i', $source)
+    )) {
+        throw new RuntimeException("Invalid {$label}: empty CSS url() references are not allowed.");
+    }
 }
 
 function piece_export_version_has_enabled_sonic(array $version): bool
@@ -3908,6 +4372,11 @@ function piece_export_readme(array $piece, string $generationMode): string
         . "- runtime/ and media/ as portable supporting assets for rehosting\n"
         . "\n"
         . "This export includes lower-left fullscreen and screenshot controls directly inside index.html.\n"
+        . "\n"
+        . "Please note that the following server-dependent features require the CMS and cannot run offline:\n"
+        . "- Re-downloading the ZIP bundle with different voice options.\n"
+        . "- Interactive comments, version history, prompt metadata, and edit tools.\n"
+        . "- Direct links to the immersive VR gallery view (the immersive view has its own standalone export structure instead).\n"
         . "\n"
         . "Open index.html after editing those files if you want to create a revised version of the piece.\n";
 }
@@ -4352,11 +4821,34 @@ function piece_export_screenshot_overlay_script(array $piece, string $generation
     status.hidden = !message;
   }
 
+  function isIPhoneWebKitBrowser() {
+    if (typeof navigator === 'undefined') return false;
+    const ua = navigator.userAgent || '';
+    const maxTouchPoints = navigator.maxTouchPoints || 0;
+    const isIPad = /\biPad\b/i.test(ua) || (/\bMacintosh\b/i.test(ua) && maxTouchPoints > 1);
+    return /\biPhone\b/i.test(ua) && /AppleWebKit/i.test(ua) && !isIPad;
+  }
+
   if (fullscreenButton) {
+    function toggleCssFullscreen(forceState) {
+      const active = typeof forceState === 'boolean' ? forceState : !document.documentElement.classList.contains('piece-export-fullscreen-active');
+      document.documentElement.classList.toggle('piece-export-fullscreen-active', active);
+      fullscreenButton.setAttribute('aria-label', active ? 'Exit fullscreen' : 'Enter fullscreen');
+      window.dispatchEvent(new Event('resize'));
+    }
+
     fullscreenButton.addEventListener('click', async function () {
       try {
+        if (document.documentElement.classList.contains('piece-export-fullscreen-active')) {
+          toggleCssFullscreen(false);
+          return;
+        }
         if (document.fullscreenElement) {
           await document.exitFullscreen();
+          return;
+        }
+        if (isIPhoneWebKitBrowser()) {
+          toggleCssFullscreen(true);
           return;
         }
         const target = document.documentElement;
@@ -4364,15 +4856,29 @@ function piece_export_screenshot_overlay_script(array $piece, string $generation
           await target.requestFullscreen();
           return;
         }
-        document.documentElement.classList.add('piece-export-fullscreen-active');
-        setStatus('Fullscreen is not available in this browser; expanded the piece instead.');
+        toggleCssFullscreen(true);
       } catch (error) {
-        document.documentElement.classList.add('piece-export-fullscreen-active');
+        toggleCssFullscreen(true);
       }
     });
+
     document.addEventListener('fullscreenchange', function () {
-      fullscreenButton.setAttribute('aria-label', document.fullscreenElement ? 'Exit fullscreen' : 'Enter fullscreen');
-      document.documentElement.classList.toggle('piece-export-fullscreen-active', Boolean(document.fullscreenElement));
+      const isFs = Boolean(document.fullscreenElement);
+      fullscreenButton.setAttribute('aria-label', isFs ? 'Exit fullscreen' : 'Enter fullscreen');
+      if (!isFs) {
+        document.documentElement.classList.remove('piece-export-fullscreen-active');
+      }
+      window.dispatchEvent(new Event('resize'));
+    });
+
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && document.documentElement.classList.contains('piece-export-fullscreen-active')) {
+        if (document.fullscreenElement) {
+          document.exitFullscreen().catch(() => {});
+        } else {
+          toggleCssFullscreen(false);
+        }
+      }
     });
   }
 
@@ -4564,6 +5070,9 @@ function piece_export_screenshot_overlay_script(array $piece, string $generation
   }
 
   async function exportSurfaceWithValidation(surface) {
+    if (typeof window.__creatrComposeCapture === 'function') {
+      surface = await window.__creatrComposeCapture(surface);
+    }
     tryForceAframeRender(surface);
     const first = exportCanvasSurface(surface);
     if (generationMode !== 'aframe' || hasVisiblePixels(first)) {
@@ -4587,9 +5096,14 @@ function piece_export_screenshot_overlay_script(array $piece, string $generation
     getSurface: getCaptureSurface,
     captureCanvas: async function () {
       const surface = await getCaptureSurface();
-      return surface.type === 'svg'
-        ? exportSvgSurface(surface.node)
-        : exportSurfaceWithValidation(surface.node);
+      if (surface.type === 'svg') {
+        let canvas = await exportSvgSurface(surface.node);
+        if (typeof window.__creatrComposeCapture === 'function') {
+          canvas = await window.__creatrComposeCapture(canvas);
+        }
+        return canvas;
+      }
+      return exportSurfaceWithValidation(surface.node);
     }
   };
 
@@ -4615,9 +5129,13 @@ function piece_export_screenshot_overlay_script(array $piece, string $generation
 
       try {
         const surface = await getCaptureSurface();
-        const blob = await canvasToBlob(surface.type === 'svg'
+        let exportCanvas = surface.type === 'svg'
           ? await exportSvgSurface(surface.node)
-          : await exportSurfaceWithValidation(surface.node));
+          : await exportSurfaceWithValidation(surface.node);
+        if (surface.type === 'svg' && typeof window.__creatrComposeCapture === 'function') {
+          exportCanvas = await window.__creatrComposeCapture(exportCanvas);
+        }
+        const blob = await canvasToBlob(exportCanvas);
         downloadBlob(blob);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Could not take a screenshot right now.';

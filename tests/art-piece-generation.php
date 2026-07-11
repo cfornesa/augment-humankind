@@ -76,6 +76,27 @@ function assert_throws(callable $fn, string $expectedMsg = ''): void {
     }
 }
 
+function assert_node_parses(string $source, string $label, bool $module = false): void {
+    if (trim((string) shell_exec('command -v node 2>/dev/null')) === '') {
+        return;
+    }
+
+    $command = $module
+        ? ['node', '--check', '--input-type=module', '-']
+        : ['node', '--check', '-'];
+    $descriptors = [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+    $process = proc_open($command, $descriptors, $pipes);
+    assert_true(is_resource($process), "Could not start node --check for {$label}.");
+    fwrite($pipes[0], $source);
+    fclose($pipes[0]);
+    stream_get_contents($pipes[1]);
+    fclose($pipes[1]);
+    $stderr = stream_get_contents($pipes[2]);
+    fclose($pipes[2]);
+    $exitCode = proc_close($process);
+    assert_eq($exitCode, 0, "node --check failed for {$label}: {$stderr}");
+}
+
 echo "=== art_piece_extract_code_blocks ===\n";
 
 // 1. Full extraction
@@ -745,6 +766,44 @@ test('generation mode labels expose C2.js Interactive distinctly', function () {
     assert_eq(art_piece_generation_mode_label('c2'), 'C2.js');
 });
 
+test('non-interactive piece modes default camera overlay on while steerable modes keep legacy behavior', function () {
+    foreach (['p5', 'c2', 'svg'] as $mode) {
+        assert_eq(art_piece_camera_overlay_default($mode), 1, "Expected {$mode} camera overlay to default on.");
+        $capabilities = piece_sound_capability_contract($mode, [], (bool) art_piece_camera_overlay_default($mode));
+        assert_true($capabilities['camera_view'], "Expected {$mode} camera view capability.");
+        assert_true($capabilities['camera_opacity'], "Expected {$mode} camera opacity capability.");
+        assert_true(!$capabilities['sound'] && !$capabilities['hand_control'], "Expected {$mode} camera capability without fabricated sound/steering.");
+    }
+
+    foreach (['c2_interactive', 'three', 'aframe'] as $mode) {
+        assert_eq(art_piece_camera_overlay_default($mode), null, "Expected {$mode} to retain its legacy default.");
+    }
+});
+
+test('2D camera overlay backfill is dual-shipped and preserves explicit choices', function () {
+    $migration = file_get_contents(__DIR__ . '/../docs/migrations/2026-07-11-default-2d-camera-overlay.sql');
+    $setup = file_get_contents(__DIR__ . '/../scripts/setup-database.php');
+    foreach ([$migration, $setup] as $source) {
+        assert_contains($source, 'SET camera_overlay = 1');
+        assert_contains($source, 'WHERE camera_overlay IS NULL');
+        assert_contains($source, "IN ('p5', 'c2', 'svg')");
+    }
+    assert_not_contains($migration, "IN ('p5', 'c2', 'c2_interactive', 'svg')");
+});
+
+test('regular piece camera and opacity controls share the existing piece-controls panel', function () {
+    $view = file_get_contents(__DIR__ . '/../public/app/views/pieces/show.php');
+    $panelAt = strpos($view, 'data-piece-sound-panel role="region" aria-label="Piece controls"');
+    $cameraAt = strpos($view, 'data-piece-sound-camera-bg-row');
+    $opacityAt = strpos($view, 'data-piece-sound-camera-opacity-row');
+    assert_true($panelAt !== false && $cameraAt !== false && $opacityAt !== false);
+    assert_true($panelAt < $cameraAt && $cameraAt < $opacityAt, 'Expected camera approval and opacity inside the shared regular-view controls panel.');
+
+    $form = file_get_contents(__DIR__ . '/../public/app/views/admin/pieces/form.php');
+    assert_contains($form, "['p5', 'c2', 'svg'].includes(engine || 'p5') ? '1' : ''");
+    assert_contains($form, 'cameraOverlayWasChanged = true;');
+});
+
 test('A-Frame system prompt exists', function () {
     $prompt = art_piece_generation_system_prompt('aframe');
     assert_contains($prompt, 'A-Frame');
@@ -1321,6 +1380,131 @@ test('A-Frame bundle export embeds supported CMS media for direct-open screensho
     assert_contains($exported, 'A-Frame could not produce a nonblank screenshot right now.');
 });
 
+test('source-map stripping preserves directive-shaped JavaScript strings', function () {
+    $inlineDirective = 'const map = "/*# sourceMappingURL=data:application/json;base64,abc */";';
+    $source = $inlineDirective
+        . "\n//# sourceMappingURL=runtime.js.map\n"
+        . "/*# sourceMappingURL=runtime-alt.js.map */\n";
+    $stripped = piece_export_strip_source_maps($source);
+
+    assert_contains($stripped, $inlineDirective);
+    assert_not_contains($stripped, 'runtime.js.map');
+    assert_not_contains($stripped, 'runtime-alt.js.map');
+    assert_node_parses($stripped, 'source-map stripper fixture');
+});
+
+test('prepared A-Frame runtime remains valid and removes file URL self-load cleanup', function () {
+    $runtime = piece_export_runtime_source_file('assets/js/aframe.min.js');
+
+    assert_contains($runtime, '/*# sourceMappingURL=data:application/json;base64,');
+    assert_not_contains($runtime, 'sourceMappingURL=aframe-master.min.js.map');
+    assert_not_contains($runtime, 'this.release=function(){e.pause(),e.src=""}');
+    assert_contains($runtime, 'this.release=function(){e.pause(),e.removeAttribute("src"),e.load()}');
+    assert_node_parses($runtime, 'prepared A-Frame runtime');
+});
+
+test('A-Frame compatibility transform fails closed when the vendor signature changes', function () {
+    assert_throws(
+        fn() => piece_export_prepare_aframe_runtime('window.AFRAME = {};'),
+        'expected exactly one empty audio source cleanup'
+    );
+});
+
+test('manifest validation rejects empty exported resource references', function () {
+    assert_throws(
+        fn() => piece_export_validate_manifest([
+            'document' => '<!doctype html><img src="">',
+            'bundle_files' => [],
+            'runtime_files' => [],
+        ], 'empty HTML fixture'),
+        'empty resource URL attributes'
+    );
+    assert_throws(
+        fn() => piece_export_validate_manifest([
+            'document' => '<!doctype html><title>Fixture</title>',
+            'bundle_files' => [['zip_path' => 'styles/piece.css', 'data' => '.x{background:url("")}']],
+            'runtime_files' => [],
+        ], 'empty CSS fixture'),
+        'empty CSS url() references'
+    );
+    assert_throws(
+        fn() => piece_export_validate_manifest([
+            'document' => '<!doctype html><title>Fixture</title>',
+            'bundle_files' => [],
+            'runtime_files' => [['zip_path' => 'runtime/empty.js', 'data' => '']],
+        ], 'empty runtime fixture'),
+        'packaged runtime/empty.js is empty'
+    );
+});
+
+test('regular and immersive A-Frame bundles package the same valid runtime', function () {
+    $piece = ['id' => 196, 'title' => 'Portable A-Frame', 'engine' => 'aframe'];
+    $version = [
+        'engine' => 'aframe',
+        'generation_mode' => 'aframe',
+        'html_code' => '<a-scene id="scene" embedded><a-box position="0 1 -3"></a-box></a-scene>',
+        'css_code' => '',
+        'generated_code' => 'window.sketch = ({ scene, startFrame }) => { startFrame(() => {}); };',
+    ];
+    $runtimes = [];
+
+    foreach ([[], ['surface' => 'immersive']] as $options) {
+        $bundle = piece_export_bundle($piece, $version, $options);
+        $zip = new ZipArchive();
+        $zip->open($bundle['path']);
+        $runtime = $zip->getFromName('runtime/aframe/aframe.min.js');
+        $zip->close();
+        unlink($bundle['path']);
+        assert_true(is_string($runtime) && $runtime !== '', 'Expected packaged A-Frame runtime.');
+        assert_not_contains($runtime, 'e.src=""');
+        assert_contains($runtime, 'e.removeAttribute("src"),e.load()');
+        assert_node_parses($runtime, 'packaged A-Frame runtime');
+        $runtimes[] = $runtime;
+    }
+
+    assert_eq($runtimes[0], $runtimes[1], 'Regular and immersive A-Frame runtime preparation diverged.');
+});
+
+test('all piece modes emit syntactically valid authored and runtime JavaScript', function () {
+    $cases = [
+        'p5' => ['p5', '<div id="canvas-container"></div>', 'window.sketch = (p) => {};'],
+        'c2' => ['c2', '<canvas id="piece-canvas"></canvas>', 'window.sketch = ({ canvas }) => {};'],
+        'c2_interactive' => ['c2', '<canvas id="piece-canvas"></canvas>', 'window.sketch = ({ canvas }) => { canvas.addEventListener("pointermove", () => {}); };'],
+        'three' => ['three', '<div id="container"></div>', 'window.sketch = ({ THREE, canvas }) => {};'],
+        'svg' => ['svg', '<svg id="piece-svg" viewBox="0 0 10 10"></svg>', 'window.sketch = () => {};'],
+        'aframe' => ['aframe', '<a-scene id="scene" embedded><a-box></a-box></a-scene>', 'window.sketch = ({ scene }) => {};'],
+    ];
+
+    foreach ($cases as $mode => [$engine, $html, $script]) {
+        $manifest = piece_export_build_manifest(
+            ['id' => 500, 'title' => "Syntax {$mode}", 'engine' => $engine],
+            [
+                'engine' => $engine,
+                'generation_mode' => $mode,
+                'html_code' => $html,
+                'css_code' => '',
+                'generated_code' => $script,
+            ]
+        );
+
+        foreach (array_merge($manifest['bundle_files'], $manifest['runtime_files']) as $file) {
+            $zipPath = (string) ($file['zip_path'] ?? '');
+            $extension = strtolower((string) pathinfo($zipPath, PATHINFO_EXTENSION));
+            if (!in_array($extension, ['js', 'mjs'], true)) {
+                continue;
+            }
+            $source = isset($file['data'])
+                ? (string) $file['data']
+                : (string) file_get_contents((string) $file['source_path']);
+            assert_node_parses(
+                $source,
+                "{$mode} {$zipPath}",
+                !piece_export_runtime_is_classic_script($zipPath)
+            );
+        }
+    }
+});
+
 test('bundle export keeps index.html as the only manual entry point', function () {
     $piece = ['id' => 97, 'title' => 'Bundle Entry Point Piece', 'engine' => 'three'];
     $version = [
@@ -1436,7 +1620,7 @@ test('sound-bearing C2 interactive bundle export loads Tone.js from the ZIP and 
         'html_code' => '<canvas id="piece-canvas"></canvas>',
         'css_code' => '#piece-canvas{width:100%;height:100%;}',
         'generated_code' => 'window.sketch = ({ canvas, startFrame }) => { canvas.addEventListener("pointermove", () => {}); startFrame(() => {}); };',
-        'sonic_params' => '{"tempo":90,"scale":"minor","instrument":"plucksynth","enabled":true}',
+        'sonic_params' => '{"tempo":90,"scale":"minor","instrument":"plucksynth","enabled":true,"extras":{"voices":{"hand_tracking":true}}}',
     ];
 
     $bundle = piece_export_bundle($piece, $version);
@@ -1453,9 +1637,43 @@ test('sound-bearing C2 interactive bundle export loads Tone.js from the ZIP and 
     assert_not_contains($index, 'new Blob([window.__creatrToneInlineSource]');
     assert_not_contains($index, 'avoidPluckSynthWorklet');
     assert_contains($index, '__creatrSonicSetMover');
+    assert_contains($index, "handControlLabel.textContent = 'Hand control'");
+    assert_contains($index, "cameraBgLabel.textContent = 'Camera view'");
+    assert_contains($index, "cameraOpacityLabel.textContent = 'Camera opacity'");
+    assert_contains($index, "engine: 'c2_interactive'");
+    assert_contains($index, 'setBackgroundOpacity: function (value)');
+    assert_contains($index, 'window.__creatrComposeCapture');
+    assert_contains($index, 'surface = await window.__creatrComposeCapture(surface)');
+    assert_contains($index, "soundSwitch.textContent = 'Off'");
     assert_true(is_string($tone) && strlen($tone) > 1000, 'Expected bundled Tone.js runtime file.');
     assert_contains($sonicController, 'createPluckVoice');
     assert_not_contains($sonicController, 'avoidPluckSynthWorklet');
+});
+
+test('piece sound capability contract preserves sensible engine parity', function () {
+    $sonic = ['enabled' => true, 'extras' => ['voices' => ['melodic' => true, 'hand_tracking' => true, 'hand_control' => true]]];
+    $c2 = piece_sound_capability_contract('c2_interactive', $sonic);
+    assert_true($c2['keyboard'] && $c2['hand_tracking'] && $c2['hand_control'] && $c2['camera_view'] && $c2['camera_opacity'] && $c2['microphone']);
+
+    foreach (['three', 'aframe'] as $mode) {
+        $caps = piece_sound_capability_contract($mode, $sonic);
+        assert_true($caps['hand_control'] && $caps['camera_view']);
+        // Opacity blends everywhere now — three/aframe use a camera-attached
+        // blended quad instead of an opaque scene background.
+        assert_true($caps['camera_opacity']);
+    }
+
+    foreach (['p5', 'c2', 'svg'] as $mode) {
+        $caps = piece_sound_capability_contract($mode, $sonic);
+        assert_true(!$caps['hand_control'] && !$caps['camera_view'] && !$caps['camera_opacity']);
+        assert_true($caps['keyboard'] && $caps['hand_tracking'] && $caps['microphone']);
+    }
+
+    $narrowed = piece_sound_capability_contract('c2_interactive', ['enabled' => true, 'extras' => ['voices' => ['melodic' => false, 'hand_tracking' => false]]]);
+    assert_true(!$narrowed['keyboard'] && !$narrowed['hand_tracking'] && !$narrowed['hand_control'] && !$narrowed['camera_view']);
+
+    $ctrlDisabled = piece_sound_capability_contract('c2_interactive', ['enabled' => true, 'extras' => ['voices' => ['melodic' => true, 'hand_tracking' => true, 'hand_control' => false]]]);
+    assert_true($ctrlDisabled['hand_tracking'] && !$ctrlDisabled['hand_control']);
 });
 
 test('immersive bundle export keeps index.html as the immersive manual entry point', function () {
@@ -1564,14 +1782,24 @@ test('collection bundle export keeps all pieces in one immersive gallery entry p
         'css_code' => '',
         'generated_code' => 'window.sketch = ({ canvas, startFrame }) => { startFrame(() => {}); };',
     ];
+    $pieceC = ['id' => 203, 'title' => 'Collection A-Frame Piece', 'engine' => 'aframe'];
+    $versionC = [
+        'id' => 303,
+        'engine' => 'aframe',
+        'generation_mode' => 'aframe',
+        'html_code' => '<a-scene id="scene" embedded><a-box></a-box></a-scene>',
+        'css_code' => '',
+        'generated_code' => 'window.sketch = ({ scene }) => {};',
+    ];
     $stateJson = json_encode(['camera' => ['x' => 4, 'y' => 2, 'z' => 8], 'target' => ['x' => 0, 'y' => 1, 'z' => 0], 'activeIndex' => 1]);
     $state = rtrim(strtr(base64_encode((string) $stateJson), '+/', '-_'), '=');
 
     $bundle = collection_export_bundle(
-        ['id' => 3, 'slug' => 'collection-export', 'name' => 'Collection Export', 'rows' => 1, 'cols' => 2],
+        ['id' => 3, 'slug' => 'collection-export', 'name' => 'Collection Export', 'rows' => 1, 'cols' => 3],
         [
             ['type' => 'art_piece', 'piece' => $pieceA, 'version' => $versionA],
             ['type' => 'art_piece', 'piece' => $pieceB, 'version' => $versionB],
+            ['type' => 'art_piece', 'piece' => $pieceC, 'version' => $versionC],
         ],
         ['view_state' => $state]
     );
@@ -1582,6 +1810,7 @@ test('collection bundle export keeps all pieces in one immersive gallery entry p
     $globalRuntime = $zip->getFromName('runtime/immersive-gallery.global.js');
     $gltfLoader = $zip->getFromName('runtime/three/GLTFLoader.js');
     $gltfGlobal = $zip->getFromName('runtime/three/GLTFLoader.global.js');
+    $nestedAframe = $zip->getFromName('pieces/collection-a-frame-piece/runtime/aframe/aframe.min.js');
     $readme = $zip->getFromName('README.txt');
     $zip->close();
     unlink($bundle['path']);
@@ -1590,6 +1819,7 @@ test('collection bundle export keeps all pieces in one immersive gallery entry p
     assert_contains($index, 'mountExhibitWall');
     assert_contains($index, 'Collection Piece A');
     assert_contains($index, 'Collection Piece B');
+    assert_contains($index, 'Collection A-Frame Piece');
     assert_contains($index, '"activeIndex":1');
     assert_contains($index, 'fullscreen-toggle-btn');
     assert_contains($index, 'immersive-stage-toolbar');
@@ -1605,6 +1835,10 @@ test('collection bundle export keeps all pieces in one immersive gallery entry p
     assert_contains($globalRuntime, 'let _GLTFLoaderCtor = window.GLTFLoader || null;');
     assert_contains($gltfLoader, "from './utils/BufferGeometryUtils.js';");
     assert_contains($gltfGlobal, 'window.THREE.GLTFLoader = GLTFLoader;');
+    assert_true(is_string($nestedAframe) && $nestedAframe !== '', 'Expected nested collection A-Frame runtime.');
+    assert_not_contains($nestedAframe, 'e.src=""');
+    assert_contains($nestedAframe, 'e.removeAttribute("src"),e.load()');
+    assert_node_parses($nestedAframe, 'nested collection A-Frame runtime');
     assert_contains($readme, 'This is a collection-wall export, not a single-piece export.');
 });
 
@@ -1737,7 +1971,10 @@ test('hand-enabled A-Frame exports include steer/camera UI, hooks, and bundled M
     assert_contains($cdn, 'Show camera');
     assert_contains($cdn, "engine: 'aframe'");
     assert_contains($cdn, "cameraObject.rotation.order = 'YXZ'");
-    assert_contains($cdn, 'scene.object3D.background = this._videoTexture');
+    // Camera feed renders as a blended camera-attached quad (opacity
+    // support), not an opaque scene.background swap.
+    assert_contains($cdn, 'camera.add(quad);');
+    assert_contains($cdn, 'getBackgroundOpacity()');
 
     $bundle = piece_export_bundle($piece, $version);
     $zip = new ZipArchive();

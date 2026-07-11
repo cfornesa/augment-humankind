@@ -130,6 +130,12 @@ class PlatformArtPieceVersion
             $tailValues[] = $data['sonic_params'];
         }
 
+        // Same contract as sonic_params: only touch camera_overlay when supplied.
+        if (self::hasCameraOverlayColumn() && array_key_exists('camera_overlay', $data)) {
+            $assignments[] = 'camera_overlay = ?';
+            $tailValues[] = $data['camera_overlay'] === null ? null : (int)(bool) $data['camera_overlay'];
+        }
+
         $tailValues[] = $id;
         $values = array_merge($values, $tailValues);
 
@@ -203,12 +209,12 @@ class PlatformArtPieceVersion
 
     private static function selectColumns(): string
     {
-        return art_piece_version_select_columns(self::hasGenerationModeColumn(), true, true, self::hasSonicParamsColumn());
+        return art_piece_version_select_columns(self::hasGenerationModeColumn(), true, true, self::hasSonicParamsColumn(), self::hasCameraOverlayColumn());
     }
 
     private static function storageColumns(): array
     {
-        return art_piece_version_storage_columns(self::hasGenerationModeColumn(), self::hasSonicParamsColumn());
+        return art_piece_version_storage_columns(self::hasGenerationModeColumn(), self::hasSonicParamsColumn(), self::hasCameraOverlayColumn());
     }
 
     private static function storageValues(array $data): array
@@ -245,6 +251,12 @@ class PlatformArtPieceVersion
             $values[] = $data['sonic_params'] ?? null;
         }
 
+        if (self::hasCameraOverlayColumn()) {
+            $values[] = array_key_exists('camera_overlay', $data) && $data['camera_overlay'] !== null
+                ? (int)(bool) $data['camera_overlay']
+                : null;
+        }
+
         return $values;
     }
 
@@ -256,5 +268,10 @@ class PlatformArtPieceVersion
     private static function hasSonicParamsColumn(): bool
     {
         return ah_column_exists('art_piece_versions', 'sonic_params');
+    }
+
+    private static function hasCameraOverlayColumn(): bool
+    {
+        return ah_column_exists('art_piece_versions', 'camera_overlay');
     }
 }

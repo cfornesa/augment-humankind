@@ -100,7 +100,7 @@ function art_piece_is_c2_interactive_code(string $code, ?string $html = null): b
     ) === 1;
 }
 
-function art_piece_version_base_columns(bool $includeGenerationMode = true, bool $includeSonic = false): array
+function art_piece_version_base_columns(bool $includeGenerationMode = true, bool $includeSonic = false, bool $includeCameraOverlay = false): array
 {
     $columns = [
         'v.id',
@@ -128,12 +128,16 @@ function art_piece_version_base_columns(bool $includeGenerationMode = true, bool
         $columns[] = 'v.sonic_params';
     }
 
+    if ($includeCameraOverlay) {
+        $columns[] = 'v.camera_overlay';
+    }
+
     return $columns;
 }
 
-function art_piece_version_select_columns(bool $includeGenerationMode = true, bool $includeCreatedAt = false, bool $includeDraftMeta = false, bool $includeSonic = false): string
+function art_piece_version_select_columns(bool $includeGenerationMode = true, bool $includeCreatedAt = false, bool $includeDraftMeta = false, bool $includeSonic = false, bool $includeCameraOverlay = false): string
 {
-    $columns = art_piece_version_base_columns($includeGenerationMode, $includeSonic);
+    $columns = art_piece_version_base_columns($includeGenerationMode, $includeSonic, $includeCameraOverlay);
 
     if ($includeCreatedAt) {
         $columns[] = 'v.created_at';
@@ -153,7 +157,7 @@ function art_piece_version_select_columns(bool $includeGenerationMode = true, bo
     return implode(",\n                    ", $columns);
 }
 
-function art_piece_version_storage_columns(bool $includeGenerationMode = true, bool $includeSonic = false): array
+function art_piece_version_storage_columns(bool $includeGenerationMode = true, bool $includeSonic = false, bool $includeCameraOverlay = false): array
 {
     $columns = [
         'art_piece_id',
@@ -186,6 +190,10 @@ function art_piece_version_storage_columns(bool $includeGenerationMode = true, b
     // included when the (optional) column exists on this deployment.
     if ($includeSonic) {
         $columns[] = 'sonic_params';
+    }
+
+    if ($includeCameraOverlay) {
+        $columns[] = 'camera_overlay';
     }
 
     return $columns;
@@ -678,6 +686,11 @@ function validate_art_piece_sonic_extras(mixed $decoded): array
             'movement' => !isset($voicesIn['movement']) || (bool) $voicesIn['movement'],
             'melodic' => !isset($voicesIn['melodic']) || (bool) $voicesIn['melodic'],
             'hand_tracking' => (bool) ($voicesIn['hand_tracking'] ?? false),
+            // Default true, matching the admin checkbox and the capability
+            // contract: hand control is offered whenever the piece's camera
+            // permission (or the hand-tracking voice) unlocks it, unless the
+            // admin explicitly turns it off.
+            'hand_control' => !isset($voicesIn['hand_control']) || (bool) $voicesIn['hand_control'],
         ],
         'synth' => [
             'octave_min' => $octaveMin,
@@ -802,6 +815,31 @@ function art_piece_sonic_params_supported(): bool
     } catch (Throwable) {
         return false;
     }
+}
+
+function art_piece_camera_overlay_supported(): bool
+{
+    if (!function_exists('ah_column_exists')) {
+        return true;
+    }
+    try {
+        return ah_column_exists('art_piece_versions', 'camera_overlay');
+    } catch (Throwable) {
+        return false;
+    }
+}
+
+/**
+ * Default authoring value for camera overlays when no explicit Metadata-tab
+ * choice has been stored yet. The 2D/non-interactive surfaces use a local,
+ * pointer-transparent video overlay with opacity control, so make that
+ * visitor-activated capability available by default. Steerable/immersive
+ * engines retain their legacy NULL behavior (follow hand-tracking).
+ */
+function art_piece_camera_overlay_default(string $generationMode): ?int
+{
+    $generationMode = art_piece_normalize_generation_mode($generationMode, $generationMode);
+    return in_array($generationMode, ['p5', 'c2', 'svg'], true) ? 1 : null;
 }
 
 /**

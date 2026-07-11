@@ -10,6 +10,95 @@
 
 None.
 
+## 2026-07-11 — Immersive Camera: Gallery-Wall Projection + Universal Opacity + Export Parity
+
+### Decision
+
+- **Gallery-wall projection.** The immersive gallery-room mounts (p5, plain
+  C2, SVG — and mounted interactive C2) now implement the camera view by
+  projecting the visitor's mirrored feed onto the room's back wall behind
+  the framed art (`createGalleryWallCameraController()` in
+  immersive-gallery.js), chosen over a screen-space overlay (the room is
+  all WebGL; there is no DOM surface) and over scene-background replacement
+  (only visible at the room's periphery). Toggle-off restores the wall
+  material exactly. This fixes the orphaned "Piece controls" chevron on
+  `/immersive/pieces/{id}` for those engines — `mountGalleryPiece()` now
+  returns a `getPieceInteractionController` with `supportsCameraBackground`.
+- **Opacity everywhere** (supersedes the earlier 2D-only scoping):
+  `camera_opacity` now equals `camera_view` in the capability contract.
+  Three.js/A-Frame (regular, immersive, exports) replace the opaque
+  `scene.background = VideoTexture` swap with a mirrored, camera-attached
+  blended quad (`createCameraBlendQuadHooks()` /
+  `piece_export_camera_blend_quad_members()` /
+  `createCameraBlendQuadController()`); at the default opacity 1.0 it looks
+  identical to the old behavior, and the slider now blends. The 2D DOM
+  overlay keeps its 0.35 default; the `creatr-sound-camera-bg-state`
+  message carries the hook's current opacity so sliders initialize to the
+  surface's real default. The immersive toolbar gained the opacity row.
+- **Exported immersive ZIP parity.** `piece_export_immersive_document()`
+  now passes `camera_view`/`hand_control` to its toolbar and
+  `cameraOverlayAllowed`/`handControlAllowed` to `setupImmersiveStageChrome`
+  — previously even Three/A-Frame immersive exports had no camera control
+  despite working live. Immersive ZIPs already bundle
+  sonic-controller.js/Tone.js unconditionally and MediaPipe when
+  `hand_tracking || hand_control`; unchanged.
+- **Collections stay camera-free** (reaffirmed): the exhibit-wall multiplex
+  and collection ZIPs keep their deliberate exclusion (no getUserMedia
+  prompts on unfocused tiles, no per-tile inference).
+
+### Verification
+
+- `php tests/art-piece-generation.php` — **Passed: 153, Failed: 0**;
+  `php tests/three-runtime-consistency.php` — **Passed: 128, Failed: 0**
+  (contract assertions updated: camera_opacity == camera_view; export
+  bootstraps assert the blended-quad members).
+- Browser (mocked `getUserMedia` with a synthetic canvas stream, since the
+  automated pane blocks real capture): piece 105 (p5 gallery room) — panel
+  opens with working Camera view; feed projects mirrored onto the back wall
+  behind the framed art; opacity slider (initialized 100) blends toward the
+  room color; toggle-off restores the beige wall exactly. Piece 109
+  (camera-only A-Frame, the original complaint case) — immersive panel
+  shows Hand control + Camera view + opacity; the blended quad renders the
+  mirrored feed behind the scene objects and the slider blends it; the
+  regular view for the same piece shows the same rows with no sound toggle,
+  and the slider drives the in-iframe quad (verified opacity 0.4 landed on
+  the quad material) with no audio present.
+- Real-device camera capture was not exercisable in the automated pane;
+  live video was verified through the synthetic stream, which drives the
+  identical code path after `getUserMedia`.
+
+## 2026-07-11 — Default Camera Overlay for 2D Piece Modes
+
+### Decision
+
+- P5.js, plain C2.js, and SVG pieces expose the visitor-activated camera
+  overlay by default; explicit author Off values remain authoritative.
+- Existing NULL versions in those three modes were backfilled to
+  `camera_overlay = 1` through both a dated migration and the probe-guarded
+  setup manifest. New versions resolve a blank authoring value through the
+  same engine-aware default.
+- C2 Interactive, Three.js, and A-Frame retain their existing NULL behavior;
+  the migration does not touch them.
+- In regular view, Camera view approval and Camera opacity remain together in
+  the existing Piece controls menu. Camera access is never automatic and still
+  begins only after the visitor presses Show camera.
+
+### Verification
+
+- Configured database: piece 105 now has `camera_overlay = 1`; current p5
+  (27), plain C2 (24), and SVG (14) pieces are On, while interactive-engine
+  NULL states remain unchanged.
+- `php tests/art-piece-generation.php` — **Passed: 153, Failed: 0**
+- `php tests/three-runtime-consistency.php` — **Passed: 128, Failed: 0**
+
+### Memory checkpoint
+
+- Confirmed and recorded in MEMORY.md: P5.js, plain C2.js, and SVG camera
+  overlays default On but remain visitor-activated and author-disableable;
+  camera approval and opacity share the regular-view Piece controls menu.
+- No DESIGN.md entry proposed: this extends an established control pattern and
+  does not introduce a new aesthetic preference.
+
 ## 2026-07-11 — Mobile-Safe Piece Download Controls
 
 ### Decision
@@ -47,6 +136,107 @@ None.
   downloader-narrowable Keyboard/Hand-tracking; offline exports remain PNG-only.
 - No DESIGN.md Observed Taste entry proposed: this was a responsive usability
   correction using established immersive chrome, not a new aesthetic signal.
+
+## 2026-07-11 — Corrections to the Camera Overlay / Interact Tab Implementation
+
+### Decision
+
+Rectified defects introduced while implementing the camera overlay feature
+(tasks 6–7 of the approved plan were executed by another agent and reviewed
+here). The corrections, each now covered by tests:
+
+- **sonic_params fabrication reverted.** `resolveSonicParamsFromPost()` had
+  been changed to materialize `['enabled' => false]` (plus default-checked
+  voices) for pieces with no sound design, so any admin save turned a silent
+  piece into a "sound" piece (piece 108 showed the full sound panel and played
+  idle notes). Restored the "never fabricate; only mutate an existing block"
+  contract, made the sound-playback checkbox render only when sonic_params
+  exists, and added `sound_playback_present` / `sonic_extras_present` markers
+  so a save submitted from a form that never rendered those fields preserves
+  stored values instead of reading absence as "off".
+- **Data cleanup.** `docs/migrations/2026-07-11-null-fabricated-sonic-params.sql`
+  (+ probe-guarded setup-database backfill) NULLs sonic_params rows lacking
+  tempo/scale/instrument — the fabricated signature; real AI sound designs
+  always carry all three.
+- **Hand control unified and made standalone.** Single contract rule:
+  `hand_control = steerable engine (three/aframe/c2_interactive) AND
+  (hand_tracking voice OR camera_view) AND admin checkbox (default true —
+  now consistent across validator, UI, and contract; it previously defaulted
+  false in the validator only)`. The live runtime now honors it: pieceContext
+  carries `handControl`, sonic-controller's `enableHandControl()` accepts
+  `opts.allowHandControl`, and sound-less pieces get a silent engine (audio
+  can never enable on them — `ensureEnabled()` refuses) so camera steering
+  and the device-tilt fallback work with no sound design, live, immersive,
+  and in exports.
+- **`sound` capability centralized.** The contract itself returns
+  `sound=false` for an empty sonic block (and gates keyboard/microphone on
+  it); callers no longer re-derive that rule.
+- **Export/live divergence closed.** MediaPipe assets bundle when
+  hand_tracking OR hand_control is offered (camera-only steerable pieces get
+  a working "Steer the piece" offline); collection exports force hand_control
+  off alongside hand_tracking so collection ZIP sizes stay bounded; the
+  export camera toggle and pagehide path acquire/release through the shared
+  static `CreatrSonicController.cameraFeed` consistently.
+- **Organization.** The four near-verbatim DOM overlay/compose JS copies were
+  deduplicated into `piece_export_dom_camera_overlay_script()` (piece-runtime
+  keeps its single live twin, `createDomCameraOverlayHooks()`); stale
+  "plain c2 has no sound" comment fixed; unused `$generationMode` parameter
+  dropped from `piece_camera_overlay_enabled()`.
+- **Interact tab layout.** Hand-tracking (a sound voice) lives in "Public
+  sound controls"; "Public camera controls" holds only the hand-control
+  checkbox; both render only for pieces with a sound design (their values
+  persist in sonic extras). Sound-less pieces see an explanatory hint —
+  their camera permission lives on the Metadata tab and hand control follows
+  it automatically.
+
+### Verification
+
+- `php tests/art-piece-generation.php` — **Passed: 144, Failed: 0**
+- `php tests/three-runtime-consistency.php` — **Passed: 128, Failed: 0**
+  (new contract assertions: camera-only three/aframe/svg, explicit-Off with
+  hand-tracking, legacy NULL equivalence)
+- Note: the two 2026-07-11 entries below were written by the other agent;
+  where they describe the fabrication payload or the always-on camera
+  fieldset as decisions, this entry supersedes them.
+
+## 2026-07-11 — Capability-Driven Live/Downloaded Piece Parity
+
+### Decision
+
+- Added `piece_sound_capability_contract()` as the engine/configuration source
+  for supported sound and camera controls instead of independently gating the
+  live and downloaded panels.
+- Downloaded C2 Interactive pieces now expose the in-panel Sound switch, hand
+  steering, Camera view, adjustable camera opacity, and the already-bundled
+  keyboard/theremin/microphone controls.
+- C2 Camera view is a mirrored, pointer-transparent video overlay at 35%
+  default opacity. It does not alter the canvas bitmap, aspect lock, pointer
+  coordinates, or generated rendering loop.
+- PNG capture explicitly composes an active C2 camera overlay into the saved
+  image. Camera frames otherwise remain local and ephemeral.
+- The shared sonic controller, MediaPipe inference, microphone graph, theremin,
+  and camera-stream ownership implementations were not modified.
+
+### Verification
+
+- `php tests/three-runtime-consistency.php` — **Passed: 128, Failed: 0**
+- `php tests/art-piece-generation.php` — **Passed: 144, Failed: 0**
+- Generated and served a hand-enabled piece 110 ZIP. At 390×844 and 412×915,
+  the panel exposed Sound, instruments, Keyboard, Hand-tracking, Hand control,
+  Camera view, and Microphone without horizontal overflow.
+- The automated browser environment declined camera activation; live video was
+  therefore verified structurally and through generated-bundle/runtime tests,
+  not by accepting a real camera stream.
+- Follow-up parity audit found the downloaded document's own screenshot button
+  bypassing `__creatrComposeCapture`; all exported PNG paths now invoke the
+  composition hook before validation and encoding. The engine matrix is locked
+  by tests for C2 Interactive, Three.js, A-Frame, p5, plain C2, and SVG.
+
+### Memory checkpoint supersession
+
+- The earlier pending proposal that described offline exports as permanently
+  PNG-only/limited is superseded by this parity decision and must not be added
+  to MEMORY.md unchanged.
 
 ## 2026-07-11 — Restored Cross-Browser Theremin Tracking, Hand Controls, and Live Microphone
 
@@ -2597,3 +2787,18 @@ schema, route, feature flag, public endpoint, or vendor changed.
 - ChromeOS against production confirmed the poisoned-cache mechanism:
   same-URL fetch returned cached `text/plain` while `cache:'reload'` returned
   `text/javascript`.
+
+## 2026-07-11 — Universal Camera Overlay & Offline Export Parity
+
+### Decision
+
+Implemented universal camera overlay overlays and full offline export feature parity:
+
+- **Offline Camera Overlay overlays:** Added camera video overlay layers to P5.js and SVG (default) bootstraps for ZIP export. Exported files can now overlay a mirrored webcam feed inside the browser and render composed PNG captures containing the camera pixels.
+- **Microphone WebWorklet-Free Custom BitCrusher compatibility:** Swapped Tone.BitCrusher with a custom WaveShaper BitCrusher inside the p5, SVG and C2 interactive export scripts to avoid browser sandbox blocks against Blob URLs under the `file://` protocol.
+- **iOS Safari Fullscreen & Escape Exit Affordance:** Ported `isIPhoneWebKitBrowser()` check, CSS fullscreen fallback, and Escape-key exit affordance into the offline/exported page scripts, ensuring mobile Safari users can toggle and exit pseudo-fullscreen views smoothly.
+- **Consistency Test Suite:** Updated `tests/three-runtime-consistency.php` signature assertions for `piece_export_sonic_script` to cover the `$cameraOverlay` parameter and verified all 128 consistency checks pass.
+- **Typo Fix in comment block (1,800 lines commented out):** Fixed a typo at line 2129 of `piece-render.php` where a comment close tag `*/` was accidentally corrupted to `nfunction`, causing 1,800 lines of helper code (including `collection_export_bundle`, `piece_build_media_manifest`, etc.) to be commented out and throw "Call to undefined function" errors on live views. Restored the correct close tag and function definition.
+- **Separation of Camera Controls in Admin Edit Panel:** Split the Audio tab in the piece edit panel (`/admin/pieces/[id]/edit`) into two separate fieldsets: "Public sound controls" (ambient, movement, melodic) and "Public camera controls" (hand-tracking, hand control), allowing camera steering to be toggled independently of sound playback. Updated the database model saving array, capability contract, and the front-end view layout accordingly to make Hand Control independent of the Hand Tracking voice.
+- **Always-Accessible Camera Toggles for Silent Pieces:** Changed `$audioTabAvailable` in `form.php` to align with `$soundControlsAvailable` (i.e. always true when the database schema supports it) rather than hiding the tab when the piece has no active sound design (`$currentSonicEnabled` is false). Refactored `resolveSonicParamsFromPost()` in `PiecesAdminController.php` to construct a default base payload `['enabled' => false]` if there is no existing sonic_params, ensuring toggled camera parameters (like `hand_control`) are successfully persisted to the database.
+- **Interact Tab & Inline Audio Separation:** Renamed the Audio tab to "Interact" across all piece types in `form.php`. Wrapped all audio-specific fieldsets/controls (Public sound controls, Default volume, Ambient sample, Synth controls, and Effects) inside checks for `$currentSonicEnabled` so they are completely hidden for pieces that do not have associated audio, revealing only the camera section under the "Interact" tab.

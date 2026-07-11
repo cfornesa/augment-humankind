@@ -39,12 +39,20 @@ $aiProfileName = $version['ai_profile_name'] ?? '(Blank)';
 $aiPersonaName = $version['ai_persona_name'] ?? '(Blank)';
 $sonicFeel = art_piece_sonic_feel($version['sonic_params'] ?? null);
 $sonicParamsDecoded = !empty($version['sonic_params']) ? json_decode((string) $version['sonic_params'], true) : null;
-$soundToggleAvailable = is_array($sonicParamsDecoded) && ($sonicParamsDecoded['enabled'] ?? true) !== false;
+$pieceControlCapabilities = piece_sound_capability_contract(
+    $generationMode,
+    is_array($sonicParamsDecoded) ? $sonicParamsDecoded : [],
+    piece_camera_overlay_enabled($version)
+);
+// The contract owns the "no sonic_params means no sound" rule.
+$soundToggleAvailable = !empty($pieceControlCapabilities['sound']);
+$cameraViewAvailable = !empty($pieceControlCapabilities['camera_view']);
+$handControlAvailable = !empty($pieceControlCapabilities['hand_control']);
 $downloadVoiceOptions = [];
-if ($soundToggleAvailable && (($sonicParamsDecoded['extras']['voices']['melodic'] ?? true) !== false)) {
+if (!empty($pieceControlCapabilities['keyboard'])) {
     $downloadVoiceOptions['melodic'] = 'Keyboard (piano)';
 }
-if ($soundToggleAvailable && !empty($sonicParamsDecoded['extras']['voices']['hand_tracking'])) {
+if (!empty($pieceControlCapabilities['hand_tracking'])) {
     $downloadVoiceOptions['hand_tracking'] = 'Hand-tracking (camera theremin)';
 }
 
@@ -619,6 +627,8 @@ canvas[aria-hidden="true"] {
                 && !empty($version['sonic_params'])
                 && (($sonicParamsDecoded = json_decode((string) $version['sonic_params'], true)) && ($sonicParamsDecoded['enabled'] ?? true) !== false)
                 ? ['enabled' => true] : null,
+            'camera_view' => !$isStaticEmbed && $cameraViewAvailable,
+            'hand_control' => !$isStaticEmbed && $handControlAvailable,
             'show_fullscreen' => !$isStaticEmbed,
             'fullscreen_onclick' => 'toggleFullscreen()',
         ]) ?>
@@ -998,7 +1008,7 @@ const sonicParams = <?= json_encode(
         ? $sonicParamsDecoded
         : null
 ) ?>;
-const viewerControlsOptions = { showViewerControls: <?= (!$isEmbedMode && !$isStaticEmbed) ? 'true' : 'false' ?>, sonicParams, pieceId: <?= (int) ($piece['id'] ?? 0) ?> };
+const viewerControlsOptions = { showViewerControls: <?= (!$isEmbedMode && !$isStaticEmbed) ? 'true' : 'false' ?>, sonicParams, pieceId: <?= (int) ($piece['id'] ?? 0) ?>, cameraOverlay: <?= $cameraViewAvailable ? 'true' : 'false' ?>, handControl: <?= $handControlAvailable ? 'true' : 'false' ?> };
 
 const stage = document.getElementById('immersive-stage');
 
@@ -1042,6 +1052,8 @@ try {
         },
         getAudioController: () => immersiveViewer?.getAudioController?.(),
         getPieceInteractionController: () => immersiveViewer?.getPieceInteractionController?.(),
+        cameraOverlayAllowed: <?= $cameraViewAvailable ? 'true' : 'false' ?>,
+        handControlAllowed: <?= $handControlAvailable ? 'true' : 'false' ?>,
     });
 
     const downloadPieceLink = document.querySelector('[data-immersive-download-piece]');

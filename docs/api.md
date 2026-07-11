@@ -282,16 +282,26 @@ fullscreen, PNG capture, slideshow/full-view behavior, and local runtime/media
 packaging for direct local opening.
 
 Sound is per-piece and muted by default everywhere it appears — no master
-switch, no autoplay. On the regular `/pieces/[id]` page, a Three.js/A-Frame
-piece with `sonic_params` gets a mute/unmute button next to the fullscreen
-toggle (`piece-fullscreen.js`); the iframe (`piece-runtime.js`) owns Tone.js
-and playback, and the parent page only posts `{type: 'creatr-sound-toggle',
+switch, no autoplay. Every engine can carry `sonic_params` on the regular
+`/pieces/[id]` page now (Three.js/A-Frame sonify camera motion,
+`c2_interactive` sonifies pointer motion, p5/plain C2/SVG have no motion
+signal there and play an idle random-note pattern instead); a piece that has
+one gets a mute/unmute button next to the fullscreen toggle
+(`piece-fullscreen.js`). The button — and the rest of the sound-specific rows
+in the "Piece controls" popover (volume, voice pickers, keyboard, mic) — is
+gated by `piece_sound_capability_contract()`'s `sound` capability, which is
+`false` outright whenever the version's `sonic_params` is empty; a sound-less
+piece never renders them. The iframe (`piece-runtime.js`) owns Tone.js and
+playback, and the parent page only posts `{type: 'creatr-sound-toggle',
 enabled}` to it and listens for its `{type: 'creatr-sound-state', enabled,
 reason}` reply to keep the button's state honest (a `reason: 'unavailable'`
 means Tone.js failed to load, so the button reverts to muted rather than
-sticking on). Other engines never render the button — they have no camera
-motion on this surface to sonify (the immersive view sonifies every engine;
-see the ALGORITHMS.md interaction-loop notes). Regular and immersive
+sticking on). The camera overlay (`camera_overlay`, set on the piece editor's
+Metadata tab — see the Platform Art Pieces section below) is a separate,
+independent permission — a sound-less piece can still show a "Piece
+controls" popover with just the camera rows, and the camera toggle's message
+bridge is mounted even when no audio engine exists (see the ALGORITHMS.md
+interaction-loop notes). Regular and immersive
 standalone exports bundle the same capability entirely offline: Tone.js is
 self-hosted at `assets/vendor/tone/Tone.js` live, and in bundle-mode exports
 (`/pieces/[id]/download`, its immersive-surface variant, and
@@ -313,7 +323,13 @@ capture reflects the visible immersive view from the
 current camera; for gallery-room engines this is the rendered Three.js
 gallery canvas, not the off-screen source canvas, unless the full-view
 overlay (including interactive C2) is open — then capture uses the overlay
-iframe.
+iframe. The same toolbar's "Piece controls" panel carries the camera rows
+when the piece's `camera_overlay` permission allows them: Three.js/A-Frame
+render the mirrored feed on a blended camera quad behind the scene, while
+gallery-room engines project it onto the room's back wall behind the framed
+art — both with the same opacity slider, both baked into the room render so
+the PNG capture includes them, and both offered identically by the exported
+immersive ZIP (its toolbar receives the same capability flags).
 
 `/exhibits` lists migrated `platform_exhibits` rows (name, description, item
 count, and a thumbnail drawn from the first item). `/exhibits/[slug]` renders
@@ -1049,6 +1065,25 @@ public piece routes. Versions are managed separately; each version has prompt,
 structured spec, HTML/CSS/generated code, generation vendor, model, and
 validation status. The public renderer supports migrated p5, c2, Three.js,
 SVG, and generic HTML/code versions.
+
+The editor's Metadata tab also submits `camera_overlay` — a 3-state select
+(`''`/`'1'`/`'0'`) resolved to `NULL`/`1`/`0` on the version row
+(`PiecesAdminController::resolveCameraOverlayFromPost()`, guarded by
+`art_piece_camera_overlay_supported()`), independent of any sound design; see
+§3.10 of ALGORITHMS.md for how it's consumed. When the version has
+`sonic_params`, the editor's "Interact" tab exposes two fieldsets: "Public
+sound controls" (ambient/movement/keyboard voice visibility plus the
+hand-tracking "camera theremin" toggle — all sound voices, submitted as
+`sonic_voice_*` and stored under `sonic_params.extras.voices`) and "Public
+camera controls" (a `sonic_voice_hand_control` checkbox, default checked,
+controlling whether the piece offers camera-steered/tilt-fallback "Hand
+control" — independent of whether the theremin itself is on). Both fieldsets
+render only when the version already has `sonic_params`; a sound-less piece
+sees an explanatory hint instead, since `resolveSonicParamsFromPost()`
+deliberately never fabricates a sonic block for a piece that never had
+one — only AI generation/Refine create `sonic_params` — so a plain
+Metadata/Interact-tab save can only mutate an existing block, never
+manufacture sound (and its accompanying playback) on a piece that had none.
 
 `POST /admin/pieces/[id]/capture-thumbnail` accepts `image_data`
 (base64-encoded PNG string, captured client-side) in the request body,
