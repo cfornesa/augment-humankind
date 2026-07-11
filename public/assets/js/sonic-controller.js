@@ -26,6 +26,68 @@
     plucksynth: 'PluckSynth', duosynth: 'DuoSynth',
   };
 
+  var sonicDebugEnabled = false;
+  try { sonicDebugEnabled = new URLSearchParams(global.location && global.location.search || '').get('sonicdebug') === '1'; } catch (_e) {}
+  function sonicDebug(stage, detail) {
+    if (!sonicDebugEnabled) return;
+    var text = stage + (detail ? ': ' + detail : '');
+    try { console.info('[sonicdebug]', text); } catch (_e) {}
+    try {
+      var panel = document.getElementById('creatr-sonic-debug');
+      if (!panel) {
+        panel = document.createElement('pre');
+        panel.id = 'creatr-sonic-debug';
+        panel.setAttribute('aria-live', 'polite');
+        panel.style.cssText = 'position:fixed;left:0.5rem;right:0.5rem;bottom:0.5rem;z-index:2147483647;max-height:38vh;overflow:auto;margin:0;padding:0.65rem;border:1px solid #67e8f9;border-radius:0.5rem;background:rgba(3,7,18,.94);color:#cffafe;font:11px/1.4 ui-monospace,monospace;white-space:pre-wrap;pointer-events:none;';
+        (document.body || document.documentElement).appendChild(panel);
+      }
+      panel.textContent += (panel.textContent ? '\n' : '') + new Date().toISOString().slice(11, 23) + ' ' + text;
+    } catch (_e) {}
+  }
+  function capabilityState(capability, state, reason, fallback) {
+    sonicDebug(capability + ' ' + state, reason || '');
+    try {
+      document.dispatchEvent(new CustomEvent('creatr-sonic-capability-state', {
+        detail: { capability: capability, state: state, reason: reason || null, fallback: fallback || null }
+      }));
+    } catch (_e) {}
+  }
+
+  function createDeviceTiltController(onPoint) {
+    var active = false;
+    function onOrientation(event) {
+      if (!active || typeof onPoint !== 'function') return;
+      var gamma = Number(event.gamma);
+      var beta = Number(event.beta);
+      if (!isFinite(gamma) || !isFinite(beta)) return;
+      var nx = Math.max(0, Math.min(1, 0.5 + gamma / 90));
+      var ny = Math.max(0, Math.min(1, 0.5 + (beta - 45) / 90));
+      try { onPoint(nx, ny); } catch (_e) {}
+    }
+    return {
+      async enable() {
+        if (active) return true;
+        if (typeof global.DeviceOrientationEvent === 'undefined') return false;
+        try {
+          if (typeof global.DeviceOrientationEvent.requestPermission === 'function') {
+            var permission = await global.DeviceOrientationEvent.requestPermission();
+            if (permission !== 'granted') return false;
+          }
+          active = true;
+          global.addEventListener('deviceorientation', onOrientation);
+          capabilityState('hand_control', 'fallback', null, 'device_tilt');
+          return true;
+        } catch (_e) { return false; }
+      },
+      disable() {
+        if (!active) return;
+        active = false;
+        global.removeEventListener('deviceorientation', onOrientation);
+      },
+      isActive: function () { return active; },
+    };
+  }
+
   function midiToFreq(m) { return 440 * Math.pow(2, (m - 69) / 12); }
 
   // Maps a 0-100 volume percent to a Tone.js dB value. 50 reproduces the
@@ -391,8 +453,9 @@
     // volume of the melodic voice specifically (not the shared master bus),
     // so hand-tracking layers over the ambient/movement voices exactly like
     // keyboard mode does.
-    var _handLandmarkerPromise = null;
-    function loadHandLandmarkerOnce() {
+    var _handLandmarkerPromise = null, handLoaderRetryCount = 0;
+    function loadHandLandmarkerOnce(forceRetry) {
+      if (forceRetry) _handLandmarkerPromise = null;
       if (_handLandmarkerPromise) return _handLandmarkerPromise;
       _handLandmarkerPromise = (async function () {
         var visionSrc = opts.mediaPipeVisionSrc || '/assets/vendor/mediapipe-hands/vision_bundle.mjs';
@@ -400,14 +463,18 @@
         var modelSrc = opts.mediaPipeModelSrc || '/assets/vendor/mediapipe-hands/hand_landmarker.task';
 
         try {
+          sonicDebug('hand model local start', visionSrc);
           var vision = await import(visionSrc);
           var fileset = await vision.FilesetResolver.forVisionTasks(wasmDir);
-          return await vision.HandLandmarker.createFromOptions(fileset, {
+          var localLandmarker = await vision.HandLandmarker.createFromOptions(fileset, {
             baseOptions: { modelAssetPath: modelSrc },
             runningMode: 'VIDEO',
             numHands: 1,
           });
+          sonicDebug('hand model local ready');
+          return localLandmarker;
         } catch (localError) {
+          sonicDebug('hand model local failed', localError.message || String(localError));
           console.warn("Local MediaPipe assets failed to load. Attempting CDN fallback...", localError);
           try {
             var cdnVisionSrc = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/vision_bundle.mjs';
@@ -416,11 +483,13 @@
 
             var vision = await import(cdnVisionSrc);
             var fileset = await vision.FilesetResolver.forVisionTasks(cdnWasmDir);
-            return await vision.HandLandmarker.createFromOptions(fileset, {
+            var cdnLandmarker = await vision.HandLandmarker.createFromOptions(fileset, {
               baseOptions: { modelAssetPath: cdnModelSrc },
               runningMode: 'VIDEO',
               numHands: 1,
             });
+            sonicDebug('hand model CDN ready');
+            return cdnLandmarker;
           } catch (cdnError) {
             console.error("CDN fallback also failed.", cdnError);
             document.dispatchEvent(new CustomEvent('creatr-hand-tracking-failed', {
@@ -429,8 +498,21 @@
             throw cdnError;
           }
         }
-      })();
+      })().catch(function (error) {
+        _handLandmarkerPromise = null;
+        throw error;
+      });
       return _handLandmarkerPromise;
+    }
+
+    async function loadHandLandmarkerWithRetry() {
+      try { return await loadHandLandmarkerOnce(false); }
+      catch (firstError) {
+        if (handLoaderRetryCount >= 1) throw firstError;
+        handLoaderRetryCount += 1;
+        sonicDebug('hand model retry', firstError.message || String(firstError));
+        return loadHandLandmarkerOnce(true);
+      }
     }
 
     // Opens (or re-references) the single shared camera stream + hidden
@@ -445,6 +527,7 @@
         throw new Error('navigator.mediaDevices.getUserMedia not supported or blocked');
       }
       var stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      sonicDebug('camera acquired', stream.getVideoTracks().map(function (t) { return t.readyState; }).join(','));
       if (disposed) { stream.getTracks().forEach(function (t) { t.stop(); }); throw new Error('disposed'); }
       handStream = stream;
       handVideoEl = document.createElement('video');
@@ -456,6 +539,7 @@
       handVideoEl.srcObject = handStream;
       (document.body || document.documentElement).appendChild(handVideoEl);
       await handVideoEl.play();
+      sonicDebug('camera video playing', handVideoEl.videoWidth + 'x' + handVideoEl.videoHeight + ' ready=' + handVideoEl.readyState);
       handCameraRefs = 1;
       return handVideoEl;
     }
@@ -472,11 +556,52 @@
       if (handRafId) { cancelAnimationFrame(handRafId); handRafId = null; }
     }
 
+    var handInferenceMode = 'video', handInferenceCanvas = null, handInferenceContext = null, handInferenceFrame = 0;
+    function failHandInference(error) {
+      var message = error && (error.message || String(error)) || 'Hand inference failed';
+      if (handThereminOn) capabilityState('hand_tracking', 'unavailable', message);
+      if (handControlOn) capabilityState('hand_control', 'unavailable', message, 'device_tilt');
+      if (handNoteHeld) { try { melodicSynth && melodicSynth.triggerRelease(); } catch (_e) {} handNoteHeld = false; }
+      var refsToRelease = (handThereminOn ? 1 : 0) + (handControlOn ? 1 : 0);
+      handThereminOn = false;
+      handControlOn = false;
+      if (typeof handFrameSubscriber === 'function') { try { handFrameSubscriber(null); } catch (_e) {} }
+      while (refsToRelease-- > 0) releaseHandCamera();
+      stopHandLoopIfIdle();
+    }
+
+    function detectHandFrame() {
+      if (handInferenceMode === 'canvas') {
+        handInferenceFrame += 1;
+        if (handInferenceFrame % 3 !== 0) return undefined;
+        if (!handInferenceCanvas) {
+          handInferenceCanvas = document.createElement('canvas');
+          handInferenceCanvas.width = 256;
+          handInferenceCanvas.height = 256;
+          handInferenceContext = handInferenceCanvas.getContext('2d', { alpha: false });
+        }
+        if (!handInferenceContext) throw new Error('Canvas 2D context unavailable for hand fallback');
+        handInferenceContext.drawImage(handVideoEl, 0, 0, 256, 256);
+        return handLandmarker.detectForVideo(handInferenceCanvas, performance.now());
+      }
+      return handLandmarker.detectForVideo(handVideoEl, performance.now());
+    }
+
     function handFrameStep() {
       handRafId = requestAnimationFrame(handFrameStep);
       if (!handLandmarker || !handVideoEl || handVideoEl.readyState < 2) return;
       var result;
-      try { result = handLandmarker.detectForVideo(handVideoEl, performance.now()); } catch (_e) { return; }
+      try { result = detectHandFrame(); }
+      catch (error) {
+        if (handInferenceMode === 'video') {
+          handInferenceMode = 'canvas';
+          capabilityState('hand_tracking', 'loading', error.message || String(error), 'canvas');
+          return;
+        }
+        failHandInference(error);
+        return;
+      }
+      if (result === undefined) return;
       var hand = result && result.landmarks && result.landmarks[0];
       // Hand-control subscriber (piece interaction) sees every frame,
       // including hand-lost frames (null), independent of the theremin.
@@ -512,6 +637,7 @@
       if (handThereminOn) return true;
       var cameraHeld = false;
       try {
+        capabilityState('hand_tracking', 'loading');
         // Camera FIRST — synchronously reachable from the invoking gesture
         // task, before the (slow) Tone.js and MediaPipe model loads consume
         // WebKit's transient-activation window.
@@ -520,10 +646,11 @@
         if (disposed) throw new Error('disposed');
         await ensureSynth();
         if (disposed) throw new Error('disposed');
-        handLandmarker = await loadHandLandmarkerOnce();
+        handLandmarker = await loadHandLandmarkerWithRetry();
         if (disposed) throw new Error('disposed');
         handThereminOn = true;
         if (!handRafId) handFrameStep();
+        capabilityState('hand_tracking', 'active');
         return true;
       } catch (_e) {
         if (cameraHeld) releaseHandCamera();
@@ -532,6 +659,7 @@
         document.dispatchEvent(new CustomEvent('creatr-hand-tracking-failed', {
           detail: { error: _e.message || String(_e) }
         }));
+        capabilityState('hand_tracking', 'unavailable', _e.message || String(_e));
         return false;
       }
     }
@@ -553,13 +681,15 @@
       if (handControlOn) return true;
       var cameraHeld = false;
       try {
+        capabilityState('hand_control', 'loading');
         await acquireHandCamera();       // camera FIRST — same gesture rule
         cameraHeld = true;
         if (disposed) throw new Error('disposed');
-        handLandmarker = await loadHandLandmarkerOnce();
+        handLandmarker = await loadHandLandmarkerWithRetry();
         if (disposed) throw new Error('disposed');
         handControlOn = true;
         if (!handRafId) handFrameStep();
+        capabilityState('hand_control', 'active');
         return true;
       } catch (_e) {
         if (cameraHeld) releaseHandCamera();
@@ -568,6 +698,7 @@
         document.dispatchEvent(new CustomEvent('creatr-hand-tracking-failed', {
           detail: { error: _e.message || String(_e) }
         }));
+        capabilityState('hand_control', 'unavailable', _e.message || String(_e), 'device_tilt');
         return false;
       }
     }
@@ -649,15 +780,26 @@
       });
       micEffectNodes = [];
       var chainTail = micNode;
+      var connectTail = function (destination) {
+        if (chainTail === micNativeSource) micConnect(chainTail, destination);
+        else chainTail.connect(destination);
+      };
       ['distortion', 'chorus', 'tremolo', 'pitch_shift', 'bitcrusher', 'flanger', 'ring_mod'].forEach(function (key) {
         var cfg = micEffectsState[key];
         if (!cfg || !cfg.enabled) return;
         var node = createEffectNode(Tone, key, cfg);
-        chainTail.connect(node);
+        connectTail(node);
         chainTail = node;
         micEffectNodes.push(node);
       });
-      chainTail.connect(bus);
+      connectTail(bus);
+    }
+
+    var micStream = null, micNativeSource = null;
+    function micConnect(source, destination) {
+      var target = destination && (destination.input || destination);
+      if (!target) throw new Error('Mic destination unavailable');
+      source.connect(target);
     }
 
     async function enableMic() {
@@ -671,14 +813,18 @@
       // Grab the mic permission as the FIRST await, inside the invoking
       // gesture task (WebKit's transient activation does not survive the
       // Tone.js load below). Tone.UserMedia.open() then reuses the already-
-      // granted permission without needing activation of its own.
+      // granted stream is retained and connected directly after Tone loads,
+      // so there is no second capture request outside the activation window.
+      capabilityState('mic', 'loading');
       var permissionStream = null;
       try {
         permissionStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        sonicDebug('mic acquired', permissionStream.getAudioTracks().map(function (t) { return t.readyState + '/' + t.enabled; }).join(','));
       } catch (permError) {
         document.dispatchEvent(new CustomEvent('creatr-mic-failed', {
           detail: { error: permError.message || String(permError) }
         }));
+        capabilityState('mic', 'unavailable', permError.message || String(permError));
         return false;
       }
       var releasePermissionStream = function () {
@@ -689,19 +835,20 @@
       await ensureSynth();
       if (disposed || !bus) { releasePermissionStream(); return false; }
       var Tone = global.Tone;
-      if (!Tone || !Tone.UserMedia || !Tone.UserMedia.supported) {
+      if (!Tone) {
         releasePermissionStream();
         document.dispatchEvent(new CustomEvent('creatr-mic-failed', {
-          detail: { error: 'Tone.UserMedia not supported or blocked' }
+          detail: { error: 'Tone.js unavailable' }
         }));
         return false;
       }
       try {
-        var node = new Tone.UserMedia();
-        await node.open();
-        releasePermissionStream();
-        if (disposed) { try { node.close(); } catch (_e) {} try { node.dispose(); } catch (_e) {} return false; }
-        micNode = node;
+        var rawContext = Tone.context && (Tone.context.rawContext || Tone.context);
+        if (!rawContext || !rawContext.createMediaStreamSource) throw new Error('MediaStreamAudioSourceNode unavailable');
+        micStream = permissionStream;
+        permissionStream = null;
+        micNativeSource = rawContext.createMediaStreamSource(micStream);
+        micNode = micNativeSource;
         rebuildMicChain(Tone);
         // iOS switches the audio session to play-and-record when the mic
         // opens, which can suspend/interrupt the AudioContext and kill
@@ -709,10 +856,13 @@
         // their next note; the context itself and a looping ambient
         // Tone.Player do not — recover both explicitly.
         recoverFromAudioSessionChange(Tone);
+        capabilityState('mic', 'active');
         return true;
       } catch (_e) {
         releasePermissionStream();
-        micNode = null;
+        disableMic();
+        try { recoverFromAudioSessionChange(Tone); } catch (_ignored) {}
+        capabilityState('mic', 'unavailable', _e.message || String(_e));
         document.dispatchEvent(new CustomEvent('creatr-mic-failed', {
           detail: { error: _e.message || String(_e) }
         }));
@@ -751,14 +901,16 @@
     }
 
     function disableMic() {
-      if (!micNode) return;
+      if (!micNode && !micStream) return;
       micEffectNodes.forEach(function (node) {
         try { node.disconnect(); } catch (_e) {}
         try { node.dispose && node.dispose(); } catch (_e) {}
       });
       micEffectNodes = [];
-      try { micNode.close(); } catch (_e) {}
-      try { micNode.dispose(); } catch (_e) {}
+      try { micNativeSource && micNativeSource.disconnect(); } catch (_e) {}
+      if (micStream) { try { micStream.getTracks().forEach(function (track) { track.stop(); }); } catch (_e) {} }
+      micNativeSource = null;
+      micStream = null;
       micNode = null;
     }
 
@@ -983,6 +1135,7 @@
 
   global.CreatrSonicController = {
     create: create,
+    createDeviceTiltController: createDeviceTiltController,
     SONIC_SCALES: SONIC_SCALES,
     SONIC_INSTRUMENTS: SONIC_INSTRUMENTS,
     midiToFreq: midiToFreq,

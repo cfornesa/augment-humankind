@@ -474,12 +474,12 @@
   device; only the vendored model/WASM assets are fetched, and those come
   from this site's own server, not Google's CDN.
 - **What breaks if unavailable or changed:** Only the hand-tracking input
-  mode. `enableHandTracking()` is wrapped in a try/catch; a missing/corrupt
-  vendored file, a `getUserMedia` denial, or no camera hardware all fail
-  silently — the toggle simply reverts to whichever mode was active before,
-  with no error banner, matching this codebase's "approximate rather than
-  fail" sonic-params philosophy. Movement, keyboard, and ambient voices are
-  entirely unaffected.
+  mode. Failed initialization is retried once without caching a rejected
+  promise; direct-video inference then falls back to a throttled canvas frame
+  source. If the model still cannot run, camera theremin becomes explicitly
+  unavailable and steering offers clearly labeled device tilt. Movement,
+  keyboard, ambient voices, and manual navigation remain unaffected. No second
+  vision vendor or model is loaded.
 - **Self-hosting alternative:** N/A — already self-hosted (not loaded from
   Google's `storage.googleapis.com`/CDN at runtime).
 - **Runtime Fallbacks (for downloaded exports):** When opened via `file://` or if local assets fail to load/fetch due to browser CORS or sandbox constraints, the runtime attempts a fallback to CORS-enabled public CDNs:

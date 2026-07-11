@@ -474,8 +474,20 @@ JS;
     }
 
     var handControlActive = false;
+    var tiltController = null;
     handControlToggle.addEventListener('click', async function () {
       var turningOn = handControlToggle.getAttribute('aria-pressed') !== 'true';
+      if (handControlToggle.dataset.capabilityFallback === 'device_tilt') {
+        if (!tiltController && window.CreatrSonicController && window.__pieceHandHooks) {
+          tiltController = window.CreatrSonicController.createDeviceTiltController(function(nx, ny) {
+            window.__pieceHandHooks.handPoint(nx, ny);
+          });
+        }
+        var tiltOk = turningOn && tiltController ? await tiltController.enable() : false;
+        if (!turningOn && tiltController) tiltController.disable();
+        handControlToggle.setAttribute('aria-pressed', tiltOk ? 'true' : 'false');
+        return;
+      }
       if (!turningOn) {
         handControlActive = false;
         if (engine) { engine.onHandFrame(null); engine.disableHandControl(); }
@@ -525,10 +537,38 @@ JS;
       var hooks = window.__pieceHandHooks;
       if (hooks && hooks.clearBackgroundVideo) { try { hooks.clearBackgroundVideo(); } catch (_e) {} }
       if (cameraBgToggle.getAttribute('aria-pressed') === 'true' && engine) engine.releaseCameraFeed();
+      if (tiltController) tiltController.disable();
     }, { once: true });
 
 JS;
         }
+        $handRowWiringScript .= <<<'JS'
+
+    document.addEventListener('creatr-sonic-capability-state', function(event) {
+      var detail = event.detail || {};
+      var target = detail.capability === 'hand_tracking' ? handToggle
+        : detail.capability === 'hand_control' && typeof handControlToggle !== 'undefined' ? handControlToggle
+        : detail.capability === 'mic' ? micToggle : null;
+      if (!target) return;
+      target.dataset.capabilityState = detail.state || '';
+      target.setAttribute('aria-busy', detail.state === 'loading' ? 'true' : 'false');
+      if (detail.state === 'loading') target.disabled = true;
+      if (detail.state === 'active') { target.disabled = false; target.setAttribute('aria-pressed', 'true'); }
+      if (detail.state === 'unavailable') {
+        target.setAttribute('aria-pressed', 'false');
+        target.title = detail.reason || 'Unavailable on this device';
+        if (detail.capability === 'hand_control' && detail.fallback === 'device_tilt') {
+          target.disabled = false;
+          target.dataset.capabilityFallback = 'device_tilt';
+          target.textContent = 'Use device tilt';
+        } else {
+          target.disabled = true;
+          target.textContent = detail.capability === 'mic' ? 'Mic unavailable' : 'Hand tracking unavailable';
+        }
+      }
+    });
+
+JS;
     }
 
     return <<<HTML

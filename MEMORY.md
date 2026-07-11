@@ -75,6 +75,8 @@ Source: DECISIONS.md 2026-07-06 Public Copy Subtabs, Footer Consolidation, Widen
 
 # Standing Decisions — Art Pieces, AI Generation & Immersive
 
+2026-07-10 DECISION iOS hand features use retryable MediaPipe initialization, direct-video then throttled-canvas inference, and explicitly labeled device tilt as the final steering fallback; live mic uses one granted stream through createMediaStreamSource() and never raw-monitors on failure.
+
 2026-07-10 DECISION Hand steering and camera backgrounds have Three.js/A-Frame parity across regular views, mounted immersive views, and standalone exports; mounted steering exclusively owns the camera and restores prior controls at the resulting pose.
 Source: DECISIONS.md 2026-07-10 Completed Hand/Camera Parity for Immersive Mounts and A-Frame Exports.
 

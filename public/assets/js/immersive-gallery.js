@@ -703,6 +703,7 @@ function createSharedGyroController(stageEl, camera, options = {}) {
       isActive() { return false; },
       suspend() { return false; },
       resume() {},
+      deactivate() {},
       async setup() { return false; },
       requestCalibration() {},
     };
@@ -944,6 +945,11 @@ function createSharedGyroController(stageEl, camera, options = {}) {
         setGyroActive(true);
       }
       resumeActiveAfterSuspend = false;
+    },
+    deactivate() {
+      suspended = false;
+      resumeActiveAfterSuspend = false;
+      if (gyroActive) setGyroActive(false);
     },
     setup,
     requestCalibration,
@@ -1428,6 +1434,7 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
   let micSupportChecked = false;
   let handControlActive = false;
   let cameraBgActive = false;
+  let tiltFallbackActive = false;
 
   function isSoundPanelOpen() {
     return !!soundPanel && !soundPanel.hidden;
@@ -1541,6 +1548,16 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
     const ctrl = getAudioController();
     const interaction = getPieceInteractionController();
     if (!ctrl || !interaction?.supportsHandControl) return;
+    if (handControlToggle?.dataset.capabilityFallback === "device_tilt") {
+      if (tiltFallbackActive) {
+        interaction.disableTiltFallback?.();
+        tiltFallbackActive = false;
+      } else {
+        tiltFallbackActive = !!(await interaction.enableTiltFallback?.());
+      }
+      handControlToggle.setAttribute("aria-pressed", tiltFallbackActive ? "true" : "false");
+      return;
+    }
     if (handControlActive) {
       handControlActive = false;
       ctrl.onHandFrame(null);
@@ -1596,6 +1613,34 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
       await ctrl.enableMic();
     }
     syncSoundPanel();
+  };
+
+  const onCapabilityState = (event) => {
+    const detail = event.detail || {};
+    const target = detail.capability === "hand_tracking"
+      ? soundHandToggle
+      : detail.capability === "hand_control"
+        ? handControlToggle
+        : detail.capability === "mic"
+          ? micToggle
+          : null;
+    if (!target) return;
+    target.dataset.capabilityState = detail.state || "";
+    target.setAttribute("aria-busy", detail.state === "loading" ? "true" : "false");
+    if (detail.state === "loading") target.disabled = true;
+    if (detail.state === "active") { target.disabled = false; target.setAttribute("aria-pressed", "true"); }
+    if (detail.state === "unavailable") {
+      target.setAttribute("aria-pressed", "false");
+      target.title = detail.reason || "Unavailable on this device";
+      if (detail.capability === "hand_control" && detail.fallback === "device_tilt") {
+        target.disabled = false;
+        target.dataset.capabilityFallback = "device_tilt";
+        target.textContent = "Use device tilt";
+      } else {
+        target.disabled = true;
+        target.textContent = detail.capability === "mic" ? "Mic unavailable" : "Hand tracking unavailable";
+      }
+    }
   };
 
   const onMicFxToggle = (event) => {
@@ -1659,6 +1704,7 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
   micToggle?.addEventListener("click", onMicToggle);
   micFxToggles.forEach((checkbox) => checkbox.addEventListener("change", onMicFxToggle));
   voicePickerSelects.forEach((select) => select.addEventListener("change", onVoicePickerChange));
+  document.addEventListener("creatr-sonic-capability-state", onCapabilityState);
   if (soundPanelTrigger && soundPanel) {
     document.addEventListener("pointerdown", onSoundDocumentPointerDown, { capture: true });
     document.addEventListener("keydown", onSoundDocumentKeyDown);
@@ -1700,6 +1746,8 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
       micToggle?.removeEventListener("click", onMicToggle);
       micFxToggles.forEach((checkbox) => checkbox.removeEventListener("change", onMicFxToggle));
       voicePickerSelects.forEach((select) => select.removeEventListener("change", onVoicePickerChange));
+      document.removeEventListener("creatr-sonic-capability-state", onCapabilityState);
+      if (tiltFallbackActive) getPieceInteractionController()?.disableTiltFallback?.();
       detachPianoKeyListener?.();
       detachPianoKeyListener = null;
       if (soundPanelTrigger && soundPanel) {
@@ -3199,6 +3247,11 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
     const pieceInteractionController = {
       supportsHandControl: true,
       supportsCameraBackground: true,
+      async enableTiltFallback() {
+        this.setHandSteering(false);
+        return !!(await gyroController?.setup?.());
+      },
+      disableTiltFallback() { gyroController?.deactivate?.(); },
       setHandSteering(active) {
         const next = !!active;
         if (next === handSteeringExclusive) return;
@@ -3336,6 +3389,7 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
   let aframeControlsBeforeHand = [];
   let aframePreviousBackground;
   let aframeVideoTexture = null;
+  let aframeTiltController = null;
   const audioController = createAudioController(options.sonicParams, stageEl, { pieceId: options.pieceId });
   let _aframeAudioPrev = null;
   const stopFrameHandles = [];
@@ -3682,6 +3736,17 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
   const pieceInteractionController = {
     supportsHandControl: true,
     supportsCameraBackground: true,
+    async enableTiltFallback() {
+      if (!window.CreatrSonicController?.createDeviceTiltController) return false;
+      this.setHandSteering(true);
+      if (!aframeTiltController) {
+        aframeTiltController = window.CreatrSonicController.createDeviceTiltController((nx, ny) => this.handPoint(nx, ny, true));
+      }
+      const enabled = await aframeTiltController.enable();
+      if (!enabled) this.setHandSteering(false);
+      return enabled;
+    },
+    disableTiltFallback() { aframeTiltController?.disable(); this.setHandSteering(false); },
     setHandSteering(active) {
       const next = !!active;
       if (next === handSteeringExclusive) return;
@@ -3705,8 +3770,8 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
         aframeControlsBeforeHand = [];
       }
     },
-    handPoint(nx, ny) {
-      if (!handSteeringExclusive) return;
+    handPoint(nx, ny, fromTilt) {
+      if (!handSteeringExclusive && !fromTilt) return;
       const cameraObject = getAFrameCameraObject();
       if (!cameraObject) return;
       const desiredYaw = -(nx - 0.5) * Math.PI * 1.5;
@@ -3736,6 +3801,7 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
   };
 
   const destroy = () => {
+    aframeTiltController?.disable();
     pieceInteractionController.setHandSteering(false);
     pieceInteractionController.clearBackgroundVideo();
     disposed = true;

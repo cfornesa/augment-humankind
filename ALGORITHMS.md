@@ -2663,13 +2663,19 @@ Consolidates the side-channel notes in §3 and §4 LEG D.
   consumer (§12.8) each hold a reference, one `getUserMedia` prompt serves
   all three, and the stream is torn down when the last holder releases. One
   landmark loop feeds every consumer.
+- **Safari recovery:** rejected model initialization clears the cached promise
+  and permits one fresh initialization cycle. Inference begins from the live
+  video; its first exception switches to a 256×256 canvas copy every third
+  frame, and a second failure stops inference, releases only the hand
+  consumers' camera references, and reports an explicit unavailable state.
 - **Characteristics:** The vision model is a black-box classifier, but the
   mapping around it is closed-form and clamped, so out-of-range landmarks
   can only produce in-range notes. O(1) per frame beyond model inference.
 
 ### 12.6 Live mic voice with effects chain — `enableMic()` / `createEffectNode()` / `rebuildMicChain()` ([sonic-controller.js](public/assets/js/sonic-controller.js))
 - **Type:** Audio-graph assembly (ordered pipeline rebuild).
-- **Logic:** A `Tone.UserMedia` node feeds an optional effects chain in a
+- **Logic:** One microphone `MediaStream` feeds a native
+  `MediaStreamAudioSourceNode`, connected to an optional Tone effects chain in a
   fixed order — distortion, chorus, tremolo, pitch shift, bitcrusher,
   flanger, ring mod — into the master bus directly (deliberately bypassing
   the synth-tuned filter), mixing over the other voices. Toggling any
@@ -2680,6 +2686,9 @@ Consolidates the side-channel notes in §3 and §4 LEG D.
   default, never persisted (it never touches sonic params or the database);
   unsupported browsers or a denied permission dispatch `creatr-mic-failed`
   and everything else keeps playing.
+- **iOS capture path:** the granted stream is the actual source; there is no
+  second `Tone.UserMedia.open()` after the gesture. Failure stops its tracks,
+  resumes the existing synth context, and never dry-monitors the mic.
 - **Characteristics:** Deterministic graph given the toggle set; rebuild is
   O(effects). Fail-open by construction.
 
@@ -2737,6 +2746,12 @@ Consolidates the side-channel notes in §3 and §4 LEG D.
 - **Privacy:** frames are processed live for landmarks/texture only — never
   recorded, persisted, or transmitted; both toggles are per-visitor opt-ins
   on top of the sound toggle.
+- **Final steering fallback:** when both direct-video and canvas MediaPipe
+  inference fail, the steering control becomes “Use device tilt.” Regular
+  runtimes/exports map beta/gamma into the existing hand-point hook;
+  immersive Three.js reuses gyro control and immersive A-Frame pauses its
+  competing look controls. This is labeled device motion, never hand tracking;
+  the theremin has no substitute.
 
 ### Recipe Overview — Sonification pipeline
 

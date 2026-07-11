@@ -142,6 +142,7 @@ function createPieceRuntimeAudioController(sonicParams, getMover) {
 
   const pieceId = (pieceContext && pieceContext.pieceId != null) ? pieceContext.pieceId : null;
   let engine = null, disposed = false;
+  let tiltController = null;
 
   // Tell the host page which voices are visible for this piece (the parent
   // has no direct access to sonicParams — it only relays postMessages) so
@@ -338,6 +339,26 @@ function createPieceRuntimeAudioController(sonicParams, getMover) {
     }).catch(() => notifyParentHandControlState(false));
   }
 
+  async function handleTiltToggle(on) {
+    if (!on) {
+      tiltController?.disable();
+      notifyParentHandControlState(false, 'device_tilt');
+      return;
+    }
+    const CSC = window.CreatrSonicController;
+    const hooks = window.__pieceHandHooks;
+    if (!CSC?.createDeviceTiltController || !hooks?.handPoint) {
+      notifyParentCapabilityState({ capability: 'hand_control', state: 'unavailable', reason: 'Device motion unavailable' });
+      return;
+    }
+    if (!tiltController) {
+      tiltController = CSC.createDeviceTiltController((nx, ny) => hooks.handPoint(nx, ny));
+    }
+    const ok = await tiltController.enable();
+    notifyParentHandControlState(ok, ok ? 'device_tilt' : null);
+    if (!ok) notifyParentCapabilityState({ capability: 'hand_control', state: 'unavailable', reason: 'Device motion permission denied' });
+  }
+
   function handleCameraBackgroundToggle(on) {
     if (!on) {
       cameraBackgroundBinding.detach();
@@ -379,13 +400,24 @@ function createPieceRuntimeAudioController(sonicParams, getMover) {
     } catch (_) {}
   }
 
-  function notifyParentHandControlState(on) {
+  function notifyParentHandControlState(on, mode) {
     try {
       if (window.parent && window.parent !== window) {
-        window.parent.postMessage({ type: 'creatr-sound-hand-control-state', enabled: !!on }, '*');
+        window.parent.postMessage({ type: 'creatr-sound-hand-control-state', enabled: !!on, mode: mode || 'hand' }, '*');
       }
     } catch (_) {}
   }
+
+  function notifyParentCapabilityState(detail) {
+    try {
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({ type: 'creatr-sonic-capability-state', detail: detail || {} }, '*');
+      }
+    } catch (_) {}
+  }
+
+  const onCapabilityState = (event) => notifyParentCapabilityState(event.detail);
+  document.addEventListener('creatr-sonic-capability-state', onCapabilityState);
 
   function notifyParentCameraBgState(on) {
     try {
@@ -701,6 +733,7 @@ function createPieceRuntimeAudioController(sonicParams, getMover) {
     toggleHand: handleHandToggle,
     toggleMic: handleMicToggle,
     toggleHandControl: handleHandControlToggle,
+    toggleTilt: handleTiltToggle,
     toggleCameraBackground: handleCameraBackgroundToggle,
   };
 
@@ -710,6 +743,8 @@ function createPieceRuntimeAudioController(sonicParams, getMover) {
       detachStandalonePianoKeys?.();
       handControlBinding.detach();
       cameraBackgroundBinding.detach();
+      tiltController?.disable();
+      document.removeEventListener('creatr-sonic-capability-state', onCapabilityState);
       engine?.dispose();
     },
   };

@@ -1148,6 +1148,51 @@ test('mic acquisition recovers the audio session (context resume + ambient sampl
     assert_contains($sonicSrc, "if (ambientSynth.state !== 'started') ambientSynth.start();");
 });
 
+test('iOS hand tracking retries failed model initialization and falls back from video frames to throttled canvas inference', function () {
+    $sonicSrc = file_get_contents(__DIR__ . '/../public/assets/js/sonic-controller.js');
+    assert_contains($sonicSrc, '_handLandmarkerPromise = null');
+    assert_contains($sonicSrc, 'async function loadHandLandmarkerWithRetry()');
+    assert_contains($sonicSrc, "handInferenceMode = 'canvas'");
+    assert_contains($sonicSrc, 'handInferenceFrame % 3 !== 0');
+    assert_contains($sonicSrc, 'handInferenceContext.drawImage(handVideoEl');
+    assert_contains($sonicSrc, "capabilityState('hand_control', 'unavailable'");
+    assert_not_contains($sonicSrc, 'detectForVideo(handVideoEl, performance.now()); } catch (_e) { return; }');
+});
+
+test('live mic uses exactly one granted stream through MediaStreamAudioSourceNode and never opens Tone.UserMedia', function () {
+    $sonicSrc = file_get_contents(__DIR__ . '/../public/assets/js/sonic-controller.js');
+    if (substr_count($sonicSrc, 'getUserMedia({ audio: true })') !== 1) {
+        throw new RuntimeException('Mic enable path must contain exactly one audio getUserMedia call.');
+    }
+    assert_contains($sonicSrc, 'rawContext.createMediaStreamSource(micStream)');
+    assert_contains($sonicSrc, 'micStream.getTracks().forEach(function (track) { track.stop(); })');
+    assert_not_contains($sonicSrc, 'new Tone.UserMedia()');
+    assert_not_contains($sonicSrc, 'await node.open()');
+    assert_contains($sonicSrc, "capabilityState('mic', 'unavailable'");
+});
+
+test('hand-control failures expose an explicit device-tilt fallback across regular, immersive, and export surfaces', function () {
+    $sonicSrc = file_get_contents(__DIR__ . '/../public/assets/js/sonic-controller.js');
+    $runtime = file_get_contents(__DIR__ . '/../public/assets/js/piece-runtime.js');
+    $fullscreen = file_get_contents(__DIR__ . '/../public/assets/js/piece-fullscreen.js');
+    $immersive = file_get_contents(__DIR__ . '/../public/assets/js/immersive-gallery.js');
+    $render = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
+    assert_contains($sonicSrc, 'createDeviceTiltController: createDeviceTiltController');
+    assert_contains($runtime, 'toggleTilt: handleTiltToggle');
+    assert_contains($fullscreen, "target.textContent = 'Use device tilt'");
+    assert_contains($immersive, 'enableTiltFallback');
+    assert_contains($render, "target.textContent = 'Use device tilt'");
+});
+
+test('sonicdebug is opt-in, local-only, and capability controls expose loading/active/unavailable states', function () {
+    $sonicSrc = file_get_contents(__DIR__ . '/../public/assets/js/sonic-controller.js');
+    assert_contains($sonicSrc, "get('sonicdebug') === '1'");
+    assert_contains($sonicSrc, "panel.id = 'creatr-sonic-debug'");
+    assert_contains($sonicSrc, "detail: { capability: capability, state: state");
+    assert_not_contains($sonicSrc, 'fetch(');
+    assert_not_contains($sonicSrc, 'localStorage.setItem');
+});
+
 test('regular piece view inlines its critical CSS and the global stylesheet is cache-busted', function () {
     $show = file_get_contents(__DIR__ . '/../public/app/views/pieces/show.php');
     assert_contains($show, 'piece_view_critical_css()');

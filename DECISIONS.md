@@ -2462,3 +2462,21 @@ path used by camera-first gestures, and live/immersive-export pages preload
 - `php tests/three-runtime-consistency.php` — **Passed: 122, Failed: 0**
 - `php tests/art-piece-generation.php` — **Passed: 143, Failed: 0**
 - JavaScript and modified PHP syntax checks passed.
+
+## 2026-07-10 — iOS Hand Tracking and Live Mic Recovery
+
+### Decision
+
+iPhone testing proved camera capture/background worked while MediaPipe hand
+features failed and mic capture silenced the existing mix. The shared sonic
+engine now treats these as downstream runtime failures: MediaPipe initialization
+is retryable, direct-video inference falls back to a throttled canvas source,
+and failures expose capability states instead of being swallowed. Steering then
+offers explicitly labeled device tilt; camera theremin has no fake substitute.
+
+Live mic now uses one `getUserMedia({audio:true})` stream connected through
+`AudioContext.createMediaStreamSource()` into the Tone effects/bus. It no
+longer opens a second Tone.UserMedia stream after the gesture. Failure stops
+the mic, resumes the existing synth graph, and never enables feedback-prone raw
+monitoring. `?sonicdebug=1` shows local-only stage diagnostics; nothing is
+persisted or transmitted. No schema, route, feature flag, or vendor changed.

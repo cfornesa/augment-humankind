@@ -292,6 +292,13 @@ may also block the bundled MediaPipe module under direct-file CORS rules. If
 the camera controls remain off, serve the extracted folder from localhost
 (for example, `python3 -m http.server`) or deploy it over HTTPS; the export
 includes an on-page troubleshooting notice for this case.
+On supported web views, MediaPipe initialization is retryable and hand
+inference falls back from direct video frames to a throttled canvas copy when
+Safari rejects the video source. If hand inference still cannot run, steering
+is relabeled as device tilt (with a separate motion-permission gesture); the
+camera theremin is marked unavailable rather than silently pretending to be
+active. `?sonicdebug=1` adds a local-only diagnostic panel for camera, model,
+inference, microphone, and audio-context stages.
 
 AI piece prompts can also name existing CMS media explicitly. Prompt language
 now treats image-style IDs and media-asset IDs as parallel inputs rather than
