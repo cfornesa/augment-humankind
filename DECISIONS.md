@@ -2496,3 +2496,34 @@ longer opens a second Tone.UserMedia stream after the gesture. Failure stops
 the mic, resumes the existing synth graph, and never enables feedback-prone raw
 monitoring. `?sonicdebug=1` shows local-only stage diagnostics; nothing is
 persisted or transmitted. No schema, route, feature flag, or vendor changed.
+
+## 2026-07-11 — Deployed-Host MIME Types for MediaPipe / WASM Assets
+
+### Decision
+
+Cross-browser testing against production (real Chrome on ChromeOS via browser
+automation, plus iPhone Safari reports) captured the root cause of hand
+tracking failing on ChromeOS/iOS while working on macOS Chrome: LiteSpeed
+serves unknown extensions as `text/plain`, and browsers hard-reject ES-module
+`import()` and WASM streaming with that type. The self-hosted
+`/assets/vendor/mediapipe-hands/vision_bundle.mjs` therefore never loaded on
+deployed hosts ("Failed to fetch dynamically imported module"), and every
+browser silently depended on the 19 MB jsdelivr/Google CDN fallback — which
+Chrome-on-macOS survived and ChromeOS/iOS did not ("Aborted(both async and
+sync fetching of the wasm failed)"). The PHP dev server sends correct types,
+which is why 127.0.0.1 always worked.
+
+Fix: `AddType` declarations in `public/.htaccess` for `.mjs`, `.wasm`,
+`.task`, `.glb`, `.gltf`, `.obj` so the self-hosted bundle loads first-party
+on any deployment. Also confirmed the separate "Mic unavailable" defect on all
+browsers was the pre-4175ba8 mic chain connect bug, resolved by deploying that
+commit. No schema, route, feature flag, public endpoint, or vendor changed;
+`.htaccess` is generic and duplication-safe.
+
+### Verification
+
+- Captured failing error strings from production inside the piece iframe on
+  ChromeOS before the fix; local (correct-MIME) equivalent verified working in
+  Chrome on macOS (mic enable + effects panel, hand assets loading locally).
+- Post-deploy check: `curl -sI https://augmenthumankind.com/assets/vendor/mediapipe-hands/vision_bundle.mjs`
+  must report `content-type: text/javascript`.

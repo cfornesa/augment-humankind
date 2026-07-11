@@ -5,6 +5,19 @@
 Options -Indexes
 DirectoryIndex index.php
 
+# LiteSpeed defaults unknown extensions to text/plain. Browsers hard-reject
+# ES modules (import()) and WebAssembly streaming served as text/plain, which
+# silently broke the self-hosted MediaPipe hand-tracking bundle
+# (/assets/vendor/mediapipe-hands/) on deployed hosts while the PHP dev
+# server — which sends correct types — kept working. .task is the MediaPipe
+# model; .glb/.gltf/.obj are the 3D piece-model uploads.
+AddType text/javascript .mjs
+AddType application/wasm .wasm
+AddType application/octet-stream .task
+AddType model/gltf-binary .glb
+AddType model/gltf+json .gltf
+AddType text/plain .obj
+
 php_value upload_max_filesize 64M
 php_value post_max_size 72M
 php_value max_execution_time 120
