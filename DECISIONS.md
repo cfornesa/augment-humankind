@@ -2367,3 +2367,98 @@ was approved via plan mode.
   stale names (IDLE_GAP_MS/pieceLoadToneOnce/motionTick absent from doc).
 - All markdown links resolve except the two intentional diagram
   placeholders; TOC anchors follow GitHub slug rules.
+
+## 2026-07-10 — iOS Regular-View Fixes + Camera Background & Hand Control
+
+### Context
+User reported iOS Safari breakage on /pieces/113 (unstyled fullscreen/sound
+UI, clickable footer in fullscreen, dead camera theremin, mic silencing the
+ambient voice) and requested two features: camera feed as piece background
+and hand-tracking piece control. Plan approved in plan mode (scoping via
+AskUserQuestion: inline critical CSS + cache-bust; defensive mic fix;
+camera background three/aframe only; hand-as-orbit control).
+
+### Agent loops
+- 2 Explore agents (parallel): regular-view UI/CSS forensics; sonic-controller
+  hand/mic tracing + feature feasibility.
+
+### Root causes and fixes
+- Unstyled UI: styles.css linked without cache-busting (header.php) while
+  the recent .piece-* rules only lived in that external sheet; iOS served a
+  stale copy. Fixed: `?v=filemtime` on the stylesheet link AND the .piece-*
+  block (styles.css 1695–2198) MOVED verbatim into a new
+  `piece_view_critical_css()` (immersive-chrome.php) inlined by
+  views/pieces/show.php — single source, deleted from styles.css.
+  `.piece-immersive-link` stayed in styles.css (used by collections/show).
+- Camera theremin dead on iOS: postMessage relays carry no user activation,
+  and getUserMedia sat after Tone+MediaPipe awaits. Fixed: same-origin
+  gesture bridge (`window.__creatrSonicGesture`, piece-runtime.js) called
+  synchronously from parent click handlers (piece-fullscreen.js
+  `gestureCall()`, postMessage fallback); engine-level getUserMedia-FIRST
+  ordering (ref-counted `acquireHandCamera()`, mic permission stream before
+  Tone load); MediaPipe model warmed on sound-enable; hidden video appended
+  to DOM; `allow="camera; microphone"` on the regular-view iframe and the
+  immersive full-view lightbox iframe (previously had NO allow attribute).
+- Mic silencing ambient: piece 113 is synth-ambient, so the confirmed
+  sample-Player interruption theory is incomplete; shipped defensive
+  `recoverFromAudioSessionChange()` (context resume + sample restart +
+  statechange listener). If the synth case still reproduces on device,
+  next step is the ?sonicdebug diagnostics from the plan.
+
+### New features
+- "Steer the piece" (hand-as-orbit) + "Show camera" (VideoTexture scene
+  background): shared ref-counted camera pipeline in sonic-controller.js
+  (`enableHandControl`/`onHandFrame`/`acquireCameraFeed`), engine hooks on
+  `window.__pieceHandHooks` (three: eased-spherical orbit + VideoTexture;
+  aframe: yaw/pitch + VideoTexture; c2 interactive: synthetic pointermove,
+  no background). Rows capability-gated via the iframe handshake. Export
+  parity: hooks added to BOTH three export bootstraps (bundle + cdn) and
+  rows/wiring in piece_export_sonic_script (three exports only).
+
+### Follow-up scope (closed 2026-07-10)
+- The initially omitted immersive mounted-view toggles and A-Frame offline
+  export rows were completed in the parity follow-up below.
+
+### Verification
+- All tests pass (three-runtime-consistency 120 incl. 6 new contract tests;
+  art-piece-generation 142; full suite green).
+- Local browser (php -S via preview): /pieces/113 renders styled popover,
+  piano, download picker from the INLINE CSS (rules no longer exist in
+  styles.css, so rendering proves the inline path); CSS-fallback fullscreen
+  lifts main to z-index 9600 — footer unreachable; sound enables via the
+  gesture bridge (Tone loads); hand-control/camera toggles fail closed with
+  aria reverted when camera is blocked; zero console errors; mobile-width
+  @media rules apply from the inline block; export sonic script emits the
+  new rows for three and not for aframe.
+- Remaining: on-device iPhone verification against production (theremin,
+  ambient-vs-mic, camera background, hand-orbit) — awaiting user.
+
+## 2026-07-10 — Completed Hand/Camera Parity for Immersive Mounts and A-Frame Exports
+
+### Decision
+
+“Steer the piece” and “Show camera” now have Three.js/A-Frame parity across
+regular live views, mounted immersive views, and standalone ZIP exports.
+Mounted hand steering receives exclusive camera ownership: Three.js pauses
+OrbitControls, arrow/click/wheel/viewer navigation, and gyro; A-Frame pauses
+look/WASD, pointer, and viewer controls. Disabling steering restores the exact
+previous control modes at the hand-steered pose, with gyro recalibrated from
+that pose rather than snapping back.
+
+The shared ref-counted MediaPipe camera stream remains the only camera source.
+Theremin, steering, and camera background may be toggled independently; denial,
+disable, page teardown, and viewer destruction release their references,
+restore the prior scene background, and dispose video textures. Collection
+exports remain excluded from hand tracking, and no schema, route, feature flag,
+public endpoint, or vendor dependency changed.
+
+Browser permission testing caught and fixed a mounted-view initialization gap:
+`createAudioController()` now provides the synchronous `ensureEngineSync()`
+path used by camera-first gestures, and live/immersive-export pages preload
+`sonic-controller.js` so `getUserMedia` remains inside the originating click.
+
+### Verification
+
+- `php tests/three-runtime-consistency.php` — **Passed: 122, Failed: 0**
+- `php tests/art-piece-generation.php` — **Passed: 143, Failed: 0**
+- JavaScript and modified PHP syntax checks passed.

@@ -218,6 +218,10 @@
             }
         });
         if (micRow) micRow.hidden = !event.data.micSupported;
+        const handControlRowEl = root.querySelector('[data-piece-sound-hand-control-row]');
+        if (handControlRowEl) handControlRowEl.hidden = !event.data.handControlSupported;
+        const cameraBgRowEl = root.querySelector('[data-piece-sound-camera-bg-row]');
+        if (cameraBgRowEl) cameraBgRowEl.hidden = !event.data.cameraBgSupported;
     });
 
     voicePickerSelects.forEach((select) => {
@@ -333,13 +337,27 @@
         frame.contentWindow?.postMessage({ type: 'creatr-sound-octave', octave: currentOctaveDisplay }, '*');
     });
 
+    // Gesture-critical toggles (camera/mic getUserMedia inside the iframe):
+    // postMessage does NOT carry WebKit's transient user activation across
+    // the boundary, so call straight into the same-origin iframe from the
+    // click task via the bridge piece-runtime.js exposes — falling back to
+    // the old relay if the bridge isn't there yet (iframe still booting).
+    function gestureCall(method, on, fallbackType) {
+        const win = frame.contentWindow;
+        if (!win) return;
+        const bridge = win.__creatrSonicGesture;
+        if (bridge && typeof bridge[method] === 'function') {
+            try { bridge[method](on); return; } catch (_e) {}
+        }
+        win.postMessage({ type: fallbackType, enabled: on }, '*');
+    }
+
     const panelHandToggle = root.querySelector('[data-piece-sound-hand-toggle]');
     panelHandToggle?.addEventListener('click', () => {
         const nextOn = panelHandToggle.getAttribute('aria-pressed') !== 'true';
-        // getUserMedia's own permission prompt (inside the iframe) is the
-        // user gesture here; on denial the iframe replies with enabled:false
-        // and this silently reverts — no error banner.
-        frame.contentWindow?.postMessage({ type: 'creatr-sound-hand-toggle', enabled: nextOn }, '*');
+        // On denial the iframe replies with enabled:false and this silently
+        // reverts — no error banner.
+        gestureCall('toggleHand', nextOn, 'creatr-sound-hand-toggle');
     });
 
     window.addEventListener('message', (event) => {
@@ -349,11 +367,35 @@
         panelHandToggle?.setAttribute('aria-pressed', event.data.enabled ? 'true' : 'false');
     });
 
+    // Hand-control (piece interaction) and camera-background — same shared
+    // camera pipeline as the theremin, each its own toggle. Rows are hidden
+    // until the iframe's capability handshake says the active engine
+    // supports them.
+    const handControlToggle = root.querySelector('[data-piece-sound-hand-control-toggle]');
+    const cameraBgToggle = root.querySelector('[data-piece-sound-camera-bg-toggle]');
+
+    handControlToggle?.addEventListener('click', () => {
+        const nextOn = handControlToggle.getAttribute('aria-pressed') !== 'true';
+        gestureCall('toggleHandControl', nextOn, 'creatr-sound-hand-control-toggle');
+    });
+    cameraBgToggle?.addEventListener('click', () => {
+        const nextOn = cameraBgToggle.getAttribute('aria-pressed') !== 'true';
+        gestureCall('toggleCameraBackground', nextOn, 'creatr-sound-camera-bg-toggle');
+    });
+    window.addEventListener('message', (event) => {
+        if (event.source !== frame.contentWindow || !event.data) return;
+        if (event.data.type === 'creatr-sound-hand-control-state') {
+            handControlToggle?.setAttribute('aria-pressed', event.data.enabled ? 'true' : 'false');
+        } else if (event.data.type === 'creatr-sound-camera-bg-state') {
+            cameraBgToggle?.setAttribute('aria-pressed', event.data.enabled ? 'true' : 'false');
+        }
+    });
+
     // Live human-voice input (mic) — visitor-facing, off by default, never
-    // persisted. Same postMessage-relay pattern as hand-tracking above.
+    // persisted.
     micToggle?.addEventListener('click', () => {
         const nextOn = micToggle.getAttribute('aria-pressed') !== 'true';
-        frame.contentWindow?.postMessage({ type: 'creatr-sound-mic-toggle', enabled: nextOn }, '*');
+        gestureCall('toggleMic', nextOn, 'creatr-sound-mic-toggle');
     });
 
     micFxToggles.forEach((checkbox) => {

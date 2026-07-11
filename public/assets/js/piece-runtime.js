@@ -161,10 +161,40 @@ function createPieceRuntimeAudioController(sonicParams, getMover) {
           },
           ambientIsSample: !!(ambientSample.enabled && ambientSample.media_id),
           micSupported: !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia),
+          // Engine-dependent camera capabilities (hooks are registered by
+          // the active bootstrap before this controller is created).
+          handControlSupported: !!(voices.hand_tracking && window.__pieceHandHooks && window.__pieceHandHooks.handPoint),
+          cameraBgSupported: !!(voices.hand_tracking && window.__pieceHandHooks && window.__pieceHandHooks.setBackgroundVideo),
         }, '*');
       }
     } catch (_) {}
   })();
+
+  // Kick the (audio-free, ~small) controller script load immediately so that
+  // by the time the visitor taps a camera/mic toggle the engine can be
+  // created SYNCHRONOUSLY inside the gesture task — WebKit's transient
+  // activation does not survive awaits on script loads.
+  pieceLoadSonicControllerOnce().catch(() => {});
+
+  function createEngineWith(CSC) {
+    return CSC.create(sonicParams, {
+      getMover: getMover || undefined,
+      toneSrc: (pieceContext && typeof pieceContext.toneSource === 'string' && pieceContext.toneSource !== '')
+        ? pieceContext.toneSource
+        : undefined,
+    });
+  }
+
+  // Synchronous engine creation for gesture-critical paths; returns null if
+  // the controller script hasn't finished loading yet (callers then fall
+  // back to the async path and accept the activation risk).
+  function ensureEngineSync() {
+    if (disposed || engine) return engine;
+    const CSC = window.CreatrSonicController;
+    if (!CSC) return null;
+    engine = createEngineWith(CSC);
+    return engine;
+  }
 
   async function ensureEnabled() {
     if (disposed) return false;
@@ -172,12 +202,7 @@ function createPieceRuntimeAudioController(sonicParams, getMover) {
     if (!engine) {
       const CSC = await pieceLoadSonicControllerOnce();
       if (disposed) return false;
-      engine = CSC.create(sonicParams, {
-        getMover: getMover || undefined,
-        toneSrc: (pieceContext && typeof pieceContext.toneSource === 'string' && pieceContext.toneSource !== '')
-          ? pieceContext.toneSource
-          : undefined,
-      });
+      engine = createEngineWith(CSC);
       if (!engine) return false;
     }
     const ok = await engine.enable();
@@ -241,35 +266,93 @@ function createPieceRuntimeAudioController(sonicParams, getMover) {
       return;
     }
     if (data.type === 'creatr-sound-hand-toggle') {
-      if (!data.enabled) {
-        engine?.disableHandTracking();
-        engine?.setInputMode('motion');
-        notifyParentHandState(false);
-        return;
-      }
-      ensureEnabled().then(async (ok) => {
-        const handOk = ok && engine ? await engine.enableHandTracking() : false;
-        if (handOk) engine.setInputMode('hand');
-        notifyParentHandState(handOk);
-      });
+      handleHandToggle(!!data.enabled);
+      return;
+    }
+    if (data.type === 'creatr-sound-hand-control-toggle') {
+      handleHandControlToggle(!!data.enabled);
+      return;
+    }
+    if (data.type === 'creatr-sound-camera-bg-toggle') {
+      handleCameraBackgroundToggle(!!data.enabled);
       return;
     }
     if (data.type === 'creatr-sound-mic-toggle') {
-      if (!data.enabled) {
-        engine?.disableMic();
-        notifyParentMicState(false);
-        return;
-      }
-      ensureEnabled().then(async (ok) => {
-        const micOk = ok && engine ? await engine.enableMic() : false;
-        notifyParentMicState(micOk);
-      });
+      handleMicToggle(!!data.enabled);
       return;
     }
     if (data.type === 'creatr-sound-mic-fx') {
       engine?.setMicEffect(data.effect, data.enabled);
       return;
     }
+  }
+
+  // Gesture-critical toggles are shared between the postMessage relay and
+  // the same-origin direct bridge (window.__creatrSonicGesture, called
+  // synchronously from the parent page's click handler so WebKit's transient
+  // activation reaches getUserMedia — postMessage alone does not carry it).
+  function handleHandToggle(on) {
+    if (!on) {
+      engine?.disableHandTracking();
+      engine?.setInputMode('motion');
+      notifyParentHandState(false);
+      return;
+    }
+    const eng = ensureEngineSync();
+    // Camera first, inside the gesture task (enableHandTracking's first
+    // await is getUserMedia); audio enablement follows.
+    const handPromise = eng ? eng.enableHandTracking() : null;
+    ensureEnabled().then(async (ok) => {
+      const handOk = ok && engine
+        ? await (handPromise !== null ? handPromise : engine.enableHandTracking())
+        : false;
+      if (handOk) engine.setInputMode('hand');
+      notifyParentHandState(handOk);
+    }).catch(() => notifyParentHandState(false));
+  }
+
+  function handleMicToggle(on) {
+    if (!on) {
+      engine?.disableMic();
+      notifyParentMicState(false);
+      return;
+    }
+    ensureEngineSync();
+    ensureEnabled().then(async (ok) => {
+      const micOk = ok && engine ? await engine.enableMic() : false;
+      notifyParentMicState(micOk);
+    }).catch(() => notifyParentMicState(false));
+  }
+
+  function handleHandControlToggle(on) {
+    if (!on) {
+      handControlBinding.detach();
+      engine?.disableHandControl();
+      notifyParentHandControlState(false);
+      return;
+    }
+    const eng = ensureEngineSync();
+    Promise.resolve(eng ? eng.enableHandControl() : false).then((controlOk) => {
+      if (controlOk) handControlBinding.attach(engine);
+      notifyParentHandControlState(controlOk);
+    }).catch(() => notifyParentHandControlState(false));
+  }
+
+  function handleCameraBackgroundToggle(on) {
+    if (!on) {
+      cameraBackgroundBinding.detach();
+      engine?.releaseCameraFeed();
+      notifyParentCameraBgState(false);
+      return;
+    }
+    const eng = ensureEngineSync();
+    Promise.resolve(eng ? eng.acquireCameraFeed() : Promise.reject(new Error('unavailable')))
+      .then((video) => {
+        const shown = cameraBackgroundBinding.attach(video);
+        if (!shown) engine?.releaseCameraFeed();
+        notifyParentCameraBgState(shown);
+      })
+      .catch(() => notifyParentCameraBgState(false));
   }
 
   function notifyParentHandState(on) {
@@ -295,6 +378,69 @@ function createPieceRuntimeAudioController(sonicParams, getMover) {
       }
     } catch (_) {}
   }
+
+  function notifyParentHandControlState(on) {
+    try {
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({ type: 'creatr-sound-hand-control-state', enabled: !!on }, '*');
+      }
+    } catch (_) {}
+  }
+
+  function notifyParentCameraBgState(on) {
+    try {
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({ type: 'creatr-sound-camera-bg-state', enabled: !!on }, '*');
+      }
+    } catch (_) {}
+  }
+
+  // Hand-control: feeds each landmark frame's wrist position (mirrored X so
+  // moving the hand right steers right — the camera image is a mirror) into
+  // the engine-specific interaction hook that the active bootstrap
+  // registered on window.__pieceHandHooks (orbit for three, camera yaw/pitch
+  // for aframe, synthetic pointer for interactive c2).
+  const handControlBinding = {
+    active: false,
+    attach(eng) {
+      if (this.active || !eng) return;
+      this.active = true;
+      eng.onHandFrame((hand) => {
+        if (!this.active || !hand) return;
+        const hooks = window.__pieceHandHooks;
+        if (!hooks || typeof hooks.handPoint !== 'function') return;
+        const wrist = hand[0];
+        if (!wrist) return;
+        try { hooks.handPoint(1 - wrist.x, wrist.y); } catch (_) {}
+      });
+    },
+    detach() {
+      if (!this.active) return;
+      this.active = false;
+      engine?.onHandFrame(null);
+    },
+  };
+
+  // Camera background: hands the shared hidden <video> to the bootstrap's
+  // setBackgroundVideo hook (three/aframe VideoTexture); attach() returns
+  // false where the active engine registered no such hook.
+  const cameraBackgroundBinding = {
+    active: false,
+    attach(video) {
+      const hooks = window.__pieceHandHooks;
+      if (!video || !hooks || typeof hooks.setBackgroundVideo !== 'function') return false;
+      let shown = false;
+      try { shown = !!hooks.setBackgroundVideo(video); } catch (_) {}
+      this.active = shown;
+      return shown;
+    },
+    detach() {
+      if (!this.active) return;
+      this.active = false;
+      const hooks = window.__pieceHandHooks;
+      try { hooks && hooks.clearBackgroundVideo && hooks.clearBackgroundVideo(); } catch (_) {}
+    },
+  };
 
   // Inline sound toggle button for the standalone (file://) exported HTML,
   // where there is no parent hosting the iframe — root document owns UI.
@@ -545,10 +691,25 @@ function createPieceRuntimeAudioController(sonicParams, getMover) {
 
   window.addEventListener('message', handleMessage);
 
+  // Same-origin gesture bridge: the parent page's click handlers call these
+  // synchronously (frame.contentWindow.__creatrSonicGesture.*) so WebKit's
+  // transient activation reaches the getUserMedia calls inside — the
+  // postMessage relay above stays as the fallback and for non-gesture
+  // messages (volume, octave, effects).
+  window.__creatrSonicGesture = {
+    toggleSound(on) { handleMessage({ source: window, data: { type: 'creatr-sound-toggle', enabled: !!on } }); },
+    toggleHand: handleHandToggle,
+    toggleMic: handleMicToggle,
+    toggleHandControl: handleHandControlToggle,
+    toggleCameraBackground: handleCameraBackgroundToggle,
+  };
+
   return {
     dispose() {
       disposed = true;
       detachStandalonePianoKeys?.();
+      handControlBinding.detach();
+      cameraBackgroundBinding.detach();
       engine?.dispose();
     },
   };
@@ -1101,6 +1262,29 @@ function bootCanvasRuntime(extra) {
         const t = e.touches && e.touches[0];
         if (t) updateC2Mover(t.clientX, t.clientY);
       }, { passive: true });
+      // Hand control for interactive c2: the wrist becomes a synthetic
+      // pointer over the canvas, driving both the piece's own pointer
+      // handlers and (via updateC2Mover) the movement voice. No camera
+      // background here — the 2D canvas is opaque with no scene object.
+      window.__pieceHandHooks = {
+        engine: 'c2_interactive',
+        handPoint(nx, ny) {
+          const rect = canvas.getBoundingClientRect();
+          if (!rect.width || !rect.height) return;
+          const clientX = rect.left + nx * rect.width;
+          const clientY = rect.top + ny * rect.height;
+          updateC2Mover(clientX, clientY);
+          try {
+            canvas.dispatchEvent(new PointerEvent('pointermove', { clientX, clientY, bubbles: true }));
+          } catch (_) {
+            try {
+              const ev = document.createEvent('MouseEvent');
+              ev.initMouseEvent('mousemove', true, true, window, 0, clientX, clientY, clientX, clientY, false, false, false, false, 0, null);
+              canvas.dispatchEvent(ev);
+            } catch (_e) {}
+          }
+        },
+      };
       pieceAudioController = createPieceRuntimeAudioController(PIECE_SONIC, () => c2Mover);
     } else {
       // Plain (non-interactive) c2 has no motion signal — idle-only pattern.
@@ -1449,6 +1633,35 @@ function bootAFrame() {
         disableMotionTracking();
         bindAFramePointerControls();
         requestAnimationFrame(() => requestAnimationFrame(signalAFrameReadyOnce));
+        // Hooks first (capability handshake) — see the three bootstrap twin.
+        window.__pieceHandHooks = {
+          engine: 'aframe',
+          handPoint(nx, ny) {
+            const cameraObject = getAFrameCameraObject();
+            if (!cameraObject) return;
+            const desiredYaw = (0.5 - nx) * Math.PI * 1.5;
+            const desiredPitch = (0.5 - ny) * Math.PI * 0.6;
+            cameraObject.rotation.y += (desiredYaw - cameraObject.rotation.y) * 0.12;
+            cameraObject.rotation.x += (desiredPitch - cameraObject.rotation.x) * 0.12;
+          },
+          _prevBackground: undefined,
+          _videoTexture: null,
+          setBackgroundVideo(video) {
+            const THREE = window.AFRAME && window.AFRAME.THREE;
+            const object3D = scene && scene.object3D;
+            if (!THREE || !THREE.VideoTexture || !object3D) return false;
+            this._prevBackground = object3D.background ?? null;
+            this._videoTexture = new THREE.VideoTexture(video);
+            if (THREE.SRGBColorSpace) this._videoTexture.colorSpace = THREE.SRGBColorSpace;
+            object3D.background = this._videoTexture;
+            return true;
+          },
+          clearBackgroundVideo() {
+            const object3D = scene && scene.object3D;
+            if (object3D) object3D.background = this._prevBackground ?? null;
+            if (this._videoTexture) { try { this._videoTexture.dispose(); } catch (_) {} this._videoTexture = null; }
+          },
+        };
         if (PIECE_SONIC) {
           pieceAudioController = createPieceRuntimeAudioController(PIECE_SONIC, () => getAFrameCameraMover());
         }
@@ -1853,6 +2066,44 @@ async function bootThree() {
       };
       animateControls();
     }
+
+    // Interaction/camera hooks for the shared hand-tracking pipeline —
+    // registered BEFORE the audio controller so its capability handshake
+    // (notifyParentVoices) can advertise them to the host page.
+    window.__pieceHandHooks = {
+      engine: 'three',
+      // Wrist position (mirrored x, raw y in 0..1) steers the orbit like a
+      // continuous drag: desired spherical angles around the current orbit
+      // target, eased per frame so tracking jitter doesn't jolt the camera.
+      handPoint(nx, ny) {
+        if (!controls || !state.camera) return;
+        const target = controls.target;
+        const offset = state.camera.position.clone().sub(target);
+        const sph = new mod.Spherical().setFromVector3(offset);
+        const desiredTheta = (nx - 0.5) * Math.PI * 1.5;
+        const desiredPhi = Math.PI / 2 + (ny - 0.5) * Math.PI * 0.7;
+        sph.theta += (desiredTheta - sph.theta) * 0.12;
+        sph.phi += (desiredPhi - sph.phi) * 0.12;
+        sph.phi = Math.max(0.15, Math.min(Math.PI - 0.15, sph.phi));
+        offset.setFromSpherical(sph);
+        state.camera.position.copy(target).add(offset);
+        controls.update();
+      },
+      _prevBackground: undefined,
+      _videoTexture: null,
+      setBackgroundVideo(video) {
+        if (!state.scene || !mod.VideoTexture) return false;
+        this._prevBackground = state.scene.background ?? null;
+        this._videoTexture = new mod.VideoTexture(video);
+        if (mod.SRGBColorSpace) this._videoTexture.colorSpace = mod.SRGBColorSpace;
+        state.scene.background = this._videoTexture;
+        return true;
+      },
+      clearBackgroundVideo() {
+        if (state.scene) state.scene.background = this._prevBackground ?? null;
+        if (this._videoTexture) { try { this._videoTexture.dispose(); } catch (_) {} this._videoTexture = null; }
+      },
+    };
 
     // Per-piece Tone.js sonification: muted by default, unmuted via a
     // postMessage from the parent page's sound toggle (no master switch).

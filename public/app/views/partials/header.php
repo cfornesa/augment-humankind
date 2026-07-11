@@ -100,7 +100,10 @@ unset($_ahLightMap, $_ahDarkMap, $_ahCol, $_ahVar);
         <meta property="og:image" content="<?= e($_ahResolvedOgImage) ?>">
         <meta name="twitter:image" content="<?= e($_ahResolvedOgImage) ?>">
     <?php endif; ?>
-    <link rel="stylesheet" href="/assets/styles.css">
+    <?php // Cache-busted like the piece JS: iOS Safari holds stylesheets far
+          // past their freshness window, which left new .piece-*/.admin-* rules
+          // unapplied for returning visitors. ?>
+    <link rel="stylesheet" href="/assets/styles.css?v=<?= (int) @filemtime(dirname(__DIR__, 3) . '/assets/styles.css') ?>">
     <?php if ($_ahLightVars !== [] || $_ahDarkVars !== []): ?>
     <style>
         <?php if ($_ahLightVars !== []): ?>

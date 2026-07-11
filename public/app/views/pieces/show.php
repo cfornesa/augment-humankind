@@ -83,13 +83,17 @@ $pieceFullscreenScriptVersion = (int) @filemtime(dirname(__DIR__, 3) . '/assets/
 
 <?php $status = $piece['status'] ?? 'active'; require dirname(__DIR__) . '/partials/status-banner.php'; ?>
 
+<?php // Inlined so the piece chrome (sound panel, piano, fullscreen overlay)
+      // never depends on a stale-cached external stylesheet — see
+      // piece_view_critical_css() in immersive-chrome.php. ?>
+<style><?= piece_view_critical_css() ?></style>
 <section class="piece-stage" aria-label="Generative art piece">
     <?php if ($hasCode): ?>
         <div data-piece-download-root data-piece-id="<?= (int) $piece['id'] ?>">
             <div class="piece-canvas-container">
                 <?= piece_render_iframe($piece, $version, 560, array_filter([
                     'data-piece-download-frame' => 'true',
-                    'allow' => $handTrackingAvailable ? 'camera' : null,
+                    'allow' => $handTrackingAvailable ? 'camera; microphone' : 'microphone',
                 ])) ?>
                 <?php if ($soundToggleAvailable): ?>
                 <div class="piece-sound-controls">
@@ -122,6 +126,17 @@ $pieceFullscreenScriptVersion = (int) @filemtime(dirname(__DIR__, 3) . '/assets/
                         <div class="piece-sound-row" data-piece-sound-hand-row>
                             <span>Hand-tracking</span>
                             <button type="button" class="piece-sound-keyboard-toggle" data-piece-sound-hand-toggle aria-pressed="false">Camera theremin</button>
+                        </div>
+                        <?php // Engine-dependent camera features: unhidden by the iframe's
+                              // capability handshake (creatr-sound-voices) when the active
+                              // engine registered the matching interaction hook. ?>
+                        <div class="piece-sound-row" data-piece-sound-hand-control-row hidden>
+                            <span>Hand control</span>
+                            <button type="button" class="piece-sound-keyboard-toggle" data-piece-sound-hand-control-toggle aria-pressed="false">Steer the piece</button>
+                        </div>
+                        <div class="piece-sound-row" data-piece-sound-camera-bg-row hidden>
+                            <span>Camera view</span>
+                            <button type="button" class="piece-sound-keyboard-toggle" data-piece-sound-camera-bg-toggle aria-pressed="false">Show camera</button>
                         </div>
                         <?php endif; ?>
                         <?= immersive_stage_mic_panel_markup('piece-mic', 'data-piece-mic', 'piece-sound-row', 'piece-sound-keyboard-toggle') ?>

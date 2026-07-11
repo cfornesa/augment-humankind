@@ -278,6 +278,21 @@ HTML/CSS/JS. The seeded templates demonstrate optional CMS media usage with
 background example, using engine-appropriate sizing rather than asset-tag
 dimensions.
 
+Hand-tracking-enabled pieces expose three independent, visitor-controlled
+camera uses: a camera theremin, “Steer the piece,” and “Show camera.” Three.js
+and A-Frame support steering and camera backgrounds in regular views, mounted
+immersive views, and standalone ZIP exports; interactive C2 uses hand steering
+as pointer input but has no scene-background hook. Mounted hand steering owns
+the camera until disabled, then restores gyro/manual controls at the resulting
+viewpoint. Camera frames are processed locally for landmarks or a live texture
+and are never recorded, persisted, or transmitted. A downloaded ZIP opened
+directly with a `file://` URL may not receive camera access—particularly in
+Safari—because browsers can require a secure context for `getUserMedia` and
+may also block the bundled MediaPipe module under direct-file CORS rules. If
+the camera controls remain off, serve the extracted folder from localhost
+(for example, `python3 -m http.server`) or deploy it over HTTPS; the export
+includes an on-page troubleshooting notice for this case.
+
 AI piece prompts can also name existing CMS media explicitly. Prompt language
 now treats image-style IDs and media-asset IDs as parallel inputs rather than
 implicitly interchangeable aliases:

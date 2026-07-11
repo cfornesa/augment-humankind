@@ -430,8 +430,12 @@
   and wrist-to-fingertip spread controls that voice's volume. Enabled per
   piece by the admin (Audio tab, "Hand-tracking" voice toggle) and, when
   enabled, exposed to visitors as a toggle in the sound popover on the
-  regular `/pieces/[id]` view and the immersive single-piece view only —
-  never the exhibit-wall/gallery-room multiplex (performance: no running
+  regular `/pieces/[id]` view, the mounted immersive single-piece view, and
+  standalone Three.js/A-Frame ZIP exports. The same camera pipeline also
+  powers independent “Steer the piece” and “Show camera” controls on those
+  Three.js/A-Frame surfaces; interactive C2 supports steering as pointer input
+  but not camera backgrounds. These controls are never enabled for the
+  exhibit-wall/gallery-room multiplex (performance: no running
   parallel inference for every wall thumbnail; UX: no camera prompts firing
   on an unfocused tile).
 - **Package:** `@mediapipe/tasks-vision` (WASM inference engine) +
@@ -444,9 +448,10 @@
   `import()` (valid even from a classic, non-module script in evergreen
   browsers, avoiding the need for a UMD build MediaPipe doesn't ship), lazy,
   only when a user actually activates hand-tracking mode. **Works in both the
-  live pages and single-piece ZIP exports** (immersive and non-immersive/
-  standalone alike) — `piece_export_sonic_script()`'s self-built popover
-  (used for standalone single-piece exports) mirrors the live keyboard/hand
+  live regular and mounted immersive pages plus single-piece ZIP exports**
+  (immersive and non-immersive/standalone alike) —
+  `piece_export_sonic_script()`'s self-built popover (used for standalone
+  single-piece exports) mirrors the live keyboard/hand/steering/background
   toggle, and both export paths bundle `runtime/mediapipe-hands/*` only when
   that piece's hand-tracking voice is enabled
   (`piece_export_version_has_hand_tracking()` in `piece-render.php`). The
@@ -490,4 +495,3 @@
   `https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task`,
   replacing the files under `public/assets/vendor/mediapipe-hands/` and
   re-verifying the camera-permission flow and export bundling.
-

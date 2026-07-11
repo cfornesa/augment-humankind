@@ -744,6 +744,7 @@ canvas[aria-hidden="true"] {
 </div>
 
 <script src="/assets/js/public-piece-download.js?v=<?= $publicPieceScriptVersion ?>"></script>
+<script src="/assets/js/sonic-controller.js?v=<?= $sonicControllerVersion ?>"></script>
 <script type="module">
 window.__creatrSonicControllerSrc = '/assets/js/sonic-controller.js?v=<?= $sonicControllerVersion ?>';
 window.__creatrToneSrc = '/assets/vendor/tone/Tone.js?v=<?= $toneVersion ?>';
@@ -1028,6 +1029,7 @@ try {
             immersiveViewer?.openFullViewAt?.(0);
         },
         getAudioController: () => immersiveViewer?.getAudioController?.(),
+        getPieceInteractionController: () => immersiveViewer?.getPieceInteractionController?.(),
     });
 
     const downloadPieceLink = document.querySelector('[data-immersive-download-piece]');

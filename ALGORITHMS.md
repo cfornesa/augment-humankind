@@ -2620,21 +2620,27 @@ Consolidates the side-channel notes in §3 and §4 LEG D.
   fail-open; determinism holds per voice given its input trace (motion,
   keys, hand landmarks), with the layering making the *mix* input-driven.
 
-### 12.4 Iframe relay and autoplay-gated lazy loading — `createPieceRuntimeAudioController()` / `pieceLoadSonicControllerOnce()` ([piece-runtime.js](public/assets/js/piece-runtime.js))
-- **Type:** Gated lazy initialization (once-only promise) over a
-  message-passing handshake.
-- **Logic:** `createPieceRuntimeAudioController()` is now a thin
-  relay/adapter: on first unmute it lazy-loads sonic-controller.js
-  (`pieceLoadSonicControllerOnce()`), which in turn lazy-loads Tone.js
-  (self-hosted; exports bundle both as blob URLs like OrbitControls, §3.4 —
-  with `PluckSynth`→`FMSynth` substituted in bundle mode where the worklet
-  is unavailable), then bridges parent↔iframe `postMessage` for the sound,
-  mic, and effect toggles. Message sources are verified to be the parent
-  window (or the window itself in standalone exports); because the messages
-  originate from a real user click, the browser's autoplay-gesture
-  requirement is satisfied inside the iframe. In exhibit walls only the
-  focused piece sonifies — the controller is torn down and rebuilt when
-  focus moves.
+### 12.4 Gesture bridge, iframe relay, and autoplay-gated lazy loading — `createPieceRuntimeAudioController()` / `window.__creatrSonicGesture` ([piece-runtime.js](public/assets/js/piece-runtime.js), [piece-fullscreen.js](public/assets/js/piece-fullscreen.js))
+- **Type:** Gated lazy initialization (once-only promise) over a two-channel
+  parent↔iframe protocol.
+- **Logic:** `createPieceRuntimeAudioController()` is a thin relay/adapter:
+  the controller script is preloaded at piece load (audio-free), Tone.js is
+  lazy-loaded on first unmute (self-hosted; exports bundle both as blob URLs
+  like OrbitControls, §3.4 — with `PluckSynth`→`FMSynth` substituted in
+  bundle mode where the worklet is unavailable). Parent↔iframe communication
+  is two-channel: non-gesture messages (volume, octave, instrument, effects)
+  travel by `postMessage` with source verification, but **gesture-critical
+  toggles** (sound, camera theremin, hand control, camera background, mic)
+  are invoked by the parent page's click handler calling *synchronously*
+  into the same-origin iframe via `window.__creatrSonicGesture` — WebKit's
+  transient user activation does not survive a `postMessage` hop, so a relay
+  alone can never reach `getUserMedia` on iOS. `postMessage` remains the
+  fallback when the bridge isn't up yet. Within the engine every camera/mic
+  path calls `getUserMedia` as its FIRST await (before the Tone.js or
+  MediaPipe loads, which would outlive the activation window), and the
+  MediaPipe model is warmed in the background as soon as sound is enabled on
+  a hand-tracking piece. In exhibit walls only the focused piece sonifies —
+  the controller is torn down and rebuilt when focus moves.
 
 ### 12.5 Hand-tracking theremin — `handFrameStep()` / `loadHandLandmarkerOnce()` ([sonic-controller.js](public/assets/js/sonic-controller.js))
 - **Type:** Continuous signal mapping from vision-model landmarks (no
@@ -2651,6 +2657,12 @@ Consolidates the side-channel notes in §3 and §4 LEG D.
   `rampTo` glide, theremin-style. The note attacks when a hand enters the
   frame and releases when it leaves. Gated on the `voices.hand_tracking`
   extras flag plus a camera `getUserMedia` grant.
+- **Shared camera pipeline:** the camera stream + hidden `<video>` are a
+  ref-counted shared resource (`acquireHandCamera()`/`releaseHandCamera()`):
+  the theremin, the hand-control subscriber (§12.8), and the camera-feed
+  consumer (§12.8) each hold a reference, one `getUserMedia` prompt serves
+  all three, and the stream is torn down when the last holder releases. One
+  landmark loop feeds every consumer.
 - **Characteristics:** The vision model is a black-box classifier, but the
   mapping around it is closed-form and clamped, so out-of-range landmarks
   can only produce in-range notes. O(1) per frame beyond model inference.
@@ -2684,6 +2696,47 @@ Consolidates the side-channel notes in §3 and §4 LEG D.
   Audio uploads for the sample come through the §7.3 pipeline: a
   MIME-sniffed mp3/ogg/wav allowlist, 32 MB cap, gated on the `media_audio`
   feature flag.
+
+### 12.8 Hand-as-orbit control and camera background — `enableHandControl()` / `acquireCameraFeed()` ([sonic-controller.js](public/assets/js/sonic-controller.js)); `window.__pieceHandHooks` consumers ([piece-runtime.js](public/assets/js/piece-runtime.js), export twins in [piece-render.php](public/app/helpers/piece-render.php))
+- **Type:** Continuous landmark→control mapping (eased spherical orbit) +
+  texture substitution.
+- **Logic:** Two further consumers of the §12.5 camera pipeline, each its
+  own visitor toggle:
+  - **Hand control ("Steer the piece"):** the landmark loop publishes each
+    frame's hand (or null) to an `onHandFrame` subscriber; the host maps the
+    wrist to control input via the engine-specific hook the active bootstrap
+    registered on `window.__pieceHandHooks`. X is mirrored (camera images
+    are mirrors) so moving the hand right steers right. For Three.js the
+    wrist's normalized position becomes desired spherical angles around the
+    orbit target — `θ = (nx−0.5)·1.5π`, `φ = π/2 + (ny−0.5)·0.7π`, φ clamped
+    away from the poles — eased 12% per frame so tracking jitter never jolts
+    the camera; for A-Frame the same mapping drives camera yaw/pitch; for
+    interactive c2 the wrist becomes a synthetic `pointermove` over the
+    canvas, driving the piece's own pointer handlers (and the movement voice
+    for free). Theremin and control can run simultaneously off one camera.
+  - **Camera background ("Show camera"):** `acquireCameraFeed()` hands the
+    shared hidden `<video>` to the bootstrap's `setBackgroundVideo` hook,
+    which swaps the Three.js scene background for a `THREE.VideoTexture`
+    (previous background saved and restored on toggle-off). Registered for
+    Three.js (live + export twins) and A-Frame (live); other engines have
+    opaque canvases and no scene object, so their rows never appear — the
+    parent UI shows each row only after the iframe's capability handshake
+    (`handControlSupported`/`cameraBgSupported`) confirms the hook exists.
+    Mounted immersive Three.js/A-Frame viewers expose the same two capabilities
+    through `getPieceInteractionController()`, and standalone exports register
+    the same hook contract for both engines.
+- **Mounted-view ownership:** while hand steering is enabled, its interaction
+  controller exclusively owns the camera. Three.js pauses OrbitControls,
+  arrow/click/wheel/viewer-button navigation, and the shared gyro controller;
+  A-Frame pauses its look/WASD components plus pointer and viewer controls.
+  Disabling steering restores exactly the control modes that were active but
+  keeps the hand-steered camera pose; gyro recalibrates from that pose rather
+  than snapping back. Failure and viewer teardown clear the landmark subscriber,
+  release the shared camera reference, restore controls, restore the previous
+  scene background, and dispose the `VideoTexture`.
+- **Privacy:** frames are processed live for landmarks/texture only — never
+  recorded, persisted, or transmitted; both toggles are per-visitor opt-ins
+  on top of the sound toggle.
 
 ### Recipe Overview — Sonification pipeline
 
@@ -2822,6 +2875,11 @@ STEP 4 — VOICES         (independent concurrent legs, one tick per frame)
   mic permission dispatches `creatr-mic-failed`; a throwing note trigger is
   swallowed. Sound can only ever degrade toward silence — it has no path to
   break the visual piece.
+- *Audio-session recovery:* opening the mic switches iOS to a
+  play-and-record session, which can interrupt the AudioContext and stop a
+  looping ambient sample; `recoverFromAudioSessionChange()` resumes the
+  context, restarts the sample, and installs a `statechange` listener so the
+  same recovery runs after any later interruption (phone call, Siri).
 - *Privacy boundary:* camera frames and mic audio are processed live and
   never persisted or transmitted; hand tracking and mic are separate
   per-visitor opt-ins on top of the sound toggle.

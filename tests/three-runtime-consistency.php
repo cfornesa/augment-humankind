@@ -1054,6 +1054,118 @@ test('piece-runtime.js relays mic toggle/effect postMessages and reports mic sup
     assert_contains($runtime, 'NOT extended with mic UI');
 });
 
+test('gesture bridge: parent surfaces call same-origin into the iframe for camera/mic toggles (postMessage carries no user activation on WebKit)', function () {
+    $runtime = file_get_contents(__DIR__ . '/../public/assets/js/piece-runtime.js');
+    assert_contains($runtime, 'window.__creatrSonicGesture = {');
+    assert_contains($runtime, 'toggleHand: handleHandToggle');
+    assert_contains($runtime, 'toggleMic: handleMicToggle');
+
+    $fullscreen = file_get_contents(__DIR__ . '/../public/assets/js/piece-fullscreen.js');
+    assert_contains($fullscreen, 'function gestureCall(method, on, fallbackType)');
+    assert_contains($fullscreen, "gestureCall('toggleHand', nextOn, 'creatr-sound-hand-toggle')");
+    assert_contains($fullscreen, "gestureCall('toggleMic', nextOn, 'creatr-sound-mic-toggle')");
+});
+
+test('camera acquisition is getUserMedia-FIRST in every gesture path (theremin, hand control, mic) and the stream is shared/ref-counted', function () {
+    $sonicSrc = file_get_contents(__DIR__ . '/../public/assets/js/sonic-controller.js');
+    assert_contains($sonicSrc, 'async function acquireHandCamera()');
+    assert_contains($sonicSrc, 'function releaseHandCamera()');
+    // enableHandTracking/enableHandControl must acquire the camera before
+    // Tone.js / the MediaPipe model load.
+    $handTracking = substr($sonicSrc, strpos($sonicSrc, 'async function enableHandTracking'));
+    assert_contains(substr($handTracking, 0, strpos($handTracking, 'loadHandLandmarkerOnce')), 'acquireHandCamera', 'enableHandTracking acquires camera before model load');
+    $mic = substr($sonicSrc, strpos($sonicSrc, 'async function enableMic'));
+    assert_contains(substr($mic, 0, strpos($mic, 'ensureSynth')), 'getUserMedia({ audio: true })', 'enableMic grabs mic permission before Tone loads');
+    // Warm the model as soon as sound is on for hand-tracking pieces.
+    assert_contains($sonicSrc, 'loadHandLandmarkerOnce().catch(function () {})');
+});
+
+test('hand-control and camera-background share one pipeline and exist in both the live runtime and the three export twins', function () {
+    $sonicSrc = file_get_contents(__DIR__ . '/../public/assets/js/sonic-controller.js');
+    assert_contains($sonicSrc, 'enableHandControl: enableHandControl');
+    assert_contains($sonicSrc, 'acquireCameraFeed: acquireCameraFeed');
+    assert_contains($sonicSrc, 'onHandFrame: function (cb)');
+
+    $runtime = file_get_contents(__DIR__ . '/../public/assets/js/piece-runtime.js');
+    $render = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
+    foreach (['runtime' => $runtime, 'render' => $render] as $name => $src) {
+        assert_contains($src, 'window.__pieceHandHooks = {', "$name registers hand hooks.");
+        assert_contains($src, 'handPoint(nx, ny)', "$name has a handPoint hook.");
+        assert_contains($src, 'setBackgroundVideo(video)', "$name has a camera-background hook.");
+    }
+    // Both three seams use the same eased-spherical orbit mapping.
+    assert_contains($runtime, '(nx - 0.5) * Math.PI * 1.5');
+    assert_contains($render, '(nx - 0.5) * Math.PI * 1.5');
+
+    $show = file_get_contents(__DIR__ . '/../public/app/views/pieces/show.php');
+    assert_contains($show, 'data-piece-sound-hand-control-toggle');
+    assert_contains($show, 'data-piece-sound-camera-bg-toggle');
+});
+
+test('mounted Three.js and A-Frame viewers expose hand/camera interaction controllers with exclusive control ownership', function () {
+    $gallery = file_get_contents(__DIR__ . '/../public/assets/js/immersive-gallery.js');
+    $pieceView = file_get_contents(__DIR__ . '/../public/app/views/immersive/piece.php');
+    $chrome = file_get_contents(__DIR__ . '/../public/app/helpers/immersive-chrome.php');
+
+    assert_contains($chrome, 'data-immersive-sound-hand-control-toggle');
+    assert_contains($chrome, 'data-immersive-sound-camera-bg-toggle');
+    assert_contains($gallery, 'getPieceInteractionController');
+    assert_contains($gallery, 'function ensureEngineSync()');
+    assert_contains($pieceView, '/assets/js/sonic-controller.js?v=');
+    assert_contains($pieceView, 'getPieceInteractionController: () => immersiveViewer?.getPieceInteractionController?.()');
+    if (substr_count($gallery, 'supportsHandControl: true') < 2) throw new RuntimeException('Both mounted engines must expose hand control.');
+    if (substr_count($gallery, 'supportsCameraBackground: true') < 2) throw new RuntimeException('Both mounted engines must expose camera backgrounds.');
+    assert_contains($gallery, 'gyroController?.suspend()');
+    assert_contains($gallery, 'gyroController?.resume()');
+    assert_contains($gallery, 'if (handSteeringExclusive) return;');
+    assert_contains($gallery, 'controls.enabled = controlsEnabledBeforeHand');
+    assert_contains($gallery, 'component?.pause?.()');
+    assert_contains($gallery, 'if (wasPlaying) component?.play?.()');
+    assert_contains($gallery, 'pieceInteractionController.clearBackgroundVideo()');
+});
+
+test('A-Frame standalone exports register the shared hand hooks and receive both camera rows', function () {
+    $render = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
+    assert_contains($render, "engine: 'aframe'");
+    assert_contains($render, "if (\$engine === 'three' || \$engine === 'aframe')");
+    assert_contains($render, "cameraObject.rotation.order = 'YXZ'");
+    assert_contains($render, 'scene.object3D.background = this._videoTexture');
+    assert_contains($render, "window.addEventListener('pagehide'");
+});
+
+test('iframes that host camera/mic features carry the Permissions-Policy allow attribute', function () {
+    $show = file_get_contents(__DIR__ . '/../public/app/views/pieces/show.php');
+    assert_contains($show, "'camera; microphone'");
+
+    $gallery = file_get_contents(__DIR__ . '/../public/assets/js/immersive-gallery.js');
+    assert_contains($gallery, '"allow", "camera; microphone"');
+});
+
+test('mic acquisition recovers the audio session (context resume + ambient sample restart) so enabling the mic never silences the ambient voice', function () {
+    $sonicSrc = file_get_contents(__DIR__ . '/../public/assets/js/sonic-controller.js');
+    assert_contains($sonicSrc, 'function recoverFromAudioSessionChange(Tone)');
+    assert_contains($sonicSrc, "raw.addEventListener('statechange'");
+    assert_contains($sonicSrc, "if (ambientSynth.state !== 'started') ambientSynth.start();");
+});
+
+test('regular piece view inlines its critical CSS and the global stylesheet is cache-busted', function () {
+    $show = file_get_contents(__DIR__ . '/../public/app/views/pieces/show.php');
+    assert_contains($show, 'piece_view_critical_css()');
+
+    $chrome = file_get_contents(__DIR__ . '/../public/app/helpers/immersive-chrome.php');
+    assert_contains($chrome, 'function piece_view_critical_css');
+    assert_contains($chrome, '.piece-stage-fullscreen {');
+    assert_contains($chrome, 'body.piece-fullscreen-locked main {');
+
+    $header = file_get_contents(__DIR__ . '/../public/app/views/partials/header.php');
+    assert_contains($header, '/assets/styles.css?v=');
+
+    // Single source: the moved rules must NOT also live in styles.css.
+    $styles = file_get_contents(__DIR__ . '/../public/assets/styles.css');
+    assert_not_contains($styles, '.piece-stage-fullscreen {');
+    assert_not_contains($styles, '.piece-sound-panel {');
+});
+
 echo "\n=== Results ===\n";
 echo "Passed: {$passed}\n";
 echo "Failed: {$failed}\n";

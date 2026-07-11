@@ -701,6 +701,8 @@ function createSharedGyroController(stageEl, camera, options = {}) {
       update() {},
       dispose() {},
       isActive() { return false; },
+      suspend() { return false; },
+      resume() {},
       async setup() { return false; },
       requestCalibration() {},
     };
@@ -713,6 +715,8 @@ function createSharedGyroController(stageEl, camera, options = {}) {
   let enableMotionBtn = null;
   let disposed = false;
   let activationPromise = null;
+  let resumeActiveAfterSuspend = false;
+  let suspended = false;
   const baselineQuat = new THREE.Quaternion();
   const yawProbe = new THREE.Vector3();
 
@@ -904,7 +908,7 @@ function createSharedGyroController(stageEl, camera, options = {}) {
 
   return {
     update() {
-      if (!gyroActive || !deviceControls || disposed) return;
+      if (suspended || !gyroActive || !deviceControls || disposed) return;
       if (hasDeviceOrientationAngles(deviceControls)) {
         calibrateGyroToCurrentView();
         deviceControls.update();
@@ -924,6 +928,22 @@ function createSharedGyroController(stageEl, camera, options = {}) {
     },
     isActive() {
       return gyroActive;
+    },
+    suspend() {
+      if (disposed || suspended) return resumeActiveAfterSuspend;
+      suspended = true;
+      resumeActiveAfterSuspend = gyroActive;
+      if (gyroActive) setGyroActive(false);
+      return resumeActiveAfterSuspend;
+    },
+    resume() {
+      if (disposed || !suspended) return;
+      suspended = false;
+      if (resumeActiveAfterSuspend) {
+        requestCalibration();
+        setGyroActive(true);
+      }
+      resumeActiveAfterSuspend = false;
     },
     setup,
     requestCalibration,
@@ -1044,6 +1064,10 @@ export function createReadOnlyFullViewOverlay(stageEl, items, options = {}) {
       const iframe = document.createElement("iframe");
       iframe.setAttribute("title", item.title || "Full view");
       iframe.setAttribute("sandbox", "allow-scripts allow-same-origin");
+      // Without an explicit Permissions-Policy allowance, getUserMedia is
+      // blocked inside the iframe even same-origin — the piece's own sound
+      // UI (camera theremin, live mic) needs both.
+      iframe.setAttribute("allow", "camera; microphone");
       iframe.setAttribute("tabindex", interactive ? "0" : "-1");
       iframe.srcdoc = item.srcdoc;
       iframe.style.cssText = "width:100%;height:100%;border:0;display:block;pointer-events:" + (interactive ? "auto" : "none") + ";background:#05070f;";
@@ -1386,6 +1410,10 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
   const pianoOctaveUp = root.querySelector("[data-immersive-piano-octave-up]");
   const soundHandRow = root.querySelector("[data-immersive-sound-hand-row]");
   const soundHandToggle = root.querySelector("[data-immersive-sound-hand-toggle]");
+  const handControlRow = root.querySelector("[data-immersive-sound-hand-control-row]");
+  const handControlToggle = root.querySelector("[data-immersive-sound-hand-control-toggle]");
+  const cameraBgRow = root.querySelector("[data-immersive-sound-camera-bg-row]");
+  const cameraBgToggle = root.querySelector("[data-immersive-sound-camera-bg-toggle]");
   const voicePickerRows = root.querySelectorAll("[data-immersive-voice-picker-row]");
   const voicePickerSelects = root.querySelectorAll("[data-immersive-voice-picker-select]");
   const micRow = root.querySelector("[data-immersive-mic-row]");
@@ -1393,8 +1421,13 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
   const micFxWrap = root.querySelector("[data-immersive-mic-fx]");
   const micFxToggles = root.querySelectorAll("[data-immersive-mic-fx-toggle]");
   const getAudioController = typeof options.getAudioController === "function" ? options.getAudioController : () => null;
+  const getPieceInteractionController = typeof options.getPieceInteractionController === "function"
+    ? options.getPieceInteractionController
+    : () => null;
   let detachPianoKeyListener = null;
   let micSupportChecked = false;
+  let handControlActive = false;
+  let cameraBgActive = false;
 
   function isSoundPanelOpen() {
     return !!soundPanel && !soundPanel.hidden;
@@ -1417,6 +1450,11 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
     if (pianoOctaveDisplay) pianoOctaveDisplay.textContent = String(ctrl.getOctave());
     if (soundHandRow) soundHandRow.hidden = !voices.hand_tracking;
     if (soundHandToggle) soundHandToggle.setAttribute("aria-pressed", ctrl.getInputMode() === "hand" ? "true" : "false");
+    const interaction = getPieceInteractionController();
+    if (handControlRow) handControlRow.hidden = !voices.hand_tracking || !interaction?.supportsHandControl;
+    if (cameraBgRow) cameraBgRow.hidden = !voices.hand_tracking || !interaction?.supportsCameraBackground;
+    if (handControlToggle) handControlToggle.setAttribute("aria-pressed", handControlActive ? "true" : "false");
+    if (cameraBgToggle) cameraBgToggle.setAttribute("aria-pressed", cameraBgActive ? "true" : "false");
     if (!micSupportChecked) {
       micSupportChecked = true;
       if (micRow) micRow.hidden = !ctrl.isMicSupported();
@@ -1499,6 +1537,54 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
     syncSoundPanel();
   };
 
+  const onHandControlToggle = async () => {
+    const ctrl = getAudioController();
+    const interaction = getPieceInteractionController();
+    if (!ctrl || !interaction?.supportsHandControl) return;
+    if (handControlActive) {
+      handControlActive = false;
+      ctrl.onHandFrame(null);
+      ctrl.disableHandControl();
+      interaction.setHandSteering(false);
+      syncSoundPanel();
+      return;
+    }
+    const ok = await ctrl.enableHandControl();
+    if (!ok) {
+      interaction.setHandSteering(false);
+      syncSoundPanel();
+      return;
+    }
+    handControlActive = true;
+    interaction.setHandSteering(true);
+    ctrl.onHandFrame((hand) => {
+      if (!handControlActive || !hand?.[0]) return;
+      try { interaction.handPoint(1 - hand[0].x, hand[0].y); } catch (_) {}
+    });
+    syncSoundPanel();
+  };
+
+  const onCameraBgToggle = async () => {
+    const ctrl = getAudioController();
+    const interaction = getPieceInteractionController();
+    if (!ctrl || !interaction?.supportsCameraBackground) return;
+    if (cameraBgActive) {
+      cameraBgActive = false;
+      interaction.clearBackgroundVideo();
+      ctrl.releaseCameraFeed();
+      syncSoundPanel();
+      return;
+    }
+    try {
+      const video = await ctrl.acquireCameraFeed();
+      cameraBgActive = !!interaction.setBackgroundVideo(video);
+      if (!cameraBgActive) ctrl.releaseCameraFeed();
+    } catch (_) {
+      cameraBgActive = false;
+    }
+    syncSoundPanel();
+  };
+
   const onMicToggle = async () => {
     const ctrl = getAudioController();
     if (!ctrl) return;
@@ -1568,6 +1654,8 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
   pianoOctaveDown?.addEventListener("click", onPianoOctaveDown);
   pianoOctaveUp?.addEventListener("click", onPianoOctaveUp);
   soundHandToggle?.addEventListener("click", onSoundHandToggle);
+  handControlToggle?.addEventListener("click", onHandControlToggle);
+  cameraBgToggle?.addEventListener("click", onCameraBgToggle);
   micToggle?.addEventListener("click", onMicToggle);
   micFxToggles.forEach((checkbox) => checkbox.addEventListener("change", onMicFxToggle));
   voicePickerSelects.forEach((select) => select.addEventListener("change", onVoicePickerChange));
@@ -1596,6 +1684,19 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
       pianoOctaveDown?.removeEventListener("click", onPianoOctaveDown);
       pianoOctaveUp?.removeEventListener("click", onPianoOctaveUp);
       soundHandToggle?.removeEventListener("click", onSoundHandToggle);
+      handControlToggle?.removeEventListener("click", onHandControlToggle);
+      cameraBgToggle?.removeEventListener("click", onCameraBgToggle);
+      if (handControlActive) {
+        handControlActive = false;
+        getAudioController()?.onHandFrame(null);
+        getAudioController()?.disableHandControl();
+        getPieceInteractionController()?.setHandSteering(false);
+      }
+      if (cameraBgActive) {
+        cameraBgActive = false;
+        getPieceInteractionController()?.clearBackgroundVideo();
+        getAudioController()?.releaseCameraFeed();
+      }
       micToggle?.removeEventListener("click", onMicToggle);
       micFxToggles.forEach((checkbox) => checkbox.removeEventListener("change", onMicFxToggle));
       voicePickerSelects.forEach((select) => select.removeEventListener("change", onVoicePickerChange));
@@ -2159,6 +2260,20 @@ function createAudioController(sonicParams, stageEl, opts = {}) {
   // this looks it up from the document instead. One immersive stage per page.
   const toggleBtn = document.querySelector("[data-immersive-sound-toggle]") || null;
 
+  function ensureEngineSync() {
+    if (disposed) return null;
+    if (engine) return engine;
+    const CSC = window.CreatrSonicController;
+    if (!CSC) return null;
+    engine = CSC.create(sonicParams, {
+      toneSrc: window.__creatrToneSrc,
+      mediaPipeVisionSrc: window.__creatrMediaPipeVisionSrc,
+      mediaPipeWasmDir: window.__creatrMediaPipeWasmDir,
+      mediaPipeModelSrc: window.__creatrMediaPipeModelSrc,
+    });
+    return engine;
+  }
+
   function setBtnState(muted) {
     if (!toggleBtn) return;
     toggleBtn.setAttribute("aria-pressed", muted ? "false" : "true");
@@ -2330,6 +2445,20 @@ function createAudioController(sonicParams, stageEl, opts = {}) {
       return engine.enableHandTracking();
     },
     disableHandTracking() { if (engine) engine.disableHandTracking(); },
+    async enableHandControl() {
+      if (opts.allowHandTracking === false) return false;
+      if (!engine) ensureEngineSync();
+      return engine ? engine.enableHandControl() : false;
+    },
+    disableHandControl() { if (engine) engine.disableHandControl(); },
+    onHandFrame(callback) { if (engine) engine.onHandFrame(callback); },
+    async acquireCameraFeed() {
+      if (opts.allowHandTracking === false) throw new Error("camera unavailable");
+      if (!engine) ensureEngineSync();
+      if (!engine) throw new Error("camera unavailable");
+      return engine.acquireCameraFeed();
+    },
+    releaseCameraFeed() { if (engine) engine.releaseCameraFeed(); },
     // Live human-voice input (mic) — visitor-facing, off by default, never
     // persisted. isMicSupported() is a plain feature check that works
     // before the engine/Tone.js exist, so the UI can decide whether to
@@ -2532,6 +2661,10 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
   let userHasInteracted = false;
   let gyroController = null;
   let viewerControls = null;
+  let handSteeringExclusive = false;
+  let controlsEnabledBeforeHand = true;
+  let immersivePreviousBackground;
+  let immersiveVideoTexture = null;
   const audioController = createAudioController(options.sonicParams, stageEl, { pieceId: options.pieceId });
   const _audioPrevPos = new THREE.Vector3();
   let _audioPrevInit = false;
@@ -2627,6 +2760,7 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
   }
 
   function onThreePointerDown(e) {
+    if (handSteeringExclusive) return;
     _pointerState.set(e.pointerId, {
       pointerType: e.pointerType || "mouse",
       button: e.button,
@@ -2659,7 +2793,7 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
   }
 
   function onThreePointerUp(e) {
-    if (!controls || !state.camera) return;
+    if (handSteeringExclusive || !controls || !state.camera) return;
     const pointer = _pointerState.get(e.pointerId);
     const wasMultiTouch = _hadMultiTouchGesture || activeTouchPointerCount() > 1;
     clearThreePointer(e);
@@ -2691,7 +2825,7 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
     // the very next frame's "snap back to last saved state" logic then
     // reverts the zoom. Handling wheel ourselves (and saving state after)
     // closes that gap. Viewer buttons use this same path for parity.
-    if (!controls || !state.camera || !Number.isFinite(zoomScale) || zoomScale <= 0) return;
+    if (handSteeringExclusive || !controls || !state.camera || !Number.isFinite(zoomScale) || zoomScale <= 0) return;
     const cameraPosition = state.camera.position;
     const direction = cameraPosition.clone().sub(controls.target);
     const currentDistance = direction.length();
@@ -2716,7 +2850,7 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
   }
 
   function applyThreeZoomValue(value) {
-    if (!controls || !state.camera || !Number.isFinite(value)) return;
+    if (handSteeringExclusive || !controls || !state.camera || !Number.isFinite(value)) return;
     const minDistance = controls.minDistance || 0.6;
     const currentDistance = state.camera.position.distanceTo(controls.target);
     const maxDistance = controls.maxDistance || Math.max(40, currentDistance * 4);
@@ -2732,7 +2866,7 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
   }
 
   function applyThreeDirectionalMove(forwardScale, rightScale) {
-    if (!controls || !state.camera) return;
+    if (handSteeringExclusive || !controls || !state.camera) return;
     cancelThreeNavigationAnimation();
     state.camera.getWorldDirection(_buttonForward);
     _buttonForward.y = 0;
@@ -2760,7 +2894,7 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
   }
 
   function applyThreeFloatMove(verticalScale) {
-    if (!controls || !state.camera || !Number.isFinite(verticalScale)) return;
+    if (handSteeringExclusive || !controls || !state.camera || !Number.isFinite(verticalScale)) return;
     cancelThreeNavigationAnimation();
     const step = Math.max(0.08, controls.target.distanceTo(state.camera.position) * 0.03);
     const nextCamY = Math.max(0.1, Math.min(threeNavLimit, state.camera.position.y + (verticalScale * step)));
@@ -2774,6 +2908,7 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
   }
 
   function onThreeWheel(e) {
+    if (handSteeringExclusive) return;
     if (!controls || !state.camera) return;
     e.preventDefault();
     e.stopPropagation();
@@ -2814,7 +2949,7 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
           }
         }
 
-        if (keyNav?.update()) {
+        if (!handSteeringExclusive && keyNav?.update()) {
           externalMotion = true;
         }
 
@@ -2829,7 +2964,7 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
         // (a separate degree of freedom, untouched by this) keep working
         // exactly as before. enableRotate is already false (see setup below),
         // so there's no fight over rotation between the two.
-        gyroController?.update();
+        if (!handSteeringExclusive) gyroController?.update();
 
         // Sonification leg: drive Tone.js from the same per-frame camera motion
         // the navigation legs above produced. No-ops until the user enables sound.
@@ -2929,7 +3064,7 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
           if (cmp && cmp.trim() !== "" && cmp.trim() !== "transparent" && cmp.trim() !== "rgba(0, 0, 0, 0)") { bg = cmp; break; }
         }
         bg = bg ?? "#000000";
-        syncThreeRendererBackground(state.renderer, state.scene, bg);
+        if (!immersiveVideoTexture) syncThreeRendererBackground(state.renderer, state.scene, bg);
         // When the piece drives its own startFrame render loop (the documented
         // contract), it already calls renderer.render() every frame — rendering
         // here too would just duplicate that full-scene draw every tick. The
@@ -3061,7 +3196,62 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
     resizeObserver.observe(stageEl);
     window.addEventListener("resize", resize);
 
+    const pieceInteractionController = {
+      supportsHandControl: true,
+      supportsCameraBackground: true,
+      setHandSteering(active) {
+        const next = !!active;
+        if (next === handSteeringExclusive) return;
+        if (next) controlsEnabledBeforeHand = controls.enabled;
+        handSteeringExclusive = next;
+        cancelThreeNavigationAnimation();
+        if (next) {
+          controls.enabled = false;
+          keyNav?.clearKeys?.();
+          gyroController?.suspend();
+          isOrbitActive = false;
+        } else {
+          controls.enabled = controlsEnabledBeforeHand;
+          saveOrbitState();
+          gyroController?.resume();
+        }
+      },
+      handPoint(nx, ny) {
+        if (!handSteeringExclusive || !controls || !state.camera) return;
+        const offset = state.camera.position.clone().sub(controls.target);
+        const spherical = new THREE.Spherical().setFromVector3(offset);
+        const desiredTheta = (nx - 0.5) * Math.PI * 1.5;
+        const desiredPhi = Math.PI / 2 + (ny - 0.5) * Math.PI * 0.7;
+        spherical.theta += (desiredTheta - spherical.theta) * 0.12;
+        spherical.phi += (desiredPhi - spherical.phi) * 0.12;
+        spherical.phi = Math.max(0.15, Math.min(Math.PI - 0.15, spherical.phi));
+        offset.setFromSpherical(spherical);
+        state.camera.position.copy(controls.target).add(offset);
+        state.camera.lookAt(controls.target);
+        saveOrbitState();
+        userHasInteracted = true;
+      },
+      setBackgroundVideo(video) {
+        if (!video || !state.scene) return false;
+        if (immersiveVideoTexture) this.clearBackgroundVideo();
+        immersivePreviousBackground = state.scene.background ?? null;
+        immersiveVideoTexture = new THREE.VideoTexture(video);
+        if (THREE.SRGBColorSpace) immersiveVideoTexture.colorSpace = THREE.SRGBColorSpace;
+        state.scene.background = immersiveVideoTexture;
+        return true;
+      },
+      clearBackgroundVideo() {
+        if (!immersiveVideoTexture) return;
+        if (state.scene) state.scene.background = immersivePreviousBackground ?? null;
+        immersiveVideoTexture?.dispose?.();
+        immersiveVideoTexture = null;
+        immersivePreviousBackground = undefined;
+      },
+    };
+
     const destroy = () => {
+      pieceInteractionController.setHandSteering(false);
+      pieceInteractionController.clearBackgroundVideo();
       resizeObserver.disconnect();
       window.removeEventListener("resize", resize);
       cancelAnimationFrame(frameId);
@@ -3099,6 +3289,7 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
       }),
       getViewState: () => shellViewState({ camera: state.camera, controls }),
       getAudioController: () => audioController,
+      getPieceInteractionController: () => pieceInteractionController,
     };
   } catch (err) {
     onError(err);
@@ -3141,6 +3332,10 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
   let viewerControls = null;
   let pointerTarget = null;
   let frameId = 0;
+  let handSteeringExclusive = false;
+  let aframeControlsBeforeHand = [];
+  let aframePreviousBackground;
+  let aframeVideoTexture = null;
   const audioController = createAudioController(options.sonicParams, stageEl, { pieceId: options.pieceId });
   let _aframeAudioPrev = null;
   const stopFrameHandles = [];
@@ -3220,6 +3415,7 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
   }
 
   function applyAFrameZoom(distance) {
+    if (handSteeringExclusive) return;
     const THREE_NS = getAFrameThree();
     const cameraObject = getAFrameCameraObject();
     if (!THREE_NS || !cameraObject) return;
@@ -3237,6 +3433,7 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
   }
 
   function applyAFrameDirectionalMove(forwardScale, rightScale) {
+    if (handSteeringExclusive) return;
     const THREE_NS = getAFrameThree();
     const cameraObject = getAFrameCameraObject();
     if (!THREE_NS || !cameraObject) return;
@@ -3255,6 +3452,7 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
   }
 
   function applyAFrameFloatMove(verticalScale) {
+    if (handSteeringExclusive) return;
     const THREE_NS = getAFrameThree();
     if (!THREE_NS || !Number.isFinite(verticalScale)) return;
     moveAFrameCameraByWorldDelta(new THREE_NS.Vector3(0, verticalScale * 0.14, 0));
@@ -3296,6 +3494,7 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
   }
 
   function onAFramePointerDown(event) {
+    if (handSteeringExclusive) return;
     if ((event.pointerType || "mouse") === "touch") {
       aframeNav.activeTouches.add(event.pointerId);
       if (activeAFrameTouchCount() > 1) aframeNav.hadMultiTouch = true;
@@ -3348,6 +3547,7 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
   }
 
   function onAFramePointerUp(event) {
+    if (handSteeringExclusive) return;
     const THREE_NS = getAFrameThree();
     const pointer = aframeNav.pointer;
     const wasMultiTouch = aframeNav.hadMultiTouch || activeAFrameTouchCount() > 1;
@@ -3395,7 +3595,7 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
       }
       _aframeAudioPrev = { x: wp.x, y: wp.y, z: wp.z };
     }
-    if (!THREE_NS || !mover || !aframeNav.animFrom || !aframeNav.animTo) return;
+    if (handSteeringExclusive || !THREE_NS || !mover || !aframeNav.animFrom || !aframeNav.animTo) return;
     const t = Math.min((performance.now() - aframeNav.animStart) / 350, 1);
     const eased = 1 - (1 - t) ** 3;
     const nextWorld = new THREE_NS.Vector3().lerpVectors(aframeNav.animFrom, aframeNav.animTo, eased);
@@ -3479,7 +3679,65 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
     }
   }).catch(onError);
 
+  const pieceInteractionController = {
+    supportsHandControl: true,
+    supportsCameraBackground: true,
+    setHandSteering(active) {
+      const next = !!active;
+      if (next === handSteeringExclusive) return;
+      handSteeringExclusive = next;
+      aframeNav.animFrom = aframeNav.animTo = null;
+      aframeNav.pointer = null;
+      aframeNav.activeTouches.clear();
+      const cameraEl = scene?.querySelector("[camera]") || scene?.querySelector("a-camera");
+      const controlNames = ["look-controls", "wasd-controls"];
+      if (next) {
+        aframeControlsBeforeHand = controlNames.map((name) => {
+          const component = cameraEl?.components?.[name];
+          const wasPlaying = !!component && component.isPlaying !== false;
+          component?.pause?.();
+          return { component, wasPlaying };
+        });
+      } else {
+        aframeControlsBeforeHand.forEach(({ component, wasPlaying }) => {
+          if (wasPlaying) component?.play?.();
+        });
+        aframeControlsBeforeHand = [];
+      }
+    },
+    handPoint(nx, ny) {
+      if (!handSteeringExclusive) return;
+      const cameraObject = getAFrameCameraObject();
+      if (!cameraObject) return;
+      const desiredYaw = -(nx - 0.5) * Math.PI * 1.5;
+      const desiredPitch = -(ny - 0.5) * Math.PI * 0.7;
+      cameraObject.rotation.order = "YXZ";
+      cameraObject.rotation.y += (desiredYaw - cameraObject.rotation.y) * 0.12;
+      cameraObject.rotation.x += (desiredPitch - cameraObject.rotation.x) * 0.12;
+      cameraObject.rotation.x = Math.max(-Math.PI * 0.45, Math.min(Math.PI * 0.45, cameraObject.rotation.x));
+    },
+    setBackgroundVideo(video) {
+      const THREE_NS = getAFrameThree();
+      if (!video || !scene?.object3D || !THREE_NS?.VideoTexture) return false;
+      if (aframeVideoTexture) this.clearBackgroundVideo();
+      aframePreviousBackground = scene.object3D.background ?? null;
+      aframeVideoTexture = new THREE_NS.VideoTexture(video);
+      if (THREE_NS.SRGBColorSpace) aframeVideoTexture.colorSpace = THREE_NS.SRGBColorSpace;
+      scene.object3D.background = aframeVideoTexture;
+      return true;
+    },
+    clearBackgroundVideo() {
+      if (!aframeVideoTexture) return;
+      if (scene?.object3D) scene.object3D.background = aframePreviousBackground ?? null;
+      aframeVideoTexture?.dispose?.();
+      aframeVideoTexture = null;
+      aframePreviousBackground = undefined;
+    },
+  };
+
   const destroy = () => {
+    pieceInteractionController.setHandSteering(false);
+    pieceInteractionController.clearBackgroundVideo();
     disposed = true;
     cancelAnimationFrame(frameId);
     resizeObserver?.disconnect();
@@ -3519,6 +3777,7 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
       }),
     getViewState: getAFrameViewState,
     getAudioController: () => audioController,
+    getPieceInteractionController: () => pieceInteractionController,
   };
 }
 

@@ -75,6 +75,9 @@ Source: DECISIONS.md 2026-07-06 Public Copy Subtabs, Footer Consolidation, Widen
 
 # Standing Decisions — Art Pieces, AI Generation & Immersive
 
+2026-07-10 DECISION Hand steering and camera backgrounds have Three.js/A-Frame parity across regular views, mounted immersive views, and standalone exports; mounted steering exclusively owns the camera and restores prior controls at the resulting pose.
+Source: DECISIONS.md 2026-07-10 Completed Hand/Camera Parity for Immersive Mounts and A-Frame Exports.
+
 2026-07-10 DECISION Immersive toolbar screenshot buttons are icon-only and lack a nested `span` element. The click event handlers in piece-render.php, collection.php, and piece.php are refactored to conditionally update text content only when a nested `span` is present. This avoids replacing the button's entire inner HTML and prevents the SVG camera icon from disappearing after a capture.
 
 2026-07-10 DECISION Native Tone.js BitCrusher (which uses an AudioWorkletNode compiled from a local Blob URL) is replaced with a custom WaveShaper-based BitCrusher (amplitude quantization via a step-like curve) in sonic-controller.js. This avoids browser sandboxing blocks against loading Workers/AudioWorklets from Blob URLs under the file:// protocol, allowing the bitcrusher effect to work seamlessly on downloaded pages.

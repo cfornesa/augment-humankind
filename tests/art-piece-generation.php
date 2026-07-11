@@ -1719,6 +1719,45 @@ test('hand-tracking bundle export includes MediaPipe, fallback loading, and trou
     assert_contains($sonicController, 'https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js');
 });
 
+test('hand-enabled A-Frame exports include steer/camera UI, hooks, and bundled MediaPipe while unsupported engines omit the rows', function () {
+    $piece = ['id' => 111, 'title' => 'A-Frame Camera Piece', 'engine' => 'aframe'];
+    $version = [
+        'engine' => 'aframe',
+        'generation_mode' => 'aframe',
+        'html_code' => '<a-scene id="scene"><a-entity camera position="0 1.6 4"></a-entity></a-scene>',
+        'css_code' => 'a-scene{display:block;}',
+        'generated_code' => 'window.sketch = ({ scene }) => {};',
+        'sonic_params' => '{"tempo":90,"scale":"minor","instrument":"synth","enabled":true,"extras":{"voices":{"hand_tracking":{"enabled":true}}}}',
+    ];
+
+    $cdn = piece_export_document($piece, $version, ['runtime_mode' => 'cdn']);
+    assert_contains($cdn, 'Steer the piece');
+    assert_contains($cdn, 'Show camera');
+    assert_contains($cdn, "engine: 'aframe'");
+    assert_contains($cdn, "cameraObject.rotation.order = 'YXZ'");
+    assert_contains($cdn, 'scene.object3D.background = this._videoTexture');
+
+    $bundle = piece_export_bundle($piece, $version);
+    $zip = new ZipArchive();
+    $zip->open($bundle['path']);
+    $index = $zip->getFromName('index.html');
+    $vision = $zip->getFromName('runtime/mediapipe-hands/vision_bundle.mjs');
+    $zip->close();
+    unlink($bundle['path']);
+    assert_contains($index, 'Steer the piece');
+    assert_contains($index, 'Show camera');
+    assert_true(is_string($vision) && strlen($vision) > 1000, 'Expected A-Frame export to bundle MediaPipe.');
+
+    $unsupported = $version;
+    $unsupported['engine'] = 'svg';
+    $unsupported['generation_mode'] = 'svg';
+    $unsupported['html_code'] = '<svg id="piece-svg"></svg>';
+    $unsupported['generated_code'] = 'window.sketch = () => {};';
+    $unsupportedDocument = piece_export_document(['id' => 112, 'title' => 'SVG', 'engine' => 'svg'], $unsupported);
+    assert_not_contains($unsupportedDocument, 'Steer the piece');
+    assert_not_contains($unsupportedDocument, 'Show camera');
+});
+
 echo "\n=== Results ===\n";
 echo "Passed: {$passed}\n";
 echo "Failed: {$failed}\n";

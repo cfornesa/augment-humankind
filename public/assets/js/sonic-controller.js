@@ -283,6 +283,14 @@
     var bus = null, filter = null, ambientSynth = null, movementSynth = null, melodicSynth = null;
     var effectNodes = [];
     var handStream = null, handLandmarker = null, handVideoEl = null, handRafId = null, handNoteHeld = false;
+    // The camera is a shared resource: the theremin, the hand-control
+    // subscriber, and the camera-feed consumer each hold a reference; the
+    // stream/video pair is opened once and torn down when the last holder
+    // releases. handThereminOn gates the theremin mapping inside
+    // handFrameStep(); handControlOn keeps the landmark loop alive for the
+    // onHandFrame subscriber even with the theremin off.
+    var handCameraRefs = 0, handThereminOn = false, handControlOn = false;
+    var handFrameSubscriber = null;
     var lastIdleNoteAt = 0, lastMotionNoteAt = 0, walk = 0;
     var prevX = null, prevY = null, prevZ = null;
     var volumePercent = Math.max(0, Math.min(100, Number(opts.defaultVolume)) || 50);
@@ -425,13 +433,57 @@
       return _handLandmarkerPromise;
     }
 
+    // Opens (or re-references) the single shared camera stream + hidden
+    // <video>. MUST be the FIRST await in any user-gesture-initiated enable
+    // path: WebKit's transient-activation window is short, so getUserMedia
+    // has to run before Tone.js or the MediaPipe model are loaded, not
+    // after. The video element is appended to the DOM (hidden) — WebKit
+    // decodes detached video elements unreliably.
+    async function acquireHandCamera() {
+      if (handVideoEl && handStream) { handCameraRefs += 1; return handVideoEl; }
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error('navigator.mediaDevices.getUserMedia not supported or blocked');
+      }
+      var stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      if (disposed) { stream.getTracks().forEach(function (t) { t.stop(); }); throw new Error('disposed'); }
+      handStream = stream;
+      handVideoEl = document.createElement('video');
+      handVideoEl.muted = true;
+      handVideoEl.playsInline = true;
+      handVideoEl.setAttribute('playsinline', '');
+      handVideoEl.setAttribute('muted', '');
+      handVideoEl.style.cssText = 'position:fixed;width:1px;height:1px;opacity:0;pointer-events:none;left:-10px;top:-10px;';
+      handVideoEl.srcObject = handStream;
+      (document.body || document.documentElement).appendChild(handVideoEl);
+      await handVideoEl.play();
+      handCameraRefs = 1;
+      return handVideoEl;
+    }
+
+    function releaseHandCamera() {
+      handCameraRefs = Math.max(0, handCameraRefs - 1);
+      if (handCameraRefs > 0) return;
+      if (handStream) { try { handStream.getTracks().forEach(function (t) { t.stop(); }); } catch (_e) {} handStream = null; }
+      if (handVideoEl) { try { handVideoEl.remove(); } catch (_e) {} handVideoEl = null; }
+    }
+
+    function stopHandLoopIfIdle() {
+      if (handThereminOn || handControlOn) return;
+      if (handRafId) { cancelAnimationFrame(handRafId); handRafId = null; }
+    }
+
     function handFrameStep() {
       handRafId = requestAnimationFrame(handFrameStep);
       if (!handLandmarker || !handVideoEl || handVideoEl.readyState < 2) return;
       var result;
       try { result = handLandmarker.detectForVideo(handVideoEl, performance.now()); } catch (_e) { return; }
       var hand = result && result.landmarks && result.landmarks[0];
-      if (!hand || !enabled || !melodicSynth) {
+      // Hand-control subscriber (piece interaction) sees every frame,
+      // including hand-lost frames (null), independent of the theremin.
+      if (handControlOn && typeof handFrameSubscriber === 'function') {
+        try { handFrameSubscriber(hand || null); } catch (_e) {}
+      }
+      if (!hand || !handThereminOn || !enabled || !melodicSynth) {
         if (handNoteHeld) { try { melodicSynth.triggerRelease(); } catch (_e) {} handNoteHeld = false; }
         return;
       }
@@ -457,25 +509,26 @@
 
     async function enableHandTracking() {
       if (disposed || !voices.hand_tracking) return false;
+      if (handThereminOn) return true;
+      var cameraHeld = false;
       try {
+        // Camera FIRST — synchronously reachable from the invoking gesture
+        // task, before the (slow) Tone.js and MediaPipe model loads consume
+        // WebKit's transient-activation window.
+        await acquireHandCamera();
+        cameraHeld = true;
+        if (disposed) throw new Error('disposed');
         await ensureSynth();
-        if (disposed) return false;
+        if (disposed) throw new Error('disposed');
         handLandmarker = await loadHandLandmarkerOnce();
-        if (disposed) return false;
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-          throw new Error('navigator.mediaDevices.getUserMedia not supported or blocked');
-        }
-        handStream = await navigator.mediaDevices.getUserMedia({ video: true });
-        if (disposed) { handStream.getTracks().forEach(function (t) { t.stop(); }); return false; }
-        handVideoEl = document.createElement('video');
-        handVideoEl.muted = true;
-        handVideoEl.playsInline = true;
-        handVideoEl.srcObject = handStream;
-        await handVideoEl.play();
+        if (disposed) throw new Error('disposed');
+        handThereminOn = true;
         if (!handRafId) handFrameStep();
         return true;
       } catch (_e) {
-        disableHandTracking();
+        if (cameraHeld) releaseHandCamera();
+        handThereminOn = false;
+        stopHandLoopIfIdle();
         document.dispatchEvent(new CustomEvent('creatr-hand-tracking-failed', {
           detail: { error: _e.message || String(_e) }
         }));
@@ -484,11 +537,60 @@
     }
 
     function disableHandTracking() {
-      if (handRafId) { cancelAnimationFrame(handRafId); handRafId = null; }
       if (handNoteHeld) { try { melodicSynth && melodicSynth.triggerRelease && melodicSynth.triggerRelease(); } catch (_e) {} handNoteHeld = false; }
-      if (handStream) { try { handStream.getTracks().forEach(function (t) { t.stop(); }); } catch (_e) {} handStream = null; }
       if (melodicSynth && melodicSynth.volume) { try { melodicSynth.volume.value = 0; } catch (_e) {} }
-      handVideoEl = null;
+      if (handThereminOn) { handThereminOn = false; releaseHandCamera(); }
+      stopHandLoopIfIdle();
+    }
+
+    // Hand-control: keeps the shared camera + landmark loop running and
+    // publishes each frame's landmarks (or null when no hand is visible) to
+    // the onHandFrame subscriber, so a host surface can drive piece
+    // interaction (orbit / pointer) from the same single camera pipeline
+    // the theremin uses. Needs no audio — ensureSynth() is not called.
+    async function enableHandControl() {
+      if (disposed || !voices.hand_tracking) return false;
+      if (handControlOn) return true;
+      var cameraHeld = false;
+      try {
+        await acquireHandCamera();       // camera FIRST — same gesture rule
+        cameraHeld = true;
+        if (disposed) throw new Error('disposed');
+        handLandmarker = await loadHandLandmarkerOnce();
+        if (disposed) throw new Error('disposed');
+        handControlOn = true;
+        if (!handRafId) handFrameStep();
+        return true;
+      } catch (_e) {
+        if (cameraHeld) releaseHandCamera();
+        handControlOn = false;
+        stopHandLoopIfIdle();
+        document.dispatchEvent(new CustomEvent('creatr-hand-tracking-failed', {
+          detail: { error: _e.message || String(_e) }
+        }));
+        return false;
+      }
+    }
+
+    function disableHandControl() {
+      if (!handControlOn) return;
+      handControlOn = false;
+      if (typeof handFrameSubscriber === 'function') {
+        try { handFrameSubscriber(null); } catch (_e) {}
+      }
+      releaseHandCamera();
+      stopHandLoopIfIdle();
+    }
+
+    // Camera-feed consumer (e.g. a VideoTexture piece background): holds a
+    // reference on the shared stream and hands back the hidden <video>.
+    async function acquireCameraFeed() {
+      if (disposed || !voices.hand_tracking) throw new Error('camera not available for this piece');
+      return acquireHandCamera();
+    }
+
+    function releaseCameraFeed() {
+      releaseHandCamera();
     }
 
     async function ensureSynth() {
@@ -566,10 +668,29 @@
         }));
         return false;
       }
+      // Grab the mic permission as the FIRST await, inside the invoking
+      // gesture task (WebKit's transient activation does not survive the
+      // Tone.js load below). Tone.UserMedia.open() then reuses the already-
+      // granted permission without needing activation of its own.
+      var permissionStream = null;
+      try {
+        permissionStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch (permError) {
+        document.dispatchEvent(new CustomEvent('creatr-mic-failed', {
+          detail: { error: permError.message || String(permError) }
+        }));
+        return false;
+      }
+      var releasePermissionStream = function () {
+        if (!permissionStream) return;
+        try { permissionStream.getTracks().forEach(function (t) { t.stop(); }); } catch (_e) {}
+        permissionStream = null;
+      };
       await ensureSynth();
-      if (disposed || !bus) return false;
+      if (disposed || !bus) { releasePermissionStream(); return false; }
       var Tone = global.Tone;
       if (!Tone || !Tone.UserMedia || !Tone.UserMedia.supported) {
+        releasePermissionStream();
         document.dispatchEvent(new CustomEvent('creatr-mic-failed', {
           detail: { error: 'Tone.UserMedia not supported or blocked' }
         }));
@@ -578,17 +699,55 @@
       try {
         var node = new Tone.UserMedia();
         await node.open();
+        releasePermissionStream();
         if (disposed) { try { node.close(); } catch (_e) {} try { node.dispose(); } catch (_e) {} return false; }
         micNode = node;
         rebuildMicChain(Tone);
+        // iOS switches the audio session to play-and-record when the mic
+        // opens, which can suspend/interrupt the AudioContext and kill
+        // continuously-scheduled sources. Per-tick synth voices recover on
+        // their next note; the context itself and a looping ambient
+        // Tone.Player do not — recover both explicitly.
+        recoverFromAudioSessionChange(Tone);
         return true;
       } catch (_e) {
+        releasePermissionStream();
         micNode = null;
         document.dispatchEvent(new CustomEvent('creatr-mic-failed', {
           detail: { error: _e.message || String(_e) }
         }));
         return false;
       }
+    }
+
+    // Resumes a suspended/interrupted context and restarts the looping
+    // ambient sample if the session change stopped it. Also installs (once)
+    // a statechange listener so the same recovery runs after any later
+    // interruption — a phone call, Siri, another app taking the session.
+    var audioRecoveryListenerInstalled = false;
+    function recoverFromAudioSessionChange(Tone) {
+      var doRecover = function () {
+        try {
+          var raw = Tone.context && (Tone.context.rawContext || Tone.context);
+          if (raw && raw.state !== 'running' && raw.resume) raw.resume().catch(function () {});
+        } catch (_e) {}
+        if (enabled && ambientIsSample && ambientSynth && ambientSynth.loaded) {
+          try { if (ambientSynth.state !== 'started') ambientSynth.start(); } catch (_e) {}
+        }
+      };
+      doRecover();
+      if (audioRecoveryListenerInstalled) return;
+      try {
+        var raw = Tone.context && (Tone.context.rawContext || Tone.context);
+        if (raw && raw.addEventListener) {
+          raw.addEventListener('statechange', function () {
+            if (disposed) return;
+            if (raw.state === 'running') doRecover();
+            else if (raw.state !== 'closed' && raw.resume) raw.resume().catch(function () {});
+          });
+          audioRecoveryListenerInstalled = true;
+        }
+      } catch (_e) {}
     }
 
     function disableMic() {
@@ -606,6 +765,11 @@
     return {
       async enable() {
         if (disposed) return false;
+        // Warm the MediaPipe model in the background as soon as sound is on
+        // for a hand-tracking piece: the (large) model + WASM load then
+        // doesn't sit between the visitor's later theremin tap and
+        // getUserMedia — the tap only has to grant the camera.
+        if (voices.hand_tracking) { try { loadHandLandmarkerOnce().catch(function () {}); } catch (_e) {} }
         await ensureSynth();
         if (disposed || !ambientSynth) return false;
         enabled = true;
@@ -708,6 +872,17 @@
       isHandTrackingAllowed: function () { return !!voices.hand_tracking; },
       enableHandTracking: enableHandTracking,
       disableHandTracking: disableHandTracking,
+      // Hand-control (piece interaction) + camera-feed consumers — all three
+      // camera users share one getUserMedia stream (ref-counted).
+      enableHandControl: enableHandControl,
+      disableHandControl: disableHandControl,
+      isHandControlEnabled: function () { return handControlOn; },
+      // cb receives the current hand's 21 normalized landmarks each frame,
+      // or null on hand-lost frames. One subscriber; pass null to clear.
+      onHandFrame: function (cb) { handFrameSubscriber = (typeof cb === 'function') ? cb : null; },
+      acquireCameraFeed: acquireCameraFeed,
+      releaseCameraFeed: releaseCameraFeed,
+      getHandVideoElement: function () { return handVideoEl; },
       // Live human-voice input (mic) — visitor-facing, off by default, never
       // persisted by this engine. isMicSupported() is a plain feature check
       // (doesn't require Tone.js to be loaded yet) so UI surfaces can decide
@@ -739,6 +914,8 @@
         if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
         if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
         disableHandTracking();
+        disableHandControl();
+        handCameraRefs = 0; releaseHandCamera(); // force-drop any feed holders
         disableMic();
         try { handLandmarker && handLandmarker.close && handLandmarker.close(); } catch (_e) {}
         try { ambientSynth && ambientSynth.dispose && ambientSynth.dispose(); } catch (_e) {}

@@ -390,16 +390,62 @@ function piece_export_sonic_script(string $engine, string $sonicParamsJson, stri
 
 JS;
         $handRowAppendScript = '    panel.appendChild(handRow);';
+        // Hand-control (steer the piece) and camera-background rows: the
+        // Three.js and A-Frame export bootstraps both register the shared
+        // hand-control/camera-background hook contract.
+        if ($engine === 'three' || $engine === 'aframe') {
+            $handRowElementsScript .= <<<'JS'
+
+    var handControlRow = document.createElement('div');
+    handControlRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:0.5rem;';
+    var handControlLabel = document.createElement('span');
+    handControlLabel.textContent = 'Hand control';
+    var handControlToggle = document.createElement('button');
+    handControlToggle.type = 'button';
+    handControlToggle.className = 'offline-sound-btn';
+    handControlToggle.textContent = 'Steer the piece';
+    handControlToggle.setAttribute('aria-pressed', 'false');
+    handControlToggle.style.cssText = 'border:1px solid rgba(255,255,255,0.18);border-radius:0.6rem;background:rgba(255,255,255,0.06);color:#fff;font:inherit;font-weight:600;padding:0.3rem 0.55rem;cursor:pointer;';
+    handControlRow.appendChild(handControlLabel); handControlRow.appendChild(handControlToggle);
+
+    var cameraBgRow = document.createElement('div');
+    cameraBgRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:0.5rem;';
+    var cameraBgLabel = document.createElement('span');
+    cameraBgLabel.textContent = 'Camera view';
+    var cameraBgToggle = document.createElement('button');
+    cameraBgToggle.type = 'button';
+    cameraBgToggle.className = 'offline-sound-btn';
+    cameraBgToggle.textContent = 'Show camera';
+    cameraBgToggle.setAttribute('aria-pressed', 'false');
+    cameraBgToggle.style.cssText = handControlToggle.style.cssText;
+    cameraBgRow.appendChild(cameraBgLabel); cameraBgRow.appendChild(cameraBgToggle);
+
+JS;
+            $handRowAppendScript .= "\n    panel.appendChild(handControlRow);\n    panel.appendChild(cameraBgRow);";
+        }
         $handRowWiringScript = <<<'JS'
 
     handToggle.addEventListener('click', async function () {
       var turningOn = !engine || engine.getInputMode() !== 'hand';
       if (turningOn) {
-        // getUserMedia's own permission prompt is the user gesture here; on
-        // denial/error this silently reverts — no error banner, matching the
-        // live-page hand-tracking behavior.
+        // Camera FIRST, inside this click's task: create the engine
+        // synchronously (sonic-controller.js is a plain <script> above, so
+        // window.CreatrSonicController is already present) and start
+        // enableHandTracking(), whose first await is getUserMedia — WebKit's
+        // transient activation does not survive the Tone.js load inside
+        // ensureEnabled(). Denial/error silently reverts — no error banner.
+        if (!engine && window.CreatrSonicController) {
+          engine = window.CreatrSonicController.create(sonicParams, {
+            getMover: function () { return getMover ? getMover() : null; },
+            toneSrc: window.__creatrToneSrc,
+            mediaPipeVisionSrc: window.__creatrMediaPipeVisionSrc,
+            mediaPipeWasmDir: window.__creatrMediaPipeWasmDir,
+            mediaPipeModelSrc: window.__creatrMediaPipeModelSrc,
+          });
+        }
+        var handPromise = engine ? engine.enableHandTracking() : null;
         var ok = await ensureEnabled();
-        var handOk = ok && engine ? await engine.enableHandTracking() : false;
+        var handOk = ok && engine ? await (handPromise !== null ? handPromise : engine.enableHandTracking()) : false;
         if (handOk) {
           engine.setInputMode('hand');
           handToggle.setAttribute('aria-pressed', 'true');
@@ -412,6 +458,77 @@ JS;
     });
 
 JS;
+        if ($engine === 'three' || $engine === 'aframe') {
+            $handRowWiringScript .= <<<'JS'
+
+    function createEngineSyncForCamera() {
+      if (engine || !window.CreatrSonicController) return engine;
+      engine = window.CreatrSonicController.create(sonicParams, {
+        getMover: function () { return getMover ? getMover() : null; },
+        toneSrc: window.__creatrToneSrc,
+        mediaPipeVisionSrc: window.__creatrMediaPipeVisionSrc,
+        mediaPipeWasmDir: window.__creatrMediaPipeWasmDir,
+        mediaPipeModelSrc: window.__creatrMediaPipeModelSrc,
+      });
+      return engine;
+    }
+
+    var handControlActive = false;
+    handControlToggle.addEventListener('click', async function () {
+      var turningOn = handControlToggle.getAttribute('aria-pressed') !== 'true';
+      if (!turningOn) {
+        handControlActive = false;
+        if (engine) { engine.onHandFrame(null); engine.disableHandControl(); }
+        handControlToggle.setAttribute('aria-pressed', 'false');
+        return;
+      }
+      var eng = createEngineSyncForCamera();
+      var controlOk = eng ? await eng.enableHandControl() : false;
+      if (controlOk) {
+        handControlActive = true;
+        eng.onHandFrame(function (hand) {
+          if (!handControlActive || !hand) return;
+          var hooks = window.__pieceHandHooks;
+          var wrist = hand[0];
+          if (!hooks || !hooks.handPoint || !wrist) return;
+          try { hooks.handPoint(1 - wrist.x, wrist.y); } catch (_e) {}
+        });
+        handControlToggle.setAttribute('aria-pressed', 'true');
+      }
+    });
+
+    cameraBgToggle.addEventListener('click', async function () {
+      var turningOn = cameraBgToggle.getAttribute('aria-pressed') !== 'true';
+      var hooks = window.__pieceHandHooks;
+      if (!turningOn) {
+        if (hooks && hooks.clearBackgroundVideo) { try { hooks.clearBackgroundVideo(); } catch (_e) {} }
+        if (engine) engine.releaseCameraFeed();
+        cameraBgToggle.setAttribute('aria-pressed', 'false');
+        return;
+      }
+      var eng = createEngineSyncForCamera();
+      if (!eng || !hooks || !hooks.setBackgroundVideo) return;
+      try {
+        var video = await eng.acquireCameraFeed();
+        var shown = !!hooks.setBackgroundVideo(video);
+        if (!shown) { eng.releaseCameraFeed(); return; }
+        cameraBgToggle.setAttribute('aria-pressed', 'true');
+      } catch (_e) {}
+    });
+
+    window.addEventListener('pagehide', function () {
+      handControlActive = false;
+      if (engine) {
+        engine.onHandFrame(null);
+        engine.disableHandControl();
+      }
+      var hooks = window.__pieceHandHooks;
+      if (hooks && hooks.clearBackgroundVideo) { try { hooks.clearBackgroundVideo(); } catch (_e) {} }
+      if (cameraBgToggle.getAttribute('aria-pressed') === 'true' && engine) engine.releaseCameraFeed();
+    }, { once: true });
+
+JS;
+        }
     }
 
     return <<<HTML
@@ -1195,6 +1312,7 @@ window.addEventListener('unhandledrejection',event=>{const r=event.reason;const 
 <script src="runtime/three/GLTFLoader.global.js"></script>
 <script src="runtime/three/OrbitControls.global.js"></script>
 <script src="runtime/three-device-orientation-controls.global.js"></script>
+<script src="runtime/sonic-controller.js"></script>
 <script src="runtime/immersive-gallery.global.js"></script>
 <script>
 const { mountAFrameImmersivePiece, mountGalleryPiece, mountThreeImmersivePiece, setupImmersiveStageChrome } = window.CreatrImmersiveGallery || {};
@@ -1249,6 +1367,7 @@ try {
       viewer?.openFullViewAt?.(0);
     },
     getAudioController: () => viewer?.getAudioController?.(),
+    getPieceInteractionController: () => viewer?.getPieceInteractionController?.(),
   });
 } catch (error) {
   showPieceError(error);
@@ -2254,6 +2373,45 @@ try {
     }
     animateControls();
     if (window.__creatrSonicSetMover) window.__creatrSonicSetMover(() => state.camera);
+    // Interaction/camera hooks for the shared hand-tracking pipeline —
+    // export twin of piece-runtime.js's three bootstrap block.
+    window.__pieceHandHooks = {
+      engine: 'three',
+      handPoint(nx, ny) {
+        if (!controls || !state.camera) return;
+        const T = window.THREE;
+        if (!T || !T.Spherical) return;
+        const target = controls.target;
+        const offset = state.camera.position.clone().sub(target);
+        const sph = new T.Spherical().setFromVector3(offset);
+        const desiredTheta = (nx - 0.5) * Math.PI * 1.5;
+        const desiredPhi = Math.PI / 2 + (ny - 0.5) * Math.PI * 0.7;
+        sph.theta += (desiredTheta - sph.theta) * 0.12;
+        sph.phi += (desiredPhi - sph.phi) * 0.12;
+        sph.phi = Math.max(0.15, Math.min(Math.PI - 0.15, sph.phi));
+        offset.setFromSpherical(sph);
+        state.camera.position.copy(target).add(offset);
+        controls.update();
+        userHasInteracted = true;
+      },
+      _prevBackground: undefined,
+      _videoTexture: null,
+      setBackgroundVideo(video) {
+        const T = window.THREE;
+        if (!state.scene || !T || !T.VideoTexture) return false;
+        this._prevBackground = state.scene.background ?? null;
+        this._videoTexture = new T.VideoTexture(video);
+        if (T.SRGBColorSpace) this._videoTexture.colorSpace = T.SRGBColorSpace;
+        state.scene.background = this._videoTexture;
+        userHasInteracted = true;
+        return true;
+      },
+      clearBackgroundVideo() {
+        if (state.scene) state.scene.background = this._prevBackground ?? null;
+        if (this._videoTexture) { try { this._videoTexture.dispose(); } catch (_) {} this._videoTexture = null; }
+        userHasInteracted = true;
+      },
+    };
   }
   window.addEventListener('resize', () => {
     sizeCanvas();
@@ -2594,6 +2752,45 @@ try {
     }
     animateControls();
     if (window.__creatrSonicSetMover) window.__creatrSonicSetMover(() => state.camera);
+    // Interaction/camera hooks for the shared hand-tracking pipeline —
+    // export twin of piece-runtime.js's three bootstrap block.
+    window.__pieceHandHooks = {
+      engine: 'three',
+      handPoint(nx, ny) {
+        if (!controls || !state.camera) return;
+        const T = window.THREE;
+        if (!T || !T.Spherical) return;
+        const target = controls.target;
+        const offset = state.camera.position.clone().sub(target);
+        const sph = new T.Spherical().setFromVector3(offset);
+        const desiredTheta = (nx - 0.5) * Math.PI * 1.5;
+        const desiredPhi = Math.PI / 2 + (ny - 0.5) * Math.PI * 0.7;
+        sph.theta += (desiredTheta - sph.theta) * 0.12;
+        sph.phi += (desiredPhi - sph.phi) * 0.12;
+        sph.phi = Math.max(0.15, Math.min(Math.PI - 0.15, sph.phi));
+        offset.setFromSpherical(sph);
+        state.camera.position.copy(target).add(offset);
+        controls.update();
+        userHasInteracted = true;
+      },
+      _prevBackground: undefined,
+      _videoTexture: null,
+      setBackgroundVideo(video) {
+        const T = window.THREE;
+        if (!state.scene || !T || !T.VideoTexture) return false;
+        this._prevBackground = state.scene.background ?? null;
+        this._videoTexture = new T.VideoTexture(video);
+        if (T.SRGBColorSpace) this._videoTexture.colorSpace = T.SRGBColorSpace;
+        state.scene.background = this._videoTexture;
+        userHasInteracted = true;
+        return true;
+      },
+      clearBackgroundVideo() {
+        if (state.scene) state.scene.background = this._prevBackground ?? null;
+        if (this._videoTexture) { try { this._videoTexture.dispose(); } catch (_) {} this._videoTexture = null; }
+        userHasInteracted = true;
+      },
+    };
   }
   window.addEventListener('resize', () => {
     sizeCanvas();
@@ -2778,6 +2975,38 @@ try {
     scene.addEventListener('loaded', () => {
       if (window.__creatrSonicSetMover) window.__creatrSonicSetMover(getAFrameCameraMover);
     }, { once: true });
+    window.__pieceHandHooks = {
+      engine: 'aframe',
+      _previousBackground: undefined,
+      _videoTexture: null,
+      handPoint(nx, ny) {
+        const cameraObject = getAFrameCameraObject();
+        if (!cameraObject) return;
+        const desiredYaw = -(nx - 0.5) * Math.PI * 1.5;
+        const desiredPitch = -(ny - 0.5) * Math.PI * 0.7;
+        cameraObject.rotation.order = 'YXZ';
+        cameraObject.rotation.y += (desiredYaw - cameraObject.rotation.y) * 0.12;
+        cameraObject.rotation.x += (desiredPitch - cameraObject.rotation.x) * 0.12;
+        cameraObject.rotation.x = Math.max(-Math.PI * 0.45, Math.min(Math.PI * 0.45, cameraObject.rotation.x));
+      },
+      setBackgroundVideo(video) {
+        const THREE_NS = getAFrameThree();
+        if (!video || !scene.object3D || !THREE_NS?.VideoTexture) return false;
+        if (this._videoTexture) this.clearBackgroundVideo();
+        this._previousBackground = scene.object3D.background ?? null;
+        this._videoTexture = new THREE_NS.VideoTexture(video);
+        if (THREE_NS.SRGBColorSpace) this._videoTexture.colorSpace = THREE_NS.SRGBColorSpace;
+        scene.object3D.background = this._videoTexture;
+        return true;
+      },
+      clearBackgroundVideo() {
+        if (!this._videoTexture) return;
+        if (scene.object3D) scene.object3D.background = this._previousBackground ?? null;
+        if (this._videoTexture) { try { this._videoTexture.dispose(); } catch (_e) {} }
+        this._videoTexture = null;
+        this._previousBackground = undefined;
+      },
+    };
     scene.addEventListener('renderstart', bindAFramePointerControls, { once: true });
     frameId = requestAnimationFrame(animateAFramePointerNavigation);
     setTimeout(bindAFramePointerControls, 250);
