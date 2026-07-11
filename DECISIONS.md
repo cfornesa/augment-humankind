@@ -10,6 +10,44 @@
 
 None.
 
+## 2026-07-11 — Mobile-Safe Piece Download Controls
+
+### Decision
+
+- Regular live piece pages now place PNG capture and ZIP controls in a compact,
+  safe-area-aware upper-left canvas overlay. The old action-row download links
+  and obstructive mobile fullscreen bottom bar were removed; View Immersive
+  remains below the canvas and the existing fullscreen toggle exits fullscreen.
+- Live immersive pieces retain standalone PNG capture and use a ZIP menu with
+  the same downloader-narrowable Keyboard and Hand-tracking choices. The final
+  ZIP action preserves the existing `dl_voices` contract and adds immersive
+  view state at activation time.
+- Downloaded/offline indexes remain PNG-only. ZIP selection is a live-server
+  concern; an already-downloaded artifact does not regenerate itself.
+- Mobile chrome uses 44×44px minimum touch targets. Menus support outside-tap
+  dismissal, Escape dismissal with focus restoration, and viewport-safe sizing.
+- The mic, camera theremin, hand-control, camera-background, MediaPipe, shared
+  camera, and gesture-bridge implementations were not modified.
+- Follow-up: PNG capture busy state changes only `aria-busy`, `aria-label`, and
+  `disabled`; it never replaces button contents. This prevents the camera SVG
+  from being deleted when capture completes.
+
+### Verification
+
+- `php tests/three-runtime-consistency.php` — **Passed: 127, Failed: 0**
+- `php tests/art-piece-generation.php` — **Passed: 143, Failed: 0**
+- Browser verification at 390×844 and 412×915 confirmed no horizontal overflow,
+  44×44px controls, fullscreen persistence without a bottom bar, both ZIP
+  checkboxes, and all four `dl_voices` URL combinations.
+
+### Unresolved memory checkpoint
+
+- Proposed MEMORY.md entry awaiting the person's confirmation: the live piece
+  export pattern is standalone upper-left PNG plus a ZIP menu limited to
+  downloader-narrowable Keyboard/Hand-tracking; offline exports remain PNG-only.
+- No DESIGN.md Observed Taste entry proposed: this was a responsive usability
+  correction using established immersive chrome, not a new aesthetic signal.
+
 ## 2026-07-11 — Restored Cross-Browser Theremin Tracking, Hand Controls, and Live Microphone
 
 ### Decision

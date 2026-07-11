@@ -1500,6 +1500,8 @@ test('immersive bundle export keeps index.html as the immersive manual entry poi
     assert_contains($index, 'fullscreen-toggle-btn');
     assert_contains($index, 'immersive-stage-toolbar');
     assert_contains($index, 'data-immersive-download-png');
+    assert_not_contains($index, 'data-immersive-download-piece');
+    assert_not_contains($index, 'data-piece-download-link');
     assert_contains($index, 'setupImmersiveStageChrome');
     assert_contains($index, '"camera":{"x":1,"y":2,"z":3}');
     assert_contains($index, 'window.CreatrPieceDownload = {');

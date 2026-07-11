@@ -30,27 +30,6 @@ if ($handTrackingAvailable) {
 $isAdmin = (bool) admin_identity();
 $pngFilenameBase = pathinfo(piece_export_filename($piece), PATHINFO_FILENAME);
 $pngFilename = ($pngFilenameBase !== '' ? $pngFilenameBase : 'piece-' . (int) ($piece['id'] ?? 0)) . '.png';
-ob_start();
-if (empty($downloadVoiceOptions)) {
-    ?><a href="/pieces/<?= (int) $piece['id'] ?>/download" class="piece-immersive-link"><?= e(public_copy_value('public_art_copy.shared_ui.download_piece_label')) ?></a><?php
-} else {
-    ?><span class="piece-download-picker-wrap" data-piece-download-picker-wrap>
-        <a href="/pieces/<?= (int) $piece['id'] ?>/download" class="piece-immersive-link" data-piece-download-link><?= e(public_copy_value('public_art_copy.shared_ui.download_piece_label')) ?></a>
-        <button type="button" class="piece-download-picker-trigger" data-piece-download-picker-trigger aria-haspopup="true" aria-expanded="false" aria-label="Choose download options">
-            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
-        </button>
-        <div class="piece-download-picker" data-piece-download-picker role="region" aria-label="Download options" hidden>
-            <p class="admin-hint" style="margin:0 0 0.5rem;">Include in this download:</p>
-            <?php foreach ($downloadVoiceOptions as $key => $label): ?>
-            <label class="checkbox-label">
-                <input type="checkbox" data-piece-download-voice="<?= e($key) ?>" checked>
-                <?= e($label) ?>
-            </label>
-            <?php endforeach; ?>
-        </div>
-    </span><?php
-}
-$downloadLinkMarkup = ob_get_clean();
 $publicPieceScriptVersion = (int) @filemtime(dirname(__DIR__, 3) . '/assets/js/public-piece-download.js');
 $pieceFullscreenScriptVersion = (int) @filemtime(dirname(__DIR__, 3) . '/assets/js/piece-fullscreen.js');
 ?>
@@ -91,6 +70,29 @@ $pieceFullscreenScriptVersion = (int) @filemtime(dirname(__DIR__, 3) . '/assets/
     <?php if ($hasCode): ?>
         <div data-piece-download-root data-piece-id="<?= (int) $piece['id'] ?>">
             <div class="piece-canvas-container">
+                <div class="piece-export-overlay" data-piece-download-picker-wrap role="toolbar" aria-label="Piece download controls">
+                    <button type="button" class="piece-export-icon-btn" data-piece-download-trigger data-download-filename="<?= e($pngFilename) ?>" aria-label="Take screenshot">
+                        <?= immersive_stage_toolbar_icon_svg('screenshot') ?>
+                    </button>
+                    <div class="piece-download-picker-wrap">
+                        <button type="button" class="piece-export-icon-btn" data-piece-download-picker-trigger aria-haspopup="true" aria-expanded="false" aria-controls="piece-download-menu" aria-label="Open download menu">
+                            <?= immersive_stage_toolbar_icon_svg('download') ?>
+                        </button>
+                        <div id="piece-download-menu" class="piece-download-picker" data-piece-download-picker role="region" aria-label="ZIP download options" hidden>
+                            <p class="piece-download-picker-heading">Include in this download:</p>
+                            <?php foreach ($downloadVoiceOptions as $key => $label): ?>
+                            <label class="piece-download-picker-choice">
+                                <input type="checkbox" data-piece-download-voice="<?= e($key) ?>" checked>
+                                <span><?= e($label) ?></span>
+                            </label>
+                            <?php endforeach; ?>
+                            <a href="/pieces/<?= (int) $piece['id'] ?>/download" class="piece-download-picker-action" data-piece-download-link>
+                                <?= immersive_stage_toolbar_icon_svg('download-small') ?>
+                                <span><?= e(public_copy_value('public_art_copy.shared_ui.download_piece_label')) ?></span>
+                            </a>
+                        </div>
+                    </div>
+                </div>
                 <?= piece_render_iframe($piece, $version, 560, array_filter([
                     'data-piece-download-frame' => 'true',
                     'allow' => $handTrackingAvailable ? 'camera; microphone' : 'microphone',
@@ -147,15 +149,8 @@ $pieceFullscreenScriptVersion = (int) @filemtime(dirname(__DIR__, 3) . '/assets/
                     <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
                 </button>
             </div>
-            <div class="piece-fullscreen-bar" data-piece-fullscreen-bar role="toolbar" aria-label="Piece downloads" hidden>
-                <?= $downloadLinkMarkup ?>
-                <button type="button" class="piece-immersive-link piece-download-button" data-piece-download-trigger data-download-filename="<?= e($pngFilename) ?>"><?= e(public_copy_value('public_art_copy.shared_ui.download_png_label')) ?></button>
-                <button type="button" class="piece-immersive-link piece-download-button" data-piece-fullscreen-close>Close</button>
-            </div>
             <div class="piece-action-row">
                 <a href="/immersive/pieces/<?= (int) $piece['id'] ?>?returnTo=<?= rawurlencode($_SERVER['REQUEST_URI'] ?? '') ?>" target="_blank" rel="noopener" class="piece-immersive-link"><?= e(public_copy_value('public_art_copy.shared_ui.view_immersive_label')) ?></a>
-                <?= $downloadLinkMarkup ?>
-                <button type="button" class="piece-immersive-link piece-download-button" data-piece-download-trigger data-download-filename="<?= e($pngFilename) ?>"><?= e(public_copy_value('public_art_copy.shared_ui.download_png_label')) ?></button>
             </div>
             <p class="piece-download-status" data-piece-download-status role="status" aria-live="polite" hidden></p>
         </div>

@@ -1357,7 +1357,7 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
     downloadMenu.hidden = !open;
     downloadTrigger.setAttribute("aria-expanded", open ? "true" : "false");
     if (open) {
-      downloadMenu.querySelector("a, button")?.focus?.();
+      downloadMenu.querySelector("a, button, input")?.focus?.();
     } else if (focusTrigger) {
       downloadTrigger.focus?.();
     }

@@ -38,6 +38,15 @@ $description = $piece['description'] ?? '';
 $aiProfileName = $version['ai_profile_name'] ?? '(Blank)';
 $aiPersonaName = $version['ai_persona_name'] ?? '(Blank)';
 $sonicFeel = art_piece_sonic_feel($version['sonic_params'] ?? null);
+$sonicParamsDecoded = !empty($version['sonic_params']) ? json_decode((string) $version['sonic_params'], true) : null;
+$soundToggleAvailable = is_array($sonicParamsDecoded) && ($sonicParamsDecoded['enabled'] ?? true) !== false;
+$downloadVoiceOptions = [];
+if ($soundToggleAvailable && (($sonicParamsDecoded['extras']['voices']['melodic'] ?? true) !== false)) {
+    $downloadVoiceOptions['melodic'] = 'Keyboard (piano)';
+}
+if ($soundToggleAvailable && !empty($sonicParamsDecoded['extras']['voices']['hand_tracking'])) {
+    $downloadVoiceOptions['hand_tracking'] = 'Hand-tracking (camera theremin)';
+}
 
 // Build the three different iterations of embed codes mirroring legacy Node.js
 $titleSafe = htmlspecialchars($piece['title'] ?? 'Art piece', ENT_QUOTES | ENT_HTML5, 'UTF-8');
@@ -584,11 +593,14 @@ canvas[aria-hidden="true"] {
                 'label' => $pieceViewActionLabel,
                 'icon' => $showC2InteractiveOverlay ? 'interactive' : 'view',
             ] : null,
-            'download_items' => !$isStaticEmbed ? [
-                [
-                    'tag' => 'a',
+            'download_options' => !$isStaticEmbed ? [
+                'choices' => array_map(
+                    static fn(string $label, string $value): array => ['label' => $label, 'value' => $value],
+                    array_values($downloadVoiceOptions),
+                    array_keys($downloadVoiceOptions)
+                ),
+                'action' => [
                     'label' => public_copy_value('public_art_copy.shared_ui.download_piece_label'),
-                    'icon' => 'download-small',
                     'attrs' => [
                         'href' => $pieceDownloadUrl,
                         'data-immersive-download-piece' => $pieceDownloadUrl,
@@ -1037,6 +1049,11 @@ try {
         downloadPieceLink.addEventListener('click', () => {
             const baseHref = downloadPieceLink.dataset.immersiveDownloadPiece || downloadPieceLink.getAttribute('href') || '';
             const state = immersiveViewer?.getViewState?.() || {};
+            const choices = document.querySelectorAll('[data-immersive-download-menu] [data-piece-download-voice]');
+            const chosen = Array.from(choices)
+                .filter((choice) => choice.checked)
+                .map((choice) => choice.dataset.pieceDownloadVoice)
+                .filter((value) => value === 'melodic' || value === 'hand_tracking');
             try {
                 const encoded = btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify(state))))
                     .replace(/\+/g, '-')
@@ -1044,11 +1061,13 @@ try {
                     .replace(/=+$/g, '');
                 const url = new URL(baseHref, window.location.href);
                 url.searchParams.set('surface', 'immersive');
+                url.searchParams.set('dl_voices', chosen.join(','));
                 if (encoded) url.searchParams.set('viewState', encoded);
                 downloadPieceLink.href = url.pathname + url.search;
             } catch (_) {
                 const url = new URL(baseHref, window.location.href);
                 url.searchParams.set('surface', 'immersive');
+                url.searchParams.set('dl_voices', chosen.join(','));
                 downloadPieceLink.href = url.pathname + url.search;
             }
         });

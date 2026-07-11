@@ -5,9 +5,7 @@
     }
 
     const toggle = root.querySelector('[data-piece-fullscreen-toggle]');
-    const bar = root.querySelector('[data-piece-fullscreen-bar]');
-    const closeBtn = root.querySelector('[data-piece-fullscreen-close]');
-    if (!toggle || !bar) {
+    if (!toggle) {
         return;
     }
 
@@ -32,15 +30,11 @@
         isFullscreen = active;
         root.classList.toggle('piece-stage-fullscreen', active);
         document.body.classList.toggle('piece-fullscreen-locked', active);
-        bar.hidden = !active;
         toggle.setAttribute('aria-expanded', active ? 'true' : 'false');
         toggle.setAttribute('aria-label', active ? 'Exit fullscreen' : 'Expand piece to fullscreen');
         if (active) {
             previouslyFocused = document.activeElement;
-            const firstControl = bar.querySelector('a, button');
-            if (firstControl) {
-                firstControl.focus();
-            }
+            toggle.focus();
         } else if (previouslyFocused && typeof previouslyFocused.focus === 'function') {
             previouslyFocused.focus();
             previouslyFocused = null;
@@ -77,10 +71,6 @@
             enter();
         }
     });
-
-    if (closeBtn) {
-        closeBtn.addEventListener('click', exit);
-    }
 
     document.addEventListener('fullscreenchange', () => {
         applyState(!!document.fullscreenElement);
@@ -469,8 +459,8 @@
 // own ZIP, bounded by whichever the admin already enabled (see
 // piece_export_apply_requested_voices() in piece-render.php). Only rendered
 // at all when the admin allowed at least one optional voice (show.php);
-// there can be more than one instance on the page (fullscreen bar + action
-// row), each wired independently here.
+// The same canvas-mounted instance remains available in regular and
+// fullscreen modes.
 document.querySelectorAll('[data-piece-download-picker-wrap]').forEach((wrap) => {
     const link = wrap.querySelector('[data-piece-download-link]');
     const trigger = wrap.querySelector('[data-piece-download-picker-trigger]');
@@ -481,7 +471,10 @@ document.querySelectorAll('[data-piece-download-picker-wrap]').forEach((wrap) =>
     const baseHref = link.getAttribute('href') || '';
 
     function updateHref() {
-        const chosen = Array.from(checkboxes).filter((cb) => cb.checked).map((cb) => cb.dataset.pieceDownloadVoice);
+        const chosen = Array.from(checkboxes)
+            .filter((cb) => cb.checked)
+            .map((cb) => cb.dataset.pieceDownloadVoice)
+            .filter((value) => value === 'melodic' || value === 'hand_tracking');
         const url = new URL(baseHref, window.location.href);
         url.searchParams.set('dl_voices', chosen.join(','));
         link.setAttribute('href', url.pathname + url.search);
@@ -491,9 +484,14 @@ document.querySelectorAll('[data-piece-download-picker-wrap]').forEach((wrap) =>
         return !picker.hidden;
     }
 
-    function setOpen(open) {
+    function setOpen(open, { restoreFocus = false } = {}) {
         picker.hidden = !open;
         trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+        if (open) {
+            picker.querySelector('input, a, button')?.focus?.();
+        } else if (restoreFocus) {
+            trigger.focus();
+        }
     }
 
     trigger.addEventListener('click', () => setOpen(!isOpen()));
@@ -503,6 +501,12 @@ document.querySelectorAll('[data-piece-download-picker-wrap]').forEach((wrap) =>
         if (event.target instanceof Node && wrap.contains(event.target)) return;
         setOpen(false);
     }, { capture: true });
+    document.addEventListener('keydown', (event) => {
+        if (event.key !== 'Escape' || !isOpen()) return;
+        event.stopPropagation();
+        setOpen(false, { restoreFocus: true });
+    });
+    link.addEventListener('click', () => setOpen(false));
 
     updateHref();
 });

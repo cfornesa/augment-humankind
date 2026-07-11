@@ -275,10 +275,10 @@
         }
 
         const filename = button.dataset.downloadFilename || 'piece.png';
-        const originalLabel = button.textContent;
+        const originalAriaLabel = button.getAttribute('aria-label');
         button.disabled = true;
         button.setAttribute('aria-busy', 'true');
-        button.textContent = 'Preparing PNG...';
+        button.setAttribute('aria-label', 'Preparing PNG');
         setStatus(statusEl, '');
 
         try {
@@ -296,7 +296,11 @@
         } finally {
             button.disabled = false;
             button.removeAttribute('aria-busy');
-            button.textContent = originalLabel;
+            if (originalAriaLabel === null) {
+                button.removeAttribute('aria-label');
+            } else {
+                button.setAttribute('aria-label', originalAriaLabel);
+            }
         }
     }
 

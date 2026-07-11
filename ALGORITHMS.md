@@ -589,6 +589,27 @@ NOTE   imported posts (Blog.FeedImport) carry source_feed_id, which
 - **Characteristics:** Fail-open by field — an invalid vector is dropped, not
   fatal; output is always a well-formed (possibly empty) state. O(1).
 
+### 3.9 Downloader-bounded ZIP features — `piece_export_apply_requested_voices()` ([piece-render.php](public/app/helpers/piece-render.php)); live controls in [show.php](public/app/views/pieces/show.php) and [immersive/piece.php](public/app/views/immersive/piece.php)
+- **Type:** Allowlisted set intersection applied to an immutable export copy.
+- **Logic:** The regular and immersive live views expose the same upper-left
+  export controls: a standalone PNG camera action plus a ZIP menu. Checked
+  choices are reduced to the fixed public allowlist `melodic` and
+  `hand_tracking`, serialized as the existing `dl_voices` comma list, and
+  applied only when the final Download ZIP action is activated. The server
+  intersects that request with the administrator-enabled voice configuration,
+  so a downloader can remove Keyboard or Hand-tracking but can never enable a
+  feature the piece owner disabled. An absent query parameter preserves the
+  stored configuration for old/external links; a present empty value disables
+  both optional voices. Ambient and movement remain unchanged. Hand-tracking
+  selection also gates the approximately 19 MB MediaPipe payload.
+- **Surface distinction:** Immersive ZIP actions additionally serialize the
+  sanitized camera/view state from §3.8. An already-downloaded offline index
+  exposes PNG capture only: its selected bundle is the terminal artifact and
+  does not attempt to generate another ZIP in the browser.
+- **Characteristics:** Pure O(number of choices), currently O(2). Database
+  state and the passed version remain unchanged; only the per-request export
+  copy is narrowed.
+
 ### Recipe Overview — AI Art Piece Generation pipeline
 
 This recipe empowers an admin to create interactive artwork simply by
@@ -860,7 +881,8 @@ actually painted on screen.
 
 ```
 RECIPE ArtPiece.RenderExport
-INPUT   stored piece + version; target = public iframe | offline export
+INPUT   stored piece + version; target = public iframe | offline export;
+        optional downloader voice subset {melodic, hand_tracking}
 OUTPUT  sandboxed embed document, or standalone offline document
 
 STEP 1 — ASSEMBLE
@@ -874,13 +896,15 @@ STEP 1 — ASSEMBLE
 
 STEP 2 — EMBED-RUNTIME
   IN:    document (← STEP 1)
+  voices ← admin-enabled voices ∩ requested allowlisted voices
+            // absent request preserves admin configuration
   PARALLEL DO                               // independent rewrites
      LEG A (runtime): inline runtime sources; wire cross-module imports via
                       Blob object-URLs (OrbitControls patched to import
                       Three.js from the generated blob URL)
      LEG B (media):   rewrite cms-media: refs → bundle-relative asset paths
   END PARALLEL
-  RETURN standalone document                // download
+  RETURN standalone document + selected runtimes // download
 
 STEP 3 — PNG-CAPTURE   (separate on-demand entry point, browser side)
   IN:    rendered canvas
@@ -903,7 +927,10 @@ STEP 3 — PNG-CAPTURE   (separate on-demand entry point, browser side)
 3. If the page is for download, the drawing libraries are bundled into it and
    image links are rewritten to point inside the download, so it works with no
    internet connection.
-4. Separately, when someone saves a picture of the artwork, the system waits
+4. Before building a visitor-requested ZIP, the system narrows Keyboard and
+   Hand-tracking to the checked, administrator-allowed subset; Hand-tracking's
+   larger vision runtime is included only when selected.
+5. Separately, when someone saves a picture of the artwork, the system waits
    until the drawing has actually appeared on screen, then captures and
    downloads it. If nothing ever appears, it reports a failure instead of
    saving a blank image.
@@ -1168,9 +1195,11 @@ STEP 6 — CAPTURE       (on demand; returns to STEP 5)
 - Typing in form fields and window blur are filtered/cleared so the camera
   never moves unintentionally and keys never stick.
 - Toolbar affordances: PNG capture is a standalone always-visible screenshot
-  button (`screenshot_action` in immersive-chrome.php); a single download
-  item renders as a direct button, with a dropdown only when two or more
-  exist.
+  button (`screenshot_action` in immersive-chrome.php). Live piece surfaces
+  pair it with a ZIP-menu button containing the downloader-bounded Keyboard
+  and Hand-tracking choices from §3.9 plus an explicit final download action;
+  downloaded/offline surfaces remain PNG-only. Both controls are upper-left,
+  safe-area-aware, and stay in place when the regular view enters fullscreen.
 
 **Failure points**
 - *Contained, per item:* WebGL context loss or an artwork whose code throws →
@@ -2877,6 +2906,10 @@ STEP 4 — VOICES         (independent concurrent legs, one tick per frame)
   substituted. Collection bundles can pass `exclude_hand_tracking` to keep
   the ~19 MB MediaPipe payload out unless a piece actually enables it
   (`piece_export_version_has_hand_tracking()`).
+- Single-piece downloaders may independently narrow the melodic keyboard and
+  hand-tracking voices through §3.9. This is an export-copy transformation,
+  not a sonic-engine mutation: mic, hand-control, camera-background, gesture
+  bridge, and shared camera algorithms in §§12.4–12.8 are unchanged.
 - A-Frame's built-in WASD controls are disabled (`disableAFrameWASD()` in
   both runtimes) so navigation is arrow-keys-only and letter keys are free
   for the melodic voice's piano mapping — the input namespaces can't

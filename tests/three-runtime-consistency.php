@@ -1196,11 +1196,30 @@ test('sonicdebug is opt-in, local-only, and capability controls expose loading/a
 test('regular piece view inlines its critical CSS and the global stylesheet is cache-busted', function () {
     $show = file_get_contents(__DIR__ . '/../public/app/views/pieces/show.php');
     assert_contains($show, 'piece_view_critical_css()');
+    assert_contains($show, 'class="piece-export-overlay"');
+    assert_contains($show, 'data-piece-download-picker-trigger');
+    assert_contains($show, 'data-piece-download-link');
+    assert_not_contains($show, 'data-piece-fullscreen-bar');
+    assert_not_contains($show, 'data-piece-fullscreen-close');
 
     $chrome = file_get_contents(__DIR__ . '/../public/app/helpers/immersive-chrome.php');
     assert_contains($chrome, 'function piece_view_critical_css');
     assert_contains($chrome, '.piece-stage-fullscreen {');
     assert_contains($chrome, 'body.piece-fullscreen-locked main {');
+    assert_contains($chrome, '.piece-export-overlay {');
+    assert_contains($chrome, 'env(safe-area-inset-left)');
+    assert_contains($chrome, "\$downloadOptions = \$opts['download_options'] ?? null;");
+
+    $fullscreen = file_get_contents(__DIR__ . '/../public/assets/js/piece-fullscreen.js');
+    assert_contains($fullscreen, "value === 'melodic' || value === 'hand_tracking'");
+    assert_contains($fullscreen, "event.key !== 'Escape'");
+    assert_contains($fullscreen, 'restoreFocus: true');
+
+    $immersiveView = file_get_contents(__DIR__ . '/../public/app/views/immersive/piece.php');
+    assert_contains($immersiveView, "'download_options' =>");
+    assert_contains($immersiveView, "url.searchParams.set('surface', 'immersive')");
+    assert_contains($immersiveView, "url.searchParams.set('dl_voices', chosen.join(','))");
+    assert_contains($immersiveView, "url.searchParams.set('viewState', encoded)");
 
     $header = file_get_contents(__DIR__ . '/../public/app/views/partials/header.php');
     assert_contains($header, '/assets/styles.css?v=');
@@ -1209,6 +1228,15 @@ test('regular piece view inlines its critical CSS and the global stylesheet is c
     $styles = file_get_contents(__DIR__ . '/../public/assets/styles.css');
     assert_not_contains($styles, '.piece-stage-fullscreen {');
     assert_not_contains($styles, '.piece-sound-panel {');
+});
+
+test('PNG capture busy state preserves icon markup and restores its accessible label', function () {
+    $download = file_get_contents(__DIR__ . '/../public/assets/js/public-piece-download.js');
+    assert_contains($download, "const originalAriaLabel = button.getAttribute('aria-label')");
+    assert_contains($download, "button.setAttribute('aria-label', 'Preparing PNG')");
+    assert_contains($download, "button.setAttribute('aria-label', originalAriaLabel)");
+    assert_not_contains($download, "button.textContent = 'Preparing PNG...'");
+    assert_not_contains($download, 'button.textContent = originalLabel');
 });
 
 echo "\n=== Results ===\n";

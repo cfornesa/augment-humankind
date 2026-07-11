@@ -273,6 +273,31 @@ function immersive_stage_toolbar_css(): string
   -webkit-backdrop-filter: blur(8px);
   z-index: 140;
 }
+.immersive-stage-download-heading {
+  margin: 0.15rem 0 0.25rem;
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 0.78rem;
+}
+.immersive-stage-download-choice {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-height: 2.75rem;
+  padding: 0.45rem 0.6rem;
+  border-radius: 0.7rem;
+  color: #fff;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.immersive-stage-download-choice:focus-within,
+.immersive-stage-download-choice:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.immersive-stage-download-choice input {
+  width: 1.1rem;
+  height: 1.1rem;
+  accent-color: #fff;
+}
 .immersive-stage-menu-btn {
   display: inline-flex;
   align-items: center;
@@ -311,8 +336,8 @@ function immersive_stage_toolbar_css(): string
   }
   .immersive-stage-icon-btn,
   .fullscreen-toggle-btn {
-    height: 2.5rem;
-    width: 2.5rem;
+    height: 2.75rem;
+    width: 2.75rem;
     border-radius: 0.7rem;
   }
   .immersive-stage-download-menu {
@@ -527,6 +552,7 @@ function immersive_stage_toolbar_markup(array $opts = []): string
 {
     $viewAction = $opts['view_action'] ?? null;
     $downloadItems = $opts['download_items'] ?? null;
+    $downloadOptions = $opts['download_options'] ?? null;
     $screenshotAction = $opts['screenshot_action'] ?? null;
     $showFullscreen = $opts['show_fullscreen'] ?? true;
     $fullscreenOnclick = $opts['fullscreen_onclick'] ?? null;
@@ -555,7 +581,30 @@ function immersive_stage_toolbar_markup(array $opts = []): string
             . '</button>';
     }
 
-    if (is_array($downloadItems) && count($downloadItems) === 1) {
+    if (is_array($downloadOptions)) {
+        $menuId = htmlspecialchars((string) ($downloadOptions['menu_id'] ?? 'immersive-download-menu'), ENT_QUOTES, 'UTF-8');
+        $action = is_array($downloadOptions['action'] ?? null) ? $downloadOptions['action'] : [];
+        $actionLabel = htmlspecialchars((string) ($action['label'] ?? 'Download ZIP'), ENT_QUOTES, 'UTF-8');
+        $actionAttrs = immersive_stage_toolbar_attrs($action['attrs'] ?? []);
+        $html .= '<div class="immersive-stage-download-wrap">';
+        $html .= '<button type="button" class="immersive-stage-icon-btn" data-immersive-download-trigger aria-haspopup="true" aria-expanded="false" aria-controls="' . $menuId . '" aria-label="Open download menu">'
+            . immersive_stage_toolbar_icon_svg('download')
+            . '</button>';
+        $html .= '<div id="' . $menuId . '" class="immersive-stage-download-menu" data-immersive-download-menu role="region" aria-label="ZIP download options" hidden>';
+        $html .= '<p class="immersive-stage-download-heading">Include in this download:</p>';
+        foreach (($downloadOptions['choices'] ?? []) as $choice) {
+            $value = htmlspecialchars((string) ($choice['value'] ?? ''), ENT_QUOTES, 'UTF-8');
+            $label = htmlspecialchars((string) ($choice['label'] ?? ''), ENT_QUOTES, 'UTF-8');
+            if ($value === '' || $label === '') {
+                continue;
+            }
+            $html .= '<label class="immersive-stage-download-choice"><input type="checkbox" data-piece-download-voice="' . $value . '" checked> <span>' . $label . '</span></label>';
+        }
+        $html .= '<a class="immersive-stage-menu-btn" data-piece-download-link' . $actionAttrs . '>'
+            . immersive_stage_toolbar_icon_svg('download-small')
+            . '<span>' . $actionLabel . '</span></a>';
+        $html .= '</div></div>';
+    } elseif (is_array($downloadItems) && count($downloadItems) === 1) {
         // A one-item menu is just an extra click for no reason — render the
         // single download directly as an icon button, matching view/
         // screenshot. Only worth a dropdown once there's an actual choice.
@@ -668,22 +717,6 @@ function piece_view_critical_css(): string
     align-items: center;
 }
 
-.piece-download-button {
-    border: 0;
-    padding: 0;
-    background: transparent;
-    color: inherit;
-    font-family: inherit;
-    font-size: inherit;
-    line-height: inherit;
-    cursor: pointer;
-}
-
-.piece-download-button[disabled] {
-    opacity: 0.6;
-    cursor: progress;
-}
-
 .piece-download-status {
     margin-top: 0.75rem;
     color: var(--ink-soft);
@@ -693,27 +726,44 @@ function piece_view_critical_css(): string
     position: relative;
     display: inline-flex;
     align-items: center;
-    gap: 0.3rem;
 }
 
-.piece-download-picker-trigger {
+.piece-export-overlay {
+    position: absolute;
+    top: 0.75rem;
+    left: 0.75rem;
+    z-index: 30;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.65rem;
+}
+
+.piece-export-icon-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    height: 1.5rem;
-    width: 1.4rem;
+    height: 2.75rem;
+    width: 2.75rem;
     padding: 0;
-    margin-top: 1rem;
-    border: 1px solid var(--line);
-    border-radius: 0.4rem;
-    background: transparent;
-    color: var(--ink);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 0.75rem;
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
     cursor: pointer;
 }
 
-.piece-download-picker-trigger:hover,
-.piece-download-picker-trigger:focus-visible {
-    border-color: var(--ink);
+.piece-export-icon-btn:hover,
+.piece-export-icon-btn:focus-visible {
+    border-color: #fff;
+    background: rgba(0, 0, 0, 0.72);
+}
+
+.piece-export-icon-btn[disabled] {
+    opacity: 0.6;
+    cursor: progress;
 }
 
 .piece-download-picker[hidden] {
@@ -724,18 +774,67 @@ function piece_view_critical_css(): string
     position: absolute;
     top: 100%;
     left: 0;
-    z-index: 20;
-    margin-top: 0.4rem;
+    z-index: 40;
+    margin-top: 0.55rem;
     display: grid;
-    gap: 0.4rem;
-    min-width: 14rem;
-    padding: 0.75rem;
-    border: 1px solid var(--line);
-    border-radius: 0.6rem;
-    background: var(--paper);
-    color: var(--ink);
-    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.25);
-    font-size: 0.85rem;
+    gap: 0.45rem;
+    min-width: min(17rem, calc(100vw - 2rem));
+    padding: 0.55rem;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 1rem;
+    background: rgba(9, 14, 24, 0.94);
+    color: #fff;
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    font-size: 0.82rem;
+}
+
+.piece-download-picker-heading {
+    margin: 0.15rem 0 0.25rem;
+    color: rgba(255, 255, 255, 0.78);
+    font-size: 0.78rem;
+}
+
+.piece-download-picker-choice {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    min-height: 2.75rem;
+    padding: 0.45rem 0.6rem;
+    border-radius: 0.7rem;
+    cursor: pointer;
+}
+
+.piece-download-picker-choice:hover,
+.piece-download-picker-choice:focus-within {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.piece-download-picker-choice input {
+    width: 1.1rem;
+    height: 1.1rem;
+    accent-color: #fff;
+}
+
+.piece-download-picker-action {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
+    min-height: 2.75rem;
+    padding: 0.65rem 0.8rem;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 0.8rem;
+    background: rgba(255, 255, 255, 0.05);
+    color: #fff;
+    font-weight: 600;
+    text-decoration: none;
+}
+
+.piece-download-picker-action:hover,
+.piece-download-picker-action:focus-visible {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.28);
 }
 
 /* Piece fullscreen overlay */
@@ -1053,29 +1152,10 @@ function piece_view_critical_css(): string
     right: calc(0.75rem + env(safe-area-inset-right));
 }
 
-.piece-fullscreen-bar[hidden] {
-    display: none;
-}
-
-.piece-fullscreen-bar {
+.piece-stage-fullscreen .piece-export-overlay {
     position: fixed;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    z-index: 9501;
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0 1.25rem;
-    padding: 0.75rem 1.25rem calc(0.75rem + env(safe-area-inset-bottom));
-    background: rgba(0, 0, 0, 0.65);
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
-}
-
-.piece-fullscreen-bar .piece-immersive-link {
-    margin-top: 0;
-    color: #f8f5ee;
+    top: calc(0.75rem + env(safe-area-inset-top));
+    left: calc(0.75rem + env(safe-area-inset-left));
 }
 
 .piece-stage-fullscreen .piece-download-status {
@@ -1119,8 +1199,7 @@ body.piece-fullscreen-locked {
         align-items: stretch;
     }
 
-    .piece-action-row .piece-immersive-link,
-    .piece-fullscreen-bar .piece-immersive-link {
+    .piece-action-row .piece-immersive-link {
         display: inline-flex;
         width: 100%;
         align-items: center;
@@ -1150,19 +1229,27 @@ body.piece-fullscreen-locked {
         border-radius: 0.7rem;
     }
 
-    .piece-fullscreen-bar {
-        gap: 0.65rem;
-        padding:
-            0.75rem
-            max(0.85rem, env(safe-area-inset-right))
-            calc(0.85rem + env(safe-area-inset-bottom))
-            max(0.85rem, env(safe-area-inset-left));
+    .piece-export-overlay {
+        top: 0.6rem;
+        left: 0.6rem;
+        gap: 0.45rem;
+    }
+
+    .piece-export-icon-btn {
+        height: 2.75rem;
+        width: 2.75rem;
+        border-radius: 0.7rem;
+    }
+
+    .piece-stage-fullscreen .piece-export-overlay {
+        top: calc(0.6rem + env(safe-area-inset-top));
+        left: calc(0.6rem + env(safe-area-inset-left));
     }
 
     .piece-stage-fullscreen .piece-download-status {
         left: max(0.85rem, env(safe-area-inset-left));
         right: max(0.85rem, env(safe-area-inset-right));
-        bottom: calc(11.25rem + env(safe-area-inset-bottom));
+        bottom: calc(1rem + env(safe-area-inset-bottom));
     }
 }
 CSS;
