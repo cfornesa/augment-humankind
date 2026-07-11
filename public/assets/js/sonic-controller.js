@@ -453,7 +453,7 @@
     // volume of the melodic voice specifically (not the shared master bus),
     // so hand-tracking layers over the ambient/movement voices exactly like
     // keyboard mode does.
-    var _handLandmarkerPromise = null, handLoaderRetryCount = 0;
+    var _handLandmarkerPromise = null, handLoaderRetryCount = 0, lastHandTimestamp = -1;
     function loadHandLandmarkerOnce(forceRetry) {
       if (forceRetry) _handLandmarkerPromise = null;
       if (_handLandmarkerPromise) return _handLandmarkerPromise;
@@ -570,7 +570,7 @@
       stopHandLoopIfIdle();
     }
 
-    function detectHandFrame() {
+    function detectHandFrame(timestamp) {
       if (handInferenceMode === 'canvas') {
         handInferenceFrame += 1;
         if (handInferenceFrame % 3 !== 0) return undefined;
@@ -582,16 +582,24 @@
         }
         if (!handInferenceContext) throw new Error('Canvas 2D context unavailable for hand fallback');
         handInferenceContext.drawImage(handVideoEl, 0, 0, 256, 256);
-        return handLandmarker.detectForVideo(handInferenceCanvas, performance.now());
+        return handLandmarker.detectForVideo(handInferenceCanvas, timestamp);
       }
-      return handLandmarker.detectForVideo(handVideoEl, performance.now());
+      return handLandmarker.detectForVideo(handVideoEl, timestamp);
     }
 
     function handFrameStep() {
       handRafId = requestAnimationFrame(handFrameStep);
       if (!handLandmarker || !handVideoEl || handVideoEl.readyState < 2) return;
+      if (handVideoEl.videoWidth === 0 || handVideoEl.videoHeight === 0) return;
+      
+      var timestamp = performance.now();
+      if (timestamp <= lastHandTimestamp) {
+        timestamp = lastHandTimestamp + 1; // ensure strict monotonicity
+      }
+      lastHandTimestamp = timestamp;
+
       var result;
-      try { result = detectHandFrame(); }
+      try { result = detectHandFrame(timestamp); }
       catch (error) {
         if (handInferenceMode === 'video') {
           handInferenceMode = 'canvas';
@@ -773,34 +781,28 @@
     // correct no matter what sequence effects are toggled in.
     function rebuildMicChain(Tone) {
       if (!micNode) return;
-      try { micNode.disconnect(); } catch (_e) {}
+      try {
+        if (micNode.disconnect) micNode.disconnect();
+        else if (micNativeSource && micNativeSource.disconnect) micNativeSource.disconnect();
+      } catch (_e) {}
       micEffectNodes.forEach(function (node) {
         try { node.disconnect(); } catch (_e) {}
         try { node.dispose && node.dispose(); } catch (_e) {}
       });
       micEffectNodes = [];
-      var chainTail = micNode;
-      var connectTail = function (destination) {
-        if (chainTail === micNativeSource) micConnect(chainTail, destination);
-        else chainTail.connect(destination);
-      };
+      var chainTail = micNativeSource || micNode;
       ['distortion', 'chorus', 'tremolo', 'pitch_shift', 'bitcrusher', 'flanger', 'ring_mod'].forEach(function (key) {
         var cfg = micEffectsState[key];
         if (!cfg || !cfg.enabled) return;
         var node = createEffectNode(Tone, key, cfg);
-        connectTail(node);
+        Tone.connect(chainTail, node);
         chainTail = node;
         micEffectNodes.push(node);
       });
-      connectTail(bus);
+      Tone.connect(chainTail, bus);
     }
 
     var micStream = null, micNativeSource = null;
-    function micConnect(source, destination) {
-      var target = destination && (destination.input || destination);
-      if (!target) throw new Error('Mic destination unavailable');
-      source.connect(target);
-    }
 
     async function enableMic() {
       if (disposed || micNode) return !!micNode;

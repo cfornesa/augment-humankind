@@ -10,6 +10,22 @@
 
 None.
 
+## 2026-07-11 — Restored Cross-Browser Theremin Tracking, Hand Controls, and Live Microphone
+
+### Decision
+
+Fixed cross-browser issues in `sonic-controller.js` that caused crashes and failures in hand-tracking (theremin/hand controls) and microphone features across Chrome on ChromeOS (Chromebook), Android, MacOS, and Safari on iOS:
+
+- **Zero-Dimension Video Protection**: Added a guard `if (handVideoEl.videoWidth === 0 || handVideoEl.videoHeight === 0) return;` at the beginning of `handFrameStep()` to prevent MediaPipe's `detectForVideo` and canvas `drawImage` from throwing crashes when the video element/camera is in its initial warmup state.
+- **Strictly Monotonic Timestamps**: Ensured that the timestamp passed to `detectForVideo` is strictly increasing (`timestamp > lastHandTimestamp`), resolving WebGL/WASM and MediaPipe exceptions due to timer precision limitations and frame-drops across platforms.
+- **Unified Microphone Connection via Tone.connect**: Replaced the custom native `source.connect(target)` logic with `Tone.connect(chainTail, destination)` across the entire microphone effects chain and destination Volume bus. This eliminates browser console TypeErrors caused by trying to connect native `MediaStreamAudioSourceNode` directly to Tone.js node wrappers.
+
+### Verification
+
+- `php tests/three-runtime-consistency.php` — **Passed: 126, Failed: 0**
+- `php tests/art-piece-generation.php` — **Passed: 143, Failed: 0**
+- Verified that all automated runtime checks and generation templates continue to build and function correctly.
+
 ## 2026-07-09 — Completed WASD decoupling for A-Frame in immersive views and exports
 
 ### Decision
