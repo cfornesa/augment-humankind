@@ -1297,6 +1297,9 @@ function createSharedGyroController(stageEl, camera, options = {}) {
 export function createReadOnlyFullViewOverlay(stageEl, items, options = {}) {
   const overlayItems = Array.isArray(items) ? items : [];
   const singleItemMode = options.layout === "single";
+  const soundControl = options.soundControl && typeof options.soundControl === "object"
+    ? options.soundControl
+    : null;
   // Piece full view keeps download controls in the stage toolbar instead of
   // duplicating them inside the overlay shell.
   const showDownloadControls = options.showDownloadControls !== false;
@@ -1320,11 +1323,11 @@ export function createReadOnlyFullViewOverlay(stageEl, items, options = {}) {
   root.appendChild(shell);
 
   const topBar = document.createElement("div");
-  topBar.style.cssText = "display:flex;align-items:flex-start;justify-content:space-between;gap:0.75rem;padding:0.9rem 1rem;border-bottom:1px solid rgba(255,255,255,0.08);";
+  topBar.style.cssText = "display:flex;flex-direction:column;align-items:stretch;gap:0.65rem;padding:0.9rem 1rem;border-bottom:1px solid rgba(255,255,255,0.08);";
   shell.appendChild(topBar);
 
   const metaWrap = document.createElement("div");
-  metaWrap.style.cssText = "min-width:0;display:flex;flex-direction:column;gap:0.2rem;";
+  metaWrap.style.cssText = "min-width:0;width:100%;display:flex;flex-direction:column;gap:0.2rem;";
   topBar.appendChild(metaWrap);
 
   const titleEl = document.createElement("div");
@@ -1347,8 +1350,11 @@ export function createReadOnlyFullViewOverlay(stageEl, items, options = {}) {
   }
 
   const controlsWrap = document.createElement("div");
-  controlsWrap.style.cssText = "display:flex;align-items:center;gap:0.5rem;flex-shrink:0;";
+  controlsWrap.style.cssText = "display:flex;align-items:center;justify-content:flex-end;gap:0.5rem;flex-wrap:wrap;width:100%;min-width:0;";
   topBar.appendChild(controlsWrap);
+
+  const soundBtn = soundControl ? chromeButton("Sound", "Enable collection sound") : null;
+  if (soundBtn) controlsWrap.appendChild(soundBtn);
 
   const downloadPieceLink = document.createElement("a");
   downloadPieceLink.textContent = "Download ZIP";
@@ -1477,7 +1483,32 @@ export function createReadOnlyFullViewOverlay(stageEl, items, options = {}) {
     if (typeof options.onActiveItemChange === "function") {
       options.onActiveItemChange(item, normalizeIndex(currentStartIndex));
     }
+    syncOverlaySoundControl();
   }
+
+  function syncOverlaySoundControl() {
+    if (!soundBtn || !soundControl) return;
+    const state = typeof soundControl.getState === "function" ? soundControl.getState() : {};
+    const enabled = state?.enabled === true;
+    const hasActiveSound = state?.hasActiveSound !== false;
+    soundBtn.disabled = false;
+    soundBtn.style.opacity = "";
+    syncAudioToggleButton(soundBtn, !enabled, {
+      off: hasActiveSound ? "Enable sound for this work" : "Enable collection sound for sounding works",
+      on: hasActiveSound ? "Mute sound for this work" : "Mute collection sound",
+    });
+  }
+
+  async function onOverlaySoundToggle() {
+    if (!soundControl || typeof soundControl.toggle !== "function") return;
+    soundBtn.disabled = true;
+    try {
+      await soundControl.toggle();
+    } finally {
+      syncOverlaySoundControl();
+    }
+  }
+  soundBtn?.addEventListener("click", onOverlaySoundToggle);
 
   function renderCurrentItems() {
     clearViewport();
@@ -1536,12 +1567,9 @@ export function createReadOnlyFullViewOverlay(stageEl, items, options = {}) {
 
   let blockCloseUntil = 0;
 
-  // The shared stage toolbar's sound button lives outside this overlay (a
-  // sibling in the persistent stage chrome), so it stays in the DOM and
-  // clickable behind the read-only modal unless we hide it explicitly here.
-  // It belongs to the live interactive scene, not this static/read-only
-  // slide view — sound stays exactly as the user set it, just not exposed
-  // as a control while this overlay is up.
+  // The shared stage toolbar's sound button lives behind this fixed overlay.
+  // Hide that inaccessible duplicate while open; collection slides can
+  // expose the same parent-owned state through soundControl above.
   function setSharedSoundToggleHidden(hide) {
     const toggleBtn = document.querySelector("[data-immersive-sound-toggle]");
     if (!toggleBtn) return;
@@ -1553,6 +1581,7 @@ export function createReadOnlyFullViewOverlay(stageEl, items, options = {}) {
     priorKeyboardDisabled = stageEl.dataset.keyboardNavigationDisabled === "true";
     stageEl.dataset.keyboardNavigationDisabled = "true";
     previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    options.onOpen?.(getActiveItem(), normalizeIndex(currentStartIndex));
     renderCurrentItems();
     root.hidden = false;
     root.setAttribute("aria-hidden", "false");
@@ -1576,13 +1605,13 @@ export function createReadOnlyFullViewOverlay(stageEl, items, options = {}) {
     } else {
       delete stageEl.dataset.keyboardNavigationDisabled;
     }
-    requestAnimationFrame(() => {
+    Promise.resolve(options.onClose?.(currentRenderedItem, normalizeIndex(currentStartIndex))).finally(() => requestAnimationFrame(() => {
       if (previouslyFocused?.focus) {
         previouslyFocused.focus();
       } else {
         stageEl.focus?.();
       }
-    });
+    }));
   }
 
   function showPrevious() {
@@ -1776,6 +1805,7 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
   let handControlActive = false;
   let handActivationEpoch = 0;
   let handActivationPending = false;
+  let activeHandControlEngine = null;
   let gestureRouter = null;
   let cameraBgActive = false;
   let tiltFallbackActive = false;
@@ -1806,11 +1836,12 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
   // don't pass it keep the legacy hand_tracking-voice gating below.
   const cameraOverlayAllowed = options.cameraOverlayAllowed === true;
   const handControlAllowed = options.handControlAllowed === true;
+  const dedicatedHandControl = options.dedicatedHandControl === true;
   // Silent engine for hand control on pieces with no audio controller
   // (sound-less pieces): enableHandControl never touches audio.
   let silentHandEngine = null;
   async function getHandControlEngine() {
-    const ctrl = getAudioController();
+    const ctrl = dedicatedHandControl ? null : getAudioController();
     if (ctrl) return ctrl;
     if (!silentHandEngine) {
       const CSC = window.CreatrSonicController || await loadSonicControllerOnce();
@@ -1853,12 +1884,13 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
   function syncSoundPanel() {
     syncCameraRow();
     const ctrl = getAudioController();
-    if (!ctrl) return;
-    const enabled = ctrl.isEnabled();
+    const sharedState = typeof options.getSoundState === "function" ? options.getSoundState() : null;
+    const enabled = sharedState ? sharedState.enabled === true : !!ctrl?.isEnabled();
     if (soundMuteToggle) {
       soundMuteToggle.setAttribute("aria-checked", enabled ? "true" : "false");
       soundMuteToggle.textContent = enabled ? "On" : "Off";
     }
+    if (!ctrl) return;
     if (soundVolume) soundVolume.value = String(ctrl.getVolume());
     const voices = ctrl.getVoices();
     if (soundKeyboardRow) soundKeyboardRow.hidden = !voices.melodic;
@@ -1905,6 +1937,11 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
   const onSoundPanelToggle = () => setSoundPanelOpen(!isSoundPanelOpen());
 
   const onSoundMuteToggle = async () => {
+    if (typeof options.onSoundToggle === "function") {
+      await options.onSoundToggle();
+      syncSoundPanel();
+      return;
+    }
     const ctrl = getAudioController();
     if (!ctrl) return;
     await ctrl.toggleEnabled();
@@ -1974,9 +2011,10 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
     if (handControlActive || handActivationPending) {
       handActivationPending = false;
       handControlActive = false;
-      const ctrl = getAudioController() || silentHandEngine;
+      const ctrl = activeHandControlEngine || getAudioController() || silentHandEngine;
       ctrl?.onHandFrame(null);
       ctrl?.disableHandControl();
+      activeHandControlEngine = null;
       gestureRouter?.reset?.('disabled');
       gestureRouter = null;
       setGestureModeIndicator('idle');
@@ -2002,6 +2040,7 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
       syncSoundPanel();
       return;
     }
+    activeHandControlEngine = ctrl;
     handControlActive = true;
     interaction.setHandSteering(true);
     let handPinched = false;
@@ -2214,12 +2253,13 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
       cameraOpacityInput?.removeEventListener("input", onCameraOpacityInput);
       if (handControlActive) {
         handControlActive = false;
-        const handCtrl = getAudioController() || silentHandEngine;
-      handCtrl?.onHandFrame(null);
-      handCtrl?.disableHandControl();
-      gestureRouter?.reset?.('destroyed');
-      gestureRouter = null;
-      setGestureModeIndicator('idle');
+        const handCtrl = activeHandControlEngine || getAudioController() || silentHandEngine;
+        handCtrl?.onHandFrame(null);
+        handCtrl?.disableHandControl();
+        activeHandControlEngine = null;
+        gestureRouter?.reset?.('destroyed');
+        gestureRouter = null;
+        setGestureModeIndicator('idle');
         getPieceInteractionController()?.setHandSteering(false);
       }
       if (silentHandEngine) {
@@ -2785,6 +2825,45 @@ function writeVoiceInstrumentOverride(pieceId, voiceName, instrumentKey) {
   }
 }
 
+function syncAudioToggleButton(toggleBtn, muted, labels = {}) {
+  if (!toggleBtn) return;
+  toggleBtn.setAttribute("aria-pressed", muted ? "false" : "true");
+  toggleBtn.setAttribute("aria-label", muted ? (labels.off || "Unmute sound") : (labels.on || "Mute sound"));
+  // Render muted (off) state: bar-with-slash. Unmuted (on): waves.
+  if (toggleBtn.replaceChildren) {
+    const svgNS = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(svgNS, "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("width", "19");
+    svg.setAttribute("height", "19");
+    svg.setAttribute("fill", "none");
+    svg.setAttribute("stroke", "currentColor");
+    svg.setAttribute("stroke-width", "1.9");
+    svg.setAttribute("stroke-linecap", "round");
+    svg.setAttribute("stroke-linejoin", "round");
+    svg.setAttribute("aria-hidden", "true");
+    const speaker = document.createElementNS(svgNS, "path");
+    speaker.setAttribute("d", "M11 5 6 9H3v6h3l5 4z");
+    svg.appendChild(speaker);
+    if (muted) {
+      const l1 = document.createElementNS(svgNS, "line");
+      l1.setAttribute("x1", "22"); l1.setAttribute("y1", "9");
+      l1.setAttribute("x2", "16"); l1.setAttribute("y2", "15");
+      const l2 = document.createElementNS(svgNS, "line");
+      l2.setAttribute("x1", "16"); l2.setAttribute("y1", "9");
+      l2.setAttribute("x2", "22"); l2.setAttribute("y2", "15");
+      svg.appendChild(l1); svg.appendChild(l2);
+    } else {
+      const w1 = document.createElementNS(svgNS, "path");
+      w1.setAttribute("d", "M16 9a4 4 0 0 1 0 6");
+      const w2 = document.createElementNS(svgNS, "path");
+      w2.setAttribute("d", "M19 6a8 8 0 0 1 0 12");
+      svg.appendChild(w1); svg.appendChild(w2);
+    }
+    toggleBtn.replaceChildren(svg);
+  }
+}
+
 function createAudioController(sonicParams, stageEl, opts = {}) {
   if (!sonicParams || typeof sonicParams !== "object") return null;
   const attachListener = opts.attachListener !== false;
@@ -2812,43 +2891,7 @@ function createAudioController(sonicParams, stageEl, opts = {}) {
   }
 
   function setBtnState(muted) {
-    if (!toggleBtn) return;
-    toggleBtn.setAttribute("aria-pressed", muted ? "false" : "true");
-    toggleBtn.setAttribute("aria-label", muted ? "Unmute sound" : "Mute sound");
-    const iconEl = toggleBtn.querySelector("svg, [aria-hidden='true']") || toggleBtn;
-    // Render muted (off) state: bar-with-slash. Unmuted (on): waves.
-    if (toggleBtn.replaceChildren) {
-      const svgNS = "http://www.w3.org/2000/svg";
-      const svg = document.createElementNS(svgNS, "svg");
-      svg.setAttribute("viewBox", "0 0 24 24");
-      svg.setAttribute("width", "19");
-      svg.setAttribute("height", "19");
-      svg.setAttribute("fill", "none");
-      svg.setAttribute("stroke", "currentColor");
-      svg.setAttribute("stroke-width", "1.9");
-      svg.setAttribute("stroke-linecap", "round");
-      svg.setAttribute("stroke-linejoin", "round");
-      svg.setAttribute("aria-hidden", "true");
-      const speaker = document.createElementNS(svgNS, "path");
-      speaker.setAttribute("d", "M11 5 6 9H3v6h3l5 4z");
-      svg.appendChild(speaker);
-      if (muted) {
-        const l1 = document.createElementNS(svgNS, "line");
-        l1.setAttribute("x1", "22"); l1.setAttribute("y1", "9");
-        l1.setAttribute("x2", "16"); l1.setAttribute("y2", "15");
-        const l2 = document.createElementNS(svgNS, "line");
-        l2.setAttribute("x1", "16"); l2.setAttribute("y1", "9");
-        l2.setAttribute("x2", "22"); l2.setAttribute("y2", "15");
-        svg.appendChild(l1); svg.appendChild(l2);
-      } else {
-        const w1 = document.createElementNS(svgNS, "path");
-        w1.setAttribute("d", "M16 9a4 4 0 0 1 0 6");
-        const w2 = document.createElementNS(svgNS, "path");
-        w2.setAttribute("d", "M19 6a8 8 0 0 1 0 12");
-        svg.appendChild(w1); svg.appendChild(w2);
-      }
-      toggleBtn.replaceChildren(svg);
-    }
+    syncAudioToggleButton(toggleBtn, muted);
   }
 
   // Shared unmute path: lazily loads the sonic-controller module (and, inside
@@ -5037,6 +5080,12 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
     maxX: wallWidth / 2,
     resetView: () => animateShellViewReset(shell, initialExhibitViewState),
   });
+  const roomCameraView = createGalleryWallCameraController(shell);
+  const roomInteractionController = {
+    ...roomHandNav,
+    ...roomCameraView,
+    supportsCameraBackground: true,
+  };
 
   // Progressive rendering state
   const runtimeSize = { width: 400, height: 300 }; // small size for grid items
@@ -5044,6 +5093,8 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
 
   let frameId = 0;
   let disposed = false;
+  let presentationSuspended = false;
+  let runtimeEpoch = 0;
   let viewerControls = null;
   let readOnlyOverlay = null;
   let disposeSlotFullViewClick = null;
@@ -5059,6 +5110,7 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
   // for its lifetime.
   let audioController = null;
   let audioControllerIndex = -1;
+  let wallSoundRequested = false;
   let lastAudioRebindAt = 0;
   // Belt-and-suspenders alongside the distance margin below: a click's
   // unmute path awaits Tone.start(), which takes at least one more
@@ -5105,28 +5157,81 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
   // per-focus-change controller (attachListener:false) has no listener of
   // its own, so the wall owns exactly ONE persistent listener here instead
   // of one that's silently attached/detached as createAudioController is
-  // torn down and rebuilt. When the focused item has no sound at all,
-  // audioController is null and the button is disabled with a clear label
-  // rather than sitting there clickable-but-inert.
+  // torn down and rebuilt. The button remains a collection-level master
+  // control even when the active item is silent: visitors can arm sound for
+  // the next sounding work without losing their intent on a silent slide.
   const wallSoundToggleBtn = document.querySelector("[data-immersive-sound-toggle]");
   function syncWallSoundButton() {
     if (!wallSoundToggleBtn) return;
+    wallSoundToggleBtn.disabled = false;
+    wallSoundToggleBtn.style.opacity = "";
     if (!audioController) {
-      wallSoundToggleBtn.disabled = true;
-      wallSoundToggleBtn.style.opacity = "0.4";
-      wallSoundToggleBtn.setAttribute("aria-label", "No sound for this piece");
+      syncAudioToggleButton(wallSoundToggleBtn, !wallSoundRequested, {
+        off: "Enable collection sound for sounding works",
+        on: "Mute collection sound",
+      });
     } else {
-      wallSoundToggleBtn.disabled = false;
-      wallSoundToggleBtn.style.opacity = "";
-      audioController.syncButton(true); // a freshly (re)bound controller always starts muted
+      audioController.syncButton(!wallSoundRequested);
     }
   }
-  function onWallSoundToggleClick() {
-    audioController?.toggleEnabled();
+  async function onWallSoundToggleClick() {
+    if (!audioController) {
+      wallSoundRequested = !wallSoundRequested;
+      syncWallSoundButton();
+      return;
+    }
+    await audioController.toggleEnabled();
   }
   if (wallSoundToggleBtn) {
     wallSoundToggleBtn.addEventListener("click", onWallSoundToggleClick);
     syncWallSoundButton(); // establish the initial disabled/enabled state before the first animate() frame
+  }
+
+  function bindWallAudioController(index) {
+    if (index === audioControllerIndex) return;
+    audioController?.dispose();
+    const focusedItem = index >= 0 ? items[index] : null;
+    audioController = createAudioController(focusedItem?.sonicParams, stageEl, {
+      attachListener: false,
+      allowHandTracking: false,
+      pieceId: focusedItem?.piece_id,
+    });
+    audioControllerIndex = index;
+    lastAudioRebindAt = performance.now();
+    exhibitAudioPrevInit = false;
+    if (audioController) {
+      const controller = audioController;
+      const toggleEnabled = controller.toggleEnabled.bind(controller);
+      const ensureAudioReady = controller.ensureAudioReady.bind(controller);
+      controller.toggleEnabled = async () => {
+        await toggleEnabled();
+        if (audioController !== controller) return;
+        wallSoundRequested = controller.isEnabled();
+        syncWallSoundButton();
+      };
+      controller.ensureAudioReady = async () => {
+        const ok = await ensureAudioReady();
+        if (audioController === controller && ok) wallSoundRequested = true;
+        syncWallSoundButton();
+        return ok;
+      };
+    }
+    syncWallSoundButton();
+    if (audioController && wallSoundRequested) {
+      const reboundController = audioController;
+      reboundController.ensureAudioReady().then((ok) => {
+        if (audioController !== reboundController) return;
+        if (!ok) wallSoundRequested = false;
+        syncWallSoundButton();
+      });
+    }
+  }
+
+  function getWallSoundState() {
+    return {
+      enabled: wallSoundRequested,
+      hasActiveSound: audioController !== null,
+    };
   }
 
   function getLiveSlots() {
@@ -5198,7 +5303,8 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
   }
 
   function updateProgressiveLoading() {
-    if (disposed) return;
+    if (disposed || presentationSuspended) return;
+    const updateEpoch = runtimeEpoch;
     const liveSlots = getLiveSlots();
     
     // Boot up newly live slots
@@ -5330,7 +5436,7 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
       try {
         if (item.engine === "p5") {
           const P5 = await loadP5Runtime();
-          if (disposed || !activeRuntimes.has(index)) {
+          if (disposed || presentationSuspended || runtimeEpoch !== updateEpoch || !activeRuntimes.has(index)) {
             host.remove();
             return;
           }
@@ -5446,7 +5552,7 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
         } else {
           // c2 / three / generic
           const c2Runtime = item.engine === "c2" ? await loadC2Runtime() : window.c2;
-          if (disposed || !activeRuntimes.has(index)) {
+          if (disposed || presentationSuspended || runtimeEpoch !== updateEpoch || !activeRuntimes.has(index)) {
             host.remove();
             return;
           }
@@ -5505,6 +5611,12 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
         if (runtime) runtime.failed = true;
       }
 
+      if (disposed || presentationSuspended || runtimeEpoch !== updateEpoch || !activeRuntimes.has(index)) {
+        stop?.();
+        texture?.dispose?.();
+        host?.remove?.();
+        return;
+      }
       const currentRuntime = activeRuntimes.get(index);
       activeRuntimes.set(index, {
         host,
@@ -5572,6 +5684,57 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
     }
   });
 
+  function restoreSlotFallback(index) {
+    const item = items[index];
+    const slot = shell.slots[index];
+    if (!item || !slot || item.kind !== "piece") return;
+    slot.artMaterial.map = null;
+    if (item.thumbnail_url && (item.thumbnail_url.startsWith("/") || item.thumbnail_url.startsWith("http"))) {
+      const restoreEpoch = runtimeEpoch;
+      new THREE.TextureLoader().load(item.thumbnail_url, tex => {
+        if (disposed || runtimeEpoch !== restoreEpoch || activeRuntimes.has(index)) {
+          tex.dispose();
+          return;
+        }
+        slot.artMaterial.map = tex;
+        slot.artMaterial.color.set("#ffffff");
+        slot.artMaterial.needsUpdate = true;
+        try { shell.renderer.render(shell.scene, shell.camera); } catch (_) {}
+      });
+    } else {
+      slot.artMaterial.color.set("#e8e4de");
+      slot.artMaterial.needsUpdate = true;
+    }
+  }
+
+  function releaseActiveRuntimes() {
+    runtimeEpoch += 1;
+    activeRuntimes.forEach((runtime, index) => {
+      runtime.stop?.();
+      runtime.texture?.dispose?.();
+      runtime.host?.remove?.();
+      restoreSlotFallback(index);
+    });
+    activeRuntimes.clear();
+  }
+
+  function suspendPresentation() {
+    if (disposed || presentationSuspended) return;
+    presentationSuspended = true;
+    cancelAnimationFrame(frameId);
+    frameId = 0;
+    releaseActiveRuntimes();
+  }
+
+  function resumePresentation() {
+    if (disposed || !presentationSuspended) return;
+    presentationSuspended = false;
+    lastTarget.copy(shell.controls.target);
+    updateProgressiveLoading();
+    try { shell.renderer.render(shell.scene, shell.camera); } catch (_) {}
+    if (!frameId) animate();
+  }
+
   // Track if camera or target moved to update progressive loading
   const lastTarget = new THREE.Vector3().copy(shell.controls.target);
 
@@ -5600,12 +5763,30 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
   const slideshowIndexBySourceIndex = new Map(
     slideshowEntries.map((entry, slideshowIndex) => [entry.sourceIndex, slideshowIndex]),
   );
+  let wallAudioIndexBeforeSlideshow = -1;
   if (hasFullViewItems) {
     readOnlyOverlay = createReadOnlyFullViewOverlay(stageEl, slideshowEntries.map((entry) => entry.item), {
       layout: "single",
+      soundControl: {
+        toggle: onWallSoundToggleClick,
+        getState: getWallSoundState,
+      },
       onActiveItemChange(item) {
         const matchedIndex = items.findIndex((candidate) => candidate?.full_view === item);
-        if (matchedIndex >= 0) selectedSourceIndex = matchedIndex;
+        if (matchedIndex >= 0) {
+          selectedSourceIndex = matchedIndex;
+          bindWallAudioController(matchedIndex);
+        }
+      },
+      onOpen() {
+        wallAudioIndexBeforeSlideshow = computeFocusedSlotIndex(audioControllerIndex);
+        suspendPresentation();
+      },
+      onClose() {
+        const restoreIndex = wallAudioIndexBeforeSlideshow;
+        wallAudioIndexBeforeSlideshow = -1;
+        bindWallAudioController(restoreIndex);
+        resumePresentation();
       },
     });
   }
@@ -5652,6 +5833,10 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
   }
   
   function animate() {
+    if (disposed || presentationSuspended) {
+      frameId = 0;
+      return;
+    }
     frameId = requestAnimationFrame(animate);
     floorNav.update();
     keyNav.update();
@@ -5664,19 +5849,12 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
     // different item, then drive it from wall-camera motion like the
     // single-piece mounts do.
     const focusedIndex = computeFocusedSlotIndex(audioControllerIndex);
+    if (focusedIndex >= 0 && !readOnlyOverlay?.isOpen?.()) selectedSourceIndex = focusedIndex;
     const nowTs = performance.now();
     if (focusedIndex !== audioControllerIndex && nowTs - lastAudioRebindAt >= AUDIO_REBIND_COOLDOWN_MS) {
-      audioController?.dispose();
-      const focusedItem = focusedIndex >= 0 ? items[focusedIndex] : null;
-      // Hand-tracking is gated to single-piece full-view contexts only —
-      // never the exhibit-wall/gallery-room multiplex (performance: no
-      // running N MediaPipe inference loops for N wall thumbnails; UX: no
-      // getUserMedia prompts firing on an unfocused tile).
-      audioController = createAudioController(focusedItem?.sonicParams, stageEl, { attachListener: false, allowHandTracking: false, pieceId: focusedItem?.piece_id });
-      audioControllerIndex = focusedIndex;
-      lastAudioRebindAt = nowTs;
-      exhibitAudioPrevInit = false;
-      syncWallSoundButton();
+      // Hand-tracking remains excluded from the multiplexed wall controller;
+      // collection hand navigation has its own dedicated silent engine.
+      bindWallAudioController(focusedIndex);
     }
     if (audioController && shell.camera) {
       if (exhibitAudioPrevInit) {
@@ -5719,16 +5897,12 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
 
   function destroy() {
     disposed = true;
+    presentationSuspended = false;
     resizeObserver.disconnect();
     cancelAnimationFrame(frameId);
     audioController?.dispose();
     if (wallSoundToggleBtn) wallSoundToggleBtn.removeEventListener("click", onWallSoundToggleClick);
-    activeRuntimes.forEach(runtime => {
-      runtime.stop?.();
-      runtime.texture?.dispose();
-      runtime.host?.remove();
-    });
-    activeRuntimes.clear();
+    releaseActiveRuntimes();
     shell.controls.dispose();
     shell.floor.geometry.dispose();
     shell.floor.material.dispose();
@@ -5749,6 +5923,8 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
     shell.renderer.dispose();
     floorNav.dispose();
     keyNav.dispose();
+    roomInteractionController.setHandSteering(false);
+    roomInteractionController.clearBackgroundVideo();
     roomHandNav.dispose();
     gyroController?.dispose();
     viewerControls?.remove();
@@ -5760,7 +5936,9 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
   return {
     destroy,
     getAudioController: () => audioController,
-    getRoomInteractionController: () => roomHandNav,
+    toggleSound: onWallSoundToggleClick,
+    getSoundState: getWallSoundState,
+    getRoomInteractionController: () => roomInteractionController,
     getSelectedItem() {
       return items[selectedSourceIndex] || null;
     },

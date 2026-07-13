@@ -34,6 +34,19 @@ $embedCopyScriptVersion = (int) @filemtime(dirname(__DIR__, 3) . '/assets/js/pub
 
 <?php $status = $collection['status'] ?? 'active'; require dirname(__DIR__) . '/partials/status-banner.php'; ?>
 
+<section class="collection-page-immersive-action" aria-label="Immersive collection view">
+    <a href="/immersive/collections/<?= e($slug) ?>?returnTo=<?= rawurlencode($_SERVER['REQUEST_URI'] ?? '') ?>" target="_blank" rel="noopener" class="piece-immersive-link"><?= e(public_copy_value('public_art_copy.shared_ui.view_immersive_label')) ?></a>
+</section>
+
+<section class="piece-page-embed-actions" aria-label="Embed this collection">
+    <button type="button" class="piece-page-embed-button" data-surface-embed-copy data-embed-code="<?= e($collectionEmbedCode) ?>">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+        <span>Embed</span>
+    </button>
+    <span class="piece-page-embed-status" data-surface-embed-status role="status" aria-live="polite"></span>
+    <textarea class="piece-page-embed-manual" data-surface-embed-manual readonly hidden aria-label="Collection embed code for manual copying"></textarea>
+</section>
+
 <section class="managed-section">
     <div class="managed-section-body">
         <?php if (!empty($collection['iframe_code'])): ?>
@@ -79,18 +92,6 @@ $embedCopyScriptVersion = (int) @filemtime(dirname(__DIR__, 3) . '/assets/js/pub
     </div>
 </section>
 
-<section class="piece-page-embed-actions" aria-label="Embed this collection">
-    <button type="button" class="piece-page-embed-button" data-surface-embed-copy data-embed-code="<?= e($collectionEmbedCode) ?>">
-        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-        <span>Embed</span>
-    </button>
-    <span class="piece-page-embed-status" data-surface-embed-status role="status" aria-live="polite"></span>
-    <textarea class="piece-page-embed-manual" data-surface-embed-manual readonly hidden aria-label="Collection embed code for manual copying"></textarea>
-</section>
-
-<section class="collection-page-immersive-action" aria-label="Immersive collection view">
-    <a href="/immersive/collections/<?= e($slug) ?>?returnTo=<?= rawurlencode($_SERVER['REQUEST_URI'] ?? '') ?>" target="_blank" rel="noopener" class="piece-immersive-link"><?= e(public_copy_value('public_art_copy.shared_ui.view_immersive_label')) ?></a>
-</section>
 <?php
 echo '<script src="/assets/js/public-piece-download.js?v=' . $embedCopyScriptVersion . '"></script>';
 echo '<script src="/embed.js" defer></script>';

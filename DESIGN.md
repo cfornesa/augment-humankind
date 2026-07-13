@@ -209,6 +209,7 @@ attention-economy registers listed above.
 2026-07-01 · DIRECTION · Adopted the Celestial theme (script fonts, parchment, cosmic ambient motion) as the live site's register — a deliberate departure from Pareto's hard-edged geometry, executed entirely through DB-stored theme code rather than code changes.
 2026-07-02 · DIRECTION · When asked whether Celestial superseded the Pareto identity, chose "both are themes, not identity" — DESIGN.md now describes the multi-site CMS design system, with Pareto and Celestial as two valid instances of shared constants.
     [Context: portable-CMS readiness session; chose the design-system framing over "Celestial is the new direction" and "Pareto stands".]
+2026-07-13 · DIRECTION · Rejected redesigning unaffected slideshow behavior and required the reported title/control overlap to be corrected within the existing interaction model.
 
 ---
 

@@ -1197,6 +1197,30 @@ STEP 3 — PNG-CAPTURE   (separate on-demand entry point, browser side)
 - **Characteristics:** Deterministic wiring; the algorithmic content is the
   contract — capabilities flow *to* validated code, never the reverse.
 
+### 4.11 Collection slideshow suspension — `suspendPresentation()`, `resumePresentation()`
+- **Type:** Resource-lifecycle state machine with epoch invalidation.
+- **Logic:** Opening a slideshow changes the wall from running to suspended,
+  cancels its animation frame, increments a runtime epoch, and releases every
+  progressive slot runtime before the slide iframe is created. An async slot
+  boot holding an older epoch discards its result. Closing restores the
+  current fallback/live-slot budget, renders a visible frame, and restarts the
+  wall loop while retaining camera and selection state.
+- **Failure behavior:** Open/close calls are idempotent and late runtime or
+  texture completions cannot overwrite a newer wall, bounding concurrent
+  WebGL contexts instead of relying on mobile browser eviction.
+
+### 4.12 Active collection sound ownership — `bindWallAudioController()`
+- **Type:** Selection-driven controller dispatch with preserved master state.
+- **Logic:** Wall proximity selects one sonic-parameter controller until the
+  slideshow opens. The wall owner is then snapshotted, the displayed slide
+  temporarily owns sound, and Prev/Next rebinds ownership—including static-wall
+  Three.js and A-Frame works—before closing restores the prior proximity owner.
+  Every rebind disposes the prior controller, creates at most one replacement,
+  and reapplies the visitor's collection-level mute choice. Silent items own no
+  controller but never disable or erase that choice, so sound can be armed for
+  the next sounding work. Room hand inference has a separate silent owner, so
+  sound capability cannot change whether collection hand navigation can start.
+
 ### Recipe Overview — Immersive viewing pipeline
 
 This recipe empowers visitors to walk through the artwork as a 3D gallery

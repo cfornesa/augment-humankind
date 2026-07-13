@@ -118,11 +118,31 @@
         throw new Error('No downloadable canvas or SVG is available yet.');
     }
 
+    function uniquePngFilename(filename) {
+        const supplied = typeof filename === 'string' && filename.trim() ? filename.trim() : 'piece.png';
+        const dot = supplied.lastIndexOf('.');
+        const stem = dot > 0 ? supplied.slice(0, dot) : supplied;
+        const extension = dot > 0 ? supplied.slice(dot) : '.png';
+        const now = new Date();
+        const stamp = [
+            now.getFullYear(),
+            String(now.getMonth() + 1).padStart(2, '0'),
+            String(now.getDate()).padStart(2, '0'),
+            '-',
+            String(now.getHours()).padStart(2, '0'),
+            String(now.getMinutes()).padStart(2, '0'),
+            String(now.getSeconds()).padStart(2, '0'),
+            '-',
+            String(now.getMilliseconds()).padStart(3, '0')
+        ].join('');
+        return stem + '-' + stamp + extension;
+    }
+
     function downloadBlob(blob, filename) {
         const blobUrl = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = blobUrl;
-        link.download = filename;
+        link.download = uniquePngFilename(filename);
         link.rel = 'noopener';
         document.body.appendChild(link);
         link.click();
@@ -412,6 +432,7 @@
         exportSvg,
         findSurface,
         hasVisiblePixels,
+        uniquePngFilename,
         waitForCaptureReady,
     };
 })();

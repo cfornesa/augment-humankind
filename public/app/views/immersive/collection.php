@@ -730,6 +730,7 @@ html, body {
                     ],
                 ],
                 'sound_action' => $hasAnySonic ? ['enabled' => true] : null,
+                'camera_view' => true,
                 // Hand navigation of the room camera (feature-flagged):
                 // renders the controls-panel hand row; the room interaction
                 // controller wired below steers OrbitControls from it.
@@ -1095,11 +1096,15 @@ try {
             immersiveViewer?.openSlideshowAt?.(activeIndex);
         },
         getAudioController: () => immersiveViewer?.getAudioController?.(),
+        onSoundToggle: () => immersiveViewer?.toggleSound?.(),
+        getSoundState: () => immersiveViewer?.getSoundState?.(),
         // Room-camera hand navigation: the chrome's hand-control toggle
         // steers the gallery room's OrbitControls through this controller
         // (feature-flagged server-side; the row is absent when disabled).
         getPieceInteractionController: () => immersiveViewer?.getRoomInteractionController?.(),
+        cameraOverlayAllowed: true,
         handControlAllowed: <?= (function_exists('feature_enabled') && feature_enabled('immersive_hand_nav')) ? 'true' : 'false' ?>,
+        dedicatedHandControl: true,
     });
     const downloadPieceLink = document.querySelector('[data-collection-download-piece]');
     const downloadPngBtn = document.querySelector('[data-collection-download-png]');

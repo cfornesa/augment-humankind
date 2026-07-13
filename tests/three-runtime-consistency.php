@@ -186,15 +186,39 @@ test('regular export bootstrap disables A-Frame WASD in both CDN and bundle mode
 
 echo "\n=== regular-view sound (Three.js/A-Frame only, muted by default) ===\n";
 
-test('mountExhibitWall sonifies only the camera-focused item, rebinding as focus changes', function () {
+test('mountExhibitWall temporarily gives slideshow entries sound ownership, then restores wall proximity', function () {
     $immersiveSrc = file_get_contents(__DIR__ . '/../public/assets/js/immersive-gallery.js');
     assert_contains($immersiveSrc, 'function computeFocusedSlotIndex');
     assert_contains($immersiveSrc, 'if (focusedIndex !== audioControllerIndex');
-    assert_contains($immersiveSrc, 'audioController = createAudioController(focusedItem?.sonicParams, stageEl, { attachListener: false, allowHandTracking: false, pieceId: focusedItem?.piece_id })');
+    assert_contains($immersiveSrc, 'function bindWallAudioController(index)');
+    assert_contains($immersiveSrc, 'audioController = createAudioController(focusedItem?.sonicParams, stageEl, {');
+    assert_contains($immersiveSrc, 'bindWallAudioController(focusedIndex)');
+    assert_contains($immersiveSrc, 'wallSoundRequested = controller.isEnabled()');
     assert_contains($immersiveSrc, 'wallSoundToggleBtn.addEventListener("click", onWallSoundToggleClick)');
+    assert_contains($immersiveSrc, 'soundControl: {');
+    assert_contains($immersiveSrc, 'toggle: onWallSoundToggleClick');
+    assert_contains($immersiveSrc, 'wallAudioIndexBeforeSlideshow = computeFocusedSlotIndex(audioControllerIndex)');
+    assert_contains($immersiveSrc, 'bindWallAudioController(restoreIndex)');
+    assert_contains($immersiveSrc, 'onActiveItemChange(item)');
+    assert_contains($immersiveSrc, 'bindWallAudioController(matchedIndex)');
     // Old controller must be disposed on every rebind, and again on wall
     // teardown, or a stale synth instance leaks.
     assert_contains($immersiveSrc, 'audioController?.dispose();');
+});
+
+test('collection sound intent remains toggleable on silent wall slots and slideshow entries', function () {
+    $immersiveSrc = file_get_contents(__DIR__ . '/../public/assets/js/immersive-gallery.js');
+    assert_contains($immersiveSrc, 'wallSoundRequested = !wallSoundRequested');
+    assert_contains($immersiveSrc, 'Enable collection sound for sounding works');
+    assert_contains($immersiveSrc, 'hasActiveSound: audioController !== null');
+    assert_contains($immersiveSrc, 'soundBtn?.addEventListener("click", onOverlaySoundToggle)');
+    assert_contains($immersiveSrc, 'await soundControl.toggle()');
+    assert_contains($immersiveSrc, 'toggleSound: onWallSoundToggleClick');
+    assert_contains($immersiveSrc, 'getSoundState: getWallSoundState');
+
+    $collectionView = file_get_contents(__DIR__ . '/../public/app/views/immersive/collection.php');
+    assert_contains($collectionView, 'onSoundToggle: () => immersiveViewer?.toggleSound?.()');
+    assert_contains($collectionView, 'getSoundState: () => immersiveViewer?.getSoundState?.()');
 });
 
 test('ambient voice ticks continuously and is never gated behind a stillness timer', function () {
@@ -420,6 +444,55 @@ test('immersive downloads serialize viewer state and expose collection slideshow
     assert_contains($collectionView, 'collectionGalleryDownloadUrl');
     assert_contains($collectionController, 'collection_export_bundle');
     assert_contains($router, "/collections/([a-z0-9-]+)/download");
+});
+
+test('collection controls, slideshow lifecycle, and repeated PNG capture stay mobile-safe', function () use ($immersive) {
+    $collectionView = file_get_contents(__DIR__ . '/../public/app/views/immersive/collection.php');
+    $collectionShow = file_get_contents(__DIR__ . '/../public/app/views/collections/show.php');
+    $download = file_get_contents(__DIR__ . '/../public/assets/js/public-piece-download.js');
+    $render = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
+
+    // Title metadata owns a row above a wrapping controls row; the artwork
+    // viewport flexes down instead of allowing chrome to cover the title.
+    assert_contains($immersive, 'topBar.style.cssText = "display:flex;flex-direction:column;align-items:stretch;');
+    assert_contains($immersive, 'controlsWrap.style.cssText = "display:flex;align-items:center;justify-content:flex-end;gap:0.5rem;flex-wrap:wrap;');
+
+    // Collection wall runtimes release before a slide iframe opens and are
+    // rebuilt after close. Async boots are epoch-guarded against stale work.
+    assert_contains($immersive, 'options.onOpen?.(getActiveItem(), normalizeIndex(currentStartIndex))');
+    assert_contains($immersive, 'options.onClose?.(currentRenderedItem, normalizeIndex(currentStartIndex))');
+    assert_contains($immersive, 'function suspendPresentation()');
+    assert_contains($immersive, 'function resumePresentation()');
+    assert_contains($immersive, 'runtimeEpoch !== updateEpoch');
+    assert_contains($immersive, 'wallAudioIndexBeforeSlideshow = computeFocusedSlotIndex(audioControllerIndex)');
+    assert_contains($immersive, 'suspendPresentation();');
+    assert_contains($immersive, 'bindWallAudioController(restoreIndex)');
+    assert_contains($immersive, 'resumePresentation();');
+
+    // Collection camera projection and room hand navigation are one
+    // interaction surface, but hand inference has a dedicated non-audio owner.
+    assert_contains($immersive, 'const roomCameraView = createGalleryWallCameraController(shell)');
+    assert_contains($immersive, 'supportsCameraBackground: true');
+    assert_contains($collectionView, "'camera_view' => true");
+    assert_contains($collectionView, 'cameraOverlayAllowed: true');
+    assert_contains($collectionView, 'dedicatedHandControl: true');
+    assert_contains($render, "'camera_view' => true");
+    assert_contains($render, 'getPieceInteractionController: () => viewer?.getRoomInteractionController?.()');
+
+    // Public collection actions precede the work grid without changing URLs.
+    $immersiveActionAt = strpos($collectionShow, 'class="collection-page-immersive-action"');
+    $managedSectionAt = strpos($collectionShow, 'class="managed-section"');
+    if ($immersiveActionAt === false || $managedSectionAt === false || $immersiveActionAt >= $managedSectionAt) {
+        throw new RuntimeException('Collection immersive/embed actions must render before collection contents.');
+    }
+
+    // Every PNG capture gets a recognizable timestamped name, including
+    // generated offline surfaces, avoiding Android duplicate-name prompts.
+    assert_contains($download, 'function uniquePngFilename(filename)');
+    assert_contains($download, 'link.download = uniquePngFilename(filename)');
+    if (substr_count($render, "String(now.getMilliseconds()).padStart(3, '0')") < 3) {
+        throw new RuntimeException('Expected unique PNG names in all three generated export capture paths.');
+    }
 });
 
 test('immersive bundle export patches renderer runtime URLs to local bundle paths', function () {
@@ -1477,7 +1550,8 @@ test('clutched gesture navigation reuses one landmark loop across regular, immer
     assert_contains($gallery, 'type === "zoom"');
     assert_contains($gallery, 'data-hand-gesture-mode');
     assert_contains(file_get_contents(__DIR__ . '/../public/assets/js/public-piece-download.js'), 'creatr-hand-gesture-mode');
-    assert_contains($gallery, 'getRoomInteractionController: () => roomHandNav');
+    assert_contains($gallery, 'getRoomInteractionController: () => roomInteractionController');
+    assert_contains($gallery, 'const dedicatedHandControl = options.dedicatedHandControl === true');
     assert_contains($features, "'label' => 'Spatial Hand Navigation'");
     assert_contains($api, 'clutched-gestural command');
 });

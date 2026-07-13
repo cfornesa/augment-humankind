@@ -1820,7 +1820,18 @@ function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = filename;
+  const dot = filename.lastIndexOf('.');
+  const stem = dot > 0 ? filename.slice(0, dot) : filename;
+  const extension = dot > 0 ? filename.slice(dot) : '.png';
+  const now = new Date();
+  const stamp = now.getFullYear()
+    + String(now.getMonth() + 1).padStart(2, '0')
+    + String(now.getDate()).padStart(2, '0') + '-'
+    + String(now.getHours()).padStart(2, '0')
+    + String(now.getMinutes()).padStart(2, '0')
+    + String(now.getSeconds()).padStart(2, '0') + '-'
+    + String(now.getMilliseconds()).padStart(3, '0');
+  link.download = stem + '-' + stamp + extension;
   document.body.appendChild(link);
   link.click();
   link.remove();
@@ -4273,6 +4284,7 @@ function collection_export_document(array $collection, array $items, array $opti
             ],
         ],
         'sound_action' => $hasAnySonic ? ['enabled' => true] : null,
+        'camera_view' => true,
         'show_fullscreen' => true,
         'fullscreen_onclick' => null,
     ]);
@@ -4341,6 +4353,8 @@ setupImmersiveStageChrome(stage, {
     viewer?.openSlideshowAt?.(Number.isFinite(Number(state.activeIndex)) ? Number(state.activeIndex) : 0);
   },
   getAudioController: () => viewer?.getAudioController?.(),
+  getPieceInteractionController: () => viewer?.getRoomInteractionController?.(),
+  cameraOverlayAllowed: true,
 });
 fullscreenBtn?.addEventListener('click', async () => {
   try {
@@ -4385,7 +4399,18 @@ function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = filename;
+  const dot = filename.lastIndexOf('.');
+  const stem = dot > 0 ? filename.slice(0, dot) : filename;
+  const extension = dot > 0 ? filename.slice(dot) : '.png';
+  const now = new Date();
+  const stamp = now.getFullYear()
+    + String(now.getMonth() + 1).padStart(2, '0')
+    + String(now.getDate()).padStart(2, '0') + '-'
+    + String(now.getHours()).padStart(2, '0')
+    + String(now.getMinutes()).padStart(2, '0')
+    + String(now.getSeconds()).padStart(2, '0') + '-'
+    + String(now.getMilliseconds()).padStart(3, '0');
+  link.download = stem + '-' + stamp + extension;
   document.body.appendChild(link);
   link.click();
   link.remove();
@@ -5710,7 +5735,18 @@ function piece_export_screenshot_overlay_script(array $piece, string $generation
     const objectUrl = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = objectUrl;
-    link.download = filename;
+    const dot = filename.lastIndexOf('.');
+    const stem = dot > 0 ? filename.slice(0, dot) : filename;
+    const extension = dot > 0 ? filename.slice(dot) : '.png';
+    const now = new Date();
+    const stamp = now.getFullYear()
+      + String(now.getMonth() + 1).padStart(2, '0')
+      + String(now.getDate()).padStart(2, '0') + '-'
+      + String(now.getHours()).padStart(2, '0')
+      + String(now.getMinutes()).padStart(2, '0')
+      + String(now.getSeconds()).padStart(2, '0') + '-'
+      + String(now.getMilliseconds()).padStart(3, '0');
+    link.download = stem + '-' + stamp + extension;
     link.rel = 'noopener';
     document.body.appendChild(link);
     link.click();

@@ -16,13 +16,15 @@ features always require a visitor gesture and browser permission.
 | Embed (CMS) | Custom plus `cms=1` | Same immersive capabilities with CMS-specific wrapper behavior |
 | Regular ZIP | Portable regular piece | Engine/capability controls and PNG capture work offline where browser security permits |
 | Immersive ZIP | Portable immersive piece | Shared immersive toolbar, view state, camera/hand controls, and PNG capture |
-| Immersive collection | One gallery-room runtime | Room-level navigation/sound/capture; no per-tile camera or hand inference |
+| Immersive collection | One gallery-room runtime | Room navigation, active-work sound, visitor-activated wall camera, capture, and one dedicated room-hand inference owner |
 
 Regular collection pages and their embeds reuse that same immersive collection
 renderer. The regular page supplies one surface-local Embed action and a
 page-level immersive link; the immersive page supplies Custom/CMS embed actions.
 The embedded stage fills its viewport without changing slideshow, item
 selection, downloads, navigation, fullscreen, audio, or renderer suspension.
+Regular collection pages place their immersive and embed actions before the
+work list without changing any canonical collection or piece URL.
 
 ## Engine Capabilities
 
@@ -55,6 +57,9 @@ stacking order.
   exception to control parity.
 - Embed controls are surface-local: regular pages copy the regular iframe;
   immersive pages copy only Custom/CMS immersive variants.
+- PNG captures use title-derived timestamped filenames on live and downloaded
+  surfaces so repeated Android downloads do not invoke the browser's
+  duplicate-filename confirmation dialog.
 
 ## Camera, Motion, and Download Variants
 
@@ -65,6 +70,15 @@ stacking order.
 - Camera theremin is an audio voice and requires an enabled sound design.
   Visual hand motion never depends on `sonic_params`; both capabilities may
   share one granted stream and inference loop.
+- The collection room projects its visitor-activated mirrored camera feed on
+  the back wall with the shared opacity control. Wall proximity owns sound
+  until a slideshow opens; the displayed slide then owns it, Prev/Next follows
+  each displayed work (including Three.js and A-Frame), and closing restores
+  the prior wall-proximity owner. The collection-level mute choice stays
+  toggleable and survives all work changes; silent works pause output without
+  disabling or discarding that choice.
+  Room hand navigation uses a dedicated silent controller so a work's audio
+  capability can never block “Walk the room.”
 - Device orientation supplies the base immersive orientation and hand motion
   adds a bounded offset. Flat regular p5/C2/C2-Interactive/SVG surfaces stay in
   their exact framed DOM until steering wakes a lazy Three.js presentation
@@ -89,6 +103,12 @@ stacking order.
   embedded, and downloaded variants reuse the same markup/controller and keep
   Sound → controls → hand guide → fullscreen ordering where those controls
   are present.
+- Opening a collection slideshow suspends the wall animation and releases its
+  progressive per-slot runtimes before creating the live slide iframe. Closing
+  rebuilds the current live-slot budget, forces a visible wall render, and
+  resumes animation without changing traversal or the room pose. Slide titles
+  occupy a dedicated row above wrapping controls, reducing artwork height
+  instead of overlapping it.
 - Full ZIP preserves the source surface, including the lazy flat spatial shell.
   Non-Camera ZIP remains permanently framed and removes camera
   rendering, camera theremin, visual hand motion, camera UI, and MediaPipe

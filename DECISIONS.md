@@ -10,6 +10,77 @@
 
 None.
 
+## 2026-07-13 — Slideshow Sound Ownership Override
+
+### Decision
+
+- Collection wall proximity remains the sound owner during room navigation.
+  Opening the slideshow snapshots that owner and temporarily transfers sound
+  to the displayed piece; Prev/Next transfers it again, and closing restores
+  the prior proximity owner before wall rendering resumes.
+- Three.js and A-Frame slides participate through their stored sonic parameters
+  without changing the separate decision about which wall visuals animate.
+- The collection sound intent remains toggleable on silent works and is exposed
+  inside the slideshow through the same parent-owned controller. No second
+  slideshow audio engine is introduced.
+- No route, schema, vendor dependency, feature flag, or public API changed.
+
+### Agent loop
+
+- Initiated a multi-file investigation/implementation loop because sound data,
+  controller ownership, overlay chrome, lifecycle restoration, documentation,
+  and regression coverage had to be traced together.
+
+### Options considered
+
+- Slideshow-only ownership, explicit wall selection latching, and hybrid
+  proximity/slideshow ownership were compared, with a reframe of sound as a
+  focused-view-only capability. The user selected the hybrid override because
+  it preserves proximity sound while making the visible slide authoritative.
+
+### Verification
+
+- Runtime consistency suite: 142 passed, 0 failed.
+- Generation/export suite completed successfully.
+- Feature-flag suite: 20 passed, 0 failed.
+- JavaScript/PHP syntax and diff checks passed.
+- Local browser verification on `/immersive/collections/apocalyptic` confirmed
+  silent-work arming, Three.js slide sound activation, Prev/Next ownership
+  transfer, and restoration of the prior proximity owner after close. No new
+  application errors were logged.
+
+## 2026-07-13 — Mobile Collection Chrome and Runtime Restoration
+
+### Decision
+
+- Repeated live and downloaded PNG captures use recognizable timestamped
+  filenames so Android Chrome does not block the page behind its native
+  duplicate-download confirmation dialog.
+- Regular collection pages place their immersive and embed actions before the
+  work list without changing any public URL or embed contract.
+- The existing collection slideshow is preserved. Its title owns a row above
+  wrapping controls, and opening it suspends/releases progressive wall
+  runtimes; closing epoch-guards stale async work, rebuilds the live-slot
+  budget, renders the wall, and resumes from the preserved pose.
+- Collection rooms compose the existing wall-camera projection with room
+  navigation. Active works own sonic parameters while the visitor's master
+  mute choice persists, and “Walk the room” uses a dedicated silent hand
+  controller so a sound-bearing work cannot block gesture navigation.
+- No route, schema, vendor dependency, or feature-flag contract changed.
+
+### Agent loop
+
+- Initiated a multi-file investigation/implementation loop because the issue
+  required tracing shared chrome, gallery lifecycle, capture/export twins,
+  sound ownership, hand input, views, documentation, and regression tests.
+
+### Verification
+
+- Runtime consistency suite: 141 passed, 0 failed.
+- Generation/export suite completed successfully.
+- Feature-flag suite: 20 passed, 0 failed.
+- JavaScript/PHP syntax and diff checks passed.
+
 ## 2026-07-12 — Canonical Immersive Reset State
 
 ### Decision

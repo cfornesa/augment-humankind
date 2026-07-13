@@ -87,6 +87,14 @@ Source: DECISIONS.md 2026-07-06 Public Copy Subtabs, Footer Consolidation, Widen
 
 # Standing Decisions — Art Pieces, AI Generation & Immersive
 
+2026-07-13 · DIRECTION · Preferred temporary explicit-focus overrides that restore the prior ambient state on exit, preserving exploratory behavior while making the foreground artwork authoritative.
+
+2026-07-13 DECISION Immersive collection sound follows wall proximity during room navigation, temporarily follows the displayed slideshow work—including Three.js and A-Frame—and restores the prior proximity owner on close. The visitor’s mute intent persists through silent works.
+
+2026-07-13 CORRECTION Collection slideshow overlap refers to title/control geometry; preserve existing slideshow functionality and place the title vertically above its controls.
+
+2026-07-13 DECISION Collection slides suspend progressive wall runtimes and restore them after closing; collection camera, active-work sound, and room-hand navigation remain independent capabilities.
+
 2026-07-11 DECISION Live and downloaded piece views derive sensible controls and capture behavior from one engine-aware capability matrix; screenshots must include all active visible composition layers.
 2026-07-11 CORRECTION Fixed a corrupted multi-line comment close tag in public/app/helpers/piece-render.php (which had been accidentally modified to "nfunction" in a prior session, commenting out 1,800 lines of helper code and throwing "Call to undefined function" errors on live views).
 2026-07-11 DECISION Split the Audio tab in the piece edit panel (/admin/pieces/[id]/edit) into two separate fieldsets: "Public sound controls" and "Public camera controls", making camera steering (hand control) independent of the hand-tracking audio voice.
