@@ -383,7 +383,7 @@
     var enabled = false, disposed = false;
     var bus = null, filter = null, ambientSynth = null, movementSynth = null, melodicSynth = null;
     var effectNodes = [];
-    var handLandmarker = null, handRafId = null, handNoteHeld = false;
+    var handLandmarker = null, handRafId = null, handNoteHeld = false, handLastSemitone = null;
     // The camera is a shared resource (module-scoped acquireSharedCamera):
     // the theremin, the hand-control subscriber, and the camera-feed
     // consumer each hold a reference; the stream/video pair is opened once
@@ -664,7 +664,20 @@
       var volumeDb = -30 + Math.max(0, Math.min(1, (spread - 0.05) / 0.3)) * 30;
       try {
         if (melodicSynth.volume) melodicSynth.volume.value = volumeDb;
-        if (!handNoteHeld) {
+        // A zero-sustain (percussive) melodic voice — the pluck stand-in
+        // MonoSynth, MembraneSynth, MetalSynth — decays to silence right
+        // after triggerAttack, so the continuous ramp below would leave the
+        // theremin silent forever after one pluck. Those voices re-trigger a
+        // short note whenever the hand crosses into a new semitone instead.
+        var envSustain = melodicSynth.envelope ? Number(melodicSynth.envelope.sustain) : NaN;
+        if (envSustain === 0) {
+          var semitone = Math.round(midi);
+          if (!handNoteHeld || semitone !== handLastSemitone) {
+            melodicSynth.triggerAttackRelease(midiToFreq(semitone), 0.2);
+            handLastSemitone = semitone;
+            handNoteHeld = true;
+          }
+        } else if (!handNoteHeld) {
           melodicSynth.triggerAttack(midiToFreq(midi));
           handNoteHeld = true;
         } else if (melodicSynth.frequency && melodicSynth.frequency.rampTo) {
@@ -757,6 +770,7 @@
       }
       releaseHandCamera();
       stopHandLoopIfIdle();
+      capabilityState('hand_control', 'inactive');
     }
 
     // Camera-feed consumer (e.g. a VideoTexture piece background or DOM
@@ -1177,9 +1191,229 @@
     };
   }
 
+  // Converts the existing single-hand, 21-landmark MediaPipe result into a
+  // small, deliberate camera-command vocabulary. This is an input adapter:
+  // it never owns a camera, starts inference, or replaces surface navigation.
+  function createClutchedGestureRouter(options) {
+    options = options || {};
+    var onCommand = typeof options.onCommand === 'function' ? options.onCommand : function () {};
+    var onMode = typeof options.onMode === 'function' ? options.onMode : function () {};
+    var dwellMs = Math.max(80, Number(options.dwellMs) || 180);
+    var stablePose = 'unknown';
+    var candidatePose = 'unknown';
+    var candidateSince = 0;
+    var pinched = false;
+    var clutchMode = null;
+    var smoothWrist = null;
+    var lastWrist = null;
+    var clutchAnchor = null;
+    var lastPalmScale = null;
+    var visibleMode = 'idle';
+    var lastSampleAt = 0;
+    var lastKnownPose = 'unknown';
+    var lastKnownPoseAt = 0;
+    var cadenceRaf = 0;
+    var cadenceFrames = [];
+    var nominalFrameMs = 1000 / 60;
+    var cadenceCarry = 0;
+    var classificationGraceMs = Math.max(50, Number(options.classificationGraceMs) || 100);
+
+    function emitMode(mode) {
+      if (visibleMode === mode) return;
+      visibleMode = mode;
+      try { onMode(mode); } catch (_e) {}
+    }
+
+    function distance(a, b) {
+      if (!a || !b) return Infinity;
+      return Math.hypot(a.x - b.x, a.y - b.y, (a.z || 0) - (b.z || 0));
+    }
+
+    function fingerExtended(hand, tip, pip) {
+      var wrist = hand[0];
+      return distance(wrist, hand[tip]) > distance(wrist, hand[pip]) * 1.12;
+    }
+
+    function classifyPose(hand) {
+      if (!hand || hand.length < 21) return 'unknown';
+      var index = fingerExtended(hand, 8, 6);
+      var middle = fingerExtended(hand, 12, 10);
+      var ring = fingerExtended(hand, 16, 14);
+      var pinky = fingerExtended(hand, 20, 18);
+      var extended = (index ? 1 : 0) + (middle ? 1 : 0) + (ring ? 1 : 0) + (pinky ? 1 : 0);
+      if (index && !middle && !ring && !pinky) return 'point';
+      if (extended >= 3) return 'open';
+      if (extended <= 1) return 'fist';
+      return 'unknown';
+    }
+
+    function cancelCadencedCommands() {
+      if (cadenceRaf) cancelAnimationFrame(cadenceRaf);
+      cadenceRaf = 0;
+      cadenceFrames = [];
+    }
+
+    function queueCadencedCommands(commands, steps) {
+      cancelCadencedCommands();
+      var count = Math.max(1, Math.min(4, steps || 1));
+      for (var frame = 0; frame < count; frame++) {
+        cadenceFrames.push(commands.map(function (command) {
+          if (command.type === 'travel' || count === 1) return command;
+          var copy = Object.assign({}, command);
+          if (typeof copy.yaw === 'number') copy.yaw /= count;
+          if (typeof copy.pitch === 'number') copy.pitch /= count;
+          if (typeof copy.delta === 'number') copy.delta /= count;
+          return copy;
+        }));
+      }
+      function flushFrame() {
+        cadenceRaf = 0;
+        var frameCommands = cadenceFrames.shift() || [];
+        frameCommands.forEach(function (command) {
+          try { onCommand(command); } catch (_e) {}
+        });
+        if (cadenceFrames.length) cadenceRaf = requestAnimationFrame(flushFrame);
+      }
+      flushFrame();
+    }
+
+    function updateStablePose(nextPose, now) {
+      if (nextPose !== candidatePose) {
+        candidatePose = nextPose;
+        candidateSince = now;
+        return;
+      }
+      if (nextPose !== stablePose && now - candidateSince >= dwellMs) {
+        stablePose = nextPose;
+      }
+    }
+
+    function palmScale(hand) {
+      return Math.max(0.001, distance(hand[0], hand[9]));
+    }
+
+    function reset(stopReason) {
+      cancelCadencedCommands();
+      if (pinched || clutchMode) {
+        try { onCommand({ type: 'stop', reason: stopReason || 'reset' }); } catch (_e) {}
+      }
+      pinched = false;
+      clutchMode = null;
+      clutchAnchor = null;
+      lastPalmScale = null;
+      lastWrist = null;
+      smoothWrist = null;
+      stablePose = candidatePose = 'unknown';
+      candidateSince = 0;
+      lastSampleAt = 0;
+      lastKnownPose = 'unknown';
+      lastKnownPoseAt = 0;
+      cadenceCarry = 0;
+      emitMode('idle');
+    }
+
+    function update(hand, timestamp) {
+      if (!hand || !hand[0] || hand.length < 21) {
+        reset('hand-lost');
+        return false;
+      }
+      var now = Number(timestamp) || performance.now();
+      var sampleDelta = lastSampleAt > 0 ? Math.max(1, Math.min(100, now - lastSampleAt)) : nominalFrameMs;
+      var sampleFrameScale = sampleDelta / nominalFrameMs;
+      cadenceCarry += sampleFrameScale;
+      var wholeCadenceSteps = Math.floor(cadenceCarry + 0.0001);
+      var cadenceSteps = Math.max(1, Math.min(4, wholeCadenceSteps));
+      cadenceCarry = wholeCadenceSteps > 4 ? 0 : Math.max(0, cadenceCarry - cadenceSteps);
+      lastSampleAt = now;
+      var rawWrist = hand[0];
+      if (!smoothWrist) {
+        smoothWrist = { x: rawWrist.x, y: rawWrist.y, z: rawWrist.z || 0 };
+      } else {
+        // Landmark stabilization happens once, before classification and
+        // command mapping, so every surface receives the same steady input.
+        // Convert the established 0.22-per-60Hz-sample response into elapsed
+        // time so a slower fallback stream has the same temporal smoothing.
+        var wristAlpha = 1 - Math.pow(1 - 0.22, sampleFrameScale);
+        smoothWrist.x += (rawWrist.x - smoothWrist.x) * wristAlpha;
+        smoothWrist.y += (rawWrist.y - smoothWrist.y) * wristAlpha;
+        smoothWrist.z += ((rawWrist.z || 0) - smoothWrist.z) * wristAlpha;
+      }
+      var pose = classifyPose(hand);
+      if (pose !== 'unknown') {
+        lastKnownPose = pose;
+        lastKnownPoseAt = now;
+      } else if (lastKnownPose !== 'unknown' && now - lastKnownPoseAt <= classificationGraceMs) {
+        pose = lastKnownPose;
+      }
+      updateStablePose(pose, now);
+      var scale = palmScale(hand);
+      var pinchRatio = distance(hand[4], hand[8]) / scale;
+      var nextPinched = pinched ? pinchRatio < 0.62 : pinchRatio < 0.42;
+
+      if (nextPinched && !pinched) {
+        // Lock the previewed pose for the lifetime of this clutch. Landmark
+        // shapes naturally change during a pinch; reclassification here would
+        // cause exactly the mode chatter this boundary is intended to prevent.
+        clutchMode = stablePose === 'point' ? 'travel' : 'orbit';
+        clutchAnchor = { x: smoothWrist.x, y: smoothWrist.y };
+        lastWrist = { x: smoothWrist.x, y: smoothWrist.y };
+        lastPalmScale = scale;
+        try { onCommand({ type: 'start', mode: clutchMode }); } catch (_e) {}
+      } else if (!nextPinched && pinched) {
+        cancelCadencedCommands();
+        try { onCommand({ type: 'stop', reason: 'release' }); } catch (_e) {}
+        clutchMode = null;
+        clutchAnchor = null;
+        lastPalmScale = null;
+      }
+      pinched = nextPinched;
+
+      if (!pinched) {
+        cancelCadencedCommands();
+        if (stablePose === 'open') {
+          emitMode('look');
+          try { onCommand({ type: 'look', x: 1 - smoothWrist.x, y: smoothWrist.y }); } catch (_e) {}
+        } else {
+          emitMode(stablePose === 'point' ? 'travel-ready' : stablePose === 'fist' ? 'orbit-ready' : 'idle');
+        }
+        lastWrist = { x: smoothWrist.x, y: smoothWrist.y };
+        return true;
+      }
+
+      emitMode(clutchMode || 'orbit');
+      var spatialCommands = [];
+      if (clutchMode === 'travel' && clutchAnchor) {
+        var right = Math.max(-1, Math.min(1, (smoothWrist.x - clutchAnchor.x) * 4));
+        var forward = Math.max(-1, Math.min(1, (clutchAnchor.y - smoothWrist.y) * 4));
+        if (Math.abs(right) < 0.12) right = 0;
+        if (Math.abs(forward) < 0.12) forward = 0;
+        spatialCommands.push({ type: 'travel', forward: forward, right: -right });
+      } else if (lastWrist) {
+        var dx = smoothWrist.x - lastWrist.x;
+        var dy = smoothWrist.y - lastWrist.y;
+        if (Math.abs(dx) > 0.002 || Math.abs(dy) > 0.002) {
+          spatialCommands.push({ type: 'orbit', yaw: -dx * 3.2, pitch: -dy * 2.4 });
+        }
+      }
+      if (lastPalmScale) {
+        var zoomDelta = (scale - lastPalmScale) / lastPalmScale;
+        if (Math.abs(zoomDelta) > 0.018) {
+          spatialCommands.push({ type: 'zoom', delta: Math.max(-0.12, Math.min(0.12, zoomDelta)) });
+        }
+      }
+      if (spatialCommands.length) queueCadencedCommands(spatialCommands, cadenceSteps);
+      lastWrist = { x: smoothWrist.x, y: smoothWrist.y };
+      lastPalmScale = scale;
+      return true;
+    }
+
+    return { update: update, reset: reset, dispose: reset, getMode: function () { return visibleMode; } };
+  }
+
   global.CreatrSonicController = {
     create: create,
     createDeviceTiltController: createDeviceTiltController,
+    createClutchedGestureRouter: createClutchedGestureRouter,
     // Standalone camera feed for pieces with a camera overlay but no sound
     // at all (no sonic engine instance): same ref-counted shared stream the
     // engines use, so live-mixing camera + sound later never double-opens

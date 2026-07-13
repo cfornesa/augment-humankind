@@ -1,5 +1,37 @@
 # ALGORITHMS.md
 
+## Surface-Specific Camera and Composed Motion
+
+Regular camera presentation resolves from the legacy regular columns;
+immersive presentation resolves from its nullable override and falls back to
+regular. Visual hand motion resolves independently from audio voices. In an
+immersive Three.js room, one stabilized landmark stream enters a clutched
+gesture router: a dwell-confirmed pose previews a mode, pinch locks it, and
+the router emits look/orbit/travel/zoom commands to the existing surface
+controller. Device orientation remains the calibrated base for look offsets.
+Flat regular surfaces remain in their authored framed DOM while asleep. On a
+visitor gesture, a lazy Three.js presentation shell textures the still-running
+canvas/SVG onto a spatial plane; gesture commands move only that shell's
+camera. Steering deactivation stops commands while retaining the shell pose;
+Reset alone eases home for 360ms. If steering is already off, Reset then
+disposes the renderer and restores the exact framed DOM. C2 Interactive alone
+releases any held pointer and latches authored input while spatially displaced;
+input returns after steering is off and Reset settles the framed view.
+
+A Non-Camera ZIP clones the version in memory, forces both camera surfaces,
+visual hand motion, and camera theremin off, then derives the manifest.
+MediaPipe inclusion follows those derived capabilities, so the lighter archive
+contains neither its model/WASM nor camera controls while other sound remains.
+Full ZIP flat spatial composition reads the frame through the DOM adapter's
+`getBackgroundVideo()` accessor. The accessor returns the canonical shared
+camera video passed into `setBackgroundVideo()`, not the display clone. A
+fully-covered clone may be throttled in a downloaded `file://` document; the
+canonical video remains active for the shared MediaPipe loop and therefore
+feeds a dedicated Three.js `VideoTexture` plane. The artwork continues through
+its existing CanvasTexture plane; camera background/overlay placement selects
+the video plane's depth/render order. This prevents fullscreen from freezing a
+Canvas2D-copied camera frame without changing the authored animation texture.
+
 > **Analytical framework source:** This document's analysis is guided by
 > "Characteristics of an Algorithm," Naukri Code360 Library,
 > <https://www.naukri.com/code360/library/characteristics-of-an-algorithm>.
@@ -627,16 +659,19 @@ NOTE   imported posts (Blog.FeedImport) carry source_feed_id, which
 - **Logic:** One descriptor derives Sound, Keyboard, microphone, Hand-tracking,
   Hand control, Camera view, and camera-opacity eligibility from the effective
   generation mode, the administrator-bounded sonic voice configuration, and the
-  version's own `camera_overlay` permission (`piece_camera_overlay_enabled()`).
+  version's own camera availability and placement
+  (`piece_camera_overlay_enabled()` / `piece_camera_placement()`).
   `sound` is `false` outright whenever the version carries no `sonic_params` at
   all — the single source of truth for "does this piece have anything to
   mute/unmute" — and `keyboard`/`microphone` are gated behind it in turn, so a
   sound-less piece never surfaces a piano or mic toggle. `camera_view` reads
-  the dedicated `camera_overlay` column when explicitly set (1/0), falling
-  back to the legacy rule (follow the hand-tracking voice on
-  `three`/`aframe`/`c2_interactive`) only when the column is `NULL`; camera
-  permission is independent of sound design, so a piece with no `sonic_params`
-  can still offer a camera overlay. `hand_control` (steer the piece via wrist
+  the dedicated `camera_overlay` column when explicitly set (1/0); `NULL`
+  offers the visitor-activated camera option on every engine without starting
+  capture. `camera_placement` accepts `background`/`overlay`; `NULL` resolves
+  through `art_piece_camera_placement_default()` to background for Three.js/
+  A-Frame and overlay for p5/C2/SVG. Camera permission is independent of sound
+  design, so a piece with no `sonic_params` can still offer it. `hand_control`
+  (steer the piece via wrist
   position or device tilt) is available whenever the piece is a steerable
   engine (`three`/`aframe`/`c2_interactive`) **and** either the hand-tracking
   voice or the camera permission is on, **and** the admin hasn't explicitly
@@ -651,11 +686,11 @@ NOTE   imported posts (Blog.FeedImport) carry source_feed_id, which
   toolbar and stage chrome receive the same `camera_view`/`hand_control`
   flags), and standalone export assembly consume this contract; browser
   runtime handshakes remain the final check for APIs such as `getUserMedia`.
-- **2D authoring default:** `art_piece_camera_overlay_default()` returns On
-  for p5, plain C2, and SVG, whose camera is a visitor-activated DOM overlay
-  with opacity control. New versions persist that explicit value; the
-  dual-shipped backfill changes only NULL rows for those modes. Explicit Off
-  values and the Three/A-Frame/C2-Interactive legacy NULL rule are preserved.
+- **Authoring and composition:** `art_piece_camera_overlay_default()` returns
+  On for every engine, meaning the control is offered rather than capture being
+  automatic. The placement-aware DOM hook renders below or above 2D artwork
+  and composes PNG layers in the same order; Three.js/A-Frame choose between
+  the blended in-scene quad and DOM overlay. Explicit Off remains authoritative.
 - **Export/live parity:** `piece_export_sonic_script()` and
   `piece_export_bootstrap()` consume the same contract, so a camera-only
   steerable piece's ZIP bundles `runtime/mediapipe-hands/*` whenever
@@ -671,6 +706,36 @@ NOTE   imported posts (Blog.FeedImport) carry source_feed_id, which
 - **Characteristics:** Deterministic O(1). The contract prevents surface code
   from independently guessing which rows should exist while still allowing a
   browser to hide a nominal capability it cannot execute.
+
+### 3.11 Piece stage reuse, local-media inlining, and hand navigation
+
+- **Canonical Light stage:** `views/partials/piece-stage.php` owns the regular
+  stage. Both `/pieces/{id}` and `/embed/pieces/{id}` include it; `embed.js`
+  wraps the Light iframe for lazy sizing/fullscreen promotion without drawing
+  duplicate controls. Screenshot, ZIP, and a literal `VR` action form one
+  upper-left rail. The standalone page adds a separate explanatory immersive
+  link below the Prompt heading; it is intentionally absent from embeds.
+  Embed-code actions are surface-local: the regular page copies its canonical
+  iframe through one `Embed` button below the stage, while the immersive page
+  offers only `Embed (Custom)` and `Embed (CMS)` for its own renderer.
+- **Viewport-fill and collections:** the regular piece embed document sizes
+  its shared stage and inner runtime to the full iframe viewport. Platform
+  collection pages and embeds reuse `/immersive/collections/{slug}?embed=1`
+  instead of implementing another gallery; only page/embed chrome differs.
+  The collection renderer's slideshow, selection, downloads, navigation,
+  sound, fullscreen, and renderer suspension/hydration paths are unchanged.
+- **Media inlining:** `piece_inline_local_media()` builds one manifest and
+  rewrites local `/image`, `/media`, and `/api/media-assets` references to data
+  URLs before immersive wall rasterization or `srcdoc` rendering, preventing
+  SVG/image security rules from dropping authored assets.
+- **C2 hand input:** wrist coordinates dispatch synthetic pointer movement;
+  thumb/index pinch uses hysteresis to dispatch pointer down/up, and hand loss
+  releases any held pointer. Percussive zero-sustain theremin voices retrigger
+  when the hand crosses a semitone instead of holding a silent attack.
+- **Room navigation:** `createRoomHandNavigation()` maps a visitor's wrist to a
+  dead-zoned velocity joystick over the gallery OrbitControls. It is one
+  visitor-activated, feature-flagged room controller—not per-tile inference—
+  and releases hand/camera state when disabled or destroyed.
 
 ### Recipe Overview — AI Art Piece Generation pipeline
 
@@ -2797,23 +2862,44 @@ Consolidates the side-channel notes in §3 and §4 LEG D.
   MIME-sniffed mp3/ogg/wav allowlist, 32 MB cap, gated on the `media_audio`
   feature flag.
 
-### 12.8 Hand-as-orbit control and camera background — `enableHandControl()` / `acquireCameraFeed()` ([sonic-controller.js](public/assets/js/sonic-controller.js)); `window.__pieceHandHooks` consumers ([piece-runtime.js](public/assets/js/piece-runtime.js), export twins in [piece-render.php](public/app/helpers/piece-render.php))
-- **Type:** Continuous landmark→control mapping (eased spherical orbit) +
-  texture substitution.
+### 12.8 Clutched-gestural camera control and camera background — `enableHandControl()` / `createClutchedGestureRouter()` / `acquireCameraFeed()` ([sonic-controller.js](public/assets/js/sonic-controller.js)); `handCommand` consumers ([piece-runtime.js](public/assets/js/piece-runtime.js), [immersive-gallery.js](public/assets/js/immersive-gallery.js), export twins in [piece-render.php](public/app/helpers/piece-render.php))
+- **Type:** Stabilized landmark classification state machine + bounded camera
+  command adapter + texture substitution.
 - **Logic:** Two further consumers of the §12.5 camera pipeline, each its
   own visitor toggle:
-  - **Hand control ("Steer the piece"):** the landmark loop publishes each
-    frame's hand (or null) to an `onHandFrame` subscriber; the host maps the
-    wrist to control input via the engine-specific hook the active bootstrap
-    registered on `window.__pieceHandHooks`. X is mirrored (camera images
-    are mirrors) so moving the hand right steers right. For Three.js the
-    wrist's normalized position becomes desired spherical angles around the
-    orbit target — `θ = (nx−0.5)·1.5π`, `φ = π/2 + (ny−0.5)·0.7π`, φ clamped
-    away from the poles — eased 12% per frame so tracking jitter never jolts
-    the camera; for A-Frame the same mapping drives camera yaw/pitch; for
-    interactive c2 the wrist becomes a synthetic `pointermove` over the
-    canvas, driving the piece's own pointer handlers (and the movement voice
-    for free). Theremin and control can run simultaneously off one camera.
+  - **Hand control ("Steer the piece"):** the existing one-hand landmark loop
+    publishes each frame once. The router exponentially stabilizes the wrist,
+    classifies open/point/fist from finger-tip versus joint distances, requires
+    a 180ms dwell, and uses normalized thumb/index distance with separate
+    enter/exit thresholds as a clutch. Open palm emits absolute free-look;
+    pointing then pinching locks travel; other confirmed poses then pinching
+    lock orbit. Wrist displacement emits bounded travel/orbit and palm-scale
+    change emits bounded zoom. Release or hand loss emits `stop` without
+    resetting pose. Surface adapters translate only those abstract commands
+    through their existing camera/target operations. Interactive C2 retains
+    its synthetic pointermove/down/up contract in immersive pointer-steering
+    contexts. In a regular spatial shell, authored C2 interaction is explicitly
+    suspended while spatially displaced, preventing one gesture from
+    simultaneously manipulating the artwork and its presentation. Steering
+    Off freezes the pose; Reset restores the frame without changing the
+    steering state, and restores authored input only when steering is Off. If
+    classification support is absent, the legacy wrist-position hook remains
+    the fallback. Theremin and navigation still share one stream and inference
+    loop. Router timing is cadence-independent: the established 0.22 wrist
+    smoothing coefficient is converted from a nominal 60 Hz sample into an
+    elapsed-time alpha; one brief `unknown` classification is tolerated for up
+    to 100 ms; and slow-sample travel/orbit/zoom output is spread across at
+    most four `requestAnimationFrame` ticks. Travel repeats its velocity
+    command while orbit/zoom divide their total delta, preserving both speed
+    and displacement without requesting more MediaPipe inference.
+  - **Instructional guide:** compatible surfaces render the hand button and
+    five slides from `immersive_stage_hand_guide_markup()`. The local dialog
+    controller is independent of the landmark pipeline: it advances one
+    bounded slide index, traps focus while open, closes via Close/backdrop/
+    Escape, restores focus to its trigger, and never invokes camera or hand
+    toggles. Mobile layout becomes a full-viewport sheet; larger viewports use
+    a centered card. The same generated helper is used by live regular,
+    immersive, collection, embed, and standalone export documents.
   - **Camera background ("Show camera"):** `acquireCameraFeed()` hands the
     shared hidden `<video>` to the bootstrap's `setBackgroundVideo` hook.
     Every surface supports adjustable opacity now. Three.js and A-Frame
@@ -2852,13 +2938,25 @@ Consolidates the side-channel notes in §3 and §4 LEG D.
     silently omitting the visitor-visible layer. Every PNG entry point,
     including the downloaded document's self-mounted camera button, invokes
     this composition hook before validation/encoding.
-- **Mounted-view ownership:** while hand steering is enabled, its interaction
-  controller exclusively owns the camera. Three.js pauses OrbitControls,
-  arrow/click/wheel/viewer-button navigation, and the shared gyro controller;
-  A-Frame pauses its look/WASD components plus pointer and viewer controls.
-  Disabling steering restores exactly the control modes that were active but
-  keeps the hand-steered camera pose; gyro recalibrates from that pose rather
-  than snapping back. Failure and viewer teardown clear the landmark subscriber,
+- **Mounted-view ownership:** while a clutch is active, the gesture router owns
+  the relevant camera degree of freedom while calling existing navigation
+  operations. Direct Three.js/A-Frame preserve their established ownership;
+  gallery rooms suppress competing pointer rotation but retain translation,
+  zoom, and composed device orientation. Disabling steering restores exactly
+  the modes that were active and keeps the resulting camera pose. For the two
+  OrbitControls-backed paths (native Three.js and mounted gallery rooms),
+  `bakeOrbitHandPose()` reads the displayed quaternion, preserves the existing
+  camera/target distance, moves the target onto that visible forward vector,
+  and calls `releaseHandOffset()` to discard residual additive-offset state
+  without easing toward home. Ordinary pointer, touch, wheel, keyboard, and
+  viewer-button navigation therefore resumes from the hand-directed pose.
+  Portable immersive launch state is separate from reset state: each native
+  Three.js, A-Frame, mounted-gallery, or collection-room controller snapshots
+  its canonical fitted pose first, then applies the optional serialized
+  download-time camera/target. Reset always animates to the canonical snapshot,
+  never back to the transient pose captured when the ZIP was requested.
+  Failure and
+  viewer teardown clear the landmark subscriber,
   release the shared camera reference, restore controls, remove the blended
   camera quad (or restore the gallery wall material), and dispose the
   `VideoTexture`.

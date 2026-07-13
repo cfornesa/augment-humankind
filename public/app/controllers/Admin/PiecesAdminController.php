@@ -203,6 +203,10 @@ class PiecesAdminController
                     'notes' => null,
                     'sonic_params' => $data['sonic_params'] ?? null,
                     'camera_overlay' => self::resolveCameraOverlayFromPost(null, $generationMode),
+                    'camera_placement' => self::resolveCameraPlacementFromPost(),
+                    'immersive_camera_overlay' => self::resolveImmersiveCameraOverlayFromPost(),
+                    'immersive_camera_placement' => self::resolveImmersiveCameraPlacementFromPost(),
+                    'regular_hand_motion' => self::resolveRegularHandMotionFromPost(),
                 ]);
                 PlatformArtPiece::updateCurrentVersion($pieceId, $versionId);
             }
@@ -276,7 +280,25 @@ class PiecesAdminController
                     : null;
                 $cameraGenerationMode = self::requestedGenerationModeFromPost($data['engine']);
                 $nextCameraOverlay = self::resolveCameraOverlayFromPost($currentCameraOverlay, $cameraGenerationMode);
-                $cameraOverlayChanged = art_piece_camera_overlay_supported() && $nextCameraOverlay !== $currentCameraOverlay;
+                $currentCameraPlacement = function_exists('piece_camera_placement') && is_array($currentVersion)
+                    ? piece_camera_placement($currentVersion)
+                    : null;
+                $nextCameraPlacement = self::resolveCameraPlacementFromPost($currentCameraPlacement);
+                $currentImmersiveCameraOverlay = isset($currentVersion['immersive_camera_overlay']) && $currentVersion['immersive_camera_overlay'] !== null
+                    ? (int) $currentVersion['immersive_camera_overlay'] : null;
+                $currentImmersiveCameraPlacement = in_array($currentVersion['immersive_camera_placement'] ?? null, ['background', 'overlay'], true)
+                    ? $currentVersion['immersive_camera_placement'] : null;
+                $currentRegularHandMotion = isset($currentVersion['regular_hand_motion']) && $currentVersion['regular_hand_motion'] !== null
+                    ? (int) $currentVersion['regular_hand_motion'] : null;
+                $nextImmersiveCameraOverlay = self::resolveImmersiveCameraOverlayFromPost($currentImmersiveCameraOverlay);
+                $nextImmersiveCameraPlacement = self::resolveImmersiveCameraPlacementFromPost($currentImmersiveCameraPlacement);
+                $nextRegularHandMotion = self::resolveRegularHandMotionFromPost($currentRegularHandMotion);
+                $cameraOverlayChanged = art_piece_camera_overlay_supported()
+                    && ($nextCameraOverlay !== $currentCameraOverlay
+                        || $nextCameraPlacement !== $currentCameraPlacement
+                        || $nextImmersiveCameraOverlay !== $currentImmersiveCameraOverlay
+                        || $nextImmersiveCameraPlacement !== $currentImmersiveCameraPlacement
+                        || $nextRegularHandMotion !== $currentRegularHandMotion);
                 $codeChanged = !$currentVersion
                     || self::normalizeCode($code['html_code']) !== self::normalizeCode($currentVersion['html_code'] ?? null)
                     || self::normalizeCode($code['css_code']) !== self::normalizeCode($currentVersion['css_code'] ?? null)
@@ -299,6 +321,10 @@ class PiecesAdminController
                     }
                     if ($cameraOverlayChanged) {
                         $inPlace['camera_overlay'] = $nextCameraOverlay;
+                        $inPlace['camera_placement'] = $nextCameraPlacement;
+                        $inPlace['immersive_camera_overlay'] = $nextImmersiveCameraOverlay;
+                        $inPlace['immersive_camera_placement'] = $nextImmersiveCameraPlacement;
+                        $inPlace['regular_hand_motion'] = $nextRegularHandMotion;
                     }
                     if ($inPlace !== []) {
                         PlatformArtPieceVersion::update((int) $currentVersion['id'], array_merge($currentVersion, $inPlace));
@@ -345,6 +371,10 @@ class PiecesAdminController
                         'ai_persona_id' => $data['ai_persona_id'] ?? null,
                         'sonic_params' => $nextSonicParams,
                         'camera_overlay' => $nextCameraOverlay,
+                        'camera_placement' => $nextCameraPlacement,
+                        'immersive_camera_overlay' => $nextImmersiveCameraOverlay,
+                        'immersive_camera_placement' => $nextImmersiveCameraPlacement,
+                        'regular_hand_motion' => $nextRegularHandMotion,
                     ]);
                     PlatformArtPiece::updateCurrentVersion((int) $id, $versionId);
                 }
@@ -635,6 +665,14 @@ class PiecesAdminController
             [
                 'sonic_params' => self::resolveSonicParamsFromPost($existing['current_version']['sonic_params'] ?? null),
                 'camera_overlay' => self::resolveCameraOverlayFromPost($existingCameraOverlay, $draftGenerationMode),
+                'camera_placement' => self::resolveCameraPlacementFromPost(
+                    function_exists('piece_camera_placement') && is_array($existing['current_version'] ?? null)
+                        ? piece_camera_placement($existing['current_version'])
+                        : null
+                ),
+                'immersive_camera_overlay' => self::resolveImmersiveCameraOverlayFromPost($existing['current_version']['immersive_camera_overlay'] ?? null),
+                'immersive_camera_placement' => self::resolveImmersiveCameraPlacementFromPost($existing['current_version']['immersive_camera_placement'] ?? null),
+                'regular_hand_motion' => self::resolveRegularHandMotionFromPost($existing['current_version']['regular_hand_motion'] ?? null),
             ]
         );
         return $draft;
@@ -694,6 +732,10 @@ class PiecesAdminController
             'ai_persona_id' => (int) ($_POST['ai_persona_id'] ?? 0) ?: null,
             'sonic_params' => self::resolveSonicParamsFromPost(),
             'camera_overlay' => self::resolveCameraOverlayFromPost(null, $generationMode),
+            'camera_placement' => self::resolveCameraPlacementFromPost(),
+            'immersive_camera_overlay' => self::resolveImmersiveCameraOverlayFromPost(),
+            'immersive_camera_placement' => self::resolveImmersiveCameraPlacementFromPost(),
+            'regular_hand_motion' => self::resolveRegularHandMotionFromPost(),
         ];
     }
 
@@ -718,26 +760,78 @@ class PiecesAdminController
         ];
     }
 
-    // Metadata-tab camera overlay permission: '1'/'0' are explicit. A blank
-    // choice resolves through the generation-mode default: On for p5/plain
-    // C2/SVG, NULL for legacy hand-tracking behavior on steerable engines.
-    // Same "trust the POST on a real submission, fall back otherwise"
-    // pattern as the sonic resolvers below.
+    // Metadata-tab "Camera view" combined select (camera_view_setting):
+    // '' = Default (stored NULL — option available, engine placement),
+    // 'background'/'overlay' = On with that placement, 'off' = Off. The
+    // legacy camera_overlay POST key ('', '1', '0') is still honored so
+    // stale tabs/tooling keep working. Same "trust the POST on a real
+    // submission, fall back otherwise" pattern as the sonic resolvers below.
     private static function resolveCameraOverlayFromPost(?int $fallback = null, ?string $generationMode = null): ?int
     {
         if (!art_piece_camera_overlay_supported()) {
             return $fallback;
+        }
+        if ($_SERVER['REQUEST_METHOD'] === 'POST' && array_key_exists('camera_view_setting', $_POST)) {
+            return match (trim((string) $_POST['camera_view_setting'])) {
+                'background', 'overlay' => 1,
+                'off' => 0,
+                default => null,
+            };
         }
         if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !array_key_exists('camera_overlay', $_POST)) {
             return $fallback;
         }
         $raw = trim((string) $_POST['camera_overlay']);
         if ($raw === '') {
-            return $generationMode !== null
-                ? art_piece_camera_overlay_default($generationMode)
-                : null;
+            return null;
         }
         return $raw === '1' ? 1 : 0;
+    }
+
+    // Placement half of the combined select. NULL = engine default
+    // (background for three/aframe, overlay for 2D) resolved at render time
+    // by piece_sound_capability_contract().
+    private static function resolveCameraPlacementFromPost(?string $fallback = null): ?string
+    {
+        if (!art_piece_camera_overlay_supported()) {
+            return $fallback;
+        }
+        if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !array_key_exists('camera_view_setting', $_POST)) {
+            return $fallback;
+        }
+        $raw = trim((string) $_POST['camera_view_setting']);
+        return in_array($raw, ['background', 'overlay'], true) ? $raw : null;
+    }
+
+    private static function resolveImmersiveCameraOverlayFromPost(mixed $fallback = null): ?int
+    {
+        if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !array_key_exists('immersive_camera_view_setting', $_POST)) {
+            return $fallback === null || $fallback === '' ? null : (int)(bool) $fallback;
+        }
+        return match (trim((string) $_POST['immersive_camera_view_setting'])) {
+            'background', 'overlay' => 1,
+            'off' => 0,
+            default => null,
+        };
+    }
+
+    private static function resolveImmersiveCameraPlacementFromPost(?string $fallback = null): ?string
+    {
+        if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !array_key_exists('immersive_camera_view_setting', $_POST)) return $fallback;
+        $raw = trim((string) $_POST['immersive_camera_view_setting']);
+        return in_array($raw, ['background', 'overlay'], true) ? $raw : null;
+    }
+
+    private static function resolveRegularHandMotionFromPost(mixed $fallback = null): ?int
+    {
+        if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !array_key_exists('regular_hand_motion_setting', $_POST)) {
+            return $fallback === null || $fallback === '' ? null : (int)(bool) $fallback;
+        }
+        return match (trim((string) $_POST['regular_hand_motion_setting'])) {
+            'on' => 1,
+            'off' => 0,
+            default => null,
+        };
     }
 
     // The manual Metadata-tab sound toggle was removed (generation and AI
@@ -788,7 +882,6 @@ class PiecesAdminController
                 'movement' => isset($_POST['sonic_voice_movement']),
                 'melodic' => isset($_POST['sonic_voice_melodic']),
                 'hand_tracking' => isset($_POST['sonic_voice_hand_tracking']),
-                'hand_control' => isset($_POST['sonic_voice_hand_control']),
             ],
             'synth' => [
                 'octave_min' => $_POST['sonic_octave_min'] ?? null,

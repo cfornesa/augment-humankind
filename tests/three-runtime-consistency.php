@@ -169,7 +169,7 @@ test('regular export bootstrap mirrors the live regular-view Three.js movement c
 
 test('regular export bootstrap mirrors the live regular-view A-Frame teleport contract', function () {
     $render = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
-    assert_contains($render, "scene.addEventListener('renderstart', bindAFramePointerControls, { once: true });");
+    assert_contains($render, "scene.addEventListener('renderstart', () => { bindAFramePointerControls(); captureInitialAFramePose(); }, { once: true });");
     assert_contains($render, 'function moveAFrameViewTo(hitPoint)');
     assert_contains($render, 'raycaster.intersectObjects(scene.object3D?.children || [], true)');
 });
@@ -242,8 +242,10 @@ test('piece_render_document injects sonic_params into the iframe context', funct
 
 test('pieces/show.php renders a gated sound toggle and posts creatr-sound-toggle to the iframe', function () {
     $show = file_get_contents(__DIR__ . '/../public/app/views/pieces/show.php');
-    assert_contains($show, 'data-piece-sound-toggle');
-    assert_contains($show, 'piece_sound_capability_contract');
+    $stage = file_get_contents(__DIR__ . '/../public/app/views/partials/piece-stage.php');
+    assert_contains($show, "partials/piece-stage.php");
+    assert_contains($stage, 'data-piece-sound-toggle');
+    assert_contains($stage, 'piece_sound_capability_contract');
 
     $fullscreenScript = file_get_contents(__DIR__ . '/../public/assets/js/piece-fullscreen.js');
     assert_contains($fullscreenScript, "type: 'creatr-sound-toggle'");
@@ -253,7 +255,7 @@ test('pieces/show.php renders a gated sound toggle and posts creatr-sound-toggle
 test('piece_export_document (non-immersive export) inlines a self-contained sound controller', function () {
     $render = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
     assert_contains($render, 'function piece_sound_capability_contract');
-    assert_contains($render, 'function piece_export_sonic_script(string $engine, string $sonicParamsJson, string $runtimeMode, int $pieceId = 0, string $generationMode = \'\', ?bool $cameraOverlay = null): string');
+    assert_contains($render, 'function piece_export_sonic_script(string $engine, string $sonicParamsJson, string $runtimeMode, int $pieceId = 0, string $generationMode = \'\', ?bool $cameraOverlay = null, ?string $cameraPlacement = null, ?bool $handMotion = null): string');
     assert_contains($render, "\$decoded = json_decode(\$sonicParamsJson, true);");
     // Bundle mode must load Tone.js from the ZIP, not from a blob:null script URL.
     assert_contains($render, "'runtime/tone/Tone.js'");
@@ -1013,7 +1015,7 @@ test('Three.js gyro controls wait for real angles and calibrate first yaw to the
     assert_contains($immersive, 'function hasDeviceOrientationAngles');
     assert_contains($immersive, 'function calibrateGyroToCurrentView()');
     assert_contains($immersive, 'baselineQuat.copy(camera.quaternion)');
-    assert_contains($immersive, 'if (hasDeviceOrientationAngles(deviceControls))');
+    assert_contains($immersive, 'gyroActive && deviceControls && hasDeviceOrientationAngles(deviceControls)');
     assert_contains($immersive, 'deviceControls.alphaOffset = bestOffset');
 });
 
@@ -1041,8 +1043,8 @@ test('mic toggle + effects markup is present in both live UI surfaces (immersive
     assert_contains($render, 'engine.setMicEffect(key, checkbox.checked)');
     assert_contains($render, 'micOk = ok && engine ? await engine.enableMic() : false;');
 
-    $show = file_get_contents(__DIR__ . '/../public/app/views/pieces/show.php');
-    assert_contains($show, "immersive_stage_mic_panel_markup('piece-mic', 'data-piece-mic'");
+    $stage = file_get_contents(__DIR__ . '/../public/app/views/partials/piece-stage.php');
+    assert_contains($stage, "immersive_stage_mic_panel_markup('piece-mic', 'data-piece-mic'");
 });
 
 test('piece-runtime.js relays mic toggle/effect postMessages and reports mic support to the parent', function () {
@@ -1098,12 +1100,12 @@ test('hand-control and camera-background share one pipeline and exist in both th
     assert_contains($runtime, '(nx - 0.5) * Math.PI * 1.5');
     assert_contains($render, '(nx - 0.5) * Math.PI * 1.5');
 
-    $show = file_get_contents(__DIR__ . '/../public/app/views/pieces/show.php');
-    assert_contains($show, 'data-piece-sound-hand-control-toggle');
-    assert_contains($show, 'data-piece-sound-camera-bg-toggle');
+    $stage = file_get_contents(__DIR__ . '/../public/app/views/partials/piece-stage.php');
+    assert_contains($stage, 'data-piece-sound-hand-control-toggle');
+    assert_contains($stage, 'data-piece-sound-camera-bg-toggle');
 });
 
-test('mounted Three.js and A-Frame viewers expose hand/camera interaction controllers with exclusive control ownership', function () {
+test('mounted viewers compose hand and device motion without coupling audio', function () {
     $gallery = file_get_contents(__DIR__ . '/../public/assets/js/immersive-gallery.js');
     $pieceView = file_get_contents(__DIR__ . '/../public/app/views/immersive/piece.php');
     $chrome = file_get_contents(__DIR__ . '/../public/app/helpers/immersive-chrome.php');
@@ -1116,8 +1118,8 @@ test('mounted Three.js and A-Frame viewers expose hand/camera interaction contro
     assert_contains($pieceView, 'getPieceInteractionController: () => immersiveViewer?.getPieceInteractionController?.()');
     if (substr_count($gallery, 'supportsHandControl: true') < 2) throw new RuntimeException('Both mounted engines must expose hand control.');
     if (substr_count($gallery, 'supportsCameraBackground: true') < 2) throw new RuntimeException('Both mounted engines must expose camera backgrounds.');
-    assert_contains($gallery, 'gyroController?.suspend()');
-    assert_contains($gallery, 'gyroController?.resume()');
+    assert_contains($gallery, 'setHandOffset(nx, ny)');
+    assert_contains($gallery, 'camera.quaternion.multiply(handOffsetQuat)');
     assert_contains($gallery, 'if (handSteeringExclusive) return;');
     assert_contains($gallery, 'controls.enabled = controlsEnabledBeforeHand');
     assert_contains($gallery, 'component?.pause?.()');
@@ -1137,8 +1139,8 @@ test('A-Frame standalone exports register the shared hand hooks and receive both
 });
 
 test('iframes that host camera/mic features carry the Permissions-Policy allow attribute', function () {
-    $show = file_get_contents(__DIR__ . '/../public/app/views/pieces/show.php');
-    assert_contains($show, "'camera; microphone'");
+    $stage = file_get_contents(__DIR__ . '/../public/app/views/partials/piece-stage.php');
+    assert_contains($stage, "'camera; microphone'");
 
     $gallery = file_get_contents(__DIR__ . '/../public/assets/js/immersive-gallery.js');
     assert_contains($gallery, '"allow", "camera; microphone"');
@@ -1198,10 +1200,15 @@ test('sonicdebug is opt-in, local-only, and capability controls expose loading/a
 
 test('regular piece view inlines its critical CSS and the global stylesheet is cache-busted', function () {
     $show = file_get_contents(__DIR__ . '/../public/app/views/pieces/show.php');
-    assert_contains($show, 'piece_view_critical_css()');
-    assert_contains($show, 'class="piece-export-overlay"');
-    assert_contains($show, 'data-piece-download-picker-trigger');
-    assert_contains($show, 'data-piece-download-link');
+    $stage = file_get_contents(__DIR__ . '/../public/app/views/partials/piece-stage.php');
+    assert_contains($show, "partials/piece-stage.php");
+    assert_contains($stage, 'piece_view_critical_css()');
+    assert_contains($stage, 'class="piece-export-overlay"');
+    assert_contains($stage, 'data-piece-download-picker-trigger');
+    assert_contains($stage, 'data-piece-download-link');
+    assert_contains($stage, 'piece-immersive-rail-link');
+    assert_contains($stage, '<span aria-hidden="true">VR</span>');
+    assert_contains($show, 'piece-page-immersive-action');
     assert_not_contains($show, 'data-piece-fullscreen-bar');
     assert_not_contains($show, 'data-piece-fullscreen-close');
 
@@ -1233,6 +1240,72 @@ test('regular piece view inlines its critical CSS and the global stylesheet is c
     assert_not_contains($styles, '.piece-sound-panel {');
 });
 
+test('surface-local embed controls reuse the regular stage without duplicate wrapper chrome', function () {
+    $show = file_get_contents(__DIR__ . '/../public/app/views/pieces/show.php');
+    $stage = file_get_contents(__DIR__ . '/../public/app/views/partials/piece-stage.php');
+    $controller = file_get_contents(__DIR__ . '/../public/app/controllers/EmbedController.php');
+    $embed = file_get_contents(__DIR__ . '/../public/embed.js');
+    $immersive = file_get_contents(__DIR__ . '/../public/app/views/immersive/piece.php');
+
+    assert_contains($show, "partials/piece-stage.php");
+    assert_contains($controller, "views/partials/piece-stage.php");
+    assert_contains($stage, 'aria-label="Piece actions"');
+    assert_contains($stage, 'piece-immersive-rail-link');
+    assert_contains($stage, '<span aria-hidden="true">VR</span>');
+    assert_not_contains($controller, 'piece-page-immersive-action');
+    assert_contains($stage, "'allowfullscreen' => 'true'");
+    assert_contains($embed, 'allow="camera; microphone; fullscreen" allowfullscreen');
+    $pieceClass = substr($embed, strpos($embed, 'class CreatrArtPiece'), strpos($embed, 'class CreatrImmersiveImage') - strpos($embed, 'class CreatrArtPiece'));
+    assert_not_contains($pieceClass, 'class="vr-btn"');
+    assert_contains($show, 'data-surface-embed-copy');
+    assert_contains($show, 'data-embed-code=');
+    assert_contains($show, '<span>Embed</span>');
+    assert_contains($show, '/embed/pieces/%d%s');
+    assert_not_contains($immersive, 'Embed Light');
+    assert_not_contains($immersive, 'Embed Heavy');
+    assert_not_contains($immersive, "copyEmbed('plain')");
+    assert_contains($immersive, 'Embed (Custom)');
+    assert_contains($immersive, 'Embed (CMS)');
+    assert_contains($immersive, 'allow="camera; microphone; fullscreen"');
+    $download = file_get_contents(__DIR__ . '/../public/assets/js/public-piece-download.js');
+    assert_contains($download, "querySelectorAll('[data-surface-embed-copy]')");
+    assert_contains($download, 'button.dataset.embedCode');
+    assert_contains($download, "status.textContent = '';");
+    assert_contains($immersive, 'toast.hidden = true;');
+    assert_contains($immersive, "msg.textContent = '';");
+});
+
+test('regular embeds fill the viewport and platform collections share the immersive renderer', function () {
+    $embedController = file_get_contents(__DIR__ . '/../public/app/controllers/EmbedController.php');
+    $collection = file_get_contents(__DIR__ . '/../public/app/views/collections/show.php');
+    $immersiveCollection = file_get_contents(__DIR__ . '/../public/app/views/immersive/collection.php');
+    $chrome = file_get_contents(__DIR__ . '/../public/app/helpers/immersive-chrome.php');
+    $embedJs = file_get_contents(__DIR__ . '/../public/embed.js');
+
+    assert_contains($embedController, 'height:100%;min-height:0;overflow:hidden');
+    assert_contains($embedController, '.piece-light-embed .piece-canvas-container>iframe');
+    assert_contains($embedController, 'height:100%!important');
+
+    assert_contains($collection, '/immersive/collections/');
+    assert_contains($collection, '?embed=1');
+    assert_contains($collection, '<creatr-exhibit-wall');
+    assert_contains($collection, 'data-surface-embed-copy');
+    assert_contains($collection, 'collection-page-immersive-action');
+    assert_contains($collection, 'height:100dvh');
+
+    assert_not_contains($immersiveCollection, "copyEmbed('plain')");
+    assert_not_contains($immersiveCollection, 'Embed Collection');
+    assert_not_contains($immersiveCollection, 'Embed Interactive');
+    assert_contains($immersiveCollection, 'Embed (Custom)');
+    assert_contains($immersiveCollection, 'Embed (CMS)');
+    assert_contains($immersiveCollection, "'vr_action' => \$isEmbedMode");
+    assert_contains($immersiveCollection, 'toast.hidden = true;');
+    assert_contains($chrome, 'immersive-stage-vr-link');
+
+    $wallClass = substr($embedJs, strpos($embedJs, 'class CreatrExhibitWall'));
+    assert_not_contains($wallClass, 'class="vr-btn"');
+});
+
 test('PNG capture busy state preserves icon markup and restores its accessible label', function () {
     $download = file_get_contents(__DIR__ . '/../public/assets/js/public-piece-download.js');
     assert_contains($download, "const originalAriaLabel = button.getAttribute('aria-label')");
@@ -1243,6 +1316,9 @@ test('PNG capture busy state preserves icon markup and restores its accessible l
 });
 
 test('piece capability contract and C2 camera composition stay aligned across live and export runtimes', function () {
+    if (!function_exists('art_piece_camera_placement_default')) {
+        require_once __DIR__ . '/../public/app/helpers/art-piece-generation.php';
+    }
     if (!function_exists('piece_sound_capability_contract')) {
         require_once __DIR__ . '/../public/app/helpers/immersive-chrome.php';
         require_once __DIR__ . '/../public/app/helpers/piece-render.php';
@@ -1250,7 +1326,7 @@ test('piece capability contract and C2 camera composition stay aligned across li
     $render = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
     $runtime = file_get_contents(__DIR__ . '/../public/assets/js/piece-runtime.js');
     $download = file_get_contents(__DIR__ . '/../public/assets/js/public-piece-download.js');
-    assert_contains($render, "'hand_control' => \$steerableEngine && (\$handTracking || \$cameraView) && (\$voices['hand_control'] ?? true) !== false");
+    assert_contains($render, "'hand_control' => \$handMotion ?? true");
     assert_contains($render, "'camera_opacity' => \$cameraView");
     $check = static function (bool $condition, string $label): void {
         if (!$condition) {
@@ -1266,21 +1342,306 @@ test('piece capability contract and C2 camera composition stay aligned across li
     $cameraOnlyAframe = piece_sound_capability_contract('aframe', [], true);
     $check($cameraOnlyAframe['camera_view'] && $cameraOnlyAframe['hand_control'] && !$cameraOnlyAframe['sound'], 'camera-only aframe gets camera + hand control');
     $cameraOnlySvg = piece_sound_capability_contract('svg', [], true);
-    $check($cameraOnlySvg['camera_view'] && $cameraOnlySvg['camera_opacity'] && !$cameraOnlySvg['hand_control'] && !$cameraOnlySvg['sound'], 'camera-only svg gets overlay + opacity, no hand control');
+    $check($cameraOnlySvg['camera_view'] && $cameraOnlySvg['camera_opacity'] && $cameraOnlySvg['hand_control'] && !$cameraOnlySvg['sound'], 'camera-only svg gets overlay + presentation tilt');
     // Explicit Off wins over the hand-tracking legacy rule for the overlay,
     // but hand control stays available through the hand-tracking voice.
     $handTrackingCameraOff = piece_sound_capability_contract('three', ['enabled' => true, 'extras' => ['voices' => ['hand_tracking' => true]]], false);
     $check(!$handTrackingCameraOff['camera_view'] && $handTrackingCameraOff['hand_control'] && $handTrackingCameraOff['hand_tracking'], 'camera Off keeps hand control via hand-tracking voice');
-    // Legacy NULL: identical to the old hand-tracking-driven behavior.
+    // NULL availability offers the visitor-activated camera option on every
+    // engine without starting capture automatically.
     $legacy = piece_sound_capability_contract('three', ['enabled' => true, 'extras' => ['voices' => ['hand_tracking' => true]]], null);
-    $check($legacy['camera_view'] && $legacy['hand_control'], 'legacy NULL follows hand-tracking');
+    $check($legacy['camera_view'] && $legacy['hand_control'], 'NULL offers camera and hand control');
     $legacyOff = piece_sound_capability_contract('three', ['enabled' => true], null);
-    $check(!$legacyOff['camera_view'] && !$legacyOff['hand_control'], 'legacy NULL without hand-tracking stays off');
+    $check($legacyOff['camera_view'] && $legacyOff['hand_control'], 'NULL without hand-tracking still offers camera steering');
     assert_contains($runtime, "engine: 'c2_interactive'");
     assert_contains($runtime, 'setBackgroundOpacity(value)');
     assert_contains($runtime, 'window.__creatrComposeCapture = async');
     assert_contains($download, 'doc.defaultView.__creatrComposeCapture');
     assert_contains($render, 'surface = await window.__creatrComposeCapture(surface)');
+});
+
+test('camera and hand settings are surface-specific and audio-independent', function () {
+    $migration = file_get_contents(__DIR__ . '/../docs/migrations/2026-07-12-piece-surface-camera-controls.sql');
+    $setup = file_get_contents(__DIR__ . '/../scripts/setup-database.php');
+    $admin = file_get_contents(__DIR__ . '/../public/app/views/admin/pieces/form.php');
+    $controller = file_get_contents(__DIR__ . '/../public/app/controllers/Admin/PiecesAdminController.php');
+    foreach ([$migration, $setup] as $src) {
+        assert_contains($src, 'immersive_camera_overlay');
+        assert_contains($src, 'immersive_camera_placement');
+        assert_contains($src, 'regular_hand_motion');
+    }
+    assert_contains($admin, 'Regular piece camera view');
+    assert_contains($admin, 'Immersive VR camera view');
+    assert_contains($admin, 'Regular hand motion');
+    assert_not_contains($admin, 'name="sonic_voice_hand_control"');
+    assert_not_contains($controller, "'hand_control' => isset(\$_POST['sonic_voice_hand_control'])");
+});
+
+test('all pieces expose full and non-camera ZIP variants', function () {
+    $stage = file_get_contents(__DIR__ . '/../public/app/views/partials/piece-stage.php');
+    $immersiveView = file_get_contents(__DIR__ . '/../public/app/views/immersive/piece.php');
+    $controller = file_get_contents(__DIR__ . '/../public/app/controllers/PiecesController.php');
+    $render = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
+    foreach ([$stage, $immersiveView] as $src) {
+        assert_contains($src, 'Download Full ZIP');
+        assert_contains($src, 'Download Non-Camera ZIP');
+    }
+    assert_contains($controller, "['dl_camera']");
+    assert_contains($render, "piece_export_basename(\$piece) . '-no-camera.zip'");
+    assert_contains($render, "piece_export_force_voice_off(\$version, 'hand_tracking')");
+});
+
+test('flat engines receive regular presentation tilt and immersive room steering', function () {
+    $runtime = file_get_contents(__DIR__ . '/../public/assets/js/piece-runtime.js');
+    $spatial = file_get_contents(__DIR__ . '/../public/assets/js/spatial-presentation.js');
+    $gallery = file_get_contents(__DIR__ . '/../public/assets/js/immersive-gallery.js');
+    assert_contains($runtime, 'function registerPresentationTilt');
+    assert_contains($runtime, 'perspective(900px)');
+    assert_contains($runtime, 'previousComposeCapture');
+    assert_contains($runtime, 'solveHomography');
+    assert_contains($runtime, 'ctx.putImageData(outputPixels, 0, 0)');
+    assert_contains($runtime, "cameraOverlay.style.transform = (tiltTransform ? tiltTransform + ' ' : '') + 'scaleX(-1)'");
+    assert_contains($runtime, "prefers-reduced-motion: reduce");
+    assert_contains($runtime, 'registerSpatialPresentation');
+    assert_contains($spatial, 'CreatrSpatialPresentation');
+    assert_contains($spatial, "state = 'waking'");
+    assert_contains($spatial, "state = 'sleeping'");
+    assert_contains($spatial, "el.dataset.creatrSpatialInteraction = 'suspended'");
+    assert_contains($spatial, 'cancelAuthoredInput(el)');
+    assert_contains($spatial, 'resetView: resetView');
+    assert_contains($spatial, 'steeringEnabled = !!active');
+    assert_contains($spatial, 'return steeringEnabled ? wake() : Promise.resolve(true)');
+    assert_contains($spatial, 'if (!interactive) return;');
+    assert_contains($spatial, "import(THREE_MODULE)");
+    assert_not_contains($spatial, 'cdn.jsdelivr.net');
+    assert_contains($spatial, 'new T.VideoTexture(video)');
+    assert_contains($spatial, "cameraPlane.position.z = cameraPlacement === 'background' ? -0.01 : 0.01");
+    assert_contains($spatial, 'shell.cameraPlane.material.opacity = opacity');
+    assert_not_contains($spatial, 'function drawMirroredVideo');
+    assert_contains($gallery, 'supportsHandControl: true');
+    assert_contains($gallery, 'gyroController?.setHandOffset?.(nx, ny)');
+    assert_contains($gallery, 'gyroController?.clearHandOffset?.()');
+    assert_contains($gallery, 'export function bakeOrbitHandPose(camera, controls, gyroController)');
+    assert_contains($gallery, 'gyroController?.releaseHandOffset?.()');
+    assert_contains($gallery, 'bakeOrbitHandPose(state.camera, controls, gyroController)');
+    assert_contains($gallery, 'bakeOrbitHandPose(shell.camera, shell.controls, gyroController)');
+    assert_contains($gallery, 'releaseHandOffset()');
+    assert_contains($gallery, 'stabilizeHand: true');
+    assert_contains($gallery, 'handInputDeadband: 0.012');
+    assert_contains($gallery, 'handMaxAngularStep: 0.022');
+    assert_contains($gallery, 'shell.controls.enableRotate = false');
+    assert_contains($gallery, 'shell.controls.enableRotate = galleryRotateBeforeHand');
+    if (
+        strpos($gallery, 'shell.controls.enableRotate = galleryRotateBeforeHand')
+        >= strpos($gallery, 'bakeOrbitHandPose(shell.camera, shell.controls, gyroController)')
+    ) {
+        throw new Exception('Gallery OrbitControls rotation must be restored before the hand-directed pose is baked.');
+    }
+});
+
+test('clutched gesture navigation reuses one landmark loop across regular, immersive, and export surfaces', function () {
+    $sonic = file_get_contents(__DIR__ . '/../public/assets/js/sonic-controller.js');
+    $runtime = file_get_contents(__DIR__ . '/../public/assets/js/piece-runtime.js');
+    $gallery = file_get_contents(__DIR__ . '/../public/assets/js/immersive-gallery.js');
+    $render = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
+    $features = file_get_contents(__DIR__ . '/../public/app/helpers/features.php');
+    $api = file_get_contents(__DIR__ . '/../docs/api.md');
+
+    assert_contains($sonic, 'function createClutchedGestureRouter');
+    assert_contains($sonic, 'createClutchedGestureRouter: createClutchedGestureRouter');
+    assert_contains($sonic, "clutchMode = stablePose === 'point' ? 'travel' : 'orbit'");
+    assert_contains($sonic, "type: 'stop', reason: 'release'");
+    assert_contains($sonic, "reset('hand-lost')");
+    assert_contains($sonic, 'pinchRatio < 0.62');
+    assert_contains($sonic, 'pinchRatio < 0.42');
+    assert_contains($sonic, 'sampleFrameScale = sampleDelta / nominalFrameMs');
+    assert_contains($sonic, 'cadenceCarry += sampleFrameScale');
+    assert_contains($sonic, '1 - Math.pow(1 - 0.22, sampleFrameScale)');
+    assert_contains($sonic, 'classificationGraceMs');
+    assert_contains($sonic, 'queueCadencedCommands(spatialCommands, cadenceSteps)');
+    assert_contains($sonic, "command.type === 'travel' || count === 1");
+    assert_contains($sonic, 'cadenceRaf = requestAnimationFrame(flushFrame)');
+    // The existing single inference result remains authoritative.
+    assert_contains($sonic, 'numHands: 1');
+    assert_not_contains($sonic, 'numHands: 2');
+
+    foreach ([$runtime, $gallery, $render] as $src) {
+        assert_contains($src, 'createClutchedGestureRouter');
+        assert_contains($src, 'handCommand');
+    }
+    foreach ([$runtime, $render] as $src) {
+        assert_contains($src, "type === 'travel'");
+        assert_contains($src, "type === 'zoom'");
+    }
+    assert_contains($gallery, 'type === "travel"');
+    assert_contains($gallery, 'type === "zoom"');
+    assert_contains($gallery, 'data-hand-gesture-mode');
+    assert_contains(file_get_contents(__DIR__ . '/../public/assets/js/public-piece-download.js'), 'creatr-hand-gesture-mode');
+    assert_contains($gallery, 'getRoomInteractionController: () => roomHandNav');
+    assert_contains($features, "'label' => 'Spatial Hand Navigation'");
+    assert_contains($api, 'clutched-gestural command');
+});
+
+test('instructional hand guide is mobile-first, accessible, surface-parity markup', function () {
+    if (!function_exists('immersive_stage_toolbar_markup')) {
+        require_once __DIR__ . '/../public/app/helpers/immersive-chrome.php';
+    }
+    $toolbar = immersive_stage_toolbar_markup([
+        'sound_action' => ['enabled' => true],
+        'hand_control' => true,
+        'show_fullscreen' => true,
+    ]);
+    assert_contains($toolbar, 'data-hand-guide-trigger');
+    assert_contains($toolbar, 'data-hand-guide-dialog');
+    assert_contains($toolbar, 'aria-modal="true"');
+    assert_contains($toolbar, 'data-hand-guide-slide');
+    assert_contains($toolbar, 'Point + pinch');
+    assert_contains($toolbar, "event.key==='Escape'");
+    assert_contains($toolbar, "event.key!=='Tab'");
+    assert_contains($toolbar, "event.target===dialog");
+    $soundAt = strpos($toolbar, 'data-immersive-sound-toggle');
+    $controlsAt = strpos($toolbar, 'data-immersive-sound-panel-trigger');
+    $guideAt = strpos($toolbar, 'data-hand-guide-trigger');
+    $fullscreenAt = strpos($toolbar, 'id="fullscreen-toggle-btn"');
+    if (!($soundAt < $controlsAt && $controlsAt < $guideAt && $guideAt < $fullscreenAt)) {
+        throw new RuntimeException('Immersive right-side order must be sound, controls, hand guide, fullscreen.');
+    }
+
+    $stage = file_get_contents(__DIR__ . '/../public/app/views/partials/piece-stage.php');
+    assert_contains($stage, "\$handGuideAvailable = \$handControlAvailable;");
+    assert_contains($stage, "immersive_stage_hand_guide_markup('piece', 'piece-sound-toggle', \$pieceGenerationMode === 'c2_interactive' ? 'c2_interactive_latched' : '')");
+    $render = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
+    assert_contains($render, "immersive_stage_hand_guide_markup('offline', 'offline-sound-btn', \$handGuideVariant)");
+    assert_contains($render, "row.appendChild(handGuideTrigger)");
+    assert_contains($render, "\$handGuideVariant = \$generationMode === 'c2_interactive' ? 'c2_interactive_latched' : 'default';");
+    $c2Toolbar = immersive_stage_toolbar_markup([
+        'hand_control' => true,
+        'hand_guide_variant' => 'c2_interactive_latched',
+    ]);
+    assert_contains($c2Toolbar, 'Interaction pauses');
+    assert_contains($c2Toolbar, 'Return to interact');
+    assert_contains($c2Toolbar, 'remains non-interactive whenever it is spatially displaced');
+    assert_contains($c2Toolbar, 'Reset returns home without disabling steering');
+    assert_contains($c2Toolbar, 'data-immersive-reset-view');
+    assert_contains(file_get_contents(__DIR__ . '/../public/app/views/immersive/piece.php'), "'hand_guide_variant' => ''");
+    $css = immersive_stage_hand_guide_css();
+    assert_contains($css, '@media(max-width:600px)');
+    assert_contains($css, 'width:100%;height:100%');
+});
+
+test('hand steering cancellation and pose reset stay independent from camera visibility', function () {
+    $runtime = file_get_contents(__DIR__ . '/../public/assets/js/piece-runtime.js');
+    $fullscreen = file_get_contents(__DIR__ . '/../public/assets/js/piece-fullscreen.js');
+    $gallery = file_get_contents(__DIR__ . '/../public/assets/js/immersive-gallery.js');
+    $render = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
+    $sonic = file_get_contents(__DIR__ . '/../public/assets/js/sonic-controller.js');
+    assert_contains($runtime, 'handControlActivationEpoch');
+    assert_contains($runtime, 'setHandSteering?.(false)');
+    assert_contains($runtime, "data.type === 'creatr-reset-view'");
+    assert_contains($fullscreen, 'data-piece-reset-view');
+    assert_contains($gallery, 'handActivationEpoch');
+    assert_contains($gallery, 'data-immersive-reset-view');
+    assert_contains($render, 'handControlActivationEpoch');
+    assert_contains($render, 'resetViewButton');
+    assert_contains($render, 'setHandSteering(false)');
+    assert_contains($runtime, 'getCameraVideo: () => baseHooks.getBackgroundVideo?.() || baseHooks._cameraOverlay || null');
+    assert_contains($runtime, 'return this._cameraSourceVideo || this._cameraOverlay;');
+    assert_contains($render, "getBackgroundVideo: function () { return cameraSourceVideo || cameraOverlay; }");
+    assert_contains($render, "typeof baseHooks.getBackgroundVideo==='function'?baseHooks.getBackgroundVideo():baseHooks._cameraOverlay||null");
+    assert_contains(file_get_contents(__DIR__ . '/../public/assets/js/spatial-presentation.js'), 'var video = getCameraVideo();');
+    assert_contains($sonic, "capabilityState('hand_control', 'inactive')");
+
+    $assertCanonicalBeforeLaunch = static function (string $canonical, string $launch, string $surface) use ($gallery): void {
+        $canonicalAt = strpos($gallery, $canonical);
+        $launchAt = $canonicalAt === false ? false : strpos($gallery, $launch, $canonicalAt);
+        if ($canonicalAt === false || $launchAt === false || $canonicalAt >= $launchAt) {
+            throw new Exception("{$surface} must capture its canonical Reset View pose before applying downloaded launch state.");
+        }
+    };
+    $assertCanonicalBeforeLaunch(
+        'initialThreeViewState = shellViewState({ camera: state.camera, controls });',
+        'if (applyShellViewState({ camera: state.camera, controls }, options.initialViewState))',
+        'Immersive Three.js'
+    );
+    $assertCanonicalBeforeLaunch(
+        'initialAFrameViewState = getAFrameViewState();',
+        'applyAFrameInitialViewState();',
+        'Immersive A-Frame'
+    );
+    $assertCanonicalBeforeLaunch(
+        'initialGalleryViewState = shellViewState(shell);',
+        'applyShellViewState(shell, options.initialViewState);',
+        'Mounted immersive gallery'
+    );
+    $assertCanonicalBeforeLaunch(
+        'initialExhibitViewState = shellViewState(shell);',
+        'applyShellViewState(shell, options.initialViewState);',
+        'Immersive collection room'
+    );
+});
+
+test('full flat ZIPs ship the spatial shell while non-camera ZIPs remain framed', function () {
+    $render = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
+    assert_contains($render, "in_array(\$generationMode, ['p5', 'c2', 'c2_interactive', 'svg'], true)");
+    assert_contains($render, "'runtime/three/three.global.js'");
+    assert_contains($render, "piece_export_runtime_source_file('assets/js/spatial-presentation.js')");
+    assert_contains($render, "\$excludeCamera || !empty(\$options['exclude_hand_tracking'])");
+});
+
+test('camera-aware PNG capture preserves flat presentation tilt in live and exported runtimes', function () {
+    $runtime = file_get_contents(__DIR__ . '/../public/assets/js/piece-runtime.js');
+    $render = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
+    foreach ([$runtime, $render] as $src) {
+        assert_contains($src, '__creatrComposeCapture');
+        assert_contains($src, 'previousComposeCapture');
+        assert_contains($src, 'perspective = 900');
+        assert_contains($src, 'solveHomography');
+        assert_contains($src, 'getImageData(0');
+        assert_contains($src, 'putImageData(outputPixels');
+        assert_contains($src, 'layoutWidth');
+        assert_contains($src, 'layoutHeight');
+    }
+    // Capture-time warping is deterministic Canvas 2D work, not another
+    // live renderer or fallible capture-only WebGL context.
+    assert_not_contains($runtime, "output.getContext('webgl");
+    assert_not_contains($render, "output.getContext('webgl");
+    assert_contains($runtime, 'window.__pieceHandHooks?._cameraOverlay || hooks._cameraOverlay');
+    assert_contains($runtime, 'window.__pieceHandHooks?._cameraOpacity ?? hooks._cameraOpacity');
+});
+
+test('DOM camera overlays follow live presentation geometry without polling', function () {
+    $runtime = file_get_contents(__DIR__ . '/../public/assets/js/piece-runtime.js');
+    $render = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
+    foreach ([$runtime, $render] as $src) {
+        assert_contains($src, "new ResizeObserver");
+        assert_contains($src, "observe(surface)");
+        assert_contains($src, "observe(parent)");
+        assert_contains($src, "requestAnimationFrame");
+        assert_contains($src, "cameraLastBox");
+        assert_contains($src, "fullscreenchange");
+        assert_contains($src, "disconnect()");
+    }
+    assert_not_contains($runtime, 'setInterval(() => hooks.syncBackgroundVideoBox');
+    assert_not_contains($render, 'setInterval(syncCameraOverlayBox');
+    // 3D and gallery surfaces keep their already-responsive render geometry.
+    assert_contains(file_get_contents(__DIR__ . '/../public/assets/js/immersive-gallery.js'), 'cameraQuad.onBeforeRender');
+    assert_contains(file_get_contents(__DIR__ . '/../public/assets/js/immersive-gallery.js'), 'material.map = videoTexture');
+});
+
+test('user-facing runtime errors are impact-classified across pieces and collection exports', function () {
+    $runtime = file_get_contents(__DIR__ . '/../public/assets/js/piece-runtime.js');
+    $render = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
+    foreach ([$runtime, $render] as $src) {
+        assert_contains($src, 'isNonImpactingRuntimeIssue');
+        assert_contains($src, 'ResizeObserver loop');
+        assert_contains($src, 'Receiving end does not exist');
+        assert_contains($src, 'message channel closed');
+    }
+    assert_contains($runtime, 'if (window.CREATR_PIECE_DIAGNOSTICS !== true) return;');
+    assert_contains($render, 'showCollectionError(e)');
+    // Genuine failures remain routed to the visible error UI.
+    assert_contains($runtime, "showPieceError('WebGL context was lost");
+    assert_contains($render, 'showCollectionError(error)');
 });
 
 echo "\n=== Results ===\n";

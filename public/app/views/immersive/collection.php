@@ -54,10 +54,18 @@ foreach ($items as $index => $item) {
         // remain read-only previews. srcdoc iframes run in their own browsing context,
         // so there is no WebGL context conflict with the exhibit wall.
         $pieceInteractive = in_array($generationMode, ['three', 'aframe', 'c2_interactive'], true);
+        // Inline local media for both the wall texture (SVG rasterized via
+        // <img> drops external refs) and the srcdoc full view — same parity
+        // fix as the single-piece immersive view.
+        [$wallInlinedCode, $wallInlinedHtml, $wallInlinedCss] = piece_inline_local_media([
+            (string) ($version['generated_code'] ?? ''),
+            (string) ($version['html_code'] ?? ''),
+            (string) ($version['css_code'] ?? ''),
+        ]);
         $fullView = [
             'type' => 'iframe',
             'interactive' => $pieceInteractive,
-            'srcdoc' => piece_render_document($piece, $version),
+            'srcdoc' => piece_render_document($piece, $version, ['capture_safe_media' => true]),
             'title' => $piece['title'] ?? 'Untitled Piece',
             'subtitle' => $itemEngineLabel,
             'download_url' => $collectionDownloadUrl,
@@ -70,9 +78,9 @@ foreach ($items as $index => $item) {
             'title' => $piece['title'] ?? 'Untitled Piece',
             'engine' => $engine,
             'thumbnail_url' => $piece['thumbnail_url'] ?? '',
-            'html_code' => $version['html_code'] ?? '',
-            'css_code' => $version['css_code'] ?? '',
-            'generated_code' => $version['generated_code'] ?? '',
+            'html_code' => $wallInlinedHtml,
+            'css_code' => $wallInlinedCss,
+            'generated_code' => $wallInlinedCode,
             'description' => $pieceDescription,
             'immersive_href' => $immersiveHref,
             'download_url' => $pieceDownloadUrl,
@@ -128,22 +136,13 @@ $exhibitName = $collection['name'] ?? 'Collection';
 // Determine details for URL/origin
 $origin = ($_SERVER['REQUEST_SCHEME'] ?? 'http') . '://' . ($_SERVER['HTTP_HOST'] ?? 'localhost');
 
-// Build the three different iterations of embed codes mirroring legacy Node.js
+// Build the two surface-local immersive embed variants.
 $titleSafe = htmlspecialchars($exhibitName, ENT_QUOTES | ENT_HTML5, 'UTF-8');
-
-// 1. Plain embed
-$plainEmbedCode = sprintf(
-    '<iframe src="%s/immersive/collections/%s?embed=1" width="100%%" style="width:100%%;aspect-ratio:16/9;display:block;" title="%s" frameborder="0" loading="lazy" sandbox="allow-scripts allow-same-origin"></iframe>',
-    $origin,
-    $slug,
-    $titleSafe
-);
-
-// 2. Interactive (Custom) embed
+// 1. Custom immersive embed
 $sandbox = 'allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation';
 $customSrc = $origin . '/immersive/collections/' . $slug . '?embed=1';
 $customIframe = sprintf(
-    '<iframe src="%s" width="100%%" style="width:100%%;aspect-ratio:16/9;min-height:300px;display:block;" title="%s" frameborder="0" loading="lazy" allowfullscreen allow="fullscreen" sandbox="%s"></iframe>',
+    '<iframe src="%s" width="100%%" style="width:100%%;height:100dvh;min-height:300px;display:block;" title="%s" frameborder="0" loading="lazy" allowfullscreen allow="camera; microphone; fullscreen" sandbox="%s"></iframe>',
     $customSrc,
     $titleSafe,
     $sandbox
@@ -156,10 +155,10 @@ $galleryEmbedCode = sprintf(
     $origin
 );
 
-// 3. Interactive (CMS) embed
+// 2. CMS immersive embed
 $cmsSrc = $origin . '/immersive/collections/' . $slug . '?embed=1&cms=1';
 $cmsIframe = sprintf(
-    '<iframe src="%s" width="100%%" style="width:100%%;aspect-ratio:16/9;min-height:300px;display:block;" title="%s" frameborder="0" loading="lazy" allowfullscreen allow="fullscreen" sandbox="%s"></iframe>',
+    '<iframe src="%s" width="100%%" style="width:100%%;height:100dvh;min-height:300px;display:block;" title="%s" frameborder="0" loading="lazy" allowfullscreen allow="camera; microphone; fullscreen" sandbox="%s"></iframe>',
     $cmsSrc,
     $titleSafe,
     $sandbox
@@ -643,6 +642,9 @@ html, body {
   transform: translateX(-50%) translateY(0);
   opacity: 1;
 }
+#toast-container[hidden] {
+  display: none;
+}
 
 /* A-Frame's device-orientation-permission-ui dialog hardcodes a white card
    and bright accent buttons but never sets its own text color, so it
@@ -705,6 +707,10 @@ html, body {
                     'label' => 'View slideshow',
                     'icon' => 'slideshow',
                 ] : null,
+                'vr_action' => $isEmbedMode ? [
+                    'href' => '/immersive/collections/' . rawurlencode($slug),
+                    'label' => 'Open immersive VR view',
+                ] : null,
                 'download_items' => [
                     [
                         'tag' => 'a',
@@ -724,6 +730,11 @@ html, body {
                     ],
                 ],
                 'sound_action' => $hasAnySonic ? ['enabled' => true] : null,
+                // Hand navigation of the room camera (feature-flagged):
+                // renders the controls-panel hand row; the room interaction
+                // controller wired below steers OrbitControls from it.
+                'hand_control' => function_exists('feature_enabled') && feature_enabled('immersive_hand_nav'),
+                'hand_control_label' => 'Walk the room',
                 'show_fullscreen' => true,
                 'fullscreen_onclick' => 'toggleFullscreen()',
             ]) ?>
@@ -732,17 +743,13 @@ html, body {
 
     <!-- Copy Embeds Toolbar (only shown in standard mode) -->
     <section class="copy-section">
-        <button type="button" class="embed-copy-btn" onclick="copyEmbed('plain')">
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-            Embed Collection
-        </button>
         <button type="button" class="embed-copy-btn" onclick="copyEmbed('gallery')">
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-            Embed Interactive (Custom)
+            Embed (Custom)
         </button>
         <button type="button" class="embed-copy-btn" onclick="copyEmbed('galleryCms')">
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-            Embed Interactive (CMS)
+            Embed (CMS)
         </button>
     </section>
 
@@ -830,7 +837,7 @@ html, body {
 </div>
 
 <!-- Custom Toast Message Container -->
-<div id="toast-container" aria-live="polite">
+<div id="toast-container" aria-live="polite" hidden>
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#8ccf3f" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
     <span id="toast-message"></span>
 </div>
@@ -1014,14 +1021,13 @@ if (<?= $isFullscreenInit ? 'true' : 'false' ?>) {
 
 // Embed copy codes setup
 const embedCodes = {
-    plain: <?= json_encode($plainEmbedCode) ?>,
     gallery: <?= json_encode($galleryEmbedCode) ?>,
     galleryCms: <?= json_encode($galleryCmsEmbedCode) ?>
 };
 
 window.copyEmbed = function(type) {
     const code = embedCodes[type];
-    const label = type === 'plain' ? 'Embed Collection' : (type === 'gallery' ? 'Embed Interactive (Custom)' : 'Embed Interactive (CMS)');
+    const label = type === 'gallery' ? 'Embed (Custom)' : 'Embed (CMS)';
     
     if (code) {
         navigator.clipboard.writeText(code).then(() => {
@@ -1034,18 +1040,27 @@ window.copyEmbed = function(type) {
 };
 
 let toastTimeout = null;
+let toastHideTimeout = null;
 function showToast(message) {
     const toast = document.getElementById('toast-container');
     const msg = document.getElementById('toast-message');
     if (!toast || !msg) return;
 
     if (toastTimeout) clearTimeout(toastTimeout);
+    if (toastHideTimeout) clearTimeout(toastHideTimeout);
     
     msg.textContent = message;
+    toast.hidden = false;
     toast.classList.add('show');
     
     toastTimeout = setTimeout(() => {
         toast.classList.remove('show');
+        toastTimeout = null;
+        toastHideTimeout = setTimeout(() => {
+            toast.hidden = true;
+            msg.textContent = '';
+            toastHideTimeout = null;
+        }, 350);
     }, 3000);
 }
 
@@ -1080,6 +1095,11 @@ try {
             immersiveViewer?.openSlideshowAt?.(activeIndex);
         },
         getAudioController: () => immersiveViewer?.getAudioController?.(),
+        // Room-camera hand navigation: the chrome's hand-control toggle
+        // steers the gallery room's OrbitControls through this controller
+        // (feature-flagged server-side; the row is absent when disabled).
+        getPieceInteractionController: () => immersiveViewer?.getRoomInteractionController?.(),
+        handControlAllowed: <?= (function_exists('feature_enabled') && feature_enabled('immersive_hand_nav')) ? 'true' : 'false' ?>,
     });
     const downloadPieceLink = document.querySelector('[data-collection-download-piece]');
     const downloadPngBtn = document.querySelector('[data-collection-download-png]');

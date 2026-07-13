@@ -89,6 +89,44 @@ function shellViewState(shell, extra = {}) {
   return state;
 }
 
+export function bakeOrbitHandPose(camera, controls, gyroController) {
+  if (!camera?.position || !controls?.target) return false;
+  const distance = Math.max(0.001, camera.position.distanceTo(controls.target));
+  const forward = new THREE.Vector3();
+  camera.getWorldDirection(forward);
+  if (forward.lengthSq() < 1e-8) return false;
+
+  // The displayed quaternion already contains the additive hand offset.
+  // Relinquish only that helper's bookkeeping, then make the displayed
+  // direction OrbitControls' new base so ordinary input resumes in place.
+  gyroController?.releaseHandOffset?.();
+  controls.target.copy(camera.position).addScaledVector(forward.normalize(), distance);
+  controls.update?.();
+  return true;
+}
+
+function animateShellViewReset(shell, viewState, duration = 360) {
+  const destinationCamera = readViewVector(viewState?.camera);
+  const destinationTarget = readViewVector(viewState?.target);
+  if (!shell?.camera || !shell?.controls || !destinationCamera || !destinationTarget) return Promise.resolve(false);
+  const fromCamera = shell.camera.position.clone();
+  const fromTarget = shell.controls.target.clone();
+  const startedAt = performance.now();
+  return new Promise((resolve) => {
+    function step(now) {
+      const t = Math.min(1, (now - startedAt) / duration);
+      const eased = 1 - Math.pow(1 - t, 3);
+      shell.camera.position.lerpVectors(fromCamera, destinationCamera, eased);
+      shell.controls.target.lerpVectors(fromTarget, destinationTarget, eased);
+      shell.camera.lookAt(shell.controls.target);
+      shell.controls.update();
+      if (t < 1) requestAnimationFrame(step);
+      else resolve(true);
+    }
+    requestAnimationFrame(step);
+  });
+}
+
 function encodeViewState(viewState) {
   try {
     const json = JSON.stringify(viewState || {});
@@ -321,6 +359,110 @@ export function createKeyboardNavigation(controls, options = {}) {
   target.addEventListener("keyup", onKeyUp);
   window.addEventListener("blur", onWindowBlur);
   return { update, dispose, clearKeys };
+}
+
+// Hand navigation for the gallery ROOM camera (exhibit wall): exposes the
+// same interaction-controller interface the stage chrome's hand-control
+// toggle drives for single pieces ({supportsHandControl, setHandSteering,
+// handPoint}), but steers the room's OrbitControls instead of a piece.
+// Hand position maps to a velocity joystick: hold the hand right of center
+// to strafe right, above center to walk forward — with a center deadzone so
+// a resting hand parks the camera. Reuses computeOrbitKeyboardMotion()'s
+// ground-plane math and createKeyboardNavigation()'s clamps/frame scaling.
+export function createRoomHandNavigation(controls, options = {}) {
+  const { speed = 0.09, minX = -8, maxX = 8, minZ = 0.5, maxZ = Infinity } = options;
+  const DEADZONE = 0.12;
+  let steering = false;
+  let hand = null; // latest {nx, ny}, nulled when the hand disappears
+  let gestureTravel = null;
+  const _fwd = new THREE.Vector3();
+  const TARGET_FRAME_MS = 1000 / 60;
+  const MAX_FRAME_SCALE = 4;
+  let lastUpdateAt = null;
+
+  function axis(value) {
+    const offset = value - 0.5;
+    if (Math.abs(offset) < DEADZONE) return 0;
+    // Rescale past the deadzone so motion ramps smoothly from 0 to 1.
+    return (offset - Math.sign(offset) * DEADZONE) / (0.5 - DEADZONE);
+  }
+
+  function update() {
+    const now = performance.now();
+    const frameScale = lastUpdateAt === null
+      ? 1
+      : Math.min(MAX_FRAME_SCALE, Math.max(0, (now - lastUpdateAt) / TARGET_FRAME_MS));
+    lastUpdateAt = now;
+    if (!steering || (!hand && !gestureTravel) || !controls.enabled) return false;
+    const rightScale = (gestureTravel ? gestureTravel.right : axis(hand.nx)) * speed * frameScale;
+    const fwdScale = (gestureTravel ? gestureTravel.forward : axis(1 - hand.ny)) * speed * frameScale; // hand up = forward
+    if (rightScale === 0 && fwdScale === 0) return false;
+    controls.object.getWorldDirection(_fwd);
+    const horizontal = Math.sqrt(_fwd.x ** 2 + _fwd.z ** 2) || 1;
+    const right = { x: -_fwd.z / horizontal, z: _fwd.x / horizontal };
+    const dx = (_fwd.x * fwdScale) + (right.x * rightScale);
+    const dz = (_fwd.z * fwdScale) + (right.z * rightScale);
+    const newCamX = Math.max(minX, Math.min(maxX, controls.object.position.x + dx));
+    const newCamZ = Math.max(minZ, Math.min(maxZ, controls.object.position.z + dz));
+    const actualDx = newCamX - controls.object.position.x;
+    const actualDz = newCamZ - controls.object.position.z;
+    if (Math.abs(actualDx) < 1e-6 && Math.abs(actualDz) < 1e-6) return false;
+    controls.object.position.x = newCamX;
+    controls.object.position.z = newCamZ;
+    controls.target.x += actualDx;
+    controls.target.z += actualDz;
+    return true;
+  }
+
+  return {
+    // Stage-chrome interaction-controller interface:
+    supportsHandControl: true,
+    supportsCameraBackground: false,
+    setHandSteering(on) { steering = !!on; if (!on) { hand = null; gestureTravel = null; } },
+    handPoint(nx, ny) { hand = { nx, ny }; },
+    handCommand(command) {
+      if (!steering || !command) return;
+      if (command.type === "look") {
+        gestureTravel = null;
+        const offset = controls.object.position.clone().sub(controls.target);
+        const spherical = new THREE.Spherical().setFromVector3(offset);
+        const desiredTheta = (command.x - 0.5) * Math.PI * 1.5;
+        const desiredPhi = Math.PI / 2 + (command.y - 0.5) * Math.PI * 0.7;
+        spherical.theta += (desiredTheta - spherical.theta) * 0.1;
+        spherical.phi += (desiredPhi - spherical.phi) * 0.1;
+        spherical.phi = Math.max(0.15, Math.min(Math.PI - 0.15, spherical.phi));
+        offset.setFromSpherical(spherical);
+        controls.object.position.copy(controls.target).add(offset);
+      } else if (command.type === "orbit") {
+        gestureTravel = null;
+        const offset = controls.object.position.clone().sub(controls.target);
+        const spherical = new THREE.Spherical().setFromVector3(offset);
+        spherical.theta += command.yaw || 0;
+        spherical.phi = Math.max(0.15, Math.min(Math.PI - 0.15, spherical.phi + (command.pitch || 0)));
+        controls.object.position.copy(controls.target).add(offset.setFromSpherical(spherical));
+      } else if (command.type === "travel") {
+        gestureTravel = { forward: command.forward || 0, right: command.right || 0 };
+      } else if (command.type === "zoom") {
+        const offset = controls.object.position.clone().sub(controls.target);
+        const distance = Math.max(0.45, Math.min(120, offset.length() * (1 - (command.delta || 0))));
+        controls.object.position.copy(controls.target).add(offset.setLength(distance));
+      } else if (command.type === "stop") {
+        gestureTravel = null;
+      }
+      controls.update();
+    },
+    handLost() { hand = null; gestureTravel = null; },
+    resetView() {
+      hand = null;
+      gestureTravel = null;
+      return typeof options.resetView === "function" ? options.resetView() : Promise.resolve(false);
+    },
+    setBackgroundVideo() { return false; },
+    clearBackgroundVideo() {},
+    // Room-side integration:
+    update,
+    dispose() { steering = false; hand = null; gestureTravel = null; },
+  };
 }
 
 // Camera feed as a blended, camera-attached background quad for the mounted
@@ -838,6 +980,32 @@ function createSharedGyroController(stageEl, camera, options = {}) {
   let suspended = false;
   const baselineQuat = new THREE.Quaternion();
   const yawProbe = new THREE.Vector3();
+  const handOffsetQuat = new THREE.Quaternion();
+  const handOffsetApplied = new THREE.Quaternion();
+  const handEuler = new THREE.Euler(0, 0, 0, "YXZ");
+  let handTargetYaw = 0;
+  let handTargetPitch = 0;
+  let handYaw = 0;
+  let handPitch = 0;
+  let handOffsetWasApplied = false;
+  const stabilizeHand = options.stabilizeHand === true;
+  const handSmoothing = Number.isFinite(options.handSmoothing)
+    ? Math.max(0.01, Math.min(1, options.handSmoothing))
+    : 0.14;
+  const handInputDeadband = Number.isFinite(options.handInputDeadband)
+    ? Math.max(0, options.handInputDeadband)
+    : 0;
+  const handMaxAngularStep = Number.isFinite(options.handMaxAngularStep)
+    ? Math.max(0.001, options.handMaxAngularStep)
+    : Infinity;
+  let handUpdateAt = null;
+
+  function advanceStableHandAxis(current, target, frameScale) {
+    const alpha = 1 - Math.pow(1 - handSmoothing, frameScale);
+    const proposed = (target - current) * alpha;
+    const maxStep = handMaxAngularStep * frameScale;
+    return current + Math.max(-maxStep, Math.min(maxStep, proposed));
+  }
 
   function requestCalibration() {
     baselineQuat.copy(camera.quaternion);
@@ -1027,10 +1195,37 @@ function createSharedGyroController(stageEl, camera, options = {}) {
 
   return {
     update() {
-      if (suspended || !gyroActive || !deviceControls || disposed) return;
-      if (hasDeviceOrientationAngles(deviceControls)) {
+      if (disposed) return;
+      // Remove the prior additive hand offset before controls establish this
+      // frame's base orientation. Device motion and hand motion then compose
+      // deterministically instead of competing as two quaternion writers.
+      if (handOffsetWasApplied) {
+        camera.quaternion.multiply(handOffsetApplied.clone().invert());
+        handOffsetWasApplied = false;
+      }
+      if (!suspended && gyroActive && deviceControls && hasDeviceOrientationAngles(deviceControls)) {
         calibrateGyroToCurrentView();
         deviceControls.update();
+      }
+      if (stabilizeHand) {
+        const now = performance.now();
+        const frameScale = handUpdateAt === null
+          ? 1
+          : Math.max(0.25, Math.min(4, (now - handUpdateAt) / (1000 / 60)));
+        handUpdateAt = now;
+        handYaw = advanceStableHandAxis(handYaw, handTargetYaw, frameScale);
+        handPitch = advanceStableHandAxis(handPitch, handTargetPitch, frameScale);
+      } else {
+        // Preserve the established direct Three.js/A-Frame response exactly.
+        handYaw += (handTargetYaw - handYaw) * 0.14;
+        handPitch += (handTargetPitch - handPitch) * 0.14;
+      }
+      if (Math.abs(handYaw) > 0.0001 || Math.abs(handPitch) > 0.0001) {
+        handEuler.set(handPitch, handYaw, 0, "YXZ");
+        handOffsetQuat.setFromEuler(handEuler);
+        camera.quaternion.multiply(handOffsetQuat);
+        handOffsetApplied.copy(handOffsetQuat);
+        handOffsetWasApplied = true;
       }
     },
     dispose() {
@@ -1071,6 +1266,31 @@ function createSharedGyroController(stageEl, camera, options = {}) {
     },
     setup,
     requestCalibration,
+    setHandOffset(nx, ny) {
+      const nextYaw = Math.max(-0.45, Math.min(0.45, (nx - 0.5) * 0.9));
+      const nextPitch = Math.max(-0.32, Math.min(0.32, -(ny - 0.5) * 0.64));
+      if (!stabilizeHand || Math.abs(nextYaw - handTargetYaw) >= handInputDeadband) {
+        handTargetYaw = nextYaw;
+      }
+      if (!stabilizeHand || Math.abs(nextPitch - handTargetPitch) >= handInputDeadband) {
+        handTargetPitch = nextPitch;
+      }
+    },
+    clearHandOffset() {
+      handTargetYaw = 0;
+      handTargetPitch = 0;
+      handUpdateAt = null;
+    },
+    releaseHandOffset() {
+      handTargetYaw = 0;
+      handTargetPitch = 0;
+      handYaw = 0;
+      handPitch = 0;
+      handUpdateAt = null;
+      handOffsetWasApplied = false;
+      handOffsetApplied.identity();
+      handOffsetQuat.identity();
+    },
   };
 }
 
@@ -1536,6 +1756,7 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
   const soundHandToggle = root.querySelector("[data-immersive-sound-hand-toggle]");
   const handControlRow = root.querySelector("[data-immersive-sound-hand-control-row]");
   const handControlToggle = root.querySelector("[data-immersive-sound-hand-control-toggle]");
+  const resetViewButton = root.querySelector("[data-immersive-reset-view]");
   const cameraBgRow = root.querySelector("[data-immersive-sound-camera-bg-row]");
   const cameraBgToggle = root.querySelector("[data-immersive-sound-camera-bg-toggle]");
   const cameraOpacityRow = root.querySelector("[data-immersive-sound-camera-opacity-row]");
@@ -1553,8 +1774,26 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
   let detachPianoKeyListener = null;
   let micSupportChecked = false;
   let handControlActive = false;
+  let handActivationEpoch = 0;
+  let handActivationPending = false;
+  let gestureRouter = null;
   let cameraBgActive = false;
   let tiltFallbackActive = false;
+
+  function setGestureModeIndicator(mode) {
+    let indicator = root.querySelector('[data-hand-gesture-mode]');
+    if (!indicator) {
+      indicator = document.createElement('div');
+      indicator.dataset.handGestureMode = '';
+      indicator.setAttribute('role', 'status');
+      indicator.setAttribute('aria-live', 'polite');
+      indicator.style.cssText = 'position:absolute;left:50%;bottom:calc(1rem + env(safe-area-inset-bottom));transform:translateX(-50%);z-index:132;padding:.38rem .72rem;border:1px solid rgba(255,255,255,.2);border-radius:999px;background:rgba(0,0,0,.68);color:#fff;font:600 .72rem/1.2 system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;pointer-events:none;';
+      root.appendChild(indicator);
+    }
+    const labels = { look: 'Look', orbit: 'Orbit', travel: 'Move', 'travel-ready': 'Point + pinch to move', 'orbit-ready': 'Pinch to orbit' };
+    indicator.textContent = labels[mode] || '';
+    indicator.hidden = !labels[mode];
+  }
 
   function isSoundPanelOpen() {
     return !!soundPanel && !soundPanel.hidden;
@@ -1719,6 +1958,7 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
   };
 
   const onHandControlToggle = async () => {
+    const activationEpoch = ++handActivationEpoch;
     const interaction = getPieceInteractionController();
     if (!interaction?.supportsHandControl) return;
     if (handControlToggle?.dataset.capabilityFallback === "device_tilt") {
@@ -1731,20 +1971,32 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
       handControlToggle.setAttribute("aria-pressed", tiltFallbackActive ? "true" : "false");
       return;
     }
-    if (handControlActive) {
+    if (handControlActive || handActivationPending) {
+      handActivationPending = false;
       handControlActive = false;
       const ctrl = getAudioController() || silentHandEngine;
       ctrl?.onHandFrame(null);
       ctrl?.disableHandControl();
+      gestureRouter?.reset?.('disabled');
+      gestureRouter = null;
+      setGestureModeIndicator('idle');
       interaction.setHandSteering(false);
       syncSoundPanel();
       return;
     }
     // Audio controller when the piece has sound, silent engine otherwise —
     // hand control itself never needs audio.
+    handActivationPending = true;
+    handControlToggle?.setAttribute("aria-pressed", "true");
     const ctrl = await getHandControlEngine();
-    if (!ctrl) return;
+    if (!ctrl) { handActivationPending = false; return; }
     const ok = await ctrl.enableHandControl();
+    handActivationPending = false;
+    if (activationEpoch !== handActivationEpoch) {
+      ctrl.onHandFrame(null);
+      ctrl.disableHandControl();
+      return;
+    }
     if (!ok) {
       interaction.setHandSteering(false);
       syncSoundPanel();
@@ -1752,9 +2004,38 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
     }
     handControlActive = true;
     interaction.setHandSteering(true);
+    let handPinched = false;
     ctrl.onHandFrame((hand) => {
-      if (!handControlActive || !hand?.[0]) return;
+      if (!handControlActive) return;
+      if (typeof interaction.handCommand === 'function' && window.CreatrSonicController?.createClutchedGestureRouter) {
+        if (!gestureRouter) {
+          gestureRouter = window.CreatrSonicController.createClutchedGestureRouter({
+            onCommand: (command) => interaction.handCommand(command),
+            onMode: setGestureModeIndicator,
+          });
+        }
+        gestureRouter.update(hand);
+        return;
+      }
+      if (!hand?.[0]) {
+        // Hand left the frame: release any held pinch and let velocity-style
+        // controllers (the gallery room's hand navigation) stop coasting.
+        if (handPinched) { handPinched = false; try { interaction.handPress?.(false); } catch (_) {} }
+        try { interaction.handLost?.(); } catch (_) {}
+        return;
+      }
       try { interaction.handPoint(1 - hand[0].x, hand[0].y); } catch (_) {}
+      // Pinch (thumb tip ↔ index tip) = pointer button for controllers that
+      // register handPress (interactive c2 wall mounts) — same gesture and
+      // hysteresis as piece-runtime.js's handControlBinding; keep in sync.
+      if (typeof interaction.handPress === "function" && hand[4] && hand[8]) {
+        const gap = Math.hypot(hand[4].x - hand[8].x, hand[4].y - hand[8].y, (hand[4].z || 0) - (hand[8].z || 0));
+        const next = handPinched ? gap < 0.09 : gap < 0.055;
+        if (next !== handPinched) {
+          handPinched = next;
+          try { interaction.handPress(next); } catch (_) {}
+        }
+      }
     });
     syncSoundPanel();
   };
@@ -1784,6 +2065,18 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
     syncSoundPanel();
   };
 
+  const onResetView = async () => {
+    const interaction = getPieceInteractionController();
+    if (typeof interaction?.resetView !== "function" || !resetViewButton) return;
+    resetViewButton.disabled = true;
+    resetViewButton.setAttribute("aria-busy", "true");
+    try { await interaction.resetView(); }
+    finally {
+      resetViewButton.disabled = false;
+      resetViewButton.removeAttribute("aria-busy");
+    }
+  };
+
   const onMicToggle = async () => {
     const ctrl = getAudioController();
     if (!ctrl) return;
@@ -1809,8 +2102,9 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
     if (!target) return;
     target.dataset.capabilityState = detail.state || "";
     target.setAttribute("aria-busy", detail.state === "loading" ? "true" : "false");
-    if (detail.state === "loading") target.disabled = true;
+    if (detail.state === "loading") target.disabled = detail.capability !== "hand_control";
     if (detail.state === "active") { target.disabled = false; target.setAttribute("aria-pressed", "true"); }
+    if (detail.state === "inactive") { target.disabled = false; target.setAttribute("aria-pressed", "false"); }
     if (detail.state === "unavailable") {
       target.setAttribute("aria-pressed", "false");
       target.title = detail.reason || "Unavailable on this device";
@@ -1882,6 +2176,7 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
   pianoOctaveUp?.addEventListener("click", onPianoOctaveUp);
   soundHandToggle?.addEventListener("click", onSoundHandToggle);
   handControlToggle?.addEventListener("click", onHandControlToggle);
+  resetViewButton?.addEventListener("click", onResetView);
   cameraBgToggle?.addEventListener("click", onCameraBgToggle);
   cameraOpacityInput?.addEventListener("input", onCameraOpacityInput);
   micToggle?.addEventListener("click", onMicToggle);
@@ -1914,13 +2209,17 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
       pianoOctaveUp?.removeEventListener("click", onPianoOctaveUp);
       soundHandToggle?.removeEventListener("click", onSoundHandToggle);
       handControlToggle?.removeEventListener("click", onHandControlToggle);
+      resetViewButton?.removeEventListener("click", onResetView);
       cameraBgToggle?.removeEventListener("click", onCameraBgToggle);
       cameraOpacityInput?.removeEventListener("input", onCameraOpacityInput);
       if (handControlActive) {
         handControlActive = false;
         const handCtrl = getAudioController() || silentHandEngine;
-        handCtrl?.onHandFrame(null);
-        handCtrl?.disableHandControl();
+      handCtrl?.onHandFrame(null);
+      handCtrl?.disableHandControl();
+      gestureRouter?.reset?.('destroyed');
+      gestureRouter = null;
+      setGestureModeIndicator('idle');
         getPieceInteractionController()?.setHandSteering(false);
       }
       if (silentHandEngine) {
@@ -2747,6 +3046,7 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
   let pieceDrivesOwnRender = false;
   const stopFrameHandles = new Set();
   const state = { scene: null, camera: null, renderer: null, objects: [] };
+  let initialThreeViewState = null;
 
   const instrumentedThree = { ...THREE };
   const OriginalScene = THREE.Scene;
@@ -3201,7 +3501,7 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
         // (a separate degree of freedom, untouched by this) keep working
         // exactly as before. enableRotate is already false (see setup below),
         // so there's no fight over rotation between the two.
-        if (!handSteeringExclusive) gyroController?.update();
+        gyroController?.update();
 
         // Sonification leg: drive Tone.js from the same per-frame camera motion
         // the navigation legs above produced. No-ops until the user enables sound.
@@ -3362,6 +3662,7 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
     const initialTargetDist = state.camera.position.distanceTo(controls.target);
     controls.maxDistance = Math.max(40, initialTargetDist * 4);
     controls.update();
+    initialThreeViewState = shellViewState({ camera: state.camera, controls });
     if (applyShellViewState({ camera: state.camera, controls }, options.initialViewState)) {
       saveOrbitState();
       userHasInteracted = true;
@@ -3452,28 +3753,59 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
         if (next) {
           controls.enabled = false;
           keyNav?.clearKeys?.();
-          gyroController?.suspend();
           isOrbitActive = false;
         } else {
+          bakeOrbitHandPose(state.camera, controls, gyroController);
           controls.enabled = controlsEnabledBeforeHand;
           saveOrbitState();
-          gyroController?.resume();
         }
       },
       handPoint(nx, ny) {
         if (!handSteeringExclusive || !controls || !state.camera) return;
-        const offset = state.camera.position.clone().sub(controls.target);
-        const spherical = new THREE.Spherical().setFromVector3(offset);
-        const desiredTheta = (nx - 0.5) * Math.PI * 1.5;
-        const desiredPhi = Math.PI / 2 + (ny - 0.5) * Math.PI * 0.7;
-        spherical.theta += (desiredTheta - spherical.theta) * 0.12;
-        spherical.phi += (desiredPhi - spherical.phi) * 0.12;
-        spherical.phi = Math.max(0.15, Math.min(Math.PI - 0.15, spherical.phi));
-        offset.setFromSpherical(spherical);
-        state.camera.position.copy(controls.target).add(offset);
-        state.camera.lookAt(controls.target);
+        gyroController?.setHandOffset?.(nx, ny);
         saveOrbitState();
         userHasInteracted = true;
+      },
+      handCommand(command) {
+        if (!handSteeringExclusive || !controls || !state.camera || !command) return;
+        if (command.type === "look") {
+          this.handPoint(command.x, command.y);
+          return;
+        }
+        if (command.type === "start") gyroController?.clearHandOffset?.();
+        if (command.type === "orbit") {
+          const offset = state.camera.position.clone().sub(controls.target);
+          const spherical = new THREE.Spherical().setFromVector3(offset);
+          spherical.theta += command.yaw || 0;
+          spherical.phi = Math.max(0.15, Math.min(Math.PI - 0.15, spherical.phi + (command.pitch || 0)));
+          offset.setFromSpherical(spherical);
+          state.camera.position.copy(controls.target).add(offset);
+        } else if (command.type === "travel") {
+          const forward = new THREE.Vector3();
+          state.camera.getWorldDirection(forward);
+          forward.y = 0;
+          if (forward.lengthSq() > 1e-6) forward.normalize();
+          const right = new THREE.Vector3(-forward.z, 0, forward.x);
+          const delta = forward.multiplyScalar((command.forward || 0) * 0.11)
+            .add(right.multiplyScalar((command.right || 0) * 0.09));
+          state.camera.position.add(delta);
+          controls.target.add(delta);
+        } else if (command.type === "zoom") {
+          const distance = state.camera.position.distanceTo(controls.target);
+          const nextDistance = Math.max(0.35, Math.min(threeNavLimit, distance * (1 - (command.delta || 0))));
+          const direction = state.camera.position.clone().sub(controls.target).normalize();
+          state.camera.position.copy(controls.target).addScaledVector(direction, nextDistance);
+        }
+        saveOrbitState();
+        userHasInteracted = true;
+      },
+      handLost() { gyroController?.clearHandOffset?.(); },
+      async resetView() {
+        gyroController?.clearHandOffset?.();
+        const reset = await animateShellViewReset({ camera: state.camera, controls }, initialThreeViewState);
+        saveOrbitState();
+        userHasInteracted = true;
+        return reset;
       },
       ...createCameraBlendQuadController(() => THREE, () => state.scene, () => state.camera),
     };
@@ -3576,6 +3908,7 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
     activeTouches: new Set(),
   };
   let aframeZoomSliderValue = 50;
+  let initialAFrameViewState = null;
 
   const startFrame = (handler) => {
     let frameCount = 0;
@@ -3715,6 +4048,32 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
     cameraObject?.getWorldDirection?.(forward);
     const target = camera.clone().add(forward.lengthSq() > 0 ? forward.multiplyScalar(4) : new THREE_NS.Vector3(0, 0, -4));
     return shellViewState({ camera: { position: camera }, controls: { target } });
+  }
+
+  function animateAFrameReset(viewState, duration = 360) {
+    const THREE_NS = getAFrameThree();
+    const mover = getAFrameCameraMover();
+    const toCamera = readViewVector(viewState?.camera);
+    const toTarget = readViewVector(viewState?.target);
+    if (!THREE_NS || !mover || !toCamera || !toTarget) return Promise.resolve(false);
+    const fromCamera = new THREE_NS.Vector3();
+    mover.getWorldPosition(fromCamera);
+    const currentState = getAFrameViewState();
+    const fromTarget = readViewVector(currentState.target) || toTarget.clone();
+    const startedAt = performance.now();
+    return new Promise((resolve) => {
+      function step(now) {
+        const t = Math.min(1, (now - startedAt) / duration);
+        const eased = 1 - Math.pow(1 - t, 3);
+        const worldCamera = fromCamera.clone().lerp(toCamera, eased);
+        const worldTarget = fromTarget.clone().lerp(toTarget, eased);
+        if (mover.parent) mover.parent.worldToLocal(worldCamera);
+        mover.position.copy(worldCamera);
+        mover.lookAt(worldTarget);
+        if (t < 1) requestAnimationFrame(step); else resolve(true);
+      }
+      requestAnimationFrame(step);
+    });
   }
 
   function activeAFrameTouchCount() {
@@ -3889,6 +4248,7 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
     requestAnimationFrame(resizeScene);
     requestAnimationFrame(() => {
       bindAFramePointerControls();
+      initialAFrameViewState = getAFrameViewState();
       applyAFrameInitialViewState();
     });
     scene.addEventListener("renderstart", bindAFramePointerControls, { once: true });
@@ -3955,6 +4315,26 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
       cameraObject.rotation.x += (desiredPitch - cameraObject.rotation.x) * 0.12;
       cameraObject.rotation.x = Math.max(-Math.PI * 0.45, Math.min(Math.PI * 0.45, cameraObject.rotation.x));
     },
+    handCommand(command) {
+      if (!command) return;
+      if (command.type === "look") {
+        this.handPoint(command.x, command.y);
+        return;
+      }
+      const cameraObject = getAFrameCameraObject();
+      if (!cameraObject) return;
+      if (command.type === "orbit") {
+        cameraObject.rotation.order = "YXZ";
+        cameraObject.rotation.y += command.yaw || 0;
+        cameraObject.rotation.x = Math.max(-Math.PI * 0.45, Math.min(Math.PI * 0.45, cameraObject.rotation.x + (command.pitch || 0)));
+      } else if (command.type === "travel") {
+        cameraObject.translateX((command.right || 0) * 0.08);
+        cameraObject.translateZ(-(command.forward || 0) * 0.11);
+      } else if (command.type === "zoom") {
+        cameraObject.translateZ((command.delta || 0) * 1.4);
+      }
+    },
+    resetView() { return animateAFrameReset(initialAFrameViewState); },
     ...createCameraBlendQuadController(() => getAFrameThree(), () => scene?.object3D, () => scene?.camera),
   };
 
@@ -4033,6 +4413,10 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
   let viewerControls = null;
   let readOnlyOverlay = null;
   let gyroController = null;
+  let initialGalleryViewState = null;
+  // Set by bootRuntime for interactive c2: the off-screen sketch canvas the
+  // hand-control controller drives with synthetic pointer events.
+  let interactiveSourceCanvas = null;
   const audioController = createAudioController(options.sonicParams, stageEl, { pieceId: options.pieceId, allowHandControl: options.handControl === true });
   const _galleryAudioPrevPos = new THREE.Vector3();
   let _galleryAudioPrevInit = false;
@@ -4300,6 +4684,10 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
       };
 
       const c2MediaHelpers = engine === "c2" ? createC2MediaHelpers(managedCanvas, onError) : {};
+      // Interactive c2 sketches attach their own pointer listeners to this
+      // (off-screen) canvas — remember it so the hand-control controller can
+      // drive them with synthetic pointer events.
+      if (engine === "c2" && options.c2Interactive) interactiveSourceCanvas = managedCanvas;
       const cleanup = sketchFactory({
         c2: c2Runtime,
         canvas: managedCanvas,
@@ -4319,7 +4707,18 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
 
   const floorNav = createFloorClickNavigation(shell.camera, shell.controls, shell.floor, stageEl);
   const keyNav = createKeyboardNavigation(shell.controls, { container: stageEl });
-  gyroController = createSharedGyroController(stageEl, shell.camera);
+  gyroController = createSharedGyroController(stageEl, shell.camera, {
+    // Gallery-mounted 2D pieces use a texture-projected room camera. Its
+    // OrbitControls remain available for navigation, so raw wrist landmarks
+    // need a small deadband plus frame-rate-independent angular damping to
+    // match the stable feel of direct immersive Three.js/A-Frame pieces.
+    // These values are opt-in here; direct 3D viewers keep their established
+    // shared-controller response unchanged.
+    stabilizeHand: true,
+    handSmoothing: 0.08,
+    handInputDeadband: 0.012,
+    handMaxAngularStep: 0.022,
+  });
 
   // Gallery pieces run in an off-screen canvas (createImmersiveHost) and are
   // texture-projected onto shell.artMesh, so no pointer events ever reach
@@ -4423,6 +4822,7 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
 
   bootRuntime();
   fitMountedGalleryCamera(shell, stageEl);
+  initialGalleryViewState = shellViewState(shell);
   applyShellViewState(shell, options.initialViewState);
   gyroController.setup();
   animate();
@@ -4432,16 +4832,87 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
 
   // Camera view for the gallery room: the visitor's mirrored feed projects
   // onto the room's back wall behind the framed piece (blended by opacity),
-  // so the art reads as hanging in their own space. No hand steering here —
-  // the room has no piece-pointer surface (the mounted piece is a texture).
+  // so the art reads as hanging in their own space. Hand steering is only
+  // supported for interactive c2 pieces, whose live off-screen canvas can be
+  // driven with synthetic pointer events (move + pinch-to-press) exactly
+  // like the regular view's piece-runtime does; other wall-textured engines
+  // still have no piece-pointer surface.
+  const dispatchGalleryHandPointer = (type, nx, ny) => {
+    const canvas = interactiveSourceCanvas;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    const clientX = rect.left + nx * rect.width;
+    const clientY = rect.top + ny * rect.height;
+    try {
+      canvas.dispatchEvent(new PointerEvent(type, { clientX, clientY, bubbles: true, isPrimary: true, pointerType: "touch", button: 0, buttons: type === "pointerup" ? 0 : 1 }));
+    } catch (_) {}
+  };
+  let galleryLastHandPoint = null;
+  let galleryHandSteering = false;
+  let galleryRotateBeforeHand = shell.controls.enableRotate;
   const pieceInteractionController = {
-    supportsHandControl: false,
+    supportsHandControl: true,
     supportsCameraBackground: true,
+    setHandSteering(active) {
+      const next = !!active;
+      if (next === galleryHandSteering) return;
+      galleryHandSteering = next;
+      if (next) {
+        // Match direct immersive ownership without disabling translation or
+        // zoom: hand steering owns look direction; gallery navigation stays.
+        galleryRotateBeforeHand = shell.controls.enableRotate;
+        shell.controls.enableRotate = false;
+      } else {
+        shell.controls.enableRotate = galleryRotateBeforeHand;
+        bakeOrbitHandPose(shell.camera, shell.controls, gyroController);
+      }
+    },
+    handPoint(nx, ny) {
+      if (!galleryHandSteering) return;
+      gyroController?.setHandOffset?.(nx, ny);
+      galleryLastHandPoint = { nx, ny };
+      dispatchGalleryHandPointer("pointermove", nx, ny);
+    },
+    handCommand(command) {
+      if (!galleryHandSteering || !command) return;
+      if (command.type === "look") {
+        this.handPoint(command.x, command.y);
+        return;
+      }
+      if (command.type === "start") gyroController?.clearHandOffset?.();
+      if (command.type === "orbit") {
+        const offset = shell.camera.position.clone().sub(shell.controls.target);
+        const spherical = new THREE.Spherical().setFromVector3(offset);
+        spherical.theta += command.yaw || 0;
+        spherical.phi = Math.max(0.15, Math.min(Math.PI - 0.15, spherical.phi + (command.pitch || 0)));
+        offset.setFromSpherical(spherical);
+        shell.camera.position.copy(shell.controls.target).add(offset);
+      } else if (command.type === "travel") {
+        applyGalleryDirectionalMove(command.forward || 0, command.right || 0);
+      } else if (command.type === "zoom") {
+        const offset = shell.camera.position.clone().sub(shell.controls.target);
+        const distance = Math.max(0.45, Math.min(80, offset.length() * (1 - (command.delta || 0))));
+        shell.camera.position.copy(shell.controls.target).add(offset.setLength(distance));
+      }
+      shell.controls.update();
+      syncViewerControlZoom();
+    },
+    handPress(down) {
+      if (!galleryLastHandPoint) return;
+      dispatchGalleryHandPointer(down ? "pointerdown" : "pointerup", galleryLastHandPoint.nx, galleryLastHandPoint.ny);
+    },
+    handLost() { galleryLastHandPoint = null; gyroController?.clearHandOffset?.(); },
+    resetView() {
+      gyroController?.clearHandOffset?.();
+      return animateShellViewReset(shell, initialGalleryViewState);
+    },
     ...createGalleryWallCameraController(shell),
   };
 
   function destroy() {
     disposed = true;
+    pieceInteractionController.setHandSteering(false);
     pieceInteractionController.clearBackgroundVideo();
     resizeObserver.disconnect();
     if (detectCanvasTimer) window.clearTimeout(detectCanvasTimer);
@@ -4557,6 +5028,15 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
   });
   const floorNav = createFloorClickNavigation(shell.camera, shell.controls, shell.floor, stageEl, { maxX: wallWidth / 2 });
   const keyNav = createKeyboardNavigation(shell.controls, { container: stageEl, minX: -wallWidth / 2, maxX: wallWidth / 2 });
+  // Hand navigation of the room camera (MediaPipe wrist → velocity
+  // joystick), driven by the stage chrome's hand-control toggle through the
+  // same interaction-controller interface single pieces use.
+  let initialExhibitViewState = null;
+  const roomHandNav = createRoomHandNavigation(shell.controls, {
+    minX: -wallWidth / 2,
+    maxX: wallWidth / 2,
+    resetView: () => animateShellViewReset(shell, initialExhibitViewState),
+  });
 
   // Progressive rendering state
   const runtimeSize = { width: 400, height: 300 }; // small size for grid items
@@ -5175,6 +5655,7 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
     frameId = requestAnimationFrame(animate);
     floorNav.update();
     keyNav.update();
+    roomHandNav.update();
     shell.controls.update();
     gyroController?.update();
     syncExhibitViewerZoom();
@@ -5226,6 +5707,7 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
 
   updateProgressiveLoading();
   gyroController.setup();
+  initialExhibitViewState = shellViewState(shell);
   applyShellViewState(shell, options.initialViewState);
   animate();
 
@@ -5267,6 +5749,7 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
     shell.renderer.dispose();
     floorNav.dispose();
     keyNav.dispose();
+    roomHandNav.dispose();
     gyroController?.dispose();
     viewerControls?.remove();
     readOnlyOverlay?.remove();
@@ -5277,6 +5760,7 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
   return {
     destroy,
     getAudioController: () => audioController,
+    getRoomInteractionController: () => roomHandNav,
     getSelectedItem() {
       return items[selectedSourceIndex] || null;
     },

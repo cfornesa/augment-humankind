@@ -7,6 +7,28 @@ if (!function_exists('public_copy_value')) {
     require_once __DIR__ . '/public-copy.php';
 }
 
+/**
+ * Rewrites every local media reference (/image/{id}, /media/…,
+ * /api/media-assets/{id}) in the given strings to a data: URI. Shared by
+ * piece_render_document()'s capture_safe_media mode and the immersive live
+ * view, whose wall textures rasterize SVG through an <img> where external
+ * refs are silently dropped — un-inlined media simply vanishes there.
+ * Returns the strings in the same order they were given.
+ */
+function piece_inline_local_media(array $parts): array
+{
+    $mediaMap = piece_build_media_manifest($parts);
+    if ($mediaMap === []) {
+        return $parts;
+    }
+    return array_map(static function ($content) use ($mediaMap) {
+        return piece_export_rewrite_media_refs((string) $content, static function (string $normalizedRef) use ($mediaMap): ?string {
+            $asset = $mediaMap[$normalizedRef] ?? null;
+            return is_array($asset) ? (string) ($asset['data_url'] ?? '') : null;
+        });
+    }, $parts);
+}
+
 function piece_render_document(array $piece, array $version, array $options = []): string
 {
     $title = htmlspecialchars((string) ($piece['title'] ?? 'Art piece'), ENT_QUOTES | ENT_HTML5, 'UTF-8');
@@ -53,7 +75,9 @@ function piece_render_document(array $piece, array $version, array $options = []
     $contextCapabilities = piece_sound_capability_contract(
         $contextGenerationMode,
         is_array($contextSonicDecoded) ? $contextSonicDecoded : [],
-        piece_camera_overlay_enabled($version)
+        piece_camera_overlay_enabled($version),
+        piece_camera_placement($version),
+        piece_regular_hand_motion_enabled($version)
     );
     $jsonContext = json_encode([
         'pieceId' => (int) ($piece['id'] ?? 0),
@@ -71,6 +95,10 @@ function piece_render_document(array $piece, array $version, array $options = []
         // is null so camera-only pieces still get the message bridge.
         'cameraOverlay' => !empty($contextCapabilities['camera_view']),
         'cameraOpacity' => !empty($contextCapabilities['camera_opacity']),
+        // Where the feed renders when the visitor enables the camera:
+        // 'background' or 'overlay' (already engine-defaulted by the
+        // contract when the piece stores no explicit placement).
+        'cameraPlacement' => (string) ($contextCapabilities['camera_placement'] ?? 'overlay'),
         // Hand control (camera steering + tilt fallback) rides the camera
         // permission or hand-tracking voice — see the capability contract;
         // needed even when sonic is null so steering works on sound-less
@@ -124,6 +152,8 @@ function piece_render_document(array $piece, array $version, array $options = []
     // take effect on that device.
     $runtimeVersion = (int) @filemtime(dirname(__DIR__, 2) . '/assets/js/piece-runtime.js');
     $runtimeScriptUrl = htmlspecialchars($requestOrigin . '/assets/js/piece-runtime.js?v=' . $runtimeVersion, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    $spatialVersion = (int) @filemtime(dirname(__DIR__, 2) . '/assets/js/spatial-presentation.js');
+    $spatialScriptUrl = htmlspecialchars($requestOrigin . '/assets/js/spatial-presentation.js?v=' . $spatialVersion, ENT_QUOTES | ENT_HTML5, 'UTF-8');
 
     return <<<HTML
 <!DOCTYPE html>
@@ -172,6 +202,7 @@ window.CREATR_PIECE_CONTEXT = {$jsonContext};
 window.PIECE_PRESERVE_DRAWING_BUFFER = true;
 </script>
 {$aframeCaptureShim}
+<script src="{$spatialScriptUrl}"></script>
 <script src="{$runtimeScriptUrl}"></script>
 </body>
 </html>
@@ -270,8 +301,34 @@ function piece_export_document(array $piece, array $version, array $options = []
     $imports = piece_export_imports($engine, $runtimeMode);
     $inlineRuntime = $runtimeMode === 'bundle' ? piece_export_inline_runtime_markup($engine) : '';
     $aframeCaptureShim = $engine === 'aframe' ? piece_aframe_capture_context_shim() : '';
-    $sonicScript = piece_export_sonic_script($engine, (string) ($version['sonic_params'] ?? ''), $runtimeMode, (int) ($piece['id'] ?? 0), $generationMode, piece_camera_overlay_enabled($version));
-    $bootstrap = piece_export_bootstrap($engine, $generationMode, $runtimeMode);
+    $sonicScript = piece_export_sonic_script($engine, (string) ($version['sonic_params'] ?? ''), $runtimeMode, (int) ($piece['id'] ?? 0), $generationMode, piece_camera_overlay_enabled($version), piece_camera_placement($version), piece_regular_hand_motion_enabled($version));
+    $exportCapabilities = piece_sound_capability_contract(
+        $generationMode,
+        is_array(json_decode((string) ($version['sonic_params'] ?? ''), true)) ? json_decode((string) ($version['sonic_params'] ?? ''), true) : [],
+        piece_camera_overlay_enabled($version),
+        piece_camera_placement($version),
+        piece_regular_hand_motion_enabled($version)
+    );
+    $exportCameraPlacement = $exportCapabilities['camera_placement'];
+    $flatSpatialExport = !empty($exportCapabilities['hand_control']) && in_array($generationMode, ['p5', 'c2', 'c2_interactive', 'svg'], true);
+    if ($runtimeMode === 'bundle' && $flatSpatialExport) {
+        $inlineRuntime .= "\n<script src=\"runtime/three/three.global.js\"></script>";
+    }
+    $spatialExportScript = '';
+    if ($flatSpatialExport) {
+        $spatialSource = piece_escape_inline_script(piece_export_runtime_source_file('assets/js/spatial-presentation.js'));
+        $surfaceExpr = $generationMode === 'svg'
+            ? "document.querySelector('#runtime-root svg') || document.querySelector('svg')"
+            : "document.querySelector('#runtime-root canvas') || document.querySelector('canvas')";
+        $spatialInteractive = $generationMode === 'c2_interactive' ? 'true' : 'false';
+        $spatialPlacementJson = json_encode($exportCameraPlacement, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $spatialExportScript = "<script>\n{$spatialSource}\n</script>\n<script>\n(function(){var baseHooks=window.__pieceHandHooks||{};var spatial=window.CreatrSpatialPresentation&&window.CreatrSpatialPresentation.create({getSurface:function(){return {$surfaceExpr};},interactive:{$spatialInteractive},cameraPlacement:{$spatialPlacementJson},getCameraVideo:function(){return typeof baseHooks.getBackgroundVideo==='function'?baseHooks.getBackgroundVideo():baseHooks._cameraOverlay||null;},getCameraOpacity:function(){return typeof baseHooks.getBackgroundOpacity==='function'?baseHooks.getBackgroundOpacity():(baseHooks._cameraOpacity==null?0.35:baseHooks._cameraOpacity);}});if(spatial)window.__pieceHandHooks=Object.assign(baseHooks,spatial);})();\n</script>";
+    }
+    $handGuideVariant = $generationMode === 'c2_interactive' ? 'c2_interactive_latched' : 'default';
+    $handGuideMarkup = !empty($exportCapabilities['hand_control'])
+        ? '<style>' . immersive_stage_hand_guide_css() . '</style>' . immersive_stage_hand_guide_markup('offline', 'offline-sound-btn', $handGuideVariant)
+        : '';
+    $bootstrap = piece_export_bootstrap($engine, $generationMode, $runtimeMode, $exportCameraPlacement);
     $exportOverlayCss = piece_export_screenshot_overlay_css($generationMode);
     $exportOverlayMarkup = piece_export_screenshot_overlay_markup($generationMode);
     $exportOverlayScript = piece_export_screenshot_overlay_script($piece, $generationMode);
@@ -305,14 +362,17 @@ function piece_export_document(array $piece, array $version, array $options = []
 <div id="runtime-root">{$html}</div>
 <div id="piece-error" role="alert"></div>
 {$exportOverlayMarkup}
+{$handGuideMarkup}
 <script>
 function showPieceError(error){const el=document.getElementById('piece-error');if(!el)return;el.textContent=(error&&(error.stack||error.message))?(error.stack||error.message):String(error);el.style.display='block';}
-window.addEventListener('error',event=>showPieceError(event.error||event.message));
-window.addEventListener('unhandledrejection',event=>{const r=event.reason;const m=typeof r?.message==='string'?r.message:String(r||'');if(r?.name==='AbortError'&&/worklet/i.test(m)){event.preventDefault();return;}showPieceError(r||'Unhandled promise rejection');});
+function isNonImpactingRuntimeIssue(error,source){const m=typeof error?.message==='string'?error.message:String(error||'');const s=String(source||error?.fileName||'');return /^(?:chrome|moz|safari)-extension:/i.test(s)||/ResizeObserver loop (?:limit exceeded|completed with undelivered notifications)/i.test(m)||/Could not establish connection\. Receiving end does not exist/i.test(m)||/A listener indicated an asynchronous response.*message channel closed/i.test(m);}
+window.addEventListener('error',event=>{const e=event.error||event.message;if(!isNonImpactingRuntimeIssue(e,event.filename))showPieceError(e);});
+window.addEventListener('unhandledrejection',event=>{const r=event.reason;const m=typeof r?.message==='string'?r.message:String(r||'');if((r?.name==='AbortError'&&/worklet/i.test(m))||isNonImpactingRuntimeIssue(r)){event.preventDefault();return;}showPieceError(r||'Unhandled promise rejection');});
 </script>
 {$sonicScript}
 {$pieceScriptTag}
 {$bootstrap}
+{$spatialExportScript}
 {$exportOverlayScript}
 </body>
 </html>
@@ -341,8 +401,12 @@ HTML;
  * hand-tracking voice: 1 = on, 0 = off, NULL/absent = legacy behavior where
  * the camera followed hand_tracking for three/aframe/c2_interactive.
  */
-function piece_camera_overlay_enabled(array $version): ?bool
+function piece_camera_overlay_enabled(array $version, string $surface = 'regular'): ?bool
 {
+    if ($surface === 'immersive') {
+        $immersive = $version['immersive_camera_overlay'] ?? null;
+        if ($immersive !== null && $immersive !== '') return (int) $immersive === 1;
+    }
     $raw = $version['camera_overlay'] ?? null;
     if ($raw !== null && $raw !== '') {
         return (int) $raw === 1;
@@ -351,38 +415,67 @@ function piece_camera_overlay_enabled(array $version): ?bool
     return null;
 }
 
-function piece_sound_capability_contract(string $generationMode, array $sonicParams, ?bool $cameraOverlay = null): array
+/**
+ * Resolves the stored per-piece camera placement ('background'/'overlay'),
+ * or NULL when unset — piece_sound_capability_contract() then falls back to
+ * the engine default (background for three/aframe, overlay for 2D).
+ */
+function piece_camera_placement(array $version, string $surface = 'regular'): ?string
+{
+    if ($surface === 'immersive') {
+        $immersive = $version['immersive_camera_placement'] ?? null;
+        if (in_array($immersive, ['background', 'overlay'], true)) return $immersive;
+    }
+    $raw = $version['camera_placement'] ?? null;
+    return in_array($raw, ['background', 'overlay'], true) ? $raw : null;
+}
+
+function piece_regular_hand_motion_enabled(array $version): ?bool
+{
+    $raw = $version['regular_hand_motion'] ?? null;
+    return ($raw === null || $raw === '') ? null : (int) $raw === 1;
+}
+
+function piece_sound_capability_contract(string $generationMode, array $sonicParams, ?bool $cameraOverlay = null, ?string $cameraPlacement = null, ?bool $handMotion = null): array
 {
     $voices = is_array($sonicParams['extras']['voices'] ?? null) ? $sonicParams['extras']['voices'] : [];
-    $handTracking = !empty($voices['hand_tracking']);
     $interactiveC2 = $generationMode === 'c2_interactive';
-    // NULL camera_overlay = legacy rule (camera followed hand-tracking on the
-    // engines that supported it); an explicit 1/0 wins for every engine.
-    $legacyCameraView = $handTracking && (in_array($generationMode, ['three', 'aframe'], true) || $interactiveC2);
-    $cameraView = $cameraOverlay ?? $legacyCameraView;
+    // NULL camera_overlay = the camera OPTION is available on every engine
+    // (visitor-activated toggle; nothing auto-starts) — 2026-07-12 decision,
+    // replacing the legacy follow-hand-tracking rule on three/aframe/
+    // c2_interactive. An explicit 0 still turns the camera off per piece.
+    $cameraView = $cameraOverlay ?? true;
     // No sonic content at all means no sound capability, full stop — this is
     // the single place that rule lives; callers must not re-derive it.
     $sound = $sonicParams !== [] && ($sonicParams['enabled'] ?? true) !== false;
-    // Hand control (camera steering + tilt fallback) rides the camera
-    // permission or the hand-tracking voice — not the sound design — on the
-    // engines that register a handPoint hook. The admin's hand_control
-    // checkbox (default on) can turn it off.
-    $steerableEngine = in_array($generationMode, ['three', 'aframe'], true) || $interactiveC2;
+    // Camera theremin is audio-only. A disabled/missing sound design can
+    // never expose it, even if stale sonic JSON still carries the voice.
+    $handTracking = $sound && !empty($voices['hand_tracking']);
     return [
         'sound' => $sound,
         'keyboard' => $sound && ($voices['melodic'] ?? true) !== false,
         'hand_tracking' => $handTracking,
-        'hand_control' => $steerableEngine && ($handTracking || $cameraView) && ($voices['hand_control'] ?? true) !== false,
+        // Visual hand motion is a camera-domain presentation capability.
+        // NULL defaults on; callers pass false for an explicit regular Off or
+        // for camera-free exports. Immersive surfaces always pass true.
+        'hand_control' => $handMotion ?? true,
         'camera_view' => $cameraView,
         // Every camera surface blends now: 2D engines via the DOM <video>
         // overlay's opacity, three/aframe via a camera-attached blended quad,
         // the immersive gallery room via the wall-projection material.
         'camera_opacity' => $cameraView,
+        // Where the feed renders when enabled: 'background' (behind the
+        // piece — the 3D engines' blended quad, or a DOM <video> behind a
+        // 2D canvas) or 'overlay' (a DOM <video> above the piece). NULL
+        // placement falls back to the engine default.
+        'camera_placement' => in_array($cameraPlacement, ['background', 'overlay'], true)
+            ? $cameraPlacement
+            : art_piece_camera_placement_default($generationMode),
         'microphone' => $sound,
     ];
 }
 
-function piece_export_sonic_script(string $engine, string $sonicParamsJson, string $runtimeMode, int $pieceId = 0, string $generationMode = '', ?bool $cameraOverlay = null): string
+function piece_export_sonic_script(string $engine, string $sonicParamsJson, string $runtimeMode, int $pieceId = 0, string $generationMode = '', ?bool $cameraOverlay = null, ?string $cameraPlacement = null, ?bool $handMotion = null): string
 {
     // Every engine can carry sonic_params (matches the live regular-view
     // gate in piece_render_document()). three/aframe get camera-driven
@@ -394,7 +487,7 @@ function piece_export_sonic_script(string $engine, string $sonicParamsJson, stri
         $decoded = ['enabled' => false];
     }
 
-    $capabilities = piece_sound_capability_contract($generationMode !== '' ? $generationMode : $engine, $decoded, $cameraOverlay);
+    $capabilities = piece_sound_capability_contract($generationMode !== '' ? $generationMode : $engine, $decoded, $cameraOverlay, $cameraPlacement, $handMotion);
     if (!$capabilities['sound'] && !$capabilities['camera_view'] && !$capabilities['hand_control']) {
         return '';
     }
@@ -535,15 +628,41 @@ JS;
     handControlToggle.setAttribute('aria-pressed', 'false');
     handControlToggle.style.cssText = 'border:1px solid rgba(255,255,255,0.18);border-radius:0.6rem;background:rgba(255,255,255,0.06);color:#fff;font:inherit;font-weight:600;padding:0.3rem 0.55rem;cursor:pointer;';
     handControlRow.appendChild(handControlLabel); handControlRow.appendChild(handControlToggle);
+    var resetViewRow = document.createElement('div');
+    resetViewRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:0.5rem;';
+    var resetViewLabel = document.createElement('span');
+    resetViewLabel.textContent = 'View pose';
+    var resetViewButton = document.createElement('button');
+    resetViewButton.type = 'button';
+    resetViewButton.className = 'offline-sound-btn';
+    resetViewButton.textContent = 'Reset view';
+    resetViewButton.style.cssText = 'border:1px solid rgba(255,255,255,0.18);border-radius:0.6rem;background:rgba(255,255,255,0.06);color:#fff;font:inherit;font-weight:600;padding:0.3rem 0.55rem;cursor:pointer;';
+    resetViewRow.appendChild(resetViewLabel); resetViewRow.appendChild(resetViewButton);
 
 JS;
-        $handRowAppendScript .= "\n    panel.appendChild(handControlRow);";
+        $handRowAppendScript .= "\n    panel.appendChild(handControlRow);\n    panel.appendChild(resetViewRow);";
         $handRowWiringScript .= <<<'JS'
 
     var handControlActive = false;
+    var handControlActivationEpoch = 0;
     var tiltController = null;
+    var gestureRouter = null;
+    var gestureModeIndicator = null;
+    function setGestureModeIndicator(mode) {
+      if (!gestureModeIndicator) {
+        gestureModeIndicator = document.createElement('div');
+        gestureModeIndicator.setAttribute('role', 'status');
+        gestureModeIndicator.setAttribute('aria-live', 'polite');
+        gestureModeIndicator.style.cssText = 'position:fixed;left:50%;bottom:1rem;transform:translateX(-50%);z-index:2147483646;padding:.38rem .72rem;border:1px solid rgba(255,255,255,.2);border-radius:999px;background:rgba(0,0,0,.68);color:#fff;font:600 .72rem/1.2 system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;pointer-events:none;';
+        document.body.appendChild(gestureModeIndicator);
+      }
+      var labels = { look: 'Look', orbit: 'Orbit', travel: 'Move', 'travel-ready': 'Point + pinch to move', 'orbit-ready': 'Pinch to orbit' };
+      gestureModeIndicator.textContent = labels[mode] || '';
+      gestureModeIndicator.hidden = !labels[mode];
+    }
     handControlToggle.addEventListener('click', async function () {
       var turningOn = handControlToggle.getAttribute('aria-pressed') !== 'true';
+      var activationEpoch = ++handControlActivationEpoch;
       if (handControlToggle.dataset.capabilityFallback === 'device_tilt') {
         if (!tiltController && window.CreatrSonicController && window.__pieceHandHooks) {
           tiltController = window.CreatrSonicController.createDeviceTiltController(function(nx, ny) {
@@ -558,22 +677,81 @@ JS;
       if (!turningOn) {
         handControlActive = false;
         if (engine) { engine.onHandFrame(null); engine.disableHandControl(); }
+        var disabledHooks = window.__pieceHandHooks;
+        if (disabledHooks && typeof disabledHooks.setHandSteering === 'function') {
+          try { await disabledHooks.setHandSteering(false); } catch (_e) {}
+        }
+        if (gestureRouter) gestureRouter.reset('disabled');
+        gestureRouter = null;
+        setGestureModeIndicator('idle');
         handControlToggle.setAttribute('aria-pressed', 'false');
         return;
       }
+      handControlToggle.setAttribute('aria-pressed', 'true');
       var eng = createEngineSyncForCamera();
       var controlOk = eng ? await eng.enableHandControl() : false;
+      if (activationEpoch !== handControlActivationEpoch || handControlToggle.getAttribute('aria-pressed') !== 'true') {
+        if (eng) { eng.onHandFrame(null); eng.disableHandControl(); }
+        return;
+      }
+      if (controlOk) {
+        var activeHooks = window.__pieceHandHooks;
+        if (activeHooks && typeof activeHooks.setHandSteering === 'function') {
+          try { await activeHooks.setHandSteering(true); } catch (_e) { controlOk = false; }
+        }
+      }
+      if (activationEpoch !== handControlActivationEpoch || !controlOk) {
+        handControlActive = false;
+        if (eng) { eng.onHandFrame(null); eng.disableHandControl(); }
+        handControlToggle.setAttribute('aria-pressed', 'false');
+        return;
+      }
       if (controlOk) {
         handControlActive = true;
+        var handPinched = false;
         eng.onHandFrame(function (hand) {
-          if (!handControlActive || !hand) return;
+          if (!handControlActive) return;
           var hooks = window.__pieceHandHooks;
+          if (!hooks) return;
+          if (typeof hooks.handCommand === 'function' && window.CreatrSonicController && window.CreatrSonicController.createClutchedGestureRouter) {
+            if (!gestureRouter) {
+              gestureRouter = window.CreatrSonicController.createClutchedGestureRouter({
+                onCommand: function(command) { hooks.handCommand(command); },
+                onMode: setGestureModeIndicator
+              });
+            }
+            gestureRouter.update(hand);
+            return;
+          }
+          if (!hand) {
+            if (handPinched) { handPinched = false; try { hooks.handPress && hooks.handPress(false); } catch (_e) {} }
+            return;
+          }
           var wrist = hand[0];
-          if (!hooks || !hooks.handPoint || !wrist) return;
+          if (!hooks.handPoint || !wrist) return;
           try { hooks.handPoint(1 - wrist.x, wrist.y); } catch (_e) {}
+          // Pinch (thumb tip <-> index tip) = pointer button, mirroring
+          // handControlBinding in piece-runtime.js — keep in sync.
+          if (typeof hooks.handPress === 'function' && hand[4] && hand[8]) {
+            var gap = Math.hypot(hand[4].x - hand[8].x, hand[4].y - hand[8].y, (hand[4].z || 0) - (hand[8].z || 0));
+            var next = handPinched ? gap < 0.09 : gap < 0.055;
+            if (next !== handPinched) {
+              handPinched = next;
+              try { hooks.handPress(next); } catch (_e) {}
+            }
+          }
         });
         handControlToggle.setAttribute('aria-pressed', 'true');
       }
+    });
+    resetViewButton.addEventListener('click', async function () {
+      var hooks = window.__pieceHandHooks;
+      if (!hooks || typeof hooks.resetView !== 'function') return;
+      resetViewButton.disabled = true;
+      resetViewButton.setAttribute('aria-busy', 'true');
+      try { await hooks.resetView(); } catch (_e) {}
+      resetViewButton.disabled = false;
+      resetViewButton.removeAttribute('aria-busy');
     });
 
 JS;
@@ -671,8 +849,9 @@ JS;
       if (!target) return;
       target.dataset.capabilityState = detail.state || '';
       target.setAttribute('aria-busy', detail.state === 'loading' ? 'true' : 'false');
-      if (detail.state === 'loading') target.disabled = true;
+      if (detail.state === 'loading' && detail.capability !== 'hand_control') target.disabled = true;
       if (detail.state === 'active') { target.disabled = false; target.setAttribute('aria-pressed', 'true'); }
+      if (detail.state === 'inactive') { target.disabled = false; target.setAttribute('aria-pressed', 'false'); }
       if (detail.state === 'unavailable') {
         target.setAttribute('aria-pressed', 'false');
         target.title = detail.reason || 'Unavailable on this device';
@@ -1034,6 +1213,15 @@ window.__creatrMediaPipeModelSrc = {$mediaPipeModelSrcJson};
       row.appendChild(btn);
     }
     row.appendChild(panelTrigger);
+    var handGuideTrigger = document.querySelector('[data-hand-guide-trigger]');
+    if (handGuideTrigger) {
+      Object.assign(handGuideTrigger.style, {
+        width: '2.75rem', height: '2.75rem', display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+        borderRadius: '0.75rem', border: '1px solid rgba(255,255,255,0.15)', background: 'rgba(0,0,0,0.55)',
+        color: '#fff', cursor: 'pointer', padding: '0', boxShadow: '0 4px 12px rgba(0,0,0,0.5)', backdropFilter: 'blur(4px)'
+      });
+      row.appendChild(handGuideTrigger);
+    }
     wrap.appendChild(row);
     wrap.appendChild(panel);
     document.body.appendChild(wrap);
@@ -1460,7 +1648,9 @@ function piece_export_immersive_document(array $piece, array $version, array $op
     $exportCapabilities = piece_sound_capability_contract(
         $generationMode,
         is_array($sonicDecoded) ? $sonicDecoded : [],
-        piece_camera_overlay_enabled($version)
+        piece_camera_overlay_enabled($version, 'immersive'),
+        piece_camera_placement($version, 'immersive'),
+        array_key_exists('hand_motion', $options) ? (bool) $options['hand_motion'] : true
     );
     $exportCameraView = !empty($exportCapabilities['camera_view']);
     $exportHandControl = !empty($exportCapabilities['hand_control']);
@@ -1489,6 +1679,7 @@ function piece_export_immersive_document(array $piece, array $version, array $op
         'sound_action' => $hasSonic ? ['enabled' => true] : null,
         'camera_view' => $exportCameraView,
         'hand_control' => $exportHandControl,
+        'hand_guide_variant' => '',
         'show_fullscreen' => true,
         'fullscreen_onclick' => null,
     ]);
@@ -1517,8 +1708,9 @@ html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#
 {$toolbarMarkup}
 <script>
 function showPieceError(error){const el=document.getElementById('piece-error');if(!el)return;el.textContent=(error&&(error.stack||error.message))?(error.stack||error.message):String(error);el.style.display='block';}
-window.addEventListener('error',event=>showPieceError(event.error||event.message));
-window.addEventListener('unhandledrejection',event=>{const r=event.reason;const m=typeof r?.message==='string'?r.message:String(r||'');if(r?.name==='AbortError'&&/worklet/i.test(m)){event.preventDefault();return;}showPieceError(r||'Unhandled promise rejection');});
+function isNonImpactingRuntimeIssue(error,source){const m=typeof error?.message==='string'?error.message:String(error||'');const s=String(source||error?.fileName||'');return /^(?:chrome|moz|safari)-extension:/i.test(s)||/ResizeObserver loop (?:limit exceeded|completed with undelivered notifications)/i.test(m)||/Could not establish connection\. Receiving end does not exist/i.test(m)||/A listener indicated an asynchronous response.*message channel closed/i.test(m);}
+window.addEventListener('error',event=>{const e=event.error||event.message;if(!isNonImpactingRuntimeIssue(e,event.filename))showPieceError(e);});
+window.addEventListener('unhandledrejection',event=>{const r=event.reason;const m=typeof r?.message==='string'?r.message:String(r||'');if((r?.name==='AbortError'&&/worklet/i.test(m))||isNonImpactingRuntimeIssue(r)){event.preventDefault();return;}showPieceError(r||'Unhandled promise rejection');});
 </script>
 <script>
 {$downloadBridgeScript}
@@ -2212,9 +2404,10 @@ function piece_export_download_bridge_script(): string
  * c2_interactive piece with sound enabled gets pointer-modulated pitch
  * offline, not just the idle random-note pattern. Plain c2 skips the pointer
  * mover (no motion signal) but still gets the DOM camera overlay hooks. */
-function piece_export_c2_bootstrap_script(bool $interactive): string
+function piece_export_c2_bootstrap_script(bool $interactive, string $cameraPlacement = ''): string
 {
-    $domCameraOverlayScript = piece_export_dom_camera_overlay_script('canvas');
+    $domCameraOverlayScript = piece_export_dom_camera_overlay_script('canvas', $cameraPlacement === 'background' ? 'background' : 'overlay');
+    $presentationTiltScript = $interactive ? '' : piece_export_presentation_tilt_script('canvas');
     $pointerWiring = $interactive ? <<<'JS'
   if (window.__creatrSonicSetMover) {
     const c2Mover = { position: { x: 0, y: 0, z: 0 } };
@@ -2307,6 +2500,10 @@ try {
   window.addEventListener('resize', sizeCanvas);
   let updateC2Mover = null;
   {$pointerWiring}
+  let lastHandClient = null;
+  const dispatchHandPointer = (type, clientX, clientY) => {
+    try { canvas.dispatchEvent(new PointerEvent(type, { clientX, clientY, bubbles: true, isPrimary: true, pointerType: 'touch', button: 0, buttons: type === 'pointerup' ? 0 : 1 })); } catch (_) {}
+  };
   window.__pieceHandHooks = {
     engine: 'c2_interactive',
     handPoint(nx, ny) {
@@ -2314,13 +2511,21 @@ try {
       if (!rect.width || !rect.height) return;
       const clientX = rect.left + nx * rect.width;
       const clientY = rect.top + ny * rect.height;
+      lastHandClient = { x: clientX, y: clientY };
       if (typeof updateC2Mover === 'function') {
         updateC2Mover(clientX, clientY);
       }
-      try { canvas.dispatchEvent(new PointerEvent('pointermove', { clientX, clientY, bubbles: true })); } catch (_) {}
+      dispatchHandPointer('pointermove', clientX, clientY);
+    },
+    // Pinch gesture → pointer button (see handControlBinding twin in
+    // piece-runtime.js): drag-driven c2 sketches need pointerdown/up.
+    handPress(down) {
+      if (!lastHandClient) return;
+      dispatchHandPointer(down ? 'pointerdown' : 'pointerup', lastHandClient.x, lastHandClient.y);
     },
   };
 {$domCameraOverlayScript}
+{$presentationTiltScript}
   if (typeof window.sketch === 'function') window.sketch({ c2: window.c2, canvas, startFrame, loadImage, drawImage, drawImageCover });
 } catch (error) { showPieceError(error); }
 </script>
@@ -2336,13 +2541,31 @@ HTML;
  * the piece's surface element. Export twin of createDomCameraOverlayHooks()
  * in piece-runtime.js — keep the behavior in sync.
  */
-function piece_export_dom_camera_overlay_script(string $getSurfaceExpr): string
+function piece_export_dom_camera_overlay_script(string $getSurfaceExpr, string $placement = 'overlay'): string
 {
+    $isBackgroundJson = json_encode($placement === 'background');
     return <<<JS
   (function () {
     var getSurface = function () { return {$getSurfaceExpr}; };
+    // Background placement: the feed sits BEHIND the piece surface (only
+    // visible through transparent regions) and starts opaque; overlay
+    // placement blends a subtle feed above the piece. Keep in sync with
+    // createDomCameraOverlayHooks() in piece-runtime.js.
+    var cameraIsBackground = {$isBackgroundJson};
     var cameraOverlay = null;
-    var cameraOpacity = 0.35;
+    var cameraSourceVideo = null;
+    var cameraOpacity = cameraIsBackground ? 1 : 0.35;
+    var cameraResizeObserver = null;
+    var cameraFullscreenSync = null;
+    var cameraSyncFrame = 0;
+    var cameraLastBox = '';
+    function queueCameraOverlayBoxSync() {
+      if (cameraSyncFrame) return;
+      cameraSyncFrame = requestAnimationFrame(function () {
+        cameraSyncFrame = 0;
+        syncCameraOverlayBox();
+      });
+    }
     function syncCameraOverlayBox() {
       var surface = getSurface();
       if (!cameraOverlay || !surface || !surface.parentElement) return;
@@ -2350,10 +2573,19 @@ function piece_export_dom_camera_overlay_script(string $getSurfaceExpr): string
       // roots, which have no HTMLElement offset geometry.
       var rect = surface.getBoundingClientRect();
       var parentRect = surface.parentElement.getBoundingClientRect();
-      cameraOverlay.style.left = (rect.left - parentRect.left) + 'px';
-      cameraOverlay.style.top = (rect.top - parentRect.top) + 'px';
-      cameraOverlay.style.width = rect.width + 'px';
-      cameraOverlay.style.height = rect.height + 'px';
+      var layoutWidth = surface.offsetWidth || surface.clientWidth || rect.width;
+      var layoutHeight = surface.offsetHeight || surface.clientHeight || rect.height;
+      var layoutLeft = Number.isFinite(surface.offsetLeft) ? surface.offsetLeft : ((surface.x && surface.x.baseVal && surface.x.baseVal.value) || rect.left - parentRect.left);
+      var layoutTop = Number.isFinite(surface.offsetTop) ? surface.offsetTop : ((surface.y && surface.y.baseVal && surface.y.baseVal.value) || rect.top - parentRect.top);
+      var box = [layoutLeft, layoutTop, layoutWidth, layoutHeight]
+        .map(function (value) { return Math.round(value * 100) / 100; }).join('|');
+      if (box === cameraLastBox) return;
+      cameraLastBox = box;
+      var values = box.split('|');
+      cameraOverlay.style.left = values[0] + 'px';
+      cameraOverlay.style.top = values[1] + 'px';
+      cameraOverlay.style.width = values[2] + 'px';
+      cameraOverlay.style.height = values[3] + 'px';
     }
     window.__pieceHandHooks = Object.assign(window.__pieceHandHooks || {}, {
       setBackgroundVideo: function (video) {
@@ -2365,20 +2597,47 @@ function piece_export_dom_camera_overlay_script(string $getSurfaceExpr): string
         cameraOverlay = document.createElement('video');
         cameraOverlay.autoplay = true; cameraOverlay.muted = true; cameraOverlay.playsInline = true;
         cameraOverlay.srcObject = video.srcObject;
-        cameraOverlay.style.cssText = 'position:absolute;z-index:2;transform:scaleX(-1);pointer-events:none;';
+        cameraSourceVideo = video;
+        cameraOverlay.style.cssText = 'position:absolute;transform:scaleX(-1);pointer-events:none;z-index:' + (cameraIsBackground ? '0' : '2') + ';';
         cameraOverlay.style.objectFit = 'cover';
         cameraOverlay.style.opacity = String(cameraOpacity);
-        parent.appendChild(cameraOverlay);
+        if (cameraIsBackground) {
+          if (getComputedStyle(surface).position === 'static') surface.style.position = 'relative';
+          if (!surface.style.zIndex || Number(surface.style.zIndex) < 1) surface.style.zIndex = '1';
+          parent.insertBefore(cameraOverlay, parent.firstChild);
+        } else {
+          parent.appendChild(cameraOverlay);
+        }
         syncCameraOverlayBox();
+        if (typeof ResizeObserver === 'function') {
+          cameraResizeObserver = new ResizeObserver(queueCameraOverlayBoxSync);
+          cameraResizeObserver.observe(surface);
+          cameraResizeObserver.observe(parent);
+        }
+        cameraFullscreenSync = queueCameraOverlayBoxSync;
+        document.addEventListener('fullscreenchange', cameraFullscreenSync);
+        document.addEventListener('webkitfullscreenchange', cameraFullscreenSync);
         cameraOverlay.play().catch(function () {});
         return true;
       },
-      clearBackgroundVideo: function () { if (cameraOverlay) { cameraOverlay.remove(); cameraOverlay = null; } },
+      clearBackgroundVideo: function () {
+        if (cameraResizeObserver) { cameraResizeObserver.disconnect(); cameraResizeObserver = null; }
+        if (cameraSyncFrame) { cancelAnimationFrame(cameraSyncFrame); cameraSyncFrame = 0; }
+        cameraLastBox = '';
+        if (cameraFullscreenSync) {
+          document.removeEventListener('fullscreenchange', cameraFullscreenSync);
+          document.removeEventListener('webkitfullscreenchange', cameraFullscreenSync);
+          cameraFullscreenSync = null;
+        }
+        if (cameraOverlay) { cameraOverlay.remove(); cameraOverlay = null; }
+        cameraSourceVideo = null;
+      },
       setBackgroundOpacity: function (value) {
         cameraOpacity = Math.max(0, Math.min(1, Number(value)));
         if (cameraOverlay) cameraOverlay.style.opacity = String(cameraOpacity);
       },
       getBackgroundOpacity: function () { return cameraOpacity; },
+      getBackgroundVideo: function () { return cameraSourceVideo || cameraOverlay; },
     });
     window.__creatrComposeCapture = async function (baseCanvas) {
       if (!cameraOverlay) return baseCanvas;
@@ -2386,13 +2645,181 @@ function piece_export_dom_camera_overlay_script(string $getSurfaceExpr): string
       var composed = document.createElement('canvas');
       composed.width = baseCanvas.width; composed.height = baseCanvas.height;
       var ctx = composed.getContext('2d');
-      ctx.drawImage(baseCanvas, 0, 0);
-      ctx.save(); ctx.globalAlpha = cameraOpacity; ctx.translate(composed.width, 0); ctx.scale(-1, 1);
-      ctx.drawImage(cameraOverlay, 0, 0, composed.width, composed.height); ctx.restore();
+      var drawCamera = function () {
+        ctx.save(); ctx.globalAlpha = cameraOpacity; ctx.translate(composed.width, 0); ctx.scale(-1, 1);
+        ctx.drawImage(cameraOverlay, 0, 0, composed.width, composed.height); ctx.restore();
+      };
+      // Match on-screen stacking: background bakes under the piece.
+      if (cameraIsBackground) { drawCamera(); ctx.drawImage(baseCanvas, 0, 0); }
+      else { ctx.drawImage(baseCanvas, 0, 0); drawCamera(); }
       return composed;
     };
     window.addEventListener('resize', syncCameraOverlayBox);
   })();
+JS;
+}
+
+function piece_export_presentation_tilt_script(string $getSurfaceExpr): string
+{
+    return <<<JS
+(function () {
+  var targetX = 0, targetY = 0, currentX = 0, currentY = 0;
+  var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var previousComposeCapture = window.__creatrComposeCapture;
+  window.__creatrComposeCapture = async function (baseCanvas) {
+    var source = typeof previousComposeCapture === 'function' ? await previousComposeCapture(baseCanvas) : baseCanvas;
+    if (reduced || (Math.abs(currentX) < 0.01 && Math.abs(currentY) < 0.01)) return source;
+    var width = source.width, height = source.height;
+    var output = document.createElement('canvas'); output.width = width; output.height = height;
+    var ctx = output.getContext('2d');
+    if (!ctx || !width || !height) return source;
+    var captureSurface = {$getSurfaceExpr};
+    var captureBackground = captureSurface && captureSurface.parentElement ? getComputedStyle(captureSurface.parentElement).backgroundColor : 'rgb(0, 0, 0)';
+    ctx.fillStyle = captureBackground === 'rgba(0, 0, 0, 0)' ? 'rgb(0, 0, 0)' : captureBackground;
+    ctx.fillRect(0, 0, width, height);
+    var pitch = currentX * Math.PI / 180, yaw = currentY * Math.PI / 180, perspective = 900;
+    function project(x, y) {
+      var cy = Math.cos(yaw), sy = Math.sin(yaw), cx = Math.cos(pitch), sx = Math.sin(pitch);
+      var x1 = x * cy, z1 = -x * sy, y2 = y * cx - z1 * sx, z2 = y * sx + z1 * cx;
+      var scale = perspective / Math.max(1, perspective - z2);
+      return { x: width / 2 + x1 * scale, y: height / 2 + y2 * scale };
+    }
+    var tl = project(-width / 2, -height / 2), tr = project(width / 2, -height / 2);
+    var bl = project(-width / 2, height / 2), br = project(width / 2, height / 2);
+    function solveHomography(pairs) {
+      var matrix = [];
+      pairs.forEach(function (pair) {
+        var x = pair.x, y = pair.y, u = pair.u, v = pair.v;
+        matrix.push([x,y,1,0,0,0,-u*x,-u*y,u]);
+        matrix.push([0,0,0,x,y,1,-v*x,-v*y,v]);
+      });
+      for (var col=0; col<8; col++) {
+        var pivot=col;
+        for (var row=col+1; row<8; row++) if (Math.abs(matrix[row][col])>Math.abs(matrix[pivot][col])) pivot=row;
+        if (Math.abs(matrix[pivot][col])<1e-9) return null;
+        var swap=matrix[col]; matrix[col]=matrix[pivot]; matrix[pivot]=swap;
+        var divisor=matrix[col][col];
+        for (var c=col; c<9; c++) matrix[col][c]/=divisor;
+        for (var r=0; r<8; r++) {
+          if (r===col) continue;
+          var factor=matrix[r][col];
+          for (var cc=col; cc<9; cc++) matrix[r][cc]-=factor*matrix[col][cc];
+        }
+      }
+      return matrix.map(function (row) { return row[8]; });
+    }
+    var homography=solveHomography([
+      {x:tl.x,y:tl.y,u:0,v:0},{x:tr.x,y:tr.y,u:width-1,v:0},
+      {x:br.x,y:br.y,u:width-1,v:height-1},{x:bl.x,y:bl.y,u:0,v:height-1}
+    ]);
+    if (!homography) return source;
+    var sourceContext=source.getContext('2d');
+    if (!sourceContext) return source;
+    var sourcePixels=sourceContext.getImageData(0,0,width,height);
+    var outputPixels=ctx.getImageData(0,0,width,height);
+    var src=sourcePixels.data,dst=outputPixels.data,quad=[tl,tr,br,bl];
+    function insideQuad(x,y) {
+      var sign=0;
+      for (var i=0;i<4;i++) {
+        var a=quad[i],b=quad[(i+1)%4];
+        var cross=(b.x-a.x)*(y-a.y)-(b.y-a.y)*(x-a.x);
+        if (Math.abs(cross)<1e-6) continue;
+        var nextSign=cross>0?1:-1;
+        if (sign&&nextSign!==sign) return false;
+        sign=nextSign;
+      }
+      return true;
+    }
+    var minX=Math.max(0,Math.floor(Math.min.apply(null,quad.map(function(p){return p.x;}))));
+    var maxX=Math.min(width-1,Math.ceil(Math.max.apply(null,quad.map(function(p){return p.x;}))));
+    var minY=Math.max(0,Math.floor(Math.min.apply(null,quad.map(function(p){return p.y;}))));
+    var maxY=Math.min(height-1,Math.ceil(Math.max.apply(null,quad.map(function(p){return p.y;}))));
+    for (var yy=minY;yy<=maxY;yy++) {
+      for (var xx=minX;xx<=maxX;xx++) {
+        if (!insideQuad(xx+0.5,yy+0.5)) continue;
+        var denominator=homography[6]*xx+homography[7]*yy+1;
+        if (Math.abs(denominator)<1e-9) continue;
+        var u=(homography[0]*xx+homography[1]*yy+homography[2])/denominator;
+        var v=(homography[3]*xx+homography[4]*yy+homography[5])/denominator;
+        if (u<0||v<0||u>width-1||v>height-1) continue;
+        var x0=Math.floor(u),y0=Math.floor(v),x1=Math.min(width-1,x0+1),y1=Math.min(height-1,y0+1);
+        var fx=u-x0,fy=v-y0,dstIndex=(yy*width+xx)*4;
+        for (var channel=0;channel<4;channel++) {
+          var p00=src[(y0*width+x0)*4+channel],p10=src[(y0*width+x1)*4+channel];
+          var p01=src[(y1*width+x0)*4+channel],p11=src[(y1*width+x1)*4+channel];
+          dst[dstIndex+channel]=(p00*(1-fx)+p10*fx)*(1-fy)+(p01*(1-fx)+p11*fx)*fy;
+        }
+      }
+      if ((yy-minY)%96===95) await new Promise(function(resolve){setTimeout(resolve,0);});
+    }
+    ctx.putImageData(outputPixels,0,0);
+    return output;
+  };
+  function tick() {
+    var surface = {$getSurfaceExpr};
+    currentX += (targetX - currentX) * 0.14;
+    currentY += (targetY - currentY) * 0.14;
+    if (surface) {
+      var tiltTransform = reduced ? '' : 'perspective(900px) rotateX(' + currentX.toFixed(2) + 'deg) rotateY(' + currentY.toFixed(2) + 'deg)';
+      surface.style.transformOrigin = '50% 50%';
+      surface.style.transform = tiltTransform;
+      var cameraOverlay = window.__pieceHandHooks && window.__pieceHandHooks._cameraOverlay;
+      if (cameraOverlay) {
+        cameraOverlay.style.transformOrigin = '50% 50%';
+        cameraOverlay.style.transform = (tiltTransform ? tiltTransform + ' ' : '') + 'scaleX(-1)';
+      }
+    }
+    requestAnimationFrame(tick);
+  }
+  window.__pieceHandHooks = Object.assign(window.__pieceHandHooks || {}, {
+    handPoint: function (nx, ny) {
+      targetY = Math.max(-8, Math.min(8, (nx - 0.5) * 16));
+      targetX = Math.max(-6, Math.min(6, -(ny - 0.5) * 12));
+    },
+    handLost: function () { targetX = 0; targetY = 0; }
+  });
+  requestAnimationFrame(tick);
+})();
+JS;
+}
+
+/**
+ * DOM camera overlay as object-literal members — the splice-compatible
+ * variant of piece_export_dom_camera_overlay_script(), used when a 3D piece
+ * stores overlay placement so its bootstrap gets a DOM <video> over the
+ * WebGL canvas instead of the in-scene quad. Overlay semantics only.
+ */
+function piece_export_dom_camera_overlay_members(string $getSurfaceExpr): string
+{
+    return <<<JS
+      _cameraOverlay: null,
+      _cameraOpacity: 0.35,
+      _surfaceEl() { return {$getSurfaceExpr}; },
+      setBackgroundVideo(video) {
+        const surface = this._surfaceEl();
+        if (!video || !surface || !surface.parentElement) return false;
+        this.clearBackgroundVideo();
+        const parent = surface.parentElement;
+        if (getComputedStyle(parent).position === 'static') parent.style.position = 'relative';
+        const overlay = document.createElement('video');
+        overlay.autoplay = true; overlay.muted = true; overlay.playsInline = true;
+        overlay.srcObject = video.srcObject;
+        overlay.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;z-index:2;transform:scaleX(-1);pointer-events:none;';
+        overlay.style.objectFit = 'cover';
+        overlay.style.opacity = String(this._cameraOpacity);
+        parent.appendChild(overlay);
+        this._cameraOverlay = overlay;
+        overlay.play().catch(() => {});
+        return true;
+      },
+      clearBackgroundVideo() {
+        if (this._cameraOverlay) { this._cameraOverlay.remove(); this._cameraOverlay = null; }
+      },
+      setBackgroundOpacity(value) {
+        this._cameraOpacity = Math.max(0, Math.min(1, Number(value)));
+        if (this._cameraOverlay) this._cameraOverlay.style.opacity = String(this._cameraOpacity);
+      },
+      getBackgroundOpacity() { return this._cameraOpacity; },
 JS;
 }
 
@@ -2411,10 +2838,15 @@ function piece_export_camera_blend_quad_members(string $threeExpr, string $scene
       _videoTexture: null,
       _cameraOpacity: 1,
       setBackgroundVideo(video) {
+        // Locals deliberately named so they can never shadow the caller's
+        // scope: the aframe expressions reference an outer `scene` variable,
+        // and `const scene = scene && …` was a self-referential TDZ
+        // ReferenceError that silently killed the camera toggle in regular
+        // downloads (piece 109 regression).
         const T = {$threeExpr};
-        const scene = {$sceneExpr};
-        const camera = {$cameraExpr};
-        if (!video || !scene || !camera || !T || !T.VideoTexture) return false;
+        const quadScene = {$sceneExpr};
+        const quadCamera = {$cameraExpr};
+        if (!video || !quadScene || !quadCamera || !T || !T.VideoTexture) return false;
         this.clearBackgroundVideo();
         const texture = new T.VideoTexture(video);
         if (T.SRGBColorSpace) texture.colorSpace = T.SRGBColorSpace;
@@ -2436,8 +2868,8 @@ function piece_export_camera_blend_quad_members(string $threeExpr, string $scene
           const height = 2 * dist * Math.tan((cam.fov * Math.PI) / 360);
           quad.scale.set(height * (cam.aspect || 1), height, 1);
         };
-        if (!camera.parent) scene.add(camera);
-        camera.add(quad);
+        if (!quadCamera.parent) quadScene.add(quadCamera);
+        quadCamera.add(quad);
         this._cameraQuad = quad;
         this._videoTexture = texture;{$afterChangeJs}
         return true;
@@ -2463,19 +2895,27 @@ function piece_export_camera_blend_quad_members(string $threeExpr, string $scene
 JS;
 }
 
-function piece_export_bootstrap(string $engine, string $generationMode = '', string $runtimeMode = 'cdn'): string
+function piece_export_bootstrap(string $engine, string $generationMode = '', string $runtimeMode = 'cdn', string $cameraPlacement = ''): string
 {
-    $threeCameraQuadMembers = piece_export_camera_blend_quad_members(
-        'window.THREE',
-        'state.scene',
-        'state.camera',
-        "\n        userHasInteracted = true;"
-    );
-    $aframeCameraQuadMembers = piece_export_camera_blend_quad_members(
-        'getAFrameThree()',
-        'scene && scene.object3D',
-        'scene && scene.camera'
-    );
+    // Author-chosen overlay placement on the 3D engines swaps the in-scene
+    // background quad for a DOM <video> over the WebGL canvas — mirrored
+    // from piece-runtime.js's placement branch. Empty/'background' keeps the
+    // quad (its renderOrder -1 draw already behaves as a background).
+    $threeCameraQuadMembers = $cameraPlacement === 'overlay'
+        ? piece_export_dom_camera_overlay_members('canvas')
+        : piece_export_camera_blend_quad_members(
+            'window.THREE',
+            'state.scene',
+            'state.camera',
+            "\n        userHasInteracted = true;"
+        );
+    $aframeCameraQuadMembers = $cameraPlacement === 'overlay'
+        ? piece_export_dom_camera_overlay_members("document.querySelector('a-scene canvas') || document.querySelector('canvas')")
+        : piece_export_camera_blend_quad_members(
+            'getAFrameThree()',
+            'scene && scene.object3D',
+            'scene && scene.camera'
+        );
     if ($engine === 'three' && $runtimeMode === 'bundle') {
         return <<<HTML
 <script>
@@ -2550,6 +2990,8 @@ try {
   if (typeof window.sketch === 'function') window.sketch({ THREE: instrumentedThree, canvas, startFrame, width: canvas.width, height: canvas.height, size: { width: canvas.width, height: canvas.height }, OrbitControls });
   if (state.camera && state.renderer && state.scene) {
     const controls = new OrbitControls(state.camera, canvas);
+    const initialCameraPosition = state.camera.position.clone();
+    const initialControlsTarget = controls.target.clone();
     controls.enableDamping = true;
     controls.enablePan = true;
     const threeRaycaster = new THREE.Raycaster();
@@ -2796,6 +3238,26 @@ try {
     // export twin of piece-runtime.js's three bootstrap block.
     window.__pieceHandHooks = {
       engine: 'three',
+      resetView() {
+        if (!controls || !state.camera) return false;
+        const fromCamera = state.camera.position.clone();
+        const fromTarget = controls.target.clone();
+        const homeCamera = initialCameraPosition.clone();
+        const homeTarget = initialControlsTarget.clone();
+        const started = performance.now();
+        return new Promise((resolve) => {
+          function step(now) {
+            const t = Math.min(1, (now - started) / 360);
+            const eased = 1 - Math.pow(1 - t, 3);
+            state.camera.position.lerpVectors(fromCamera, homeCamera, eased);
+            controls.target.lerpVectors(fromTarget, homeTarget, eased);
+            controls.update();
+            userHasInteracted = true;
+            if (t < 1) requestAnimationFrame(step); else resolve(true);
+          }
+          requestAnimationFrame(step);
+        });
+      },
       handPoint(nx, ny) {
         if (!controls || !state.camera) return;
         const T = window.THREE;
@@ -2810,6 +3272,32 @@ try {
         sph.phi = Math.max(0.15, Math.min(Math.PI - 0.15, sph.phi));
         offset.setFromSpherical(sph);
         state.camera.position.copy(target).add(offset);
+        controls.update();
+        userHasInteracted = true;
+      },
+      handCommand(command) {
+        if (!controls || !state.camera || !command) return;
+        if (command.type === 'look') { this.handPoint(command.x, command.y); return; }
+        const T = window.THREE;
+        const target = controls.target;
+        if (command.type === 'orbit' && T && T.Spherical) {
+          const offset = state.camera.position.clone().sub(target);
+          const sph = new T.Spherical().setFromVector3(offset);
+          sph.theta += command.yaw || 0;
+          sph.phi = Math.max(0.15, Math.min(Math.PI - 0.15, sph.phi + (command.pitch || 0)));
+          state.camera.position.copy(target).add(offset.setFromSpherical(sph));
+        } else if (command.type === 'travel' && T && T.Vector3) {
+          const forward = new T.Vector3();
+          state.camera.getWorldDirection(forward); forward.y = 0;
+          if (forward.lengthSq() > 1e-6) forward.normalize();
+          const right = new T.Vector3(-forward.z, 0, forward.x);
+          const delta = forward.multiplyScalar((command.forward || 0) * 0.11).add(right.multiplyScalar((command.right || 0) * 0.09));
+          state.camera.position.add(delta); target.add(delta);
+        } else if (command.type === 'zoom') {
+          const offset = state.camera.position.clone().sub(target);
+          offset.setLength(Math.max(0.35, Math.min(100, offset.length() * (1 - (command.delta || 0)))));
+          state.camera.position.copy(target).add(offset);
+        }
         controls.update();
         userHasInteracted = true;
       },
@@ -2829,8 +3317,11 @@ try {
 HTML;
     }
 
-    $p5OverlayScript = piece_export_dom_camera_overlay_script("parent.querySelector('canvas') || parent");
-    $svgOverlayScript = piece_export_dom_camera_overlay_script("parent.querySelector('svg') || parent");
+    $twoDPlacement = $cameraPlacement === 'background' ? 'background' : 'overlay';
+    $p5OverlayScript = piece_export_dom_camera_overlay_script("parent.querySelector('canvas') || parent", $twoDPlacement);
+    $svgOverlayScript = piece_export_dom_camera_overlay_script("parent.querySelector('svg') || parent", $twoDPlacement);
+    $p5TiltScript = piece_export_presentation_tilt_script("parent.querySelector('canvas') || parent");
+    $svgTiltScript = piece_export_presentation_tilt_script("parent.querySelector('svg') || parent");
 
     // The three-cdn and aframe arms below are nowdocs (their JS is full of
     // interpolation-hostile syntax), so the shared camera-quad members are
@@ -2842,10 +3333,11 @@ try {
   const parent = document.getElementById('canvas-container') || document.getElementById('runtime-root');
   if (typeof window.sketch === 'function' && typeof window.p5 === 'function') new window.p5(window.sketch, parent);
 {$p5OverlayScript}
+{$p5TiltScript}
 } catch (error) { showPieceError(error); }
 </script>
 HTML,
-        'c2' => piece_export_c2_bootstrap_script($generationMode === 'c2_interactive'),
+        'c2' => piece_export_c2_bootstrap_script($generationMode === 'c2_interactive', $cameraPlacement),
         'three' => <<<'HTML'
 <script type="module">
 import * as THREE from 'three';
@@ -2920,6 +3412,8 @@ try {
   if (typeof window.sketch === 'function') window.sketch({ THREE: instrumentedThree, canvas, startFrame, width: canvas.width, height: canvas.height, size: { width: canvas.width, height: canvas.height }, OrbitControls });
   if (state.camera && state.renderer && state.scene) {
     const controls = new OrbitControls(state.camera, canvas);
+    const initialCameraPosition = state.camera.position.clone();
+    const initialControlsTarget = controls.target.clone();
     controls.enableDamping = true;
     controls.enablePan = true;
     const threeRaycaster = new THREE.Raycaster();
@@ -3166,6 +3660,26 @@ try {
     // export twin of piece-runtime.js's three bootstrap block.
     window.__pieceHandHooks = {
       engine: 'three',
+      resetView() {
+        if (!controls || !state.camera) return false;
+        const fromCamera = state.camera.position.clone();
+        const fromTarget = controls.target.clone();
+        const homeCamera = initialCameraPosition.clone();
+        const homeTarget = initialControlsTarget.clone();
+        const started = performance.now();
+        return new Promise((resolve) => {
+          function step(now) {
+            const t = Math.min(1, (now - started) / 360);
+            const eased = 1 - Math.pow(1 - t, 3);
+            state.camera.position.lerpVectors(fromCamera, homeCamera, eased);
+            controls.target.lerpVectors(fromTarget, homeTarget, eased);
+            controls.update();
+            userHasInteracted = true;
+            if (t < 1) requestAnimationFrame(step); else resolve(true);
+          }
+          requestAnimationFrame(step);
+        });
+      },
       handPoint(nx, ny) {
         if (!controls || !state.camera) return;
         const T = window.THREE;
@@ -3180,6 +3694,32 @@ try {
         sph.phi = Math.max(0.15, Math.min(Math.PI - 0.15, sph.phi));
         offset.setFromSpherical(sph);
         state.camera.position.copy(target).add(offset);
+        controls.update();
+        userHasInteracted = true;
+      },
+      handCommand(command) {
+        if (!controls || !state.camera || !command) return;
+        if (command.type === 'look') { this.handPoint(command.x, command.y); return; }
+        const T = window.THREE;
+        const target = controls.target;
+        if (command.type === 'orbit' && T && T.Spherical) {
+          const offset = state.camera.position.clone().sub(target);
+          const sph = new T.Spherical().setFromVector3(offset);
+          sph.theta += command.yaw || 0;
+          sph.phi = Math.max(0.15, Math.min(Math.PI - 0.15, sph.phi + (command.pitch || 0)));
+          state.camera.position.copy(target).add(offset.setFromSpherical(sph));
+        } else if (command.type === 'travel' && T && T.Vector3) {
+          const forward = new T.Vector3();
+          state.camera.getWorldDirection(forward); forward.y = 0;
+          if (forward.lengthSq() > 1e-6) forward.normalize();
+          const right = new T.Vector3(-forward.z, 0, forward.x);
+          const delta = forward.multiplyScalar((command.forward || 0) * 0.11).add(right.multiplyScalar((command.right || 0) * 0.09));
+          state.camera.position.add(delta); target.add(delta);
+        } else if (command.type === 'zoom') {
+          const offset = state.camera.position.clone().sub(target);
+          offset.setLength(Math.max(0.35, Math.min(100, offset.length() * (1 - (command.delta || 0)))));
+          state.camera.position.copy(target).add(offset);
+        }
         controls.update();
         userHasInteracted = true;
       },
@@ -3221,6 +3761,7 @@ try {
   if (scene) {
     let pointerTarget = null;
     let frameId = 0;
+    let initialAFramePose = null;
     const aframeNav = {
       animFrom: null,
       animTo: null,
@@ -3365,12 +3906,40 @@ try {
       pointerTarget.addEventListener('lostpointercapture', clearAFramePointer);
     }
 
+    function captureInitialAFramePose() {
+      if (initialAFramePose) return;
+      const cameraObject = getAFrameCameraObject();
+      if (!cameraObject) return;
+      initialAFramePose = {
+        position: cameraObject.position.clone(),
+        quaternion: cameraObject.quaternion.clone(),
+      };
+    }
+
     scene.addEventListener('loaded', bindAFramePointerControls, { once: true });
     scene.addEventListener('loaded', () => {
       if (window.__creatrSonicSetMover) window.__creatrSonicSetMover(getAFrameCameraMover);
     }, { once: true });
     window.__pieceHandHooks = {
       engine: 'aframe',
+      resetView() {
+        captureInitialAFramePose();
+        const cameraObject = getAFrameCameraObject();
+        if (!cameraObject || !initialAFramePose) return false;
+        const fromPosition = cameraObject.position.clone();
+        const fromQuaternion = cameraObject.quaternion.clone();
+        const started = performance.now();
+        return new Promise((resolve) => {
+          function step(now) {
+            const t = Math.min(1, (now - started) / 360);
+            const eased = 1 - Math.pow(1 - t, 3);
+            cameraObject.position.lerpVectors(fromPosition, initialAFramePose.position, eased);
+            cameraObject.quaternion.slerpQuaternions(fromQuaternion, initialAFramePose.quaternion, eased);
+            if (t < 1) requestAnimationFrame(step); else resolve(true);
+          }
+          requestAnimationFrame(step);
+        });
+      },
       handPoint(nx, ny) {
         const cameraObject = getAFrameCameraObject();
         if (!cameraObject) return;
@@ -3381,9 +3950,24 @@ try {
         cameraObject.rotation.x += (desiredPitch - cameraObject.rotation.x) * 0.12;
         cameraObject.rotation.x = Math.max(-Math.PI * 0.45, Math.min(Math.PI * 0.45, cameraObject.rotation.x));
       },
+      handCommand(command) {
+        const cameraObject = getAFrameCameraObject();
+        if (!cameraObject || !command) return;
+        if (command.type === 'look') { this.handPoint(command.x, command.y); return; }
+        if (command.type === 'orbit') {
+          cameraObject.rotation.order = 'YXZ';
+          cameraObject.rotation.y += command.yaw || 0;
+          cameraObject.rotation.x = Math.max(-Math.PI * 0.45, Math.min(Math.PI * 0.45, cameraObject.rotation.x + (command.pitch || 0)));
+        } else if (command.type === 'travel') {
+          cameraObject.translateX((command.right || 0) * 0.08);
+          cameraObject.translateZ(-(command.forward || 0) * 0.11);
+        } else if (command.type === 'zoom') {
+          cameraObject.translateZ((command.delta || 0) * 1.4);
+        }
+      },
 {$aframeCameraQuadMembers}
     };
-    scene.addEventListener('renderstart', bindAFramePointerControls, { once: true });
+    scene.addEventListener('renderstart', () => { bindAFramePointerControls(); captureInitialAFramePose(); }, { once: true });
     frameId = requestAnimationFrame(animateAFramePointerNavigation);
     setTimeout(bindAFramePointerControls, 250);
   }
@@ -3397,6 +3981,7 @@ try {
 
   const parent = document.getElementById('canvas-container') || document.getElementById('runtime-root');
 {$svgOverlayScript}
+{$svgTiltScript}
 } catch (error) { showPieceError(error); }
 </script>
 HTML,
@@ -3468,7 +4053,9 @@ function piece_export_bundle(array $piece, array $version, array $options = []):
     $zip->close();
 
     return [
-        'filename' => piece_export_filename($piece),
+        'filename' => !empty($options['exclude_camera'])
+            ? piece_export_basename($piece) . '-no-camera.zip'
+            : piece_export_filename($piece),
         'path' => $tempPath,
     ];
 }
@@ -3713,8 +4300,9 @@ html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#
 {$toolbarMarkup}
 <script>
 function showCollectionError(error){const el=document.getElementById('collection-error');if(!el)return;el.textContent=(error&&(error.stack||error.message))?(error.stack||error.message):String(error);el.style.display='block';}
-window.addEventListener('error',event=>showCollectionError(event.error||event.message));
-window.addEventListener('unhandledrejection',event=>{const r=event.reason;const m=typeof r?.message==='string'?r.message:String(r||'');if(r?.name==='AbortError'&&/worklet/i.test(m)){event.preventDefault();return;}showCollectionError(r||'Unhandled promise rejection');});
+function isNonImpactingRuntimeIssue(error,source){const m=typeof error?.message==='string'?error.message:String(error||'');const s=String(source||error?.fileName||'');return /^(?:chrome|moz|safari)-extension:/i.test(s)||/ResizeObserver loop (?:limit exceeded|completed with undelivered notifications)/i.test(m)||/Could not establish connection\. Receiving end does not exist/i.test(m)||/A listener indicated an asynchronous response.*message channel closed/i.test(m);}
+window.addEventListener('error',event=>{const e=event.error||event.message;if(!isNonImpactingRuntimeIssue(e,event.filename))showCollectionError(e);});
+window.addEventListener('unhandledrejection',event=>{const r=event.reason;const m=typeof r?.message==='string'?r.message:String(r||'');if((r?.name==='AbortError'&&/worklet/i.test(m))||isNonImpactingRuntimeIssue(r)){event.preventDefault();return;}showCollectionError(r||'Unhandled promise rejection');});
 </script>
 <script>
 {$downloadBridgeScript}
@@ -4040,6 +4628,13 @@ function piece_export_build_manifest(array $piece, array $version, array $option
     // automatically respects the downloader's choice with no further changes,
     // since it's the same version array they'd otherwise have used unmodified.
     $version = piece_export_apply_requested_voices($version, $options['requested_voices'] ?? null);
+    $excludeCamera = !empty($options['exclude_camera']);
+    if ($excludeCamera) {
+        $version['camera_overlay'] = 0;
+        $version['immersive_camera_overlay'] = 0;
+        $version['regular_hand_motion'] = 0;
+        $version = piece_export_force_voice_off($version, 'hand_tracking');
+    }
     // Collections pass this to keep hand-tracking out of every per-piece
     // export inside a collection ZIP regardless of the admin's config or any
     // downloader choice — see collection_export_build_manifest() below. This
@@ -4047,16 +4642,7 @@ function piece_export_build_manifest(array $piece, array $version, array $option
     // hand-tracking-enabled pieces it contains.
     if (!empty($options['exclude_hand_tracking'])) {
         $version = piece_export_force_voice_off($version, 'hand_tracking');
-        // Hand control's primary path is MediaPipe too — excluding one but
-        // not the other would silently reintroduce the ~19.4MB payload per
-        // collection piece. The camera overlay itself (no model needed)
-        // stays available regardless. Sound-less pieces have no sonic block
-        // for force_voice_off to write into, so give them an in-memory
-        // (never persisted) stub carrying just the exclusion.
-        if (trim((string) ($version['sonic_params'] ?? '')) === '') {
-            $version['sonic_params'] = '{"enabled":false,"extras":{"voices":{"hand_control":false}}}';
-        }
-        $version = piece_export_force_voice_off($version, 'hand_control');
+        $version['regular_hand_motion'] = 0;
     }
 
     $htmlCode = (string) ($version['html_code'] ?? '');
@@ -4083,7 +4669,16 @@ function piece_export_build_manifest(array $piece, array $version, array $option
     if (!is_array($decodedSonic)) {
         $decodedSonic = ['enabled' => false];
     }
-    $capabilities = piece_sound_capability_contract($generationMode, $decodedSonic, piece_camera_overlay_enabled($version));
+    $surfaceName = $immersive ? 'immersive' : 'regular';
+    $capabilities = piece_sound_capability_contract(
+        $generationMode,
+        $decodedSonic,
+        piece_camera_overlay_enabled($version, $surfaceName),
+        piece_camera_placement($version, $surfaceName),
+        ($excludeCamera || !empty($options['exclude_hand_tracking']))
+            ? false
+            : ($immersive ? true : piece_regular_hand_motion_enabled($version))
+    );
     $cameraView = !empty($capabilities['camera_view']);
     // MediaPipe is needed by BOTH camera-based capabilities: the theremin
     // (hand_tracking voice) and hand control (camera steering) — which the
@@ -4094,6 +4689,9 @@ function piece_export_build_manifest(array $piece, array $version, array $option
     $runtimeFiles = $immersive
         ? piece_export_immersive_runtime_files((string) ($version['engine'] ?? $piece['engine'] ?? 'p5'), $needsMediaPipe)
         : piece_export_runtime_files((string) ($version['engine'] ?? $piece['engine'] ?? 'p5'));
+    if (!$immersive && !empty($capabilities['hand_control']) && in_array($generationMode, ['p5', 'c2', 'c2_interactive', 'svg'], true)) {
+        $runtimeFiles[] = ['zip_path' => 'runtime/three/three.global.js', 'data' => piece_export_three_global_source()];
+    }
 
     if (!$immersive && (piece_export_version_has_enabled_sonic($version) || $cameraView || !empty($capabilities['hand_control']))) {
         $runtimeFiles[] = [
@@ -4123,6 +4721,7 @@ function piece_export_build_manifest(array $piece, array $version, array $option
                 'media_map' => $mediaMap,
                 'embed_media' => true,
                 'view_state' => $viewState,
+                'hand_motion' => !$excludeCamera,
             ])
             : piece_export_document($piece, $version, [
                 'runtime_mode' => 'bundle',

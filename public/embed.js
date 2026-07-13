@@ -223,6 +223,10 @@
 
   function startEmbedEnhancementObserver() {
     if (window.__creatrEmbedEnhancementObserverStarted) return;
+    if (!document.body) {
+      document.addEventListener("DOMContentLoaded", startEmbedEnhancementObserver, { once: true });
+      return;
+    }
     window.__creatrEmbedEnhancementObserverStarted = true;
 
     const observer = new MutationObserver((mutations) => {
@@ -248,6 +252,7 @@
       this.attachShadow({ mode: "open" });
       this.isRendered = false;
       this.cleanup = null;
+      installFullscreenWrapperProtocol(this);
     }
 
     connectedCallback() {
@@ -363,8 +368,6 @@
       const { title, id } = data;
       const version = this.getAttribute("version");
       const origin = this.getAttribute("origin") || window.location.origin;
-      const returnTo = encodeURIComponent(window.location.pathname + window.location.search);
-      const immersiveHref = `/immersive/pieces/${id}?${version ? `version=${version}&` : ""}returnTo=${returnTo}`;
       const embedSrc = `${origin}/embed/pieces/${id}${version ? `?version=${version}` : ""}`;
 
       this.shadowRoot.innerHTML = `
@@ -387,6 +390,18 @@
               min-height: 180px !important;
             }
           }
+          :host(.creatr-fullscreen) {
+            position: fixed !important;
+            inset: 0 !important;
+            width: 100dvw !important;
+            height: 100dvh !important;
+            max-width: none !important;
+            aspect-ratio: auto !important;
+            min-height: 0 !important;
+            border: none !important;
+            border-radius: 0 !important;
+            z-index: 2147483647 !important;
+          }
           #stage-container {
             width: 100%;
             height: 100%;
@@ -399,52 +414,9 @@
             height: 100%;
             border: 0;
           }
-          .vr-btn {
-            position: absolute;
-            bottom: 16px;
-            left: 16px;
-            z-index: 100;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            background: rgba(0, 0, 0, 0.55);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            border-radius: 20px;
-            color: #fff;
-            padding: 6px 12px;
-            font-size: 11px;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            text-decoration: none;
-            backdrop-filter: blur(4px);
-            transition: background 0.2s, border-color 0.2s;
-          }
-          .vr-btn:hover {
-            background: rgba(0, 0, 0, 0.8);
-            border-color: #f7f2e8;
-          }
-          .vr-btn svg {
-            width: 16px;
-            height: 16px;
-            fill: none;
-            stroke: currentColor;
-            stroke-width: 2;
-            stroke-linecap: round;
-            stroke-linejoin: round;
-            margin-right: 6px;
-          }
         </style>
         <div id="stage-container">
-          <iframe src="${escapeHtml(embedSrc)}" title="${escapeHtml(title || "Art piece")}" loading="lazy" sandbox="allow-scripts allow-same-origin"></iframe>
-          <a href="${immersiveHref}" class="vr-btn" target="_parent">
-            <svg viewBox="0 0 24 24">
-              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-              <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
-              <line x1="12" y1="22.08" x2="12" y2="12" />
-            </svg>
-            <span>VR</span>
-          </a>
+          <iframe src="${escapeHtml(embedSrc)}" title="${escapeHtml(title || "Art piece")}" loading="lazy" allow="camera; microphone; fullscreen" allowfullscreen sandbox="allow-scripts allow-same-origin allow-popups"></iframe>
         </div>
       `;
 
@@ -648,7 +620,6 @@
 
       const title = this.getAttribute("title") || `Exhibit: ${slug}`;
       const safeTitle = escapeHtml(title);
-      const immersiveHref = `/immersive/collections/${slug}?returnTo=${encodeURIComponent(window.location.pathname + window.location.search)}`;
 
       this.shadowRoot.innerHTML = `
         <style>
@@ -705,53 +676,10 @@
             color: #a1a1aa;
             font-size: 14px;
           }
-          .vr-btn {
-            position: absolute;
-            bottom: 16px;
-            left: 16px;
-            z-index: 100;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            background: rgba(0, 0, 0, 0.55);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            border-radius: 20px;
-            color: #fff;
-            padding: 6px 12px;
-            font-size: 11px;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            text-decoration: none;
-            backdrop-filter: blur(4px);
-            transition: background 0.2s, border-color 0.2s;
-          }
-          .vr-btn:hover {
-            background: rgba(0, 0, 0, 0.8);
-            border-color: #f7f2e8;
-          }
-          .vr-btn svg {
-            width: 16px;
-            height: 16px;
-            fill: none;
-            stroke: currentColor;
-            stroke-width: 2;
-            stroke-linecap: round;
-            stroke-linejoin: round;
-            margin-right: 6px;
-          }
         </style>
         <div class="mount">
           <div class="placeholder">Scroll to load Exhibit: ${safeTitle}...</div>
         </div>
-        <a href="${immersiveHref}" class="vr-btn" target="_parent">
-          <svg viewBox="0 0 24 24">
-            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-            <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
-            <line x1="12" y1="22.08" x2="12" y2="12" />
-          </svg>
-          <span>VR</span>
-        </a>
       `;
 
       const mountDiv = this.shadowRoot.querySelector(".mount");

@@ -136,6 +136,24 @@ class PlatformArtPieceVersion
             $tailValues[] = $data['camera_overlay'] === null ? null : (int)(bool) $data['camera_overlay'];
         }
 
+        if (self::hasCameraPlacementColumn() && array_key_exists('camera_placement', $data)) {
+            $assignments[] = 'camera_placement = ?';
+            $tailValues[] = in_array($data['camera_placement'], ['background', 'overlay'], true)
+                ? $data['camera_placement']
+                : null;
+        }
+        foreach (['immersive_camera_overlay', 'regular_hand_motion'] as $booleanColumn) {
+            if (self::hasColumn($booleanColumn) && array_key_exists($booleanColumn, $data)) {
+                $assignments[] = $booleanColumn . ' = ?';
+                $tailValues[] = $data[$booleanColumn] === null ? null : (int)(bool) $data[$booleanColumn];
+            }
+        }
+        if (self::hasColumn('immersive_camera_placement') && array_key_exists('immersive_camera_placement', $data)) {
+            $assignments[] = 'immersive_camera_placement = ?';
+            $tailValues[] = in_array($data['immersive_camera_placement'], ['background', 'overlay'], true)
+                ? $data['immersive_camera_placement'] : null;
+        }
+
         $tailValues[] = $id;
         $values = array_merge($values, $tailValues);
 
@@ -255,6 +273,23 @@ class PlatformArtPieceVersion
             $values[] = array_key_exists('camera_overlay', $data) && $data['camera_overlay'] !== null
                 ? (int)(bool) $data['camera_overlay']
                 : null;
+            // Ordering matches art_piece_version_storage_columns(), which
+            // appends camera_placement right after camera_overlay when the
+            // column exists.
+            if (self::hasCameraPlacementColumn()) {
+                $values[] = in_array($data['camera_placement'] ?? null, ['background', 'overlay'], true)
+                    ? $data['camera_placement']
+                    : null;
+            }
+            foreach (['immersive_camera_overlay', 'immersive_camera_placement', 'regular_hand_motion'] as $surfaceColumn) {
+                if (!self::hasColumn($surfaceColumn)) continue;
+                if ($surfaceColumn === 'immersive_camera_placement') {
+                    $values[] = in_array($data[$surfaceColumn] ?? null, ['background', 'overlay'], true) ? $data[$surfaceColumn] : null;
+                } else {
+                    $values[] = array_key_exists($surfaceColumn, $data) && $data[$surfaceColumn] !== null
+                        ? (int)(bool) $data[$surfaceColumn] : null;
+                }
+            }
         }
 
         return $values;
@@ -273,5 +308,15 @@ class PlatformArtPieceVersion
     private static function hasCameraOverlayColumn(): bool
     {
         return ah_column_exists('art_piece_versions', 'camera_overlay');
+    }
+
+    private static function hasCameraPlacementColumn(): bool
+    {
+        return ah_column_exists('art_piece_versions', 'camera_placement');
+    }
+
+    private static function hasColumn(string $column): bool
+    {
+        return ah_column_exists('art_piece_versions', $column);
     }
 }

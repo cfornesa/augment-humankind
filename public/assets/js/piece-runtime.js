@@ -22,6 +22,7 @@ window.addEventListener('DOMContentLoaded', disableAFrameWASD);
 // canvas-ready signals vs. actual rendered frames. Remove once the root
 // cause of blank/premature thumbnail captures is confirmed and fixed.
 function diag(label, data) {
+  if (window.CREATR_PIECE_DIAGNOSTICS !== true) return;
   try { console.log('[DIAG]', label, data || ''); } catch (_) {}
   try { window.parent.postMessage({ type: 'creatr-diag', label, data: data || null, t: performance.now() }, '*'); } catch (_) {}
   // DOM-based fallback so a parent that never receives the postMessage
@@ -37,7 +38,19 @@ function showPieceError(error) {
   el.style.display = 'block';
   try { window.parent.postMessage({ type: 'sketch-status', valid: false, error: el.textContent }, '*'); } catch (_) {}
 }
-window.addEventListener('error', (event) => showPieceError(event.error || event.message));
+function isNonImpactingRuntimeIssue(error, source) {
+  const message = typeof error?.message === 'string' ? error.message : String(error || '');
+  const origin = String(source || error?.fileName || '');
+  if (/^(?:chrome|moz|safari)-extension:/i.test(origin)) return true;
+  return /ResizeObserver loop (?:limit exceeded|completed with undelivered notifications)/i.test(message)
+    || /Could not establish connection\. Receiving end does not exist/i.test(message)
+    || /A listener indicated an asynchronous response.*message channel closed/i.test(message);
+}
+window.addEventListener('error', (event) => {
+  const error = event.error || event.message;
+  if (isNonImpactingRuntimeIssue(error, event.filename)) return;
+  showPieceError(error);
+});
 // Tone.js's PluckSynth builds a LowpassCombFilter -> FeedbackCombFilter
 // internally, backed by a real AudioWorkletProcessor (Karplus-Strong
 // plucked-string synthesis needs a feedback delay line) — the only one of
@@ -58,6 +71,7 @@ window.addEventListener('unhandledrejection', (event) => {
     event.preventDefault();
     return;
   }
+  if (isNonImpactingRuntimeIssue(reason)) { event.preventDefault(); return; }
   showPieceError(reason || 'Unhandled promise rejection');
 });
 const pieceContext = window.CREATR_PIECE_CONTEXT || {};
@@ -81,6 +95,11 @@ const PIECE_CAMERA_OVERLAY = pieceContext.cameraOverlay === true;
 // by the capability contract: available on steerable engines when the camera
 // permission or the hand-tracking voice unlocks it — independent of sound.
 const PIECE_HAND_CONTROL = pieceContext.handControl === true;
+// Where the camera feed renders when enabled — 'background' (behind the
+// piece) or 'overlay' (blendable feed above it). Resolved server-side by the
+// capability contract (per-piece camera_placement column, engine default
+// otherwise: background for three/aframe, overlay for the 2D engines).
+const PIECE_CAMERA_PLACEMENT = pieceContext.cameraPlacement === 'background' ? 'background' : 'overlay';
 
 let _pieceSonicControllerPromise = null;
 function pieceLoadSonicControllerOnce() {
@@ -305,6 +324,10 @@ function createPieceRuntimeAudioController(sonicParams, getMover) {
       handleHandControlToggle(!!data.enabled);
       return;
     }
+    if (data.type === 'creatr-reset-view') {
+      window.__pieceHandHooks?.resetView?.();
+      return;
+    }
     if (data.type === 'creatr-sound-camera-bg-toggle') {
       handleCameraBackgroundToggle(!!data.enabled);
       return;
@@ -360,7 +383,9 @@ function createPieceRuntimeAudioController(sonicParams, getMover) {
     }).catch(() => notifyParentMicState(false));
   }
 
+  let handControlActivationEpoch = 0;
   function handleHandControlToggle(on) {
+    const activationEpoch = ++handControlActivationEpoch;
     if (on && !PIECE_HAND_CONTROL) {
       // Same defense-in-depth as the camera toggle below: a forged
       // postMessage must not open the camera on a piece that doesn't allow
@@ -371,12 +396,26 @@ function createPieceRuntimeAudioController(sonicParams, getMover) {
     if (!on) {
       handControlBinding.detach();
       engine?.disableHandControl();
+      Promise.resolve(window.__pieceHandHooks?.setHandSteering?.(false)).catch(() => {});
       notifyParentHandControlState(false);
       return;
     }
     const eng = ensureEngineSync();
-    Promise.resolve(eng ? eng.enableHandControl() : false).then((controlOk) => {
-      if (controlOk) handControlBinding.attach(engine);
+    Promise.resolve(eng ? eng.enableHandControl() : false).then(async (controlOk) => {
+      if (activationEpoch !== handControlActivationEpoch) {
+        eng?.disableHandControl();
+        return;
+      }
+      if (controlOk) {
+        const steeringReady = await Promise.resolve(window.__pieceHandHooks?.setHandSteering?.(true) ?? true);
+        if (activationEpoch !== handControlActivationEpoch || steeringReady === false) {
+          eng?.disableHandControl();
+          await Promise.resolve(window.__pieceHandHooks?.setHandSteering?.(false));
+          notifyParentHandControlState(false);
+          return;
+        }
+        handControlBinding.attach(engine);
+      }
       notifyParentHandControlState(controlOk);
     }).catch(() => notifyParentHandControlState(false));
   }
@@ -509,21 +548,68 @@ function createPieceRuntimeAudioController(sonicParams, getMover) {
   // for aframe, synthetic pointer for interactive c2).
   const handControlBinding = {
     active: false,
+    pinched: false,
+    router: null,
     attach(eng) {
       if (this.active || !eng) return;
       this.active = true;
+      this.pinched = false;
       eng.onHandFrame((hand) => {
-        if (!this.active || !hand) return;
+        if (!this.active) return;
         const hooks = window.__pieceHandHooks;
-        if (!hooks || typeof hooks.handPoint !== 'function') return;
+        if (!hooks) return;
+        if (typeof hooks.handCommand === 'function' && window.CreatrSonicController?.createClutchedGestureRouter) {
+          if (!this.router) {
+            this.router = window.CreatrSonicController.createClutchedGestureRouter({
+              onCommand: (command) => hooks.handCommand(command),
+              onMode: (mode) => {
+                try { window.parent?.postMessage({ type: 'creatr-hand-gesture-mode', mode }, '*'); } catch (_) {}
+              },
+            });
+          }
+          this.router.update(hand);
+          return;
+        }
+        if (!hand) {
+          // Hand lost: release any held pinch so drag-driven sketches don't
+          // keep drawing a phantom stroke.
+          if (this.pinched) {
+            this.pinched = false;
+            try { hooks.handPress?.(false); } catch (_) {}
+          }
+          return;
+        }
+        if (typeof hooks.handPoint !== 'function') return;
         const wrist = hand[0];
         if (!wrist) return;
         try { hooks.handPoint(1 - wrist.x, wrist.y); } catch (_) {}
+        // Pinch (thumb tip ↔ index tip) acts as the pointer button for
+        // engines whose hook registers handPress — interactive c2 sketches
+        // typically only respond to move while a pointer is DOWN (drag to
+        // draw), so move-only steering never reaches them. Hysteresis keeps
+        // the press from chattering at the threshold.
+        if (typeof hooks.handPress === 'function') {
+          const thumb = hand[4], index = hand[8];
+          if (thumb && index) {
+            const gap = Math.hypot(thumb.x - index.x, thumb.y - index.y, (thumb.z || 0) - (index.z || 0));
+            const next = this.pinched ? gap < 0.09 : gap < 0.055;
+            if (next !== this.pinched) {
+              this.pinched = next;
+              try { hooks.handPress(next); } catch (_) {}
+            }
+          }
+        }
       });
     },
     detach() {
       if (!this.active) return;
       this.active = false;
+      if (this.pinched) {
+        this.pinched = false;
+        try { window.__pieceHandHooks?.handPress?.(false); } catch (_) {}
+      }
+      this.router?.reset?.('disabled');
+      this.router = null;
       engine?.onHandFrame(null);
     },
   };
@@ -808,6 +894,7 @@ function createPieceRuntimeAudioController(sonicParams, getMover) {
     toggleHand: handleHandToggle,
     toggleMic: handleMicToggle,
     toggleHandControl: handleHandControlToggle,
+    resetView() { return window.__pieceHandHooks?.resetView?.(); },
     toggleTilt: handleTiltToggle,
     toggleCameraBackground: handleCameraBackgroundToggle,
   };
@@ -837,10 +924,18 @@ let pieceAudioController = null;
 // scene-background (VideoTexture / <a-videosphere>-style) hooks instead.
 // getSurface is a function so engines whose surface appears asynchronously
 // (p5's canvas) can register before it exists.
-function createDomCameraOverlayHooks(getSurface) {
+function createDomCameraOverlayHooks(getSurface, placement = 'overlay') {
+  const isBackground = placement === 'background';
   const hooks = {
     _cameraOverlay: null,
-    _cameraOpacity: 0.35,
+    _cameraSourceVideo: null,
+    _cameraResizeObserver: null,
+    _cameraFullscreenSync: null,
+    _cameraSyncFrame: 0,
+    _cameraLastBox: '',
+    // Background placement starts opaque (it sits behind the piece and only
+    // shows through transparent regions); the overlay starts subtle.
+    _cameraOpacity: isBackground ? 1 : 0.35,
     setBackgroundVideo(video) {
       const surface = getSurface();
       if (!video || !surface || !surface.parentElement) return false;
@@ -852,12 +947,35 @@ function createDomCameraOverlayHooks(getSurface) {
       overlay.muted = true;
       overlay.playsInline = true;
       overlay.srcObject = video.srcObject;
-      overlay.style.cssText = 'position:absolute;z-index:2;transform:scaleX(-1);pointer-events:none;';
+      overlay.style.cssText = 'position:absolute;transform:scaleX(-1);pointer-events:none;z-index:' + (isBackground ? '0' : '2') + ';';
       overlay.style.objectFit = 'cover';
       overlay.style.opacity = String(this._cameraOpacity);
-      parent.appendChild(overlay);
+      if (isBackground) {
+        // The video must sit BEHIND the piece surface: lift the surface into
+        // its own stacking layer above the feed. Pieces that paint an opaque
+        // background will still hide it — that's the documented caveat of
+        // choosing background placement on a 2D engine.
+        if (getComputedStyle(surface).position === 'static') surface.style.position = 'relative';
+        if (!surface.style.zIndex || Number(surface.style.zIndex) < 1) surface.style.zIndex = '1';
+        parent.insertBefore(overlay, parent.firstChild);
+      } else {
+        parent.appendChild(overlay);
+      }
       this._cameraOverlay = overlay;
+      this._cameraSourceVideo = video;
       this.syncBackgroundVideoBox();
+      // Canvas/SVG dimensions can change without a window resize (responsive
+      // embeds, fullscreen, engine auto-fit, CMS layout changes). Observe the
+      // authoritative presentation geometry rather than freezing the first
+      // measured rectangle. This exists only while the camera is active.
+      if (typeof ResizeObserver === 'function') {
+        this._cameraResizeObserver = new ResizeObserver(() => this.queueBackgroundVideoBoxSync());
+        this._cameraResizeObserver.observe(surface);
+        this._cameraResizeObserver.observe(parent);
+      }
+      this._cameraFullscreenSync = () => this.queueBackgroundVideoBoxSync();
+      document.addEventListener('fullscreenchange', this._cameraFullscreenSync);
+      document.addEventListener('webkitfullscreenchange', this._cameraFullscreenSync);
       overlay.play().catch(() => {});
       return true;
     },
@@ -869,14 +987,44 @@ function createDomCameraOverlayHooks(getSurface) {
       // roots, which have no HTMLElement offset geometry.
       const rect = surface.getBoundingClientRect();
       const parentRect = surface.parentElement.getBoundingClientRect();
-      overlay.style.left = (rect.left - parentRect.left) + 'px';
-      overlay.style.top = (rect.top - parentRect.top) + 'px';
-      overlay.style.width = rect.width + 'px';
-      overlay.style.height = rect.height + 'px';
+      // Prefer layout geometry so CSS presentation tilt does not inflate the
+      // camera box and then get applied a second time. SVG roots lack offset
+      // geometry, so fall back to client size and their x/y base values.
+      const layoutWidth = surface.offsetWidth || surface.clientWidth || rect.width;
+      const layoutHeight = surface.offsetHeight || surface.clientHeight || rect.height;
+      const layoutLeft = Number.isFinite(surface.offsetLeft) ? surface.offsetLeft : (surface.x?.baseVal?.value || rect.left - parentRect.left);
+      const layoutTop = Number.isFinite(surface.offsetTop) ? surface.offsetTop : (surface.y?.baseVal?.value || rect.top - parentRect.top);
+      const box = [layoutLeft, layoutTop, layoutWidth, layoutHeight]
+        .map(value => Math.round(value * 100) / 100).join('|');
+      if (box === this._cameraLastBox) return;
+      this._cameraLastBox = box;
+      const [left, top, width, height] = box.split('|');
+      overlay.style.left = left + 'px';
+      overlay.style.top = top + 'px';
+      overlay.style.width = width + 'px';
+      overlay.style.height = height + 'px';
+    },
+    queueBackgroundVideoBoxSync() {
+      if (this._cameraSyncFrame) return;
+      this._cameraSyncFrame = requestAnimationFrame(() => {
+        this._cameraSyncFrame = 0;
+        this.syncBackgroundVideoBox();
+      });
     },
     clearBackgroundVideo() {
+      this._cameraResizeObserver?.disconnect();
+      this._cameraResizeObserver = null;
+      if (this._cameraSyncFrame) cancelAnimationFrame(this._cameraSyncFrame);
+      this._cameraSyncFrame = 0;
+      this._cameraLastBox = '';
+      if (this._cameraFullscreenSync) {
+        document.removeEventListener('fullscreenchange', this._cameraFullscreenSync);
+        document.removeEventListener('webkitfullscreenchange', this._cameraFullscreenSync);
+        this._cameraFullscreenSync = null;
+      }
       this._cameraOverlay?.remove();
       this._cameraOverlay = null;
+      this._cameraSourceVideo = null;
     },
     setBackgroundOpacity(value) {
       this._cameraOpacity = Math.max(0, Math.min(1, Number(value)));
@@ -885,25 +1033,44 @@ function createDomCameraOverlayHooks(getSurface) {
     getBackgroundOpacity() {
       return this._cameraOpacity;
     },
+    getBackgroundVideo() {
+      return this._cameraSourceVideo || this._cameraOverlay;
+    },
   };
   // Capture compositing: downloads pass the (already-rasterized, for svg)
   // base canvas; the mirrored live camera frame is drawn over it at the
   // current overlay opacity so the PNG matches what's on screen.
   window.__creatrComposeCapture = async (baseCanvas) => {
-    const overlay = hooks._cameraOverlay;
+    // createDomCameraOverlayHooks() is merged into __pieceHandHooks. Its
+    // methods run with that merged object as `this`, so the active video is
+    // stored there—not on this pre-merge `hooks` object captured by closure.
+    // Read the authoritative installed hook first or camera-on screenshots
+    // silently omit the feed while still capturing the artwork.
+    const overlay = window.__pieceHandHooks?._cameraOverlay || hooks._cameraOverlay;
     if (!overlay) return baseCanvas;
     if (overlay.readyState < 2 || !overlay.videoWidth) throw new Error('The camera frame is not ready to capture yet.');
     const composed = document.createElement('canvas');
     composed.width = baseCanvas.width;
     composed.height = baseCanvas.height;
     const ctx = composed.getContext('2d');
-    ctx.drawImage(baseCanvas, 0, 0);
-    ctx.save();
-    ctx.globalAlpha = hooks._cameraOpacity;
-    ctx.translate(composed.width, 0);
-    ctx.scale(-1, 1);
-    ctx.drawImage(overlay, 0, 0, composed.width, composed.height);
-    ctx.restore();
+    const captureOpacity = Number(window.__pieceHandHooks?._cameraOpacity ?? hooks._cameraOpacity);
+    const drawCamera = () => {
+      ctx.save();
+      ctx.globalAlpha = Number.isFinite(captureOpacity) ? captureOpacity : 0.35;
+      ctx.translate(composed.width, 0);
+      ctx.scale(-1, 1);
+      ctx.drawImage(overlay, 0, 0, composed.width, composed.height);
+      ctx.restore();
+    };
+    // Match the on-screen stacking: background placement bakes the camera
+    // under the piece, overlay placement bakes it on top.
+    if (isBackground) {
+      drawCamera();
+      ctx.drawImage(baseCanvas, 0, 0);
+    } else {
+      ctx.drawImage(baseCanvas, 0, 0);
+      drawCamera();
+    }
     return composed;
   };
   window.addEventListener('resize', () => hooks.syncBackgroundVideoBox());
@@ -914,7 +1081,171 @@ function createDomCameraOverlayHooks(getSurface) {
 // no interaction hooks were registered) when this piece allows the camera.
 function registerDomCameraOverlay(getSurface) {
   if (!PIECE_CAMERA_OVERLAY) return;
-  window.__pieceHandHooks = Object.assign(window.__pieceHandHooks || {}, createDomCameraOverlayHooks(getSurface));
+  window.__pieceHandHooks = Object.assign(window.__pieceHandHooks || {}, createDomCameraOverlayHooks(getSurface, PIECE_CAMERA_PLACEMENT));
+}
+
+// Flat regular surfaces have no camera to orbit. Their visual hand-motion
+// contract tilts only the presentation plane, leaving authored coordinates,
+// bitmap dimensions, and capture composition unchanged.
+function registerPresentationTilt(getSurface) {
+  if (!PIECE_HAND_CONTROL) return;
+  const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+  let raf = 0;
+  let targetX = 0, targetY = 0, currentX = 0, currentY = 0;
+  // Preserve whichever compositor was registered first (camera overlay when
+  // active), then warp that complete bitmap. Canvas strip warping is
+  // deterministic and needs no extra WebGL context or dependency.
+  const previousComposeCapture = window.__creatrComposeCapture;
+  window.__creatrComposeCapture = async (baseCanvas) => {
+    const source = typeof previousComposeCapture === 'function'
+      ? await previousComposeCapture(baseCanvas)
+      : baseCanvas;
+    if (reduced || (Math.abs(currentX) < 0.01 && Math.abs(currentY) < 0.01)) return source;
+    const width = source.width, height = source.height;
+    const output = document.createElement('canvas');
+    output.width = width; output.height = height;
+    const ctx = output.getContext('2d');
+    if (!ctx || !width || !height) return source;
+    const captureSurface = getSurface();
+    const captureBackground = captureSurface?.parentElement
+      ? getComputedStyle(captureSurface.parentElement).backgroundColor
+      : 'rgb(0, 0, 0)';
+    ctx.fillStyle = captureBackground === 'rgba(0, 0, 0, 0)' ? 'rgb(0, 0, 0)' : captureBackground;
+    ctx.fillRect(0, 0, width, height);
+    const pitch = currentX * Math.PI / 180;
+    const yaw = currentY * Math.PI / 180;
+    const perspective = 900;
+    const project = (x, y) => {
+      const cy = Math.cos(yaw), sy = Math.sin(yaw);
+      const cx = Math.cos(pitch), sx = Math.sin(pitch);
+      const x1 = x * cy;
+      const z1 = -x * sy;
+      const y2 = y * cx - z1 * sx;
+      const z2 = y * sx + z1 * cx;
+      const scale = perspective / Math.max(1, perspective - z2);
+      return { x: width / 2 + x1 * scale, y: height / 2 + y2 * scale };
+    };
+    const tl = project(-width / 2, -height / 2);
+    const tr = project(width / 2, -height / 2);
+    const bl = project(-width / 2, height / 2);
+    const br = project(width / 2, height / 2);
+    const solveHomography = (pairs) => {
+      const matrix = [];
+      pairs.forEach(({ x, y, u, v }) => {
+        matrix.push([x, y, 1, 0, 0, 0, -u * x, -u * y, u]);
+        matrix.push([0, 0, 0, x, y, 1, -v * x, -v * y, v]);
+      });
+      for (let col = 0; col < 8; col += 1) {
+        let pivot = col;
+        for (let row = col + 1; row < 8; row += 1) {
+          if (Math.abs(matrix[row][col]) > Math.abs(matrix[pivot][col])) pivot = row;
+        }
+        if (Math.abs(matrix[pivot][col]) < 1e-9) return null;
+        [matrix[col], matrix[pivot]] = [matrix[pivot], matrix[col]];
+        const divisor = matrix[col][col];
+        for (let c = col; c < 9; c += 1) matrix[col][c] /= divisor;
+        for (let row = 0; row < 8; row += 1) {
+          if (row === col) continue;
+          const factor = matrix[row][col];
+          for (let c = col; c < 9; c += 1) matrix[row][c] -= factor * matrix[col][c];
+        }
+      }
+      return matrix.map(row => row[8]);
+    };
+    const homography = solveHomography([
+      { ...tl, u: 0, v: 0 }, { ...tr, u: width - 1, v: 0 },
+      { ...br, u: width - 1, v: height - 1 }, { ...bl, u: 0, v: height - 1 },
+    ]);
+    if (!homography) return source;
+    const sourceContext = source.getContext('2d');
+    if (!sourceContext) return source;
+    const sourcePixels = sourceContext.getImageData(0, 0, width, height);
+    const outputPixels = ctx.getImageData(0, 0, width, height);
+    const src = sourcePixels.data, dst = outputPixels.data;
+    const quad = [tl, tr, br, bl];
+    const insideQuad = (x, y) => {
+      let sign = 0;
+      for (let i = 0; i < 4; i += 1) {
+        const a = quad[i], b = quad[(i + 1) % 4];
+        const cross = (b.x - a.x) * (y - a.y) - (b.y - a.y) * (x - a.x);
+        if (Math.abs(cross) < 1e-6) continue;
+        const nextSign = cross > 0 ? 1 : -1;
+        if (sign && nextSign !== sign) return false;
+        sign = nextSign;
+      }
+      return true;
+    };
+    const minX = Math.max(0, Math.floor(Math.min(...quad.map(p => p.x))));
+    const maxX = Math.min(width - 1, Math.ceil(Math.max(...quad.map(p => p.x))));
+    const minY = Math.max(0, Math.floor(Math.min(...quad.map(p => p.y))));
+    const maxY = Math.min(height - 1, Math.ceil(Math.max(...quad.map(p => p.y))));
+    for (let y = minY; y <= maxY; y += 1) {
+      for (let x = minX; x <= maxX; x += 1) {
+        if (!insideQuad(x + 0.5, y + 0.5)) continue;
+        const denominator = homography[6] * x + homography[7] * y + 1;
+        if (Math.abs(denominator) < 1e-9) continue;
+        const u = (homography[0] * x + homography[1] * y + homography[2]) / denominator;
+        const v = (homography[3] * x + homography[4] * y + homography[5]) / denominator;
+        if (u < 0 || v < 0 || u > width - 1 || v > height - 1) continue;
+        const x0 = Math.floor(u), y0 = Math.floor(v), x1 = Math.min(width - 1, x0 + 1), y1 = Math.min(height - 1, y0 + 1);
+        const fx = u - x0, fy = v - y0;
+        const dstIndex = (y * width + x) * 4;
+        for (let channel = 0; channel < 4; channel += 1) {
+          const p00 = src[(y0 * width + x0) * 4 + channel];
+          const p10 = src[(y0 * width + x1) * 4 + channel];
+          const p01 = src[(y1 * width + x0) * 4 + channel];
+          const p11 = src[(y1 * width + x1) * 4 + channel];
+          dst[dstIndex + channel] = (p00 * (1 - fx) + p10 * fx) * (1 - fy) + (p01 * (1 - fx) + p11 * fx) * fy;
+        }
+      }
+      if ((y - minY) % 96 === 95) await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    ctx.putImageData(outputPixels, 0, 0);
+    return output;
+  };
+  const apply = () => {
+    const surface = getSurface();
+    if (!surface) { raf = requestAnimationFrame(apply); return; }
+    currentX += (targetX - currentX) * 0.14;
+    currentY += (targetY - currentY) * 0.14;
+    surface.style.transformOrigin = '50% 50%';
+    const tiltTransform = reduced ? '' : `perspective(900px) rotateX(${currentX.toFixed(2)}deg) rotateY(${currentY.toFixed(2)}deg)`;
+    surface.style.transform = tiltTransform;
+    // Camera is a sibling presentation layer; mirror it and apply the same
+    // tilt so live view and capture share one visible geometry.
+    const cameraOverlay = window.__pieceHandHooks?._cameraOverlay;
+    if (cameraOverlay) {
+      cameraOverlay.style.transformOrigin = '50% 50%';
+      cameraOverlay.style.transform = (tiltTransform ? tiltTransform + ' ' : '') + 'scaleX(-1)';
+    }
+    raf = requestAnimationFrame(apply);
+  };
+  raf = requestAnimationFrame(apply);
+  window.__pieceHandHooks = Object.assign(window.__pieceHandHooks || {}, {
+    handPoint(nx, ny) {
+      targetY = Math.max(-8, Math.min(8, (nx - 0.5) * 16));
+      targetX = Math.max(-6, Math.min(6, -(ny - 0.5) * 12));
+    },
+    handLost() { targetX = 0; targetY = 0; },
+  });
+  window.addEventListener('pagehide', () => cancelAnimationFrame(raf), { once: true });
+}
+
+function registerSpatialPresentation(getSurface, interactive) {
+  if (!window.CreatrSpatialPresentation?.create) {
+    registerPresentationTilt(getSurface);
+    return;
+  }
+  const baseHooks = window.__pieceHandHooks || {};
+  const spatial = window.CreatrSpatialPresentation.create({
+    getSurface,
+    interactive: interactive === true,
+    cameraPlacement: PIECE_CAMERA_PLACEMENT,
+    getCameraVideo: () => baseHooks.getBackgroundVideo?.() || baseHooks._cameraOverlay || null,
+    getCameraOpacity: () => baseHooks._cameraOpacity ?? 0.35,
+  });
+  window.__pieceHandHooks = Object.assign(baseHooks, spatial);
+  window.addEventListener('pagehide', () => spatial.dispose?.(), { once: true });
 }
 
 // Camera feed as a blended, camera-attached background quad for the 3D
@@ -1547,6 +1878,20 @@ function bootCanvasRuntime(extra) {
       // handlers and (via updateC2Mover) the movement voice. The DOM camera
       // overlay hooks are merged in separately below when the piece allows
       // the camera.
+      // Last synthetic pointer position, so a pinch press/release lands where
+      // the hand currently is even if no move frame arrived in between.
+      let lastHandClient = null;
+      const dispatchHandPointer = (type, clientX, clientY) => {
+        try {
+          canvas.dispatchEvent(new PointerEvent(type, { clientX, clientY, bubbles: true, isPrimary: true, pointerType: 'touch', button: 0, buttons: type === 'pointerup' ? 0 : 1 }));
+        } catch (_) {
+          try {
+            const ev = document.createEvent('MouseEvent');
+            ev.initMouseEvent(type.replace('pointer', 'mouse'), true, true, window, 0, clientX, clientY, clientX, clientY, false, false, false, false, 0, null);
+            canvas.dispatchEvent(ev);
+          } catch (_e) {}
+        }
+      };
       window.__pieceHandHooks = {
         engine: 'c2_interactive',
         handPoint(nx, ny) {
@@ -1554,24 +1899,26 @@ function bootCanvasRuntime(extra) {
           if (!rect.width || !rect.height) return;
           const clientX = rect.left + nx * rect.width;
           const clientY = rect.top + ny * rect.height;
+          lastHandClient = { x: clientX, y: clientY };
           updateC2Mover(clientX, clientY);
-          try {
-            canvas.dispatchEvent(new PointerEvent('pointermove', { clientX, clientY, bubbles: true }));
-          } catch (_) {
-            try {
-              const ev = document.createEvent('MouseEvent');
-              ev.initMouseEvent('mousemove', true, true, window, 0, clientX, clientY, clientX, clientY, false, false, false, false, 0, null);
-              canvas.dispatchEvent(ev);
-            } catch (_e) {}
-          }
+          dispatchHandPointer('pointermove', clientX, clientY);
+        },
+        // Pinch gesture → pointer button, so drag-driven interactive c2
+        // sketches (which only act on move while pressed) respond to the
+        // hand. Driven by handControlBinding's pinch detection.
+        handPress(down) {
+          if (!lastHandClient) return;
+          dispatchHandPointer(down ? 'pointerdown' : 'pointerup', lastHandClient.x, lastHandClient.y);
         },
       };
       registerDomCameraOverlay(() => canvas);
+      registerSpatialPresentation(() => canvas, true);
       pieceAudioController = createPieceRuntimeAudioController(PIECE_SONIC, () => c2Mover);
     } else {
       // Plain (non-interactive) c2 has no motion signal — idle-only pattern
       // when sound exists; the camera overlay works either way.
       registerDomCameraOverlay(() => canvas);
+      registerSpatialPresentation(() => canvas, false);
       pieceAudioController = createPieceRuntimeAudioController(PIECE_SONIC, null);
     }
   }
@@ -1703,6 +2050,7 @@ function bootP5() {
         registerDomCameraOverlay(() => document.querySelector('#runtime-root canvas') || document.querySelector('canvas'));
         pieceAudioController = createPieceRuntimeAudioController(PIECE_SONIC, null);
       }
+      registerSpatialPresentation(() => document.querySelector('#runtime-root canvas') || document.querySelector('canvas'), false);
     } catch (error) { showPieceError(error); }
   };
   script.onerror = () => showPieceError('Could not load p5.js runtime.');
@@ -1718,6 +2066,7 @@ function bootC2() {
   document.head.appendChild(script);
 }
 function bootAFrame() {
+  let initialAFramePose = null;
   const runtimeScript = document.currentScript && document.currentScript.src ? document.currentScript.src : window.location.href;
   const script = document.createElement('script');
   script.src = new URL('/assets/js/aframe.min.js', runtimeScript).toString();
@@ -1918,6 +2267,10 @@ function bootAFrame() {
         disableMotionTracking();
         bindAFramePointerControls();
         requestAnimationFrame(() => requestAnimationFrame(signalAFrameReadyOnce));
+        const initialCameraObject = getAFrameCameraObject();
+        if (initialCameraObject) {
+          initialAFramePose = { position: initialCameraObject.position.clone(), quaternion: initialCameraObject.quaternion.clone() };
+        }
         // Hooks first (capability handshake) — see the three bootstrap twin.
         // Camera feed renders as a blended camera-attached quad (opacity
         // slider support) rather than an opaque scene.background swap.
@@ -1932,12 +2285,49 @@ function bootAFrame() {
               cameraObject.rotation.y += (desiredYaw - cameraObject.rotation.y) * 0.12;
               cameraObject.rotation.x += (desiredPitch - cameraObject.rotation.x) * 0.12;
             },
+            handCommand(command) {
+              const cameraObject = getAFrameCameraObject();
+              if (!cameraObject || !command) return;
+              if (command.type === 'look') {
+                this.handPoint(command.x, command.y);
+              } else if (command.type === 'orbit') {
+                cameraObject.rotation.order = 'YXZ';
+                cameraObject.rotation.y += command.yaw || 0;
+                cameraObject.rotation.x = Math.max(-Math.PI * 0.45, Math.min(Math.PI * 0.45, cameraObject.rotation.x + (command.pitch || 0)));
+              } else if (command.type === 'travel') {
+                cameraObject.translateX((command.right || 0) * 0.08);
+                cameraObject.translateZ(-(command.forward || 0) * 0.11);
+              } else if (command.type === 'zoom') {
+                cameraObject.translateZ((command.delta || 0) * 1.4);
+              }
+            },
+            resetView() {
+              const cameraObject = getAFrameCameraObject();
+              if (!cameraObject || !initialAFramePose) return Promise.resolve(false);
+              const fromPosition = cameraObject.position.clone();
+              const fromQuaternion = cameraObject.quaternion.clone();
+              const startedAt = performance.now();
+              return new Promise((resolve) => {
+                const step = (now) => {
+                  const t = Math.min(1, (now - startedAt) / 360);
+                  const eased = 1 - Math.pow(1 - t, 3);
+                  cameraObject.position.lerpVectors(fromPosition, initialAFramePose.position, eased);
+                  cameraObject.quaternion.slerpQuaternions(fromQuaternion, initialAFramePose.quaternion, eased);
+                  if (t < 1) requestAnimationFrame(step); else resolve(true);
+                };
+                requestAnimationFrame(step);
+              });
+            },
           },
-          createCameraBlendQuadHooks(
-            window.AFRAME && window.AFRAME.THREE,
-            () => scene && scene.object3D,
-            () => scene && scene.camera
-          )
+          PIECE_CAMERA_PLACEMENT === 'overlay'
+            // Author chose overlay placement: a DOM <video> blended over the
+            // WebGL canvas instead of the in-scene background quad.
+            ? createDomCameraOverlayHooks(() => document.querySelector('a-scene canvas') || document.querySelector('canvas'), 'overlay')
+            : createCameraBlendQuadHooks(
+                window.AFRAME && window.AFRAME.THREE,
+                () => scene && scene.object3D,
+                () => scene && scene.camera
+              )
         );
         if (PIECE_SONIC) {
           pieceAudioController = createPieceRuntimeAudioController(PIECE_SONIC, () => getAFrameCameraMover());
@@ -2004,6 +2394,7 @@ async function bootThree() {
     if (typeof window.sketch !== 'function') return;
     const state = { scene: null, camera: null, renderer: null };
     let controls = null;
+    let initialThreePose = null;
     let rafIds = [];
     let pieceDrivesOwnRender = false;
     let readySignaled = false;
@@ -2150,6 +2541,7 @@ async function bootThree() {
       controls = new OrbitControls(state.camera, canvas);
       controls.enableDamping = true;
       controls.enablePan = true;
+      initialThreePose = { camera: state.camera.position.clone(), target: controls.target.clone() };
       const threeRaycaster = new mod.Raycaster();
       const pointerState = new Map();
       let hadMultiTouchGesture = false;
@@ -2373,8 +2765,61 @@ async function bootThree() {
           state.camera.position.copy(target).add(offset);
           controls.update();
         },
+        handCommand(command) {
+          if (!controls || !state.camera || !command) return;
+          if (command.type === 'look') {
+            this.handPoint(command.x, command.y);
+            return;
+          }
+          const target = controls.target;
+          if (command.type === 'orbit') {
+            const offset = state.camera.position.clone().sub(target);
+            const sph = new mod.Spherical().setFromVector3(offset);
+            sph.theta += command.yaw || 0;
+            sph.phi = Math.max(0.15, Math.min(Math.PI - 0.15, sph.phi + (command.pitch || 0)));
+            offset.setFromSpherical(sph);
+            state.camera.position.copy(target).add(offset);
+          } else if (command.type === 'travel') {
+            const forward = new mod.Vector3();
+            state.camera.getWorldDirection(forward);
+            forward.y = 0;
+            if (forward.lengthSq() > 1e-6) forward.normalize();
+            const right = new mod.Vector3(-forward.z, 0, forward.x);
+            const delta = forward.multiplyScalar((command.forward || 0) * 0.11)
+              .add(right.multiplyScalar((command.right || 0) * 0.09));
+            state.camera.position.add(delta);
+            target.add(delta);
+          } else if (command.type === 'zoom') {
+            const offset = state.camera.position.clone().sub(target);
+            const distance = Math.max(0.35, Math.min(100, offset.length() * (1 - (command.delta || 0))));
+            offset.setLength(distance);
+            state.camera.position.copy(target).add(offset);
+          }
+          controls.update();
+        },
+        resetView() {
+          if (!initialThreePose || !state.camera || !controls) return Promise.resolve(false);
+          const fromCamera = state.camera.position.clone();
+          const fromTarget = controls.target.clone();
+          const startedAt = performance.now();
+          return new Promise((resolve) => {
+            const step = (now) => {
+              const t = Math.min(1, (now - startedAt) / 360);
+              const eased = 1 - Math.pow(1 - t, 3);
+              state.camera.position.lerpVectors(fromCamera, initialThreePose.camera, eased);
+              controls.target.lerpVectors(fromTarget, initialThreePose.target, eased);
+              controls.update();
+              if (t < 1) requestAnimationFrame(step); else resolve(true);
+            };
+            requestAnimationFrame(step);
+          });
+        },
       },
-      createCameraBlendQuadHooks(mod, () => state.scene, () => state.camera)
+      PIECE_CAMERA_PLACEMENT === 'overlay'
+        // Author chose overlay placement: DOM <video> blended over the WebGL
+        // canvas instead of the in-scene background quad.
+        ? createDomCameraOverlayHooks(() => canvas, 'overlay')
+        : createCameraBlendQuadHooks(mod, () => state.scene, () => state.camera)
     );
 
     // Per-piece Tone.js sonification: muted by default, unmuted via a
@@ -2434,4 +2879,5 @@ if (PIECE_ENGINE === 'p5') {
     registerDomCameraOverlay(() => document.querySelector('svg'));
     pieceAudioController = createPieceRuntimeAudioController(PIECE_SONIC, null);
   }
+  registerSpatialPresentation(() => document.querySelector('svg'), false);
 }

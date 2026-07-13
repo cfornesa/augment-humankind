@@ -466,6 +466,36 @@ function manifest(): array
             );
         }],
 
+        ['art piece version camera placement (2026-07-12)', function (Ctx $ctx): void {
+            // Mirrors docs/migrations/2026-07-12-art-piece-version-camera-placement.sql.
+            // NULL = engine default (background for three/aframe, overlay for
+            // 2D engines); the NULL-availability semantics change ships in
+            // piece_sound_capability_contract(), no backfill required.
+            ensureColumn($ctx, 'art_piece_versions', 'camera_placement', 'VARCHAR(16) NULL AFTER camera_overlay');
+        }],
+
+        ['piece surface camera controls (2026-07-12)', function (Ctx $ctx): void {
+            // Mirrors docs/migrations/2026-07-12-piece-surface-camera-controls.sql.
+            ensureColumn($ctx, 'art_piece_versions', 'immersive_camera_overlay', 'TINYINT(1) NULL AFTER camera_placement');
+            ensureColumn($ctx, 'art_piece_versions', 'immersive_camera_placement', 'VARCHAR(16) NULL AFTER immersive_camera_overlay');
+            ensureColumn($ctx, 'art_piece_versions', 'regular_hand_motion', 'TINYINT(1) NULL AFTER immersive_camera_placement');
+            if (!columnExists($ctx->pdo, 'art_piece_versions', 'sonic_params')) return;
+            runBackfill(
+                $ctx,
+                "UPDATE art_piece_versions
+                 SET regular_hand_motion = CASE
+                   WHEN JSON_EXTRACT(sonic_params, '$.extras.voices.hand_control') = TRUE THEN 1
+                   WHEN JSON_EXTRACT(sonic_params, '$.extras.voices.hand_control') = FALSE THEN 0
+                   ELSE NULL
+                 END
+                 WHERE regular_hand_motion IS NULL
+                   AND sonic_params IS NOT NULL
+                   AND JSON_VALID(sonic_params)
+                   AND JSON_EXTRACT(sonic_params, '$.extras.voices.hand_control') IS NOT NULL",
+                'separate regular hand motion from sonic metadata'
+            );
+        }],
+
         ['null fabricated sonic params (2026-07-11)', function (Ctx $ctx): void {
             // See docs/migrations/2026-07-11-null-fabricated-sonic-params.sql:
             // a since-fixed admin-save bug materialized {enabled, extras}

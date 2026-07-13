@@ -67,7 +67,37 @@ html,body{margin:0;background:#fff;color:#161616;font-family:system-ui,-apple-sy
         }
 
         header('Content-Type: text/html; charset=utf-8');
-        echo piece_render_document($data['piece'], $data['version']);
+        $piece = $data['piece'];
+        $version = $data['version'];
+        $title = htmlspecialchars((string) ($piece['title'] ?? 'Art piece'), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $pieceStageReturnTo = '/embed/pieces/' . (int) $piece['id']
+            . (!empty($version['id']) ? '?version=' . (int) $version['id'] : '');
+        $stylesVersion = (int) @filemtime(dirname(__DIR__, 2) . '/assets/styles.css');
+        $downloadVersion = (int) @filemtime(dirname(__DIR__, 2) . '/assets/js/public-piece-download.js');
+        $fullscreenVersion = (int) @filemtime(dirname(__DIR__, 2) . '/assets/js/piece-fullscreen.js');
+        ?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title><?= $title ?></title>
+<link rel="stylesheet" href="/assets/styles.css?v=<?= $stylesVersion ?>">
+<style>
+html,body{margin:0;width:100%;height:100%;min-height:0;overflow:hidden;background:#000}
+.piece-light-embed .piece-stage,.piece-light-embed [data-piece-download-root],.piece-light-embed .piece-canvas-container{width:100%;height:100%;min-height:0;margin:0;padding:0}
+.piece-light-embed .piece-stage{max-width:none}
+.piece-light-embed .piece-canvas-container{aspect-ratio:auto;border-radius:0}
+.piece-light-embed .piece-canvas-container>iframe{width:100%!important;height:100%!important;min-height:0!important}
+</style>
+</head>
+<body class="piece-light-embed">
+<?php require dirname(__DIR__) . '/views/partials/piece-stage.php'; ?>
+<script src="/assets/js/public-piece-download.js?v=<?= $downloadVersion ?>"></script>
+<script src="/assets/js/piece-fullscreen.js?v=<?= $fullscreenVersion ?>"></script>
+</body>
+</html>
+<?php
         exit;
     }
 

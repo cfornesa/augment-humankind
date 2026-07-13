@@ -322,6 +322,85 @@
         });
     });
 
+    function fallbackCopyText(text) {
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.setAttribute('readonly', '');
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        const copied = document.execCommand('copy');
+        textarea.remove();
+        return copied;
+    }
+
+    document.querySelectorAll('[data-surface-embed-copy]').forEach((button) => {
+        button.dataset.embedCopyBound = 'true';
+        let statusTimeout = null;
+        const showTemporaryStatus = (status, message) => {
+            if (statusTimeout) window.clearTimeout(statusTimeout);
+            status.textContent = message;
+            statusTimeout = window.setTimeout(() => {
+                status.textContent = '';
+                statusTimeout = null;
+            }, 3000);
+        };
+        button.addEventListener('click', async function () {
+            const code = button.dataset.embedCode || '';
+            const actions = button.closest('.piece-page-embed-actions') || document;
+            const status = actions.querySelector('[data-surface-embed-status]');
+            const manual = actions.querySelector('[data-surface-embed-manual]');
+            if (!code || !status) {
+                return;
+            }
+            try {
+                if (!navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') {
+                    throw new Error('Clipboard API unavailable');
+                }
+                await navigator.clipboard.writeText(code);
+                showTemporaryStatus(status, 'Embed code is ready to paste.');
+                if (manual) manual.hidden = true;
+            } catch (_) {
+                if (fallbackCopyText(code)) {
+                    showTemporaryStatus(status, 'Embed code is ready to paste.');
+                    if (manual) manual.hidden = true;
+                } else if (manual) {
+                    manual.value = code;
+                    manual.hidden = false;
+                    manual.focus();
+                    manual.select();
+                    showTemporaryStatus(status, 'Clipboard access was blocked. Copy the selected embed code below.');
+                } else {
+                    showTemporaryStatus(status, 'Copy failed. Please try again.');
+                }
+            }
+        });
+    });
+
+    // The sandboxed regular runtime emits only a semantic gesture mode; the
+    // host owns presentation so the same feedback remains visible outside the
+    // iframe and does not become part of the authored artwork or PNG capture.
+    window.addEventListener('message', (event) => {
+        if (event.data?.type !== 'creatr-hand-gesture-mode') return;
+        const frame = document.querySelector('[data-piece-download-frame]');
+        if (!frame || event.source !== frame.contentWindow) return;
+        const host = frame.closest('.piece-canvas-container') || frame.parentElement;
+        if (!host) return;
+        let indicator = host.querySelector('[data-piece-hand-gesture-mode]');
+        if (!indicator) {
+            indicator = document.createElement('div');
+            indicator.dataset.pieceHandGestureMode = '';
+            indicator.setAttribute('role', 'status');
+            indicator.setAttribute('aria-live', 'polite');
+            indicator.style.cssText = 'position:absolute;left:50%;bottom:calc(1rem + env(safe-area-inset-bottom));transform:translateX(-50%);z-index:42;padding:.38rem .72rem;border:1px solid rgba(255,255,255,.2);border-radius:999px;background:rgba(0,0,0,.68);color:#fff;font:600 .72rem/1.2 system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;pointer-events:none;';
+            host.appendChild(indicator);
+        }
+        const labels = { look: 'Look', orbit: 'Orbit', travel: 'Move', 'travel-ready': 'Point + pinch to move', 'orbit-ready': 'Pinch to orbit' };
+        indicator.textContent = labels[event.data.mode] || '';
+        indicator.hidden = !labels[event.data.mode];
+    });
+
     // Shared primitives for other piece surfaces (immersive view) that
     // capture from a live canvas or overlay iframe instead of the
     // [data-piece-download-frame] iframe handled above.

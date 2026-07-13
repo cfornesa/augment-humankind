@@ -336,11 +336,45 @@ count, and a thumbnail drawn from the first item). `/exhibits/[slug]` renders
 an individual exhibit's details and links to its `/immersive/exhibits/[slug]`
 VR presentation. Returns 404 for an unknown or soft-deleted slug.
 
-Compatibility embed and immersive routes return content rather than redirects:
+Compatibility embed and immersive routes return content rather than redirects.
+Piece embed choices are surface-local: a page offers only embed code that
+reproduces the surface currently being viewed.
+
+- **Embed** on `/pieces/[id]` copies the regular piece stage as a directly
+  embeddable iframe. The
+  standalone `/pieces/[id]` page is authoritative: Light and TipTap/blog-post
+  embeds reuse its stage markup and controls rather than maintaining a reduced
+  renderer. Screenshot, ZIP, and a compact literal **VR** action live in one
+  responsive upper-left rail; sound/camera/hand controls and fullscreen retain
+  their regular-stage positions. The standalone page additionally renders a
+  full “View Immersive / VR Mode” link below its Prompt heading; that
+  explanatory page action is not part of the shared stage or any embed.
+- **Embed (Custom)** on `/immersive/pieces/[id]` embeds that immersive surface
+  through the `creatr-art-piece` compatibility wrapper.
+- **Embed (CMS)** appears beside it and uses the same immersive surface with
+  `cms=1` for the CMS-oriented variant. Immersive pages no longer repeat the
+  regular Embed choice. Existing URLs and stored iframe markup remain valid.
+
+Regular piece embed documents use viewport-fill sizing: their shared stage,
+canvas container, and inner runtime occupy the full iframe viewport without a
+page-background remainder. This matches immersive embed sizing without
+cropping or changing the regular piece capability contract.
+
+Platform collections use the immersive collection renderer in both regular
+and embedded presentation contexts; there is no second gallery implementation.
+The regular collection page exposes one **Embed** action for
+`/immersive/collections/[slug]?embed=1` plus a page-level immersive link. The
+embedded renderer fills its viewport and retains collection-specific gallery,
+slideshow, download, navigation, sound, fullscreen, and lifecycle behavior.
+The full immersive collection page exposes only **Embed (Custom)** and
+**Embed (CMS)**. Entry-context controls may differ, but collection functionality
+must not be removed or reimplemented.
 
 - `GET /embed/posts/[id]` — embeddable HTML for a published post, retained for
   legacy platform embeds.
-- `GET /embed/pieces/[id]` — embeddable HTML for the current version.
+- `GET /embed/pieces/[id]` — the regular Embed document for the current version;
+  it mirrors the regular piece stage, including its screenshot, ZIP, VR,
+  sound, camera, hand-control, and fullscreen capabilities.
 - `GET /embed/pieces/[id]?version=[version-id]` — embeddable HTML for a
   specific version of that piece.
 - `GET /embed/pieces/[id]/data` — JSON for the current version.
@@ -390,6 +424,12 @@ Compatibility embed and immersive routes return content rather than redirects:
   visible SVG surface, and A-Frame slides still reserve the stricter nonblank
   validation path. `Download ZIP` still routes to the same full collection
   export.
+- An immersive single-piece ZIP may launch from the camera/target state
+  captured when the visitor requested the download. That launch state is
+  never the Reset View destination: Three.js, A-Frame, mounted-gallery, and
+  collection-room runtimes capture their canonical default pose before
+  applying the optional launch state, and Reset View always returns to that
+  canonical pose.
 - `GET /immersive/images/[encoded-ref]` — full-page presentation for a
   base64url-encoded image reference, retained for legacy platform image
   gallery embeds. Query parameters `title`, `alt`, and `caption` are optional
@@ -1066,24 +1106,99 @@ structured spec, HTML/CSS/generated code, generation vendor, model, and
 validation status. The public renderer supports migrated p5, c2, Three.js,
 SVG, and generic HTML/code versions.
 
-The editor's Metadata tab also submits `camera_overlay` — a 3-state select
-(`''`/`'1'`/`'0'`) resolved to `NULL`/`1`/`0` on the version row
-(`PiecesAdminController::resolveCameraOverlayFromPost()`, guarded by
-`art_piece_camera_overlay_supported()`), independent of any sound design; see
-§3.10 of ALGORITHMS.md for how it's consumed. When the version has
-`sonic_params`, the editor's "Interact" tab exposes two fieldsets: "Public
-sound controls" (ambient/movement/keyboard voice visibility plus the
-hand-tracking "camera theremin" toggle — all sound voices, submitted as
-`sonic_voice_*` and stored under `sonic_params.extras.voices`) and "Public
-camera controls" (a `sonic_voice_hand_control` checkbox, default checked,
-controlling whether the piece offers camera-steered/tilt-fallback "Hand
-control" — independent of whether the theremin itself is on). Both fieldsets
-render only when the version already has `sonic_params`; a sound-less piece
-sees an explanatory hint instead, since `resolveSonicParamsFromPost()`
-deliberately never fabricates a sonic block for a piece that never had
-one — only AI generation/Refine create `sonic_params` — so a plain
-Metadata/Interact-tab save can only mutate an existing block, never
-manufacture sound (and its accompanying playback) on a piece that had none.
+The editor's Metadata tab exposes independent regular and immersive camera
+view selects (Default, On — background, On — overlay, or Off). The existing
+`camera_overlay` and `camera_placement` columns remain the regular-surface
+contract. Nullable `immersive_camera_overlay` and
+`immersive_camera_placement` store the immersive contract; legacy NULL values
+inherit the regular setting. Camera capture never starts automatically.
+`regular_hand_motion` independently controls regular hand steering/2D
+presentation tilt. Immersive hand motion is a platform capability rather than
+audio metadata or a per-piece switch.
+
+When visual hand navigation is active, compatible regular Three.js/A-Frame
+surfaces and immersive piece surfaces use one clutched-gestural command
+contract over the existing single-hand MediaPipe landmark stream. An open hand
+provides stabilized free-look. A recognized pose is previewed before a pinch;
+pinching commits that mode, wrist displacement drives orbit or travel, and
+apparent palm-size change provides bounded dolly/zoom. Pose changes require a
+short confidence dwell and hysteresis; pinch release or hand loss stops motion
+immediately without resetting the camera pose. Implementations emit abstract
+commands through the surface's existing navigation controller rather than
+replacing keyboard, pointer, touch, device-orientation, camera, audio, or
+rendering paths. If gesture classification is unavailable, existing
+wrist-position steering remains the compatibility fallback. The router uses
+the already-running `numHands: 1` result and must not open a second camera
+stream or start a second MediaPipe inference loop.
+
+Gesture interpretation is inference-cadence independent. Wrist smoothing uses
+elapsed time rather than assuming one landmark result per display frame;
+short `unknown` classification gaps are tolerated without changing the active
+pose candidate; and travel, orbit, and zoom commands from a slow result stream
+are distributed over the equivalent number of render frames. This preserves
+the nominal live-web response while preventing lower-cadence direct-open ZIP
+fallbacks from producing large jumps, sluggish travel, or mode chatter. The
+router does not request additional inference work to achieve this.
+
+Turning **Steer the piece** off is an ownership handoff, not a view reset. On
+OrbitControls-backed immersive surfaces, the currently displayed hand-directed
+orientation is baked into the camera/target pair before the gesture offset is
+released; the exact pre-steering pointer, touch, wheel, keyboard, and viewer
+controls then resume immediately. This contract is identical in live and Full
+ZIP immersive views. **Reset view** remains the only action that restores the
+initial pose, and it does not change steering state.
+
+Surfaces that expose this clutched-gestural contract also expose a separate
+instructional hand-guide button. It never requests camera permission, enables
+tracking, or changes hand-control state. The button opens a stage-contained,
+mobile-first slide dialog covering Look, Move, Orbit, Zoom, and Stop/recovery;
+the dialog supports Previous/Next, Escape, backdrop/Close dismissal, focus
+containment, and restoration to the invoking button. Where the right-side
+control group is present, its order is Sound (when applicable), Piece controls
+chevron, Hand guide, then Fullscreen. The same guide and ordering apply to live
+regular Three.js/A-Frame stages, immersive pieces and platform collections,
+their embeds, and camera-capable downloaded equivalents.
+
+Regular p5, plain C2, C2 Interactive, and SVG surfaces retain their existing
+framed DOM presentation as a zero-extra-renderer sleep state. Enabling visual
+hand steering may lazily create a temporary Three.js presentation shell that
+uses the still-running authored canvas/SVG as its texture. Disabling steering
+stops hand commands but retains the current spatial pose; it is not a Reset.
+Reset restores the initial platform pose without changing the steering toggle,
+camera-view toggle, camera stream, sound, or authored artwork state. When Reset
+runs while steering remains enabled, the spatial shell stays ready at its home
+pose. When steering is already disabled, Reset may dispose the home-positioned
+shell and restore the exact framed DOM.
+
+Only regular C2 Interactive applies an authored-input latch while its shell is
+spatially displaced: it dispatches pointer release/cancel before wake and
+blocks authored pointer/touch/synthetic-hand interaction while animation
+continues. Turning steering off freezes the displaced view but does not restore
+interaction; Reset returns home and restores interaction after settling.
+Three.js and A-Frame retain their native renderer/input controllers and are not
+subject to this latch. The canonical shared camera video—not the potentially
+occluded DOM display clone—is retained through a stable reference owned
+independently from steering. While the flat spatial shell is active, that video
+is rendered by a dedicated Three.js `VideoTexture` plane rather than copied
+through Canvas2D into the artwork texture; this keeps live and Full ZIP camera
+frames advancing across fullscreen transitions. A pending hand-activation
+completion is invalidated by a later Off action without releasing a separately
+enabled camera-view reference. Non-Camera ZIPs remain permanently framed and
+exclude the spatial hand shell and MediaPipe assets.
+
+`sonic_params.extras.voices` contains audio voices only. Its `hand_tracking`
+entry is the camera theremin and is offered only when a sound design exists;
+visual hand motion neither reads nor writes sonic metadata. Camera theremin
+and visual steering may share a granted stream and one MediaPipe inference
+loop, but enabling either does not enable the other.
+
+`GET /pieces/[id]/download` accepts optional `dl_camera=none`. When absent,
+the response is the backward-compatible Full ZIP. `none` creates a
+`-no-camera.zip` artifact with camera rendering, camera theremin, visual hand
+steering, camera UI, and MediaPipe files removed while retaining configured
+non-camera sound controls. The surface continues to be selected with
+`surface=immersive`; regular downloads use the regular camera contract and
+immersive downloads use the immersive contract.
 
 `POST /admin/pieces/[id]/capture-thumbnail` accepts `image_data`
 (base64-encoded PNG string, captured client-side) in the request body,

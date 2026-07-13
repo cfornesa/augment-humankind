@@ -10,6 +10,215 @@
 
 None.
 
+## 2026-07-12 — Canonical Immersive Reset State
+
+### Decision
+
+- Serialized download-time camera state remains an optional launch pose, but
+  is never reused as the Reset View destination.
+- Native Three.js, A-Frame, mounted single-piece galleries, and collection
+  rooms capture their canonical fitted pose before applying launch state.
+  Reset View always returns to that canonical snapshot.
+- This correction is independent from the still-open qualitative difference
+  between live and downloaded hand-movement response.
+
+### Verification
+
+- Runtime consistency suite: 140 passed, 0 failed, including ordering guards
+  for all four immersive reset owners.
+- Generation/export suite completed successfully.
+- JavaScript/PHP syntax and diff checks passed.
+
+## 2026-07-12 — Cadence-Independent Downloaded Gestures
+
+### Decision
+
+- The shared clutched-gesture router treats the established 60 Hz live-web
+  response as its baseline and converts wrist smoothing to elapsed time.
+- Slower landmark streams distribute travel, orbit, and zoom intent over at
+  most four render frames. Brief unknown classifications receive a 100 ms
+  grace window, reducing downloaded-mode chatter without changing inference
+  resolution, frequency, stream ownership, or engine-specific controllers.
+- Live and downloaded surfaces continue bundling the same router. The fix
+  compensates for browser cadence differences instead of introducing separate
+  downloaded tuning.
+
+### Verification
+
+- Runtime consistency suite: 140 passed, 0 failed.
+- Generation/export suite completed successfully and confirmed the cadence
+  logic is present in the bundled immersive sonic runtime.
+- JavaScript syntax and diff checks passed.
+
+## 2026-07-12 — Preserve Immersive Pose When Hand Steering Releases
+
+### Decision
+
+- Turning off hand steering on OrbitControls-backed immersive surfaces bakes
+  the currently displayed hand-directed orientation into the camera/target
+  pair before releasing the additive hand offset.
+- The gallery-backed path used by p5/C2/SVG pieces and the native immersive
+  Three.js path share this narrow handoff. Their exact pre-steering controls
+  resume from the displaced pose; Reset View remains the only pose reset.
+- A-Frame remains unchanged because its controller pauses and resumes native
+  components and does not use the additive OrbitControls offset.
+
+### Verification
+
+- Runtime consistency suite: 140 passed, 0 failed.
+- Generation/export suite completed successfully, including module and
+  direct-open global immersive ZIP runtime assertions.
+- JavaScript/PHP syntax and diff checks passed.
+
+## 2026-07-12 — Framed Sleep and Lazy Spatial Presentation for Flat Pieces
+
+### Decision
+
+- Regular p5, plain C2, C2 Interactive, and SVG pieces keep their existing
+  framed authored surface until the visitor activates hand steering.
+- Activation lazily creates a vendored-Three.js presentation shell without
+  stopping or restarting authored animation. Deactivation freezes its pose;
+  the pose-only Reset returns home without changing steering. A home shell is
+  disposed only when steering is already off.
+- Only regular C2 Interactive dispatches pointer release before transition and
+  latches authored input while spatially displaced. Steering Off remains
+  displaced/non-interactive; Reset after Off restores the framed interaction.
+  Reset while On returns home but preserves steering and the latch. Regular
+  and regular-download guides state this; immersive guides do not.
+- Camera visibility remains independent from hand steering. A pending steering
+  activation can be cancelled, including while camera view remains on.
+- Live and Full ZIP shells capture stable camera-layer references so steering
+  transitions neither hide nor release a separately enabled camera feed.
+  The Full ZIP DOM adapter exposes its canonical shared camera video through
+  `getBackgroundVideo()`; the spatial compositor must sample that source
+  rather than the live-only `_cameraOverlay` property or the occludable display
+  clone. The spatial shell renders it as a separate Three.js `VideoTexture`
+  plane so fullscreen transitions cannot freeze Canvas2D-copied video frames.
+- Full regular ZIPs package the same spatial shell and vendored Three runtime.
+  Non-Camera ZIPs remain framed and omit the shell, camera controls, MediaPipe,
+  and camera-derived behavior. Three.js/A-Frame and gallery controllers retain
+  their existing renderers and receive only pose-reset adapters.
+
+### Verification
+
+- PHP and JavaScript syntax checks passed.
+- Generation/export suite: 154 passed, 0 failed.
+- Runtime consistency suite: 139 passed, 0 failed.
+
+## 2026-07-12 — Clutched-Gestural Spatial Hand Navigation
+
+### Decision
+
+- One shared, single-hand gesture router consumes the existing 21-landmark
+  MediaPipe result; it never opens another stream or inference loop.
+- Stabilized open-hand input provides look. Pose dwell and pinch hysteresis
+  form an explicit clutch; a locked mode emits orbit or travel, palm-scale
+  change emits zoom, and release/hand loss stops without resetting the view.
+- The router emits abstract commands into existing regular Three.js/A-Frame,
+  immersive Three.js/A-Frame, gallery-piece, and collection-room controllers.
+  Keyboard, pointer, touch, gyro, camera, audio, rendering, and download paths
+  remain separate. Interactive C2 retains its authored pointer/pinch contract.
+- Existing wrist steering is the compatibility fallback when the router or a
+  surface command adapter is unavailable. No schema, route, dependency, or
+  additional inference cost was introduced.
+
+### Verification
+
+- JavaScript and PHP syntax checks passed.
+- Runtime consistency suite: 137 passed, 0 failed.
+- Generation/export suite: 154 passed, 0 failed.
+
+## 2026-07-12 — Mobile-First Hand Gesture Instruction Slides
+
+### Decision
+
+- Every surface offering clutched spatial gestures also offers a separate
+  hand-icon instructional button. It never requests permission, starts
+  tracking, or changes the hand-control toggle.
+- One shared five-slide dialog documents Look, Move, Orbit, Zoom, and safe
+  stopping. It uses a full-screen mobile sheet and centered desktop card,
+  Previous/Next and arrow keys, Escape/backdrop/Close dismissal, focus
+  containment, and trigger-focus restoration.
+- Right-side control order is Sound when present, Piece controls chevron,
+  Hand guide, then Fullscreen. The helper is reused by live and downloaded
+  regular Three.js/A-Frame views, immersive pieces, platform collections, and
+  their corresponding embeds/exports.
+
+### Verification
+
+- Browser: immersive piece 97 opened Look, advanced to Move, closed with
+  Escape, and restored focus; regular Three.js piece 113 exposed the requested
+  control order.
+- Runtime consistency suite: 138 passed, 0 failed.
+- Generation/export suite: 154 passed, 0 failed. PHP syntax and diff checks
+  passed.
+
+## 2026-07-12 — Camera/Audio Separation and Universal Immersive Hand Motion
+
+### Decision
+
+- Camera presentation and visual hand motion are camera-domain settings;
+  `sonic_params` contains audio voices only. Camera theremin requires sound.
+- Existing camera columns remain regular settings; nullable immersive
+  overrides inherit regular. Regular hand motion is persisted separately;
+  immersive hand motion is universal across every engine.
+- Device orientation supplies the base view and hand motion a bounded offset.
+  Flat regular surfaces use a reduced-motion-aware presentation tilt.
+- Every piece offers Full and Non-Camera ZIPs. The lighter artifact retains
+  non-camera sound while removing camera UI, theremin, steering, and MediaPipe.
+
+### Verification
+
+- Probe-guarded schema setup applied successfully.
+- Browser verification: piece 97 exposes Hand control without sound metadata.
+- Generation suite: 154 passed, 0 failed. Runtime suite: 133 passed, 0 failed.
+
+## 2026-07-12 — Piece Surface Parity, Camera Placement, and Light/Heavy Embeds
+
+### Decision
+
+- The standalone regular piece stage is authoritative and is shared by
+  `/pieces/{id}`, the regular embed (`/embed/pieces/{id}`), and TipTap/blog piece
+  embeds. `embed.js` supplies lazy sizing and fullscreen promotion only; it
+  does not draw duplicate piece controls.
+- Embed controls are surface-local. Regular piece pages show one **Embed**
+  action below the stage and copy `/embed/pieces/{id}`; immersive piece pages
+  show only **Embed (Custom)** and **Embed (CMS)** for their own surface.
+  Existing routes remain unchanged. Screenshot, ZIP, and a literal `VR` action
+  share one responsive upper-left rail on regular-family views. The standalone
+  piece page also carries a full “View Immersive / VR Mode” link below Prompt;
+  that explanatory link is page-only.
+- Regular piece embed documents fill their iframe viewport so no page-grid
+  remainder appears below the stage. Platform collection pages/embeds reuse
+  the existing immersive collection renderer as their shared presentation
+  layer: regular pages expose Embed plus a body-level immersive link,
+  immersive pages expose Custom/CMS, and embedded rooms carry a literal VR
+  action. Existing slideshow, selection, download, navigation, sound,
+  fullscreen, and renderer lifecycle behavior remains authoritative.
+- Every engine offers the visitor-activated camera option by default, but
+  capture never starts automatically. Nullable `camera_placement` stores
+  `background`/`overlay`; NULL defaults to background for Three.js/A-Frame
+  and overlay for p5/C2/SVG. The schema change is dual-shipped through the
+  dated migration and probe-guarded setup manifest; `schema.sql` remains frozen.
+- C2 Interactive maps wrist movement to pointer movement and pinch to pointer
+  down/up; zero-sustain theremin voices retrigger by semitone. Immersive local
+  media is inlined before wall/srcdoc rendering. Collections may provide one
+  opt-in room hand-navigation controller but never per-tile inference.
+- `docs/piece-surface-parity.md` is the maintained matrix for capabilities and
+  deliberate exclusions across regular, Light, Heavy, downloaded, and
+  collection surfaces.
+
+### Verification
+
+- `php tests/art-piece-generation.php` — **Passed: 153, Failed: 0**
+- `php tests/three-runtime-consistency.php` — **Passed: 129, Failed: 0**
+- PHP and JavaScript syntax checks passed for the modified controllers, views,
+  shared runtime, immersive runtime, sonic controller, and embed wrapper.
+- `php scripts/setup-database.php --yes` completed twice against the configured
+  database. The camera-placement schema probe reported already applied on both
+  passes; the three repeat-safe data normalization steps produced the same
+  aligned result on the second pass.
+
 ## 2026-07-11 — Immersive Camera: Gallery-Wall Projection + Universal Opacity + Export Parity
 
 ### Decision
@@ -129,11 +338,10 @@ None.
   44×44px controls, fullscreen persistence without a bottom bar, both ZIP
   checkboxes, and all four `dl_voices` URL combinations.
 
-### Unresolved memory checkpoint
+### Resolved memory checkpoint
 
-- Proposed MEMORY.md entry awaiting the person's confirmation: the live piece
-  export pattern is standalone upper-left PNG plus a ZIP menu limited to
-  downloader-narrowable Keyboard/Hand-tracking; offline exports remain PNG-only.
+- The proposed PNG-only/offline limitation was rejected and replaced in
+  MEMORY.md by the confirmed cross-surface parity rule from 2026-07-12.
 - No DESIGN.md Observed Taste entry proposed: this was a responsive usability
   correction using established immersive chrome, not a new aesthetic signal.
 

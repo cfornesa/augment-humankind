@@ -48,6 +48,14 @@ function feature_registry(): array
             'model' => null,
             'admin_href' => '/admin/media',
         ],
+        'immersive_hand_nav' => [
+            'label' => 'Spatial Hand Navigation',
+            'description' => 'Let visitors use stabilized, clutched hand gestures to look, orbit, travel, and zoom in immersive gallery rooms (MediaPipe via their camera, opt-in per session).',
+            'group' => 'pieces',
+            'requires' => ['pieces'],
+            'model' => null,
+            'admin_href' => null,
+        ],
         'media_audio' => [
             'label' => 'Audio Files',
             'description' => 'Allow MP3/OGG/WAV uploads in the media library, e.g. for use as a piece\'s ambient voice sample.',

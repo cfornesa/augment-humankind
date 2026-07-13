@@ -499,18 +499,56 @@ $sonicExtras = $audioTabAvailable && function_exists('validate_art_piece_sonic_e
                             $cameraOverlayMode = art_piece_version_generation_mode($cv, $piece);
                             $cameraOverlayStored = isset($cv['camera_overlay']) && $cv['camera_overlay'] !== null && $cv['camera_overlay'] !== ''
                                 ? (int) $cv['camera_overlay']
-                                : art_piece_camera_overlay_default($cameraOverlayMode);
-                            $cameraOverlayValue = $cameraOverlayStored !== null ? (string) $cameraOverlayStored : '';
+                                : null;
+                            $cameraPlacementStored = function_exists('piece_camera_placement') ? piece_camera_placement($cv) : null;
+                            $cameraPlacementDefault = function_exists('art_piece_camera_placement_default')
+                                ? art_piece_camera_placement_default($cameraOverlayMode)
+                                : 'overlay';
+                            // One combined value drives the select: '' (Default: option
+                            // available, engine placement), 'background', 'overlay', 'off'.
+                            if ($cameraOverlayStored === 0) {
+                                $cameraSelectValue = 'off';
+                            } elseif ($cameraOverlayStored === 1) {
+                                $cameraSelectValue = $cameraPlacementStored ?? $cameraPlacementDefault;
+                            } else {
+                                $cameraSelectValue = '';
+                            }
                             ?>
-                            <label for="camera_overlay">Camera overlay</label>
-                            <select id="camera_overlay" name="camera_overlay">
-                                <option value="" <?= $cameraOverlayValue === '' ? 'selected' : '' ?>>Default (follow hand-tracking)</option>
-                                <option value="1" <?= $cameraOverlayValue === '1' ? 'selected' : '' ?>>On</option>
-                                <option value="0" <?= $cameraOverlayValue === '0' ? 'selected' : '' ?>>Off</option>
+                            <label for="camera_view_setting">Regular piece camera view</label>
+                            <select id="camera_view_setting" name="camera_view_setting">
+                                <option value="" <?= $cameraSelectValue === '' ? 'selected' : '' ?>>Default (available, <?= $cameraPlacementDefault === 'background' ? 'background' : 'overlay' ?> placement)</option>
+                                <option value="background" <?= $cameraSelectValue === 'background' ? 'selected' : '' ?>>On — camera as background</option>
+                                <option value="overlay" <?= $cameraSelectValue === 'overlay' ? 'selected' : '' ?>>On — camera as overlay</option>
+                                <option value="off" <?= $cameraSelectValue === 'off' ? 'selected' : '' ?>>Off</option>
                             </select>
                             <small class="admin-hint" style="display: block; margin-top: 0.25rem;">
-                                Lets visitors show their camera behind/over the piece (with their permission). On by default for P5.js, plain C2.js, and SVG; authors can explicitly turn it off. On steerable engines it also unlocks hand control (camera steering).
+                                Controls the regular page, Light embed, TipTap embed, and regular ZIP. Camera permission is requested only after the visitor activates the control.
                             </small>
+                        </div>
+                        <div class="field">
+                            <?php
+                            $immersiveCameraStored = isset($cv['immersive_camera_overlay']) && $cv['immersive_camera_overlay'] !== null && $cv['immersive_camera_overlay'] !== '' ? (int) $cv['immersive_camera_overlay'] : null;
+                            $immersivePlacementStored = in_array($cv['immersive_camera_placement'] ?? null, ['background', 'overlay'], true) ? $cv['immersive_camera_placement'] : null;
+                            $immersiveCameraSelectValue = $immersiveCameraStored === 0 ? 'off' : ($immersiveCameraStored === 1 ? ($immersivePlacementStored ?? $cameraPlacementDefault) : '');
+                            ?>
+                            <label for="immersive_camera_view_setting">Immersive VR camera view</label>
+                            <select id="immersive_camera_view_setting" name="immersive_camera_view_setting">
+                                <option value="" <?= $immersiveCameraSelectValue === '' ? 'selected' : '' ?>>Default (inherit regular setting)</option>
+                                <option value="background" <?= $immersiveCameraSelectValue === 'background' ? 'selected' : '' ?>>On — camera as background</option>
+                                <option value="overlay" <?= $immersiveCameraSelectValue === 'overlay' ? 'selected' : '' ?>>On — camera as overlay</option>
+                                <option value="off" <?= $immersiveCameraSelectValue === 'off' ? 'selected' : '' ?>>Off</option>
+                            </select>
+                            <small class="admin-hint" style="display:block;margin-top:0.25rem;">Controls immersive pages, Heavy embeds, and immersive ZIPs. Immersive hand motion remains available independently of visual camera placement.</small>
+                        </div>
+                        <div class="field">
+                            <?php $regularHandValue = isset($cv['regular_hand_motion']) && $cv['regular_hand_motion'] !== null ? ((int) $cv['regular_hand_motion'] ? 'on' : 'off') : ''; ?>
+                            <label for="regular_hand_motion_setting">Regular hand motion</label>
+                            <select id="regular_hand_motion_setting" name="regular_hand_motion_setting">
+                                <option value="" <?= $regularHandValue === '' ? 'selected' : '' ?>>Default (available)</option>
+                                <option value="on" <?= $regularHandValue === 'on' ? 'selected' : '' ?>>On</option>
+                                <option value="off" <?= $regularHandValue === 'off' ? 'selected' : '' ?>>Off</option>
+                            </select>
+                            <small class="admin-hint" style="display:block;margin-top:0.25rem;">Independent of sound. Three.js/A-Frame steer their camera; p5/plain C2/SVG tilt the presentation plane.</small>
                         </div>
                         <?php endif; ?>
 
@@ -708,19 +746,8 @@ if ($engineVal === 'p5') {
                             </label>
                         </fieldset>
 
-                        <fieldset class="form-fieldset">
-                            <legend>Public camera controls</legend>
-                            <p class="admin-hint" style="margin-top:0;">Camera steering for visitors on steerable engines (Three.js, A-Frame, interactive C2). Available whenever the camera overlay (Metadata tab) or hand-tracking above unlocks it.</p>
-                            <label class="checkbox-label">
-                                <input type="checkbox" name="sonic_voice_hand_control" value="1" <?= ($sonicExtras['voices']['hand_control'] ?? true) ? 'checked' : '' ?>>
-                                Hand control (camera steering / tilt fallback)
-                            </label>
-                        </fieldset>
                         <?php else: ?>
-                        <fieldset class="form-fieldset">
-                            <legend>Public camera controls</legend>
-                            <p class="admin-hint" style="margin-top:0;">This piece has no sound design, so there are no voice settings here. The camera overlay permission lives on the Metadata tab; when it is on, visitors on steerable engines (Three.js, A-Frame, interactive C2) automatically get hand control (camera steering with a device-tilt fallback).</p>
-                        </fieldset>
+                        <p class="admin-hint">This piece has no sound design, so it has no audio controls. Camera and hand-motion settings remain available on Metadata.</p>
                         <?php endif; ?>
 
                         <?php if ($currentSonicEnabled): ?>
@@ -922,7 +949,7 @@ if ($engineVal === 'p5') {
     var cssField = document.getElementById('css_code');
     var jsField = document.getElementById('generated_code');
     var engineField = document.getElementById('engine');
-    var cameraOverlayField = document.getElementById('camera_overlay');
+    var cameraOverlayField = document.getElementById('camera_view_setting');
     var cameraOverlayWasChanged = false;
     var titleField = document.getElementById('title');
     var previewStage = document.getElementById('preview-stage-wrapper');
@@ -1147,7 +1174,14 @@ if ($engineVal === 'p5') {
 
     function updateNewPieceCameraDefault(engine) {
         if (isEditMode || !cameraOverlayField || cameraOverlayWasChanged) return;
-        cameraOverlayField.value = ['p5', 'c2', 'svg'].includes(engine || 'p5') ? '1' : '';
+        // '' = Default (option available, engine placement) for every engine;
+        // only the Default option's label differs per engine, so refresh it.
+        cameraOverlayField.value = '';
+        var defaultOption = cameraOverlayField.querySelector('option[value=""]');
+        if (defaultOption) {
+            var background = ['three', 'aframe'].includes(engine || '');
+            defaultOption.textContent = 'Default (available, ' + (background ? 'background' : 'overlay') + ' placement)';
+        }
     }
 
     // Hook listeners

@@ -427,6 +427,11 @@
 
 ## MediaPipe HandLandmarker (self-hosted)
 
+Camera theremin and visual hand motion share one granted camera stream and
+inference pipeline when used together. Full piece ZIPs include the existing
+vendored model/WASM when either capability needs it; Non-Camera ZIPs omit
+those assets. This introduces no new vendor or external service.
+
 - **Purpose:** Camera-driven hand tracking, powering two independent
   controls. (1) A "theremin" input mode for `sonic-controller.js`'s melodic
   voice — tracks one hand via the device camera; wrist height controls pitch
@@ -452,9 +457,12 @@
   behind the scene; the mounted immersive gallery room projects it onto the
   room's back wall behind the framed art), and is gated purely by
   `camera_overlay`; see `piece_sound_capability_contract()` in ALGORITHMS.md
-  §3.10. These controls are never enabled for the exhibit-wall/collection
-  multiplex (performance: no running parallel inference for every wall
-  thumbnail; UX: no camera prompts firing on an unfocused tile).
+  §3.10. Per-piece inference is never enabled for the exhibit-wall/collection
+  multiplex (performance: no parallel inference for wall tiles; UX: no camera
+  prompts on an unfocused tile). A live immersive collection may expose one
+  feature-flagged, visitor-activated **room** hand-navigation controller. It
+  loads this same self-hosted model only after the visitor selects “Walk the
+  room” and never attaches inference to individual pieces.
 - **Package:** `@mediapipe/tasks-vision` (WASM inference engine) +
   Google's pre-trained `hand_landmarker` (float16) model.
 - **Delivery:** **Self-hosted / vendored** at

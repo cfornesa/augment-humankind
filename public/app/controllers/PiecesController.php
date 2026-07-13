@@ -108,10 +108,12 @@ class PiecesController
         // all) means "use the admin's config as-is," matching every link
         // that predates this feature.
         $requestedVoices = isset($_GET['dl_voices']) ? trim((string) $_GET['dl_voices']) : null;
+        $excludeCamera = isset($_GET['dl_camera']) && strtolower(trim((string) $_GET['dl_camera'])) === 'none';
         $bundle = piece_export_bundle($data['piece'], $data['version'], [
             'surface' => $surface,
             'view_state' => $viewState,
             'requested_voices' => $requestedVoices,
+            'exclude_camera' => $excludeCamera,
         ]);
         $filename = $bundle['filename'];
         $path = $bundle['path'];

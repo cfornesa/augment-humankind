@@ -366,16 +366,30 @@
     // until the iframe's capability handshake says the active engine
     // supports them.
     const handControlToggle = root.querySelector('[data-piece-sound-hand-control-toggle]');
+    const resetViewButton = root.querySelector('[data-piece-reset-view]');
     const cameraBgToggle = root.querySelector('[data-piece-sound-camera-bg-toggle]');
     const cameraOpacityRow = root.querySelector('[data-piece-sound-camera-opacity-row]');
     const cameraOpacity = root.querySelector('[data-piece-sound-camera-opacity]');
 
     handControlToggle?.addEventListener('click', () => {
         const nextOn = handControlToggle.getAttribute('aria-pressed') !== 'true';
+        handControlToggle.setAttribute('aria-pressed', nextOn ? 'true' : 'false');
         if (handControlToggle.dataset.capabilityFallback === 'device_tilt') {
             gestureCall('toggleTilt', nextOn, 'creatr-sound-hand-control-toggle');
         } else {
             gestureCall('toggleHandControl', nextOn, 'creatr-sound-hand-control-toggle');
+        }
+    });
+    resetViewButton?.addEventListener('click', async () => {
+        resetViewButton.disabled = true;
+        resetViewButton.setAttribute('aria-busy', 'true');
+        try {
+            const bridge = frame.contentWindow?.__creatrSonicGesture;
+            if (bridge && typeof bridge.resetView === 'function') await bridge.resetView();
+            else frame.contentWindow?.postMessage({ type: 'creatr-reset-view' }, '*');
+        } finally {
+            resetViewButton.disabled = false;
+            resetViewButton.removeAttribute('aria-busy');
         }
     });
     cameraBgToggle?.addEventListener('click', () => {
@@ -439,10 +453,13 @@
         target.dataset.capabilityState = detail.state || '';
         target.setAttribute('aria-busy', detail.state === 'loading' ? 'true' : 'false');
         if (detail.state === 'loading') {
-            target.disabled = true;
+            target.disabled = detail.capability !== 'hand_control';
         } else if (detail.state === 'active') {
             target.disabled = false;
             target.setAttribute('aria-pressed', 'true');
+        } else if (detail.state === 'inactive') {
+            target.disabled = false;
+            target.setAttribute('aria-pressed', 'false');
         } else if (detail.state === 'unavailable') {
             target.setAttribute('aria-pressed', 'false');
             target.title = detail.reason || 'Unavailable on this device';
@@ -477,22 +494,24 @@
 // The same canvas-mounted instance remains available in regular and
 // fullscreen modes.
 document.querySelectorAll('[data-piece-download-picker-wrap]').forEach((wrap) => {
-    const link = wrap.querySelector('[data-piece-download-link]');
+    const links = wrap.querySelectorAll('[data-piece-download-link]');
     const trigger = wrap.querySelector('[data-piece-download-picker-trigger]');
     const picker = wrap.querySelector('[data-piece-download-picker]');
     const checkboxes = wrap.querySelectorAll('[data-piece-download-voice]');
-    if (!link || !trigger || !picker) return;
-
-    const baseHref = link.getAttribute('href') || '';
+    if (!links.length || !trigger || !picker) return;
 
     function updateHref() {
         const chosen = Array.from(checkboxes)
             .filter((cb) => cb.checked)
             .map((cb) => cb.dataset.pieceDownloadVoice)
             .filter((value) => value === 'melodic' || value === 'hand_tracking');
-        const url = new URL(baseHref, window.location.href);
-        url.searchParams.set('dl_voices', chosen.join(','));
-        link.setAttribute('href', url.pathname + url.search);
+        links.forEach((link) => {
+            const baseHref = link.dataset.baseHref || link.getAttribute('href') || '';
+            link.dataset.baseHref = baseHref;
+            const url = new URL(baseHref, window.location.href);
+            url.searchParams.set('dl_voices', chosen.join(','));
+            link.setAttribute('href', url.pathname + url.search);
+        });
     }
 
     function isOpen() {
@@ -521,7 +540,7 @@ document.querySelectorAll('[data-piece-download-picker-wrap]').forEach((wrap) =>
         event.stopPropagation();
         setOpen(false, { restoreFocus: true });
     });
-    link.addEventListener('click', () => setOpen(false));
+    links.forEach((link) => link.addEventListener('click', () => setOpen(false)));
 
     updateHref();
 });

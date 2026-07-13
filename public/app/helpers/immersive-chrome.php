@@ -11,9 +11,16 @@
  * markup/CSS so all surfaces stay pixel-identical.
  */
 
-function immersive_stage_toolbar_css(): string
+function immersive_stage_hand_guide_css(): string
 {
     return <<<'CSS'
+.hand-guide-dialog[hidden]{display:none!important}.hand-guide-dialog{position:fixed;inset:0;z-index:2147483000;display:flex;align-items:stretch;justify-content:center;padding:max(1rem,env(safe-area-inset-top)) max(1rem,env(safe-area-inset-right)) max(1rem,env(safe-area-inset-bottom)) max(1rem,env(safe-area-inset-left));background:rgba(3,7,18,.82);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);pointer-events:auto}.hand-guide-card{position:relative;display:flex;flex-direction:column;width:min(100%,34rem);min-height:0;margin:auto;border:1px solid rgba(255,255,255,.18);border-radius:1.25rem;background:rgba(9,14,24,.98);box-shadow:0 24px 80px rgba(0,0,0,.5);color:#fff;overflow:hidden}.hand-guide-header{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:1rem 1rem .75rem}.hand-guide-title{margin:0;font:700 1.05rem/1.25 system-ui,sans-serif}.hand-guide-close{display:inline-flex;align-items:center;justify-content:center;width:2.75rem;height:2.75rem;border:1px solid rgba(255,255,255,.18);border-radius:.75rem;background:rgba(255,255,255,.06);color:#fff;font-size:1.4rem;cursor:pointer}.hand-guide-viewport{display:grid;flex:1;min-height:15rem;padding:1rem;overflow:auto}.hand-guide-slide{display:grid;align-content:center;justify-items:center;gap:1rem;text-align:center}.hand-guide-slide[hidden]{display:none}.hand-guide-gesture{display:flex;align-items:center;justify-content:center;width:5.5rem;height:5.5rem;border:1px solid rgba(255,255,255,.2);border-radius:50%;background:rgba(89,184,201,.15);color:#fff}.hand-guide-slide h3{margin:0;font:750 1.35rem/1.2 system-ui,sans-serif}.hand-guide-slide p{max-width:27rem;margin:0;color:rgba(255,255,255,.82);font:400 .98rem/1.55 system-ui,sans-serif}.hand-guide-footer{display:grid;grid-template-columns:2.75rem 1fr 2.75rem;align-items:center;gap:.75rem;padding:.8rem 1rem 1rem}.hand-guide-nav{display:inline-flex;align-items:center;justify-content:center;width:2.75rem;height:2.75rem;border:1px solid rgba(255,255,255,.18);border-radius:.75rem;background:rgba(255,255,255,.07);color:#fff;font-size:1.15rem;cursor:pointer}.hand-guide-nav:disabled{opacity:.35;cursor:default}.hand-guide-progress{display:flex;justify-content:center;gap:.4rem}.hand-guide-dot{width:.45rem;height:.45rem;border-radius:50%;background:rgba(255,255,255,.3)}.hand-guide-dot.is-active{background:#fff}.hand-guide-dialog :focus-visible{outline:2px solid #fff;outline-offset:2px}@media(max-width:600px){.hand-guide-dialog{padding:0}.hand-guide-card{width:100%;height:100%;border:0;border-radius:0}.hand-guide-viewport{min-height:0}.hand-guide-footer{padding-bottom:max(1rem,env(safe-area-inset-bottom))}}
+CSS;
+}
+
+function immersive_stage_toolbar_css(): string
+{
+    $css = <<<'CSS'
 .immersive-stage-toolbar {
   position: absolute;
   top: calc(0.75rem + env(safe-area-inset-top));
@@ -35,6 +42,16 @@ function immersive_stage_toolbar_css(): string
 }
 .immersive-stage-toolbar-right {
   margin-left: auto;
+}
+.immersive-stage-vr-link {
+  width: auto;
+  min-width: 2.75rem;
+  padding-inline: 0.7rem;
+  color: #fff;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-decoration: none;
 }
 .immersive-stage-gyro-slot {
   display: contents;
@@ -352,6 +369,7 @@ function immersive_stage_toolbar_css(): string
   }
 }
 CSS;
+    return $css . immersive_stage_hand_guide_css();
 }
 
 function immersive_stage_toolbar_icon_svg(string $icon): string
@@ -377,10 +395,68 @@ function immersive_stage_toolbar_icon_svg(string $icon): string
             return '<svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M16 9a4 4 0 0 1 0 6"/><path d="M19 6a8 8 0 0 1 0 12"/></svg>';
         case 'chevron-down':
             return '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>';
+        case 'hand':
+            return '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 11V5.5a1.5 1.5 0 0 1 3 0V10"/><path d="M10 10V3.5a1.5 1.5 0 0 1 3 0V10"/><path d="M13 10V4.5a1.5 1.5 0 0 1 3 0V11"/><path d="M16 11V7.5a1.5 1.5 0 0 1 3 0V14c0 4.4-2.6 7-7 7h-1.2a6 6 0 0 1-5.1-2.9L3.4 14a1.6 1.6 0 0 1 2.7-1.7L7 13.5V11Z"/></svg>';
         case 'view':
         default:
             return '<svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="m7 15 3-3 2 2 3-4 2 3"></path></svg>';
     }
+}
+
+function immersive_stage_hand_guide_markup(string $idPrefix = 'immersive', string $buttonClass = 'immersive-stage-icon-btn', string $variant = ''): string
+{
+    $dialogId = htmlspecialchars($idPrefix . '-hand-guide', ENT_QUOTES, 'UTF-8');
+    $buttonClass = htmlspecialchars($buttonClass, ENT_QUOTES, 'UTF-8');
+    $handIcon = immersive_stage_toolbar_icon_svg('hand');
+    $slides = [
+        ['Look', 'Hold an open hand in view and move it smoothly. The camera follows your hand while filtering small tracking movements.'],
+        ['Move', 'Point, hold briefly until “Point + pinch to move” appears, then pinch. Move your hand up or down to travel and sideways to strafe.'],
+        ['Orbit', 'Hold an open or closed hand briefly, then pinch. Sweep your hand to orbit around the current view or artwork.'],
+        ['Zoom', 'While pinching, move your hand closer to or farther from the camera to approach or pull away from the view.'],
+        ['Stop safely', 'Release the pinch to stop immediately. If your hand leaves the camera frame, movement stops without resetting your current view.'],
+    ];
+    if ($variant === 'c2_interactive_latched') {
+        $slides[] = ['Interaction pauses', 'The C2 artwork keeps animating but remains non-interactive whenever it is spatially displaced. Turning off Steer the piece freezes that displaced pose; it does not restore clicking, dragging, touch, or hand-pointer interaction.'];
+        $slides[] = ['Return to interact', 'Choose Reset view after turning steering off to return to the original framed view and restore interaction. If steering is still on, Reset returns home without disabling steering, so the artwork remains ready for spatial movement and stays non-interactive.'];
+    }
+    $html = '<button type="button" class="' . $buttonClass . '" data-hand-guide-trigger aria-haspopup="dialog" aria-expanded="false" aria-controls="' . $dialogId . '" aria-label="Show hand gesture guide" title="Hand gesture guide">' . $handIcon . '</button>';
+    $html .= '<div id="' . $dialogId . '" class="hand-guide-dialog" data-hand-guide-dialog role="dialog" aria-modal="true" aria-labelledby="' . $dialogId . '-title" hidden>';
+    $html .= '<div class="hand-guide-card" data-hand-guide-card><div class="hand-guide-header"><h2 id="' . $dialogId . '-title" class="hand-guide-title">Hand gesture guide</h2><button type="button" class="hand-guide-close" data-hand-guide-close aria-label="Close hand gesture guide">×</button></div>';
+    $html .= '<div class="hand-guide-viewport">';
+    foreach ($slides as $index => [$title, $description]) {
+        $hidden = $index === 0 ? '' : ' hidden';
+        $html .= '<section class="hand-guide-slide" data-hand-guide-slide data-hand-guide-index="' . $index . '"' . $hidden . '><div class="hand-guide-gesture">' . $handIcon . '</div><h3>' . htmlspecialchars($title, ENT_QUOTES, 'UTF-8') . '</h3><p>' . htmlspecialchars($description, ENT_QUOTES, 'UTF-8') . '</p></section>';
+    }
+    $html .= '</div><div class="hand-guide-footer"><button type="button" class="hand-guide-nav" data-hand-guide-prev aria-label="Previous gesture" disabled>←</button><div class="hand-guide-progress" aria-hidden="true">';
+    foreach ($slides as $index => $_slide) {
+        $html .= '<span class="hand-guide-dot' . ($index === 0 ? ' is-active' : '') . '" data-hand-guide-dot></span>';
+    }
+    $html .= '</div><button type="button" class="hand-guide-nav" data-hand-guide-next aria-label="Next gesture">→</button></div></div></div>';
+    $html .= <<<'HTML'
+<script>(function(){
+  var script=document.currentScript,scope=script&&script.parentElement?script.parentElement:document;
+  var dialog=scope.querySelector('[data-hand-guide-dialog]');
+  if(!dialog||dialog.dataset.handGuideBound==='true')return;
+  dialog.dataset.handGuideBound='true';
+  var trigger=scope.querySelector('[data-hand-guide-trigger]');
+  var card=dialog.querySelector('[data-hand-guide-card]');
+  var closeBtn=dialog.querySelector('[data-hand-guide-close]');
+  var prev=dialog.querySelector('[data-hand-guide-prev]');
+  var next=dialog.querySelector('[data-hand-guide-next]');
+  var slides=Array.prototype.slice.call(dialog.querySelectorAll('[data-hand-guide-slide]'));
+  var dots=Array.prototype.slice.call(dialog.querySelectorAll('[data-hand-guide-dot]'));
+  var index=0,lastFocus=null,previousOverflow='';
+  function show(nextIndex){index=Math.max(0,Math.min(slides.length-1,nextIndex));slides.forEach(function(slide,i){slide.hidden=i!==index;});dots.forEach(function(dot,i){dot.classList.toggle('is-active',i===index);});prev.disabled=index===0;next.disabled=index===slides.length-1;}
+  function open(){lastFocus=document.activeElement;previousOverflow=document.body.style.overflow;document.body.style.overflow='hidden';dialog.hidden=false;trigger.setAttribute('aria-expanded','true');show(0);closeBtn.focus();}
+  function close(){if(dialog.hidden)return;dialog.hidden=true;trigger.setAttribute('aria-expanded','false');document.body.style.overflow=previousOverflow;if(lastFocus&&typeof lastFocus.focus==='function')lastFocus.focus();}
+  function focusables(){return Array.prototype.slice.call(dialog.querySelectorAll('button:not([disabled]),[href],input:not([disabled]),[tabindex]:not([tabindex="-1"])')).filter(function(el){return !el.hidden;});}
+  trigger.addEventListener('click',open);closeBtn.addEventListener('click',close);prev.addEventListener('click',function(){show(index-1);});next.addEventListener('click',function(){show(index+1);});
+  dialog.addEventListener('click',function(event){if(event.target===dialog)close();});
+  dialog.addEventListener('keydown',function(event){if(event.key==='Escape'){event.preventDefault();close();return;}if(event.key==='ArrowLeft'){event.preventDefault();show(index-1);return;}if(event.key==='ArrowRight'){event.preventDefault();show(index+1);return;}if(event.key!=='Tab')return;var items=focusables();if(!items.length)return;var first=items[0],last=items[items.length-1];if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}});
+  show(0);
+})();</script>
+HTML;
+    return $html;
 }
 
 /**
@@ -531,6 +607,8 @@ function immersive_stage_toolbar_attrs(array $attrs): string
  * Options:
  * - view_action:    null (no button) | ['label' => string, 'icon' => 'interactive'|'view'|'slideshow',
  *                   'attrs' => array] — renders the view/slideshow trigger.
+ * - vr_action:      null | ['href' => string, 'label' => string] — renders a
+ *                   literal VR link in the left toolbar for embedded stages.
  * - download_items: null (no download menu) | list of
  *                   ['tag' => 'a'|'button', 'label' => string, 'icon' => string, 'attrs' => array].
  * - screenshot_action:  null (no button) | ['attrs' => array] — renders a standalone
@@ -551,6 +629,7 @@ function immersive_stage_toolbar_attrs(array $attrs): string
 function immersive_stage_toolbar_markup(array $opts = []): string
 {
     $viewAction = $opts['view_action'] ?? null;
+    $vrAction = $opts['vr_action'] ?? null;
     $downloadItems = $opts['download_items'] ?? null;
     $downloadOptions = $opts['download_options'] ?? null;
     $screenshotAction = $opts['screenshot_action'] ?? null;
@@ -566,6 +645,7 @@ function immersive_stage_toolbar_markup(array $opts = []): string
     // contract: unlocked by the camera permission OR the hand-tracking
     // voice on steerable engines, admin-toggleable.
     $handControl = !empty($opts['hand_control']);
+    $handGuideVariant = (string) ($opts['hand_guide_variant'] ?? '');
 
     $html = '<div class="immersive-stage-toolbar" aria-label="Immersive piece controls">';
     $html .= '<div class="immersive-stage-toolbar-group immersive-stage-toolbar-group-left" role="toolbar" aria-label="Piece view and download controls">';
@@ -582,6 +662,12 @@ function immersive_stage_toolbar_markup(array $opts = []): string
             . '</button>';
     }
 
+    if (is_array($vrAction) && !empty($vrAction['href'])) {
+        $href = htmlspecialchars((string) $vrAction['href'], ENT_QUOTES, 'UTF-8');
+        $label = htmlspecialchars((string) ($vrAction['label'] ?? 'Open immersive VR view'), ENT_QUOTES, 'UTF-8');
+        $html .= '<a class="immersive-stage-icon-btn immersive-stage-vr-link" href="' . $href . '" target="_blank" rel="noopener" aria-label="' . $label . '" title="' . $label . '"><span aria-hidden="true">VR</span></a>';
+    }
+
     if (is_array($screenshotAction)) {
         $attrs = immersive_stage_toolbar_attrs($screenshotAction['attrs'] ?? []);
         $html .= '<button type="button" class="immersive-stage-icon-btn" aria-label="Take screenshot"' . $attrs . '>'
@@ -591,9 +677,9 @@ function immersive_stage_toolbar_markup(array $opts = []): string
 
     if (is_array($downloadOptions)) {
         $menuId = htmlspecialchars((string) ($downloadOptions['menu_id'] ?? 'immersive-download-menu'), ENT_QUOTES, 'UTF-8');
-        $action = is_array($downloadOptions['action'] ?? null) ? $downloadOptions['action'] : [];
-        $actionLabel = htmlspecialchars((string) ($action['label'] ?? 'Download ZIP'), ENT_QUOTES, 'UTF-8');
-        $actionAttrs = immersive_stage_toolbar_attrs($action['attrs'] ?? []);
+        $actions = is_array($downloadOptions['actions'] ?? null)
+            ? $downloadOptions['actions']
+            : [is_array($downloadOptions['action'] ?? null) ? $downloadOptions['action'] : []];
         $html .= '<div class="immersive-stage-download-wrap">';
         $html .= '<button type="button" class="immersive-stage-icon-btn" data-immersive-download-trigger aria-haspopup="true" aria-expanded="false" aria-controls="' . $menuId . '" aria-label="Open download menu">'
             . immersive_stage_toolbar_icon_svg('download')
@@ -608,9 +694,13 @@ function immersive_stage_toolbar_markup(array $opts = []): string
             }
             $html .= '<label class="immersive-stage-download-choice"><input type="checkbox" data-piece-download-voice="' . $value . '" checked> <span>' . $label . '</span></label>';
         }
-        $html .= '<a class="immersive-stage-menu-btn" data-piece-download-link' . $actionAttrs . '>'
-            . immersive_stage_toolbar_icon_svg('download-small')
-            . '<span>' . $actionLabel . '</span></a>';
+        foreach ($actions as $action) {
+            $actionLabel = htmlspecialchars((string) ($action['label'] ?? 'Download ZIP'), ENT_QUOTES, 'UTF-8');
+            $actionAttrs = immersive_stage_toolbar_attrs($action['attrs'] ?? []);
+            $html .= '<a class="immersive-stage-menu-btn" data-piece-download-link' . $actionAttrs . '>'
+                . immersive_stage_toolbar_icon_svg('download-small')
+                . '<span>' . $actionLabel . '</span></a>';
+        }
         $html .= '</div></div>';
     } elseif (is_array($downloadItems) && count($downloadItems) === 1) {
         // A one-item menu is just an extra click for no reason — render the
@@ -683,9 +773,17 @@ function immersive_stage_toolbar_markup(array $opts = []): string
                     . '</div>';
             }
             if ($handControl) {
+                // Toggle label defaults to piece steering; the gallery-room
+                // surface (collection.php) overrides it to describe walking
+                // the room instead.
+                $handControlLabel = htmlspecialchars((string) ($opts['hand_control_label'] ?? 'Steer the piece'), ENT_QUOTES, 'UTF-8');
                 $html .= '<div class="immersive-stage-sound-row" data-immersive-sound-hand-control-row hidden>'
                     . '<span>Hand control</span>'
-                    . '<button type="button" class="immersive-stage-sound-keyboard-toggle" data-immersive-sound-hand-control-toggle aria-pressed="false">Steer the piece</button>'
+                    . '<button type="button" class="immersive-stage-sound-keyboard-toggle" data-immersive-sound-hand-control-toggle aria-pressed="false">' . $handControlLabel . '</button>'
+                    . '</div>';
+                $html .= '<div class="immersive-stage-sound-row" data-immersive-reset-view-row>'
+                    . '<span>View pose</span>'
+                    . '<button type="button" class="immersive-stage-sound-keyboard-toggle" data-immersive-reset-view>Reset view</button>'
                     . '</div>';
             }
             if ($cameraView) {
@@ -703,6 +801,12 @@ function immersive_stage_toolbar_markup(array $opts = []): string
             }
             $html .= '</div>'; // .immersive-stage-sound-panel
             $html .= '</div>'; // .immersive-stage-sound-wrap
+        }
+
+        if ($handControl) {
+            // Instruction only: opening this guide never enables tracking or
+            // requests camera permission. Order is sound, controls, guide.
+            $html .= immersive_stage_hand_guide_markup('immersive', 'immersive-stage-icon-btn', $handGuideVariant);
         }
 
         if ($showFullscreen) {
@@ -732,14 +836,7 @@ function immersive_stage_toolbar_markup(array $opts = []): string
  */
 function piece_view_critical_css(): string
 {
-    return <<<'CSS'
-.piece-action-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0 1.25rem;
-    align-items: center;
-}
-
+    $css = <<<'CSS'
 .piece-download-status {
     margin-top: 0.75rem;
     color: var(--ink-soft);
@@ -782,6 +879,25 @@ function piece_view_critical_css(): string
 .piece-export-icon-btn:focus-visible {
     border-color: #fff;
     background: rgba(0, 0, 0, 0.72);
+}
+
+.piece-immersive-rail-link {
+    flex: 0 0 auto;
+    width: auto;
+    min-width: 2.75rem;
+    padding: 0 0.7rem;
+    font-size: 0.78rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-decoration: none;
+}
+
+.piece-page-immersive-action {
+    margin: 0 0 1rem;
+}
+
+.piece-page-immersive-action .piece-immersive-link {
+    margin-top: 0;
 }
 
 .piece-export-icon-btn[disabled] {
@@ -1215,30 +1331,6 @@ body.piece-fullscreen-locked {
 }
 
 @media (max-width: 700px), (max-height: 560px) {
-    .piece-action-row {
-        display: grid;
-        grid-template-columns: 1fr;
-        gap: 0.75rem;
-        align-items: stretch;
-    }
-
-    .piece-action-row .piece-immersive-link {
-        display: inline-flex;
-        width: 100%;
-        align-items: center;
-        justify-content: center;
-        min-height: 3rem;
-        margin-top: 0;
-        padding: 0.65rem 1rem;
-        border: 2px solid var(--accent);
-        border-radius: 9999px;
-        text-align: center;
-        text-decoration: none;
-        text-decoration-thickness: 0.16rem;
-        text-underline-offset: 0.24rem;
-        background: rgba(67, 29, 38, 0.12);
-    }
-
     .piece-canvas-container {
         overflow: hidden;
         border-radius: 1rem;
@@ -1247,8 +1339,8 @@ body.piece-fullscreen-locked {
     .piece-fullscreen-toggle {
         top: 0.6rem;
         right: 0.6rem;
-        height: 2.5rem;
-        width: 2.5rem;
+        height: 2.75rem;
+        width: 2.75rem;
         border-radius: 0.7rem;
     }
 
@@ -1276,4 +1368,5 @@ body.piece-fullscreen-locked {
     }
 }
 CSS;
+    return $css . immersive_stage_hand_guide_css();
 }

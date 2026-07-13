@@ -1676,6 +1676,60 @@ h3 {
 
 /* Piece detail */
 
+.piece-page-embed-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+    margin-block: 1rem;
+}
+
+.piece-page-embed-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.55rem;
+    min-height: 2.75rem;
+    padding: 0.55rem 1rem;
+    border: 1px solid var(--line);
+    border-radius: 9999px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-size: 0.82rem;
+    font-weight: 850;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    cursor: pointer;
+}
+
+.piece-page-embed-button:hover,
+.piece-page-embed-button:focus-visible {
+    border-color: var(--accent);
+}
+
+.piece-page-embed-status {
+    color: var(--ink-soft);
+    font-size: 0.85rem;
+}
+
+.piece-page-embed-manual {
+    flex: 1 1 100%;
+    width: 100%;
+    min-height: 6rem;
+    padding: 0.75rem;
+    border: 1px solid var(--line);
+    border-radius: 0.75rem;
+    background: var(--surface, transparent);
+    color: inherit;
+    font: 0.78rem/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    resize: vertical;
+}
+
+.piece-page-embed-manual[hidden] {
+    display: none;
+}
+
 .piece-prompt pre {
     white-space: pre-wrap;
     overflow-wrap: break-word;

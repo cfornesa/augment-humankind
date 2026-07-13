@@ -766,17 +766,15 @@ test('generation mode labels expose C2.js Interactive distinctly', function () {
     assert_eq(art_piece_generation_mode_label('c2'), 'C2.js');
 });
 
-test('non-interactive piece modes default camera overlay on while steerable modes keep legacy behavior', function () {
-    foreach (['p5', 'c2', 'svg'] as $mode) {
+test('all piece modes offer camera by default with engine-aware placement', function () {
+    foreach (['p5', 'c2', 'svg', 'c2_interactive', 'three', 'aframe'] as $mode) {
         assert_eq(art_piece_camera_overlay_default($mode), 1, "Expected {$mode} camera overlay to default on.");
         $capabilities = piece_sound_capability_contract($mode, [], (bool) art_piece_camera_overlay_default($mode));
         assert_true($capabilities['camera_view'], "Expected {$mode} camera view capability.");
         assert_true($capabilities['camera_opacity'], "Expected {$mode} camera opacity capability.");
-        assert_true(!$capabilities['sound'] && !$capabilities['hand_control'], "Expected {$mode} camera capability without fabricated sound/steering.");
-    }
-
-    foreach (['c2_interactive', 'three', 'aframe'] as $mode) {
-        assert_eq(art_piece_camera_overlay_default($mode), null, "Expected {$mode} to retain its legacy default.");
+        assert_true(!$capabilities['sound'], "Expected {$mode} camera capability without fabricated sound.");
+        $expectedPlacement = in_array($mode, ['three', 'aframe'], true) ? 'background' : 'overlay';
+        assert_eq($capabilities['camera_placement'], $expectedPlacement, "Expected {$mode} placement default.");
     }
 });
 
@@ -792,7 +790,7 @@ test('2D camera overlay backfill is dual-shipped and preserves explicit choices'
 });
 
 test('regular piece camera and opacity controls share the existing piece-controls panel', function () {
-    $view = file_get_contents(__DIR__ . '/../public/app/views/pieces/show.php');
+    $view = file_get_contents(__DIR__ . '/../public/app/views/partials/piece-stage.php');
     $panelAt = strpos($view, 'data-piece-sound-panel role="region" aria-label="Piece controls"');
     $cameraAt = strpos($view, 'data-piece-sound-camera-bg-row');
     $opacityAt = strpos($view, 'data-piece-sound-camera-opacity-row');
@@ -800,7 +798,7 @@ test('regular piece camera and opacity controls share the existing piece-control
     assert_true($panelAt < $cameraAt && $cameraAt < $opacityAt, 'Expected camera approval and opacity inside the shared regular-view controls panel.');
 
     $form = file_get_contents(__DIR__ . '/../public/app/views/admin/pieces/form.php');
-    assert_contains($form, "['p5', 'c2', 'svg'].includes(engine || 'p5') ? '1' : ''");
+    assert_contains($form, "background = ['three', 'aframe'].includes(engine || '')");
     assert_contains($form, 'cameraOverlayWasChanged = true;');
 });
 
@@ -1642,6 +1640,14 @@ test('sound-bearing C2 interactive bundle export loads Tone.js from the ZIP and 
     assert_contains($index, "cameraOpacityLabel.textContent = 'Camera opacity'");
     assert_contains($index, "engine: 'c2_interactive'");
     assert_contains($index, 'setBackgroundOpacity: function (value)');
+    assert_contains($index, 'cameraSourceVideo = video;');
+    assert_contains($index, 'getBackgroundVideo: function () { return cameraSourceVideo || cameraOverlay; }');
+    assert_contains($index, "typeof baseHooks.getBackgroundVideo==='function'?baseHooks.getBackgroundVideo():baseHooks._cameraOverlay||null");
+    assert_true(
+        strpos($index, 'getBackgroundVideo: function () { return cameraSourceVideo || cameraOverlay; }')
+            < strpos($index, "typeof baseHooks.getBackgroundVideo==='function'?baseHooks.getBackgroundVideo():baseHooks._cameraOverlay||null"),
+        'Expected the Full ZIP camera adapter to install its video accessor before the spatial compositor captures it.'
+    );
     assert_contains($index, 'window.__creatrComposeCapture');
     assert_contains($index, 'surface = await window.__creatrComposeCapture(surface)');
     assert_contains($index, "soundSwitch.textContent = 'Off'");
@@ -1665,14 +1671,14 @@ test('piece sound capability contract preserves sensible engine parity', functio
 
     foreach (['p5', 'c2', 'svg'] as $mode) {
         $caps = piece_sound_capability_contract($mode, $sonic);
-        assert_true(!$caps['hand_control'] && !$caps['camera_view'] && !$caps['camera_opacity']);
+        assert_true($caps['hand_control'] && $caps['camera_view'] && $caps['camera_opacity']);
         assert_true($caps['keyboard'] && $caps['hand_tracking'] && $caps['microphone']);
     }
 
     $narrowed = piece_sound_capability_contract('c2_interactive', ['enabled' => true, 'extras' => ['voices' => ['melodic' => false, 'hand_tracking' => false]]]);
-    assert_true(!$narrowed['keyboard'] && !$narrowed['hand_tracking'] && !$narrowed['hand_control'] && !$narrowed['camera_view']);
+    assert_true(!$narrowed['keyboard'] && !$narrowed['hand_tracking'] && $narrowed['hand_control'] && $narrowed['camera_view']);
 
-    $ctrlDisabled = piece_sound_capability_contract('c2_interactive', ['enabled' => true, 'extras' => ['voices' => ['melodic' => true, 'hand_tracking' => true, 'hand_control' => false]]]);
+    $ctrlDisabled = piece_sound_capability_contract('c2_interactive', ['enabled' => true, 'extras' => ['voices' => ['melodic' => true, 'hand_tracking' => true, 'hand_control' => false]]], null, null, false);
     assert_true($ctrlDisabled['hand_tracking'] && !$ctrlDisabled['hand_control']);
 });
 
@@ -1697,6 +1703,7 @@ test('immersive bundle export keeps index.html as the immersive manual entry poi
     $index = $zip->getFromName('index.html');
     $runtime = $zip->getFromName('runtime/immersive-gallery.js');
     $globalRuntime = $zip->getFromName('runtime/immersive-gallery.global.js');
+    $sonicRuntime = $zip->getFromName('runtime/sonic-controller.js');
     $gltfLoader = $zip->getFromName('runtime/three/GLTFLoader.js');
     $gltfUtils = $zip->getFromName('runtime/three/utils/BufferGeometryUtils.js');
     $gltfGlobal = $zip->getFromName('runtime/three/GLTFLoader.global.js');
@@ -1726,6 +1733,14 @@ test('immersive bundle export keeps index.html as the immersive manual entry poi
     assert_true(strpos($index, 'window.CreatrPieceDownload = {') < strpos($index, '<script src="runtime/immersive-gallery.global.js"></script>'));
     assert_contains($runtime, "from './three/three.module.js'");
     assert_contains($runtime, "await import('./three/GLTFLoader.js')");
+    assert_contains($runtime, 'bakeOrbitHandPose(state.camera, controls, gyroController)');
+    assert_contains($runtime, 'bakeOrbitHandPose(shell.camera, shell.controls, gyroController)');
+    assert_contains($runtime, 'releaseHandOffset()');
+    assert_contains($globalRuntime, 'bakeOrbitHandPose(state.camera, controls, gyroController)');
+    assert_contains($globalRuntime, 'bakeOrbitHandPose(shell.camera, shell.controls, gyroController)');
+    assert_contains($sonicRuntime, 'sampleFrameScale = sampleDelta / nominalFrameMs');
+    assert_contains($sonicRuntime, 'queueCadencedCommands(spatialCommands, cadenceSteps)');
+    assert_contains($sonicRuntime, 'classificationGraceMs');
     assert_contains($globalRuntime, "(function(){\n'use strict';");
     assert_contains($globalRuntime, 'window.CreatrImmersiveGallery = {');
     assert_contains($globalRuntime, 'const THREE = window.THREE;');
@@ -1955,7 +1970,7 @@ test('hand-tracking bundle export includes MediaPipe, fallback loading, and trou
     assert_contains($sonicController, 'https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js');
 });
 
-test('hand-enabled A-Frame exports include steer/camera UI, hooks, and bundled MediaPipe while unsupported engines omit the rows', function () {
+test('hand-enabled exports include steering and camera UI across 3D and flat engines', function () {
     $piece = ['id' => 111, 'title' => 'A-Frame Camera Piece', 'engine' => 'aframe'];
     $version = [
         'engine' => 'aframe',
@@ -1973,7 +1988,7 @@ test('hand-enabled A-Frame exports include steer/camera UI, hooks, and bundled M
     assert_contains($cdn, "cameraObject.rotation.order = 'YXZ'");
     // Camera feed renders as a blended camera-attached quad (opacity
     // support), not an opaque scene.background swap.
-    assert_contains($cdn, 'camera.add(quad);');
+    assert_contains($cdn, 'quadCamera.add(quad);');
     assert_contains($cdn, 'getBackgroundOpacity()');
 
     $bundle = piece_export_bundle($piece, $version);
@@ -1993,8 +2008,31 @@ test('hand-enabled A-Frame exports include steer/camera UI, hooks, and bundled M
     $unsupported['html_code'] = '<svg id="piece-svg"></svg>';
     $unsupported['generated_code'] = 'window.sketch = () => {};';
     $unsupportedDocument = piece_export_document(['id' => 112, 'title' => 'SVG', 'engine' => 'svg'], $unsupported);
-    assert_not_contains($unsupportedDocument, 'Steer the piece');
-    assert_not_contains($unsupportedDocument, 'Show camera');
+    assert_contains($unsupportedDocument, 'Steer the piece');
+    assert_contains($unsupportedDocument, 'perspective(900px)');
+    assert_contains($unsupportedDocument, 'Show camera');
+});
+
+test('non-camera export removes inference and camera UI while retaining non-camera sound', function () {
+    $piece = ['id' => 197, 'title' => 'Split Export', 'engine' => 'p5'];
+    $version = [
+        'engine' => 'p5',
+        'generation_mode' => 'p5',
+        'html_code' => '<div id="canvas-container"></div>',
+        'css_code' => '',
+        'generated_code' => 'window.sketch = function (p) { p.setup = function () { p.createCanvas(320, 240); }; };',
+        'camera_overlay' => 1,
+        'sonic_params' => '{"tempo":90,"scale":"minor","instrument":"synth","enabled":true,"extras":{"voices":{"ambient":true,"melodic":true,"hand_tracking":true}}}',
+    ];
+    $full = piece_export_build_manifest($piece, $version);
+    $light = piece_export_build_manifest($piece, $version, ['exclude_camera' => true]);
+    $fullPaths = array_column($full['runtime_files'], 'zip_path');
+    $lightPaths = array_column($light['runtime_files'], 'zip_path');
+    assert_true(in_array('runtime/mediapipe-hands/hand_landmarker.task', $fullPaths, true));
+    assert_true(!in_array('runtime/mediapipe-hands/hand_landmarker.task', $lightPaths, true));
+    assert_not_contains($light['document'], 'Show camera');
+    assert_not_contains($light['document'], 'Camera theremin');
+    assert_contains($light['document'], 'Sound');
 });
 
 echo "\n=== Results ===\n";

@@ -42,7 +42,9 @@ $sonicParamsDecoded = !empty($version['sonic_params']) ? json_decode((string) $v
 $pieceControlCapabilities = piece_sound_capability_contract(
     $generationMode,
     is_array($sonicParamsDecoded) ? $sonicParamsDecoded : [],
-    piece_camera_overlay_enabled($version)
+    piece_camera_overlay_enabled($version, 'immersive'),
+    piece_camera_placement($version, 'immersive'),
+    true
 );
 // The contract owns the "no sonic_params means no sound" rule.
 $soundToggleAvailable = !empty($pieceControlCapabilities['sound']);
@@ -56,23 +58,13 @@ if (!empty($pieceControlCapabilities['hand_tracking'])) {
     $downloadVoiceOptions['hand_tracking'] = 'Hand-tracking (camera theremin)';
 }
 
-// Build the three different iterations of embed codes mirroring legacy Node.js
+// Build the two surface-local immersive embed variants.
 $titleSafe = htmlspecialchars($piece['title'] ?? 'Art piece', ENT_QUOTES | ENT_HTML5, 'UTF-8');
-
-// 1. Plain embed
-$plainEmbedCode = sprintf(
-    '<iframe src="%s/embed/pieces/%d%s" width="100%%" style="width:100%%;aspect-ratio:16/9;display:block;" title="%s" frameborder="0" loading="lazy" sandbox="allow-scripts allow-same-origin"></iframe>',
-    $origin,
-    $pieceId,
-    $versionParam,
-    $titleSafe
-);
-
-// 2. Interactive (Custom) embed
+// 1. Custom immersive embed
 $sandbox = 'allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-top-navigation-by-user-activation';
 $customSrc = $origin . '/immersive/pieces/' . $pieceId . '?embed=1' . ($versionId ? '&version=' . $versionId : '');
 $customIframe = sprintf(
-    '<iframe src="%s" width="100%%" style="width:100%%;aspect-ratio:16/9;min-height:300px;display:block;" title="%s" frameborder="0" loading="lazy" allowfullscreen allow="fullscreen" sandbox="%s"></iframe>',
+    '<iframe src="%s" width="100%%" style="width:100%%;aspect-ratio:16/9;min-height:300px;display:block;" title="%s" frameborder="0" loading="lazy" allowfullscreen allow="camera; microphone; fullscreen" sandbox="%s"></iframe>',
     $customSrc,
     $titleSafe,
     $sandbox
@@ -87,10 +79,10 @@ $galleryEmbedCode = sprintf(
     $origin
 );
 
-// 3. Interactive (CMS) embed
+// 2. CMS immersive embed
 $cmsSrc = $origin . '/immersive/pieces/' . $pieceId . '?embed=1' . ($versionId ? '&version=' . $versionId : '') . '&cms=1';
 $cmsIframe = sprintf(
-    '<iframe src="%s" width="100%%" style="width:100%%;aspect-ratio:16/9;min-height:300px;display:block;" title="%s" frameborder="0" loading="lazy" allowfullscreen allow="fullscreen" sandbox="%s"></iframe>',
+    '<iframe src="%s" width="100%%" style="width:100%%;aspect-ratio:16/9;min-height:300px;display:block;" title="%s" frameborder="0" loading="lazy" allowfullscreen allow="camera; microphone; fullscreen" sandbox="%s"></iframe>',
     $cmsSrc,
     $titleSafe,
     $sandbox
@@ -120,7 +112,11 @@ $showAdminEditButton = isset($adminEditUrl) && is_string($adminEditUrl) && $admi
 $showReadOnlyFullViewButton = !$isEmbedMode && !$isStaticEmbed
     && ($engine === 'p5' || $engine === 'svg' || ($engine === 'c2' && !$c2Interactive));
 $showC2InteractiveOverlay = $engine === 'c2' && $c2Interactive;
-$fullViewPieceSrcdoc = ($showReadOnlyFullViewButton || $showC2InteractiveOverlay) ? piece_render_document($piece, $version) : null;
+// capture_safe_media: the overlay renders in a srcdoc iframe whose base/
+// origin handling makes root-relative /image/… refs unreliable — inline them.
+$fullViewPieceSrcdoc = ($showReadOnlyFullViewButton || $showC2InteractiveOverlay)
+    ? piece_render_document($piece, $version, ['capture_safe_media' => true])
+    : null;
 $pieceViewActionLabel = null;
 if ($showC2InteractiveOverlay) {
     $pieceViewActionLabel = 'Open interactive view';
@@ -496,6 +492,9 @@ html, body {
   transform: translateX(-50%) translateY(0);
   opacity: 1;
 }
+#toast-container[hidden] {
+  display: none;
+}
 
 /* Custom safety rule for shadow containment */
 canvas[aria-hidden="true"] {
@@ -607,14 +606,22 @@ canvas[aria-hidden="true"] {
                     array_values($downloadVoiceOptions),
                     array_keys($downloadVoiceOptions)
                 ),
-                'action' => [
-                    'label' => public_copy_value('public_art_copy.shared_ui.download_piece_label'),
+                'actions' => [[
+                    'label' => 'Download Full ZIP',
                     'attrs' => [
                         'href' => $pieceDownloadUrl,
                         'data-immersive-download-piece' => $pieceDownloadUrl,
                         'download' => true,
                     ],
-                ],
+                ], [
+                    'label' => 'Download Non-Camera ZIP',
+                    'attrs' => [
+                        'href' => $pieceDownloadUrl . (str_contains($pieceDownloadUrl, '?') ? '&' : '?') . 'dl_camera=none',
+                        'data-immersive-download-piece' => $pieceDownloadUrl,
+                        'data-download-camera' => 'none',
+                        'download' => true,
+                    ],
+                ]],
             ] : null,
             'screenshot_action' => !$isStaticEmbed ? [
                 'attrs' => [
@@ -629,6 +636,7 @@ canvas[aria-hidden="true"] {
                 ? ['enabled' => true] : null,
             'camera_view' => !$isStaticEmbed && $cameraViewAvailable,
             'hand_control' => !$isStaticEmbed && $handControlAvailable,
+            'hand_guide_variant' => '',
             'show_fullscreen' => !$isStaticEmbed,
             'fullscreen_onclick' => 'toggleFullscreen()',
         ]) ?>
@@ -637,17 +645,13 @@ canvas[aria-hidden="true"] {
 
     <!-- Copy Embeds Toolbar (only shown in standard mode) -->
     <section class="copy-section">
-        <button type="button" class="embed-copy-btn" onclick="copyEmbed('plain')">
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-            Embed Piece
-        </button>
         <button type="button" class="embed-copy-btn" onclick="copyEmbed('gallery')">
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-            Embed Interactive (Custom)
+            Embed (Custom)
         </button>
         <button type="button" class="embed-copy-btn" onclick="copyEmbed('galleryCms')">
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-            Embed Interactive (CMS)
+            Embed (CMS)
         </button>
     </section>
 
@@ -760,7 +764,7 @@ canvas[aria-hidden="true"] {
 </div>
 
 <!-- Custom Toast Message Container -->
-<div id="toast-container" aria-live="polite">
+<div id="toast-container" aria-live="polite" hidden>
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#8ccf3f" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
     <span id="toast-message"></span>
 </div>
@@ -945,14 +949,13 @@ if (<?= $isFullscreenInit ? 'true' : 'false' ?>) {
 
 // Embed copy codes setup
 const embedCodes = {
-    plain: <?= json_encode($plainEmbedCode) ?>,
     gallery: <?= json_encode($galleryEmbedCode) ?>,
     galleryCms: <?= json_encode($galleryCmsEmbedCode) ?>
 };
 
 window.copyEmbed = function(type) {
     const code = embedCodes[type];
-    const label = type === 'plain' ? 'Embed Piece' : (type === 'gallery' ? 'Embed Interactive (Custom)' : 'Embed Interactive (CMS)');
+    const label = type === 'gallery' ? 'Embed (Custom)' : 'Embed (CMS)';
     
     if (code) {
         navigator.clipboard.writeText(code).then(() => {
@@ -965,18 +968,27 @@ window.copyEmbed = function(type) {
 };
 
 let toastTimeout = null;
+let toastHideTimeout = null;
 function showToast(message) {
     const toast = document.getElementById('toast-container');
     const msg = document.getElementById('toast-message');
     if (!toast || !msg) return;
 
     if (toastTimeout) clearTimeout(toastTimeout);
+    if (toastHideTimeout) clearTimeout(toastHideTimeout);
     
     msg.textContent = message;
+    toast.hidden = false;
     toast.classList.add('show');
     
     toastTimeout = setTimeout(() => {
         toast.classList.remove('show');
+        toastTimeout = null;
+        toastHideTimeout = setTimeout(() => {
+            toast.hidden = true;
+            msg.textContent = '';
+            toastHideTimeout = null;
+        }, 350);
     }, 3000);
 }
 
@@ -993,9 +1005,20 @@ try {
 } catch (e) {}
 
 // Boot piece code on canvas
-const code = <?= json_encode($version['generated_code'] ?? '') ?>;
-const htmlCode = <?= json_encode($version['html_code'] ?? '') ?>;
-const cssCode = <?= json_encode($version['css_code'] ?? '') ?>;
+<?php
+// Inline local media (/image/{id} etc.) as data URIs before handing the code
+// to the immersive mounts: gallery-wall mounts rasterize SVG via an <img>,
+// where external refs are silently dropped — the regular view and downloads
+// already inline, this keeps the immersive live view at parity (piece 108).
+[$immersiveInlinedCode, $immersiveInlinedHtml, $immersiveInlinedCss] = piece_inline_local_media([
+    (string) ($version['generated_code'] ?? ''),
+    (string) ($version['html_code'] ?? ''),
+    (string) ($version['css_code'] ?? ''),
+]);
+?>
+const code = <?= json_encode($immersiveInlinedCode) ?>;
+const htmlCode = <?= json_encode($immersiveInlinedHtml) ?>;
+const cssCode = <?= json_encode($immersiveInlinedCss) ?>;
 const engine = <?= json_encode($engine) ?>;
 const title = <?= json_encode($piece['title'] ?? '') ?>;
 const prompt = <?= json_encode($prompt) ?>;
@@ -1008,7 +1031,7 @@ const sonicParams = <?= json_encode(
         ? $sonicParamsDecoded
         : null
 ) ?>;
-const viewerControlsOptions = { showViewerControls: <?= (!$isEmbedMode && !$isStaticEmbed) ? 'true' : 'false' ?>, sonicParams, pieceId: <?= (int) ($piece['id'] ?? 0) ?>, cameraOverlay: <?= $cameraViewAvailable ? 'true' : 'false' ?>, handControl: <?= $handControlAvailable ? 'true' : 'false' ?> };
+const viewerControlsOptions = { showViewerControls: <?= (!$isEmbedMode && !$isStaticEmbed) ? 'true' : 'false' ?>, sonicParams, pieceId: <?= (int) ($piece['id'] ?? 0) ?>, cameraOverlay: <?= $cameraViewAvailable ? 'true' : 'false' ?>, handControl: <?= $handControlAvailable ? 'true' : 'false' ?>, c2Interactive: <?= $c2Interactive ? 'true' : 'false' ?> };
 
 const stage = document.getElementById('immersive-stage');
 
@@ -1056,8 +1079,8 @@ try {
         handControlAllowed: <?= $handControlAvailable ? 'true' : 'false' ?>,
     });
 
-    const downloadPieceLink = document.querySelector('[data-immersive-download-piece]');
-    if (downloadPieceLink) {
+    const downloadPieceLinks = document.querySelectorAll('[data-immersive-download-piece]');
+    downloadPieceLinks.forEach((downloadPieceLink) => {
         downloadPieceLink.addEventListener('click', () => {
             const baseHref = downloadPieceLink.dataset.immersiveDownloadPiece || downloadPieceLink.getAttribute('href') || '';
             const state = immersiveViewer?.getViewState?.() || {};
@@ -1074,16 +1097,18 @@ try {
                 const url = new URL(baseHref, window.location.href);
                 url.searchParams.set('surface', 'immersive');
                 url.searchParams.set('dl_voices', chosen.join(','));
+                if (downloadPieceLink.dataset.downloadCamera === 'none') url.searchParams.set('dl_camera', 'none');
                 if (encoded) url.searchParams.set('viewState', encoded);
                 downloadPieceLink.href = url.pathname + url.search;
             } catch (_) {
                 const url = new URL(baseHref, window.location.href);
                 url.searchParams.set('surface', 'immersive');
                 url.searchParams.set('dl_voices', chosen.join(','));
+                if (downloadPieceLink.dataset.downloadCamera === 'none') url.searchParams.set('dl_camera', 'none');
                 downloadPieceLink.href = url.pathname + url.search;
             }
         });
-    }
+    });
 
     // Download PNG from the live immersive view. The default capture is the
     // stage canvas from the user's current perspective; an open interactive

@@ -130,6 +130,17 @@ function art_piece_version_base_columns(bool $includeGenerationMode = true, bool
 
     if ($includeCameraOverlay) {
         $columns[] = 'v.camera_overlay';
+        // camera_placement rides the camera_overlay flag: both ship in the
+        // same feature and the extra probe keeps older deployments (pulled
+        // code, setup script not yet run) selectable.
+        if (function_exists('ah_column_exists') && ah_column_exists('art_piece_versions', 'camera_placement')) {
+            $columns[] = 'v.camera_placement';
+        }
+        foreach (['immersive_camera_overlay', 'immersive_camera_placement', 'regular_hand_motion'] as $surfaceColumn) {
+            if (function_exists('ah_column_exists') && ah_column_exists('art_piece_versions', $surfaceColumn)) {
+                $columns[] = 'v.' . $surfaceColumn;
+            }
+        }
     }
 
     return $columns;
@@ -194,6 +205,14 @@ function art_piece_version_storage_columns(bool $includeGenerationMode = true, b
 
     if ($includeCameraOverlay) {
         $columns[] = 'camera_overlay';
+        if (function_exists('ah_column_exists') && ah_column_exists('art_piece_versions', 'camera_placement')) {
+            $columns[] = 'camera_placement';
+        }
+        foreach (['immersive_camera_overlay', 'immersive_camera_placement', 'regular_hand_motion'] as $surfaceColumn) {
+            if (function_exists('ah_column_exists') && ah_column_exists('art_piece_versions', $surfaceColumn)) {
+                $columns[] = $surfaceColumn;
+            }
+        }
     }
 
     return $columns;
@@ -690,7 +709,6 @@ function validate_art_piece_sonic_extras(mixed $decoded): array
             // contract: hand control is offered whenever the piece's camera
             // permission (or the hand-tracking voice) unlocks it, unless the
             // admin explicitly turns it off.
-            'hand_control' => !isset($voicesIn['hand_control']) || (bool) $voicesIn['hand_control'],
         ],
         'synth' => [
             'octave_min' => $octaveMin,
@@ -831,15 +849,26 @@ function art_piece_camera_overlay_supported(): bool
 
 /**
  * Default authoring value for camera overlays when no explicit Metadata-tab
- * choice has been stored yet. The 2D/non-interactive surfaces use a local,
- * pointer-transparent video overlay with opacity control, so make that
- * visitor-activated capability available by default. Steerable/immersive
- * engines retain their legacy NULL behavior (follow hand-tracking).
+ * choice has been stored yet. The camera OPTION (a visitor-activated toggle;
+ * nothing auto-starts) is available by default on every engine — 2D engines
+ * render it as a pointer-transparent video overlay, Three.js/A-Frame as an
+ * in-scene background quad (2026-07-12; the p5/c2/svg-only default shipped
+ * 2026-07-11).
  */
 function art_piece_camera_overlay_default(string $generationMode): ?int
 {
+    return 1;
+}
+
+/**
+ * Default camera placement per engine when camera_placement is NULL:
+ * Three.js/A-Frame render the feed as an in-scene, camera-attached blended
+ * quad (a background), the 2D engines as a DOM <video> overlay.
+ */
+function art_piece_camera_placement_default(string $generationMode): string
+{
     $generationMode = art_piece_normalize_generation_mode($generationMode, $generationMode);
-    return in_array($generationMode, ['p5', 'c2', 'svg'], true) ? 1 : null;
+    return in_array($generationMode, ['three', 'aframe'], true) ? 'background' : 'overlay';
 }
 
 /**

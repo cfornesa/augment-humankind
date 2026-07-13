@@ -8,6 +8,18 @@ were folded into their final entries — see "Closed Investigations". -->
 
 # Stack & Deployment
 
+2026-07-12 CORRECTION Disabling hand steering must preserve the current pose
+and immediately restore pre-steering controls across live and downloaded
+immersive surfaces; Reset View alone restores the initial pose.
+
+2026-07-12 DECISION Spatial hand navigation uses one stabilized, single-hand clutched-gestural router that emits look, orbit, travel, and zoom commands through existing surface controllers without replacing other input or rendering systems.
+
+2026-07-12 DECISION Camera/video presentation and visual hand motion are never
+stored in or enabled by audio metadata. Regular and immersive camera settings
+are independent; immersive hand motion is universal across engines. Piece
+downloads offer Full ZIP and a Non-Camera ZIP that retains non-camera sound
+while omitting camera UI, camera theremin, visual steering, and MediaPipe.
+
 2026-06-11 STACK Augment Humankind v1 is a no-framework PHP site with durable routes at `/`, `/services`, `/notes`, and `/contact`.
 
 2026-06-20 CONSTRAINT augmenthumankind.com production runs on Hostinger/PHP. The legacy platform/Replit app has since been removed from the repo (folder deleted 2026-07-03); only its exported database survives — read/export-only via `PLATFORM_*`, never written.
@@ -88,6 +100,14 @@ Source: DECISIONS.md 2026-07-06 Public Copy Subtabs, Footer Consolidation, Widen
 2026-07-11 DECISION Registered camera video overlay layers and composed capture routines inside P5.js and SVG (default) offline bootstrap scripts to provide webcam overlay features and correct PNG capture composition offline under the `file://` protocol.
 
 2026-07-11 DECISION P5.js, plain C2.js, and SVG camera overlays default On but remain visitor-activated and author-disableable; camera approval and opacity share the regular-view Piece controls menu.
+
+2026-07-12 DECISION The regular piece stage is authoritative for `/pieces/{id}`, the regular embed, and TipTap/blog piece embeds; wrappers may handle lazy sizing/fullscreen promotion but must not duplicate stage controls. Embed controls are surface-local: regular pages say Embed, immersive pages say Embed (Custom)/(CMS), Screenshot/ZIP/literal-VR share the stage rail, and the full immersive link below Prompt is standalone-page-only.
+
+2026-07-12 DECISION Regular piece embeds fill their viewport, and platform collection pages/embeds reuse the immersive collection renderer rather than maintaining a second gallery. Collection entry chrome may adapt, but slideshow, navigation, selection, downloads, sound, fullscreen, and renderer lifecycle behavior must remain intact.
+
+2026-07-12 DECISION Downloads and embeds preserve all technically relevant functionality of their source surface; deliberate exclusions such as bare `static=1` embeds and collection per-tile inference must be recorded in `docs/piece-surface-parity.md`.
+
+2026-07-12 DECISION Every engine offers a visitor-activated camera option by default without auto-starting capture; per-version placement is background or overlay, with Three.js/A-Frame defaulting to background and p5/C2/SVG to overlay.
 
 2026-07-11 DECISION Ported the `isIPhoneWebKitBrowser()` check, CSS pseudo-fullscreen layout fallbacks, and the Escape key exit handlers directly to exported/downloaded piece documents so fullscreen transitions operate cleanly on mobile Safari without browser window failures.
 
