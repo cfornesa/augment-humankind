@@ -10,6 +10,41 @@
 
 None.
 
+## 2026-07-13 — Collection Download Walk-the-Room Parity and Slideshow Sound Auto-Arm
+
+### Decision
+
+- Collection download export now includes the "Walk the room" hand-control button
+  in its toolbar, matching the live collection view when the `immersive_hand_nav`
+  feature flag is enabled. The download is always self-contained (no feature flag
+  system offline) so `hand_control: true` is unconditional there. Both `handControlAllowed`
+  and `dedicatedHandControl` are wired into `setupImmersiveStageChrome` in the
+  embedded JS, exactly mirroring the live surface options.
+- Clicking any piece on the collection wall now arms `wallSoundRequested = true`
+  before the slideshow overlay opens. The subsequent `onActiveItemChange` →
+  `bindWallAudioController` call sees the armed flag and calls `ensureAudioReady()`
+  immediately, so the clicked piece's audio starts without a separate button press.
+  Prev/Next navigation and close-to-proximity restore all flow through the same
+  `bindWallAudioController` path and inherit the armed state, giving sound across
+  the full traverse-then-exit flow.
+- `immersive-gallery.js` is shared: the single-line `wallSoundRequested = true`
+  addition in `onOpen` automatically applies to the live web view and to every
+  collection export (via `piece_export_patched_immersive_gallery_source`).
+- No route, schema, vendor dependency, feature flag, or public API changed.
+
+### Options considered
+
+- Auto-arm vs. explicit sound toggle in the overlay only. Auto-arm was chosen
+  because the user's click is an explicit act of engagement with the piece, which
+  implies intent to experience it including audio.
+
+### Verification
+
+- Runtime consistency suite: 142 passed, 0 failed.
+- Feature-flag suite: 20 passed, 0 failed.
+- Generation/export suite: 154 passed, 0 failed.
+- PHP syntax check passed on piece-render.php.
+
 ## 2026-07-13 — Slideshow Sound Ownership Override
 
 ### Decision

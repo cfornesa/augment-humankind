@@ -4285,6 +4285,11 @@ function collection_export_document(array $collection, array $items, array $opti
         ],
         'sound_action' => $hasAnySonic ? ['enabled' => true] : null,
         'camera_view' => true,
+        // Walk-the-room hand navigation — always available in the self-contained
+        // download (no feature flag system offline); mirrors the live collection
+        // view's hand_control / hand_control_label / dedicatedHandControl pattern.
+        'hand_control' => true,
+        'hand_control_label' => 'Walk the room',
         'show_fullscreen' => true,
         'fullscreen_onclick' => null,
     ]);
@@ -4355,6 +4360,11 @@ setupImmersiveStageChrome(stage, {
   getAudioController: () => viewer?.getAudioController?.(),
   getPieceInteractionController: () => viewer?.getRoomInteractionController?.(),
   cameraOverlayAllowed: true,
+  // Walk-the-room: matches the live collection's handControlAllowed +
+  // dedicatedHandControl options so the hand-control row appears and routes
+  // through the room's silent hand engine, not the audio controller.
+  handControlAllowed: true,
+  dedicatedHandControl: true,
 });
 fullscreenBtn?.addEventListener('click', async () => {
   try {

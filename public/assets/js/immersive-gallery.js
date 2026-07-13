@@ -5780,6 +5780,14 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
       },
       onOpen() {
         wallAudioIndexBeforeSlideshow = computeFocusedSlotIndex(audioControllerIndex);
+        // Arm sound for the displayed slide: the onActiveItemChange callback
+        // fires next (via renderCurrentItems → syncDownloadControls) and calls
+        // bindWallAudioController, which starts ensureAudioReady() only when
+        // wallSoundRequested is true. Setting it here fulfils the user's
+        // expectation that clicking a piece plays its sound immediately, and
+        // means Prev/Next navigation and the close-restore path also carry
+        // sound forward without a separate button press.
+        wallSoundRequested = true;
         suspendPresentation();
       },
       onClose() {
