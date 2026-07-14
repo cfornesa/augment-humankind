@@ -2276,6 +2276,18 @@ class PiecesAdminController
             $extractedCss = art_piece_apply_refine_patches($css, $patches['css']);
             $extractedJs = art_piece_apply_refine_patches($js, $patches['js']);
 
+            if (!$soundOnly && !art_piece_refine_has_meaningful_change(
+                $engine,
+                $html,
+                $extractedHtml,
+                $css,
+                $extractedCss,
+                $js,
+                $extractedJs
+            )) {
+                throw new RuntimeException('The A-Frame refinement did not make a meaningful visual change. Removing scale="1 1 1" or repeating the same GLB reference is a no-op; request a different model placement, scale, camera framing, or composition change.');
+            }
+
             // From this point on we have real extracted code, even if a
             // validation check below ultimately rejects it — persist it as
             // a draft attempt now so a rejection further down still leaves

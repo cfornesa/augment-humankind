@@ -258,7 +258,7 @@ Three.js exports attach OrbitControls to the exported scene/camera/renderer so
 drag/touch orbiting works even when the piece code itself only animates.
 Those regular standalone exports also mirror the live regular `/pieces/[id]`
 movement contract for supported 3D engines: Three.js exports keep elapsed-
-time-scaled WASD/arrow movement plus click/tap-to-move teleport without
+time-scaled arrow-key movement plus click/tap-to-move teleport without
 showing the immersive viewer HUD, and A-Frame exports keep the same regular-
 view keyboard/tap movement behavior offline.
 Camera hand steering is an additional control layer: activating it must not
@@ -399,7 +399,7 @@ must not be removed or reimplemented.
   identified by a magnifying-glass icon and aligned with the site expand
   control's x-axis, left-edge forward/back/left/right movement controls, float
   up/down controls, click/tap and press-and-hold button operation, keyboard
-  WASD/arrow movement where keyboard input exists, and pointer/touch gestures
+  arrow-key movement where keyboard input exists, and pointer/touch gestures
   where supported.
   Embedded/static immersive iframes keep the viewer HUD hidden. Desktop and
   supporting tablet browsers use native fullscreen when available; iPhone

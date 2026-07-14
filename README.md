@@ -142,8 +142,9 @@ native Three.js and A-Frame pieces:
   right, with separate float up/down controls for vertical camera movement.
 - Buttons support click/tap and press-and-hold across desktop, tablet, and
   mobile pointer devices.
-- Existing keyboard controls remain available on desktop: arrow keys and
-  WASD move the viewer.
+- Existing keyboard controls remain available on desktop: the arrow keys move
+  the viewer. WASD remains available for keyboard-note input where sound is
+  enabled and does not move the camera.
 - Existing pointer gestures remain available where supported: drag/pan,
   wheel or pinch zoom, and tap/click-to-move.
 
@@ -235,7 +236,7 @@ load local classic-runtime equivalents of the immersive runtime graph so the
 page can still mount when opened directly from `file://`.
 Regular standalone piece exports now mirror the live regular `/pieces/[id]`
 viewer for native movement behavior too: Three.js downloads keep elapsed-time-
-scaled WASD/arrow movement plus click/tap-to-move teleport without adding the
+scaled arrow-key movement plus click/tap-to-move teleport without adding the
 immersive viewer HUD, and A-Frame downloads keep authored scene interaction
 while restoring the same regular-view keyboard/tap movement contract offline.
 
@@ -249,7 +250,9 @@ runtime help:
   `index.html`; GLTF/GLB model materials and embedded textures are preserved
   by default when loaded from `/media/{id}`.
 - A-Frame downloads receive the live `<a-scene>` and can use authored scene
-  events.
+  events. Model assets retain their `/media/{id}` binary URL, and the bundled
+  first-party model runtime validates, fits, centers, and reports GLB loading
+  failures before the scene is presented.
 - C2.js interactive downloads receive the real canvas, `startFrame`, and safe
   image helpers, so authored pointer/click/touch/drag handlers continue to
   work.

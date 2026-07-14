@@ -2093,7 +2093,18 @@ function bootAFrame() {
         scene.setAttribute('device-orientation-permission-ui', 'enabled: false');
       }
 
+      installAFrameModelDiagnostics(scene);
       runPieceCode();
+      // Some generated sketches create their model entity inside window.sketch.
+      // Re-scan after authored code has run; the per-entity marker keeps this
+      // idempotent for markup that was already present.
+      installAFrameModelDiagnostics(scene);
+      let modelDiagnosticsAttempts = 0;
+      const modelDiagnosticsTimer = setInterval(() => {
+        installAFrameModelDiagnostics(scene);
+        modelDiagnosticsAttempts += 1;
+        if (modelDiagnosticsAttempts >= 20) clearInterval(modelDiagnosticsTimer);
+      }, 250);
       const ready = createReadyController(() => scene.canvas || scene.querySelector('canvas') || document.querySelector('canvas'));
       ready.noteInlineMedia(scene);
       if (typeof window.sketch === 'function') {
@@ -2385,6 +2396,118 @@ function bootAFrame() {
   };
   script.onerror = () => showPieceError('Could not load self-hosted A-Frame runtime.');
   document.head.appendChild(script);
+}
+
+// A-Frame's gltf-model component reports a successful network/parse load, but
+// it does not frame the resulting object. Uploaded GLB files commonly carry
+// arbitrary units and pivots, so a valid model can otherwise be present but
+// invisible (or far outside the camera). Keep this safety net in the shared
+// runtime so generated pieces and downloaded exports get the same behavior.
+function installAFrameModelDiagnostics(scene) {
+  const THREE_NS = window.AFRAME?.THREE || window.THREE;
+  const emit = (entity, status, data = {}) => {
+    const detail = { status, entityId: entity?.id || '', ...data };
+    try { entity?.dispatchEvent(new CustomEvent('creatr-model-status', { detail })); } catch (_) {}
+    try { window.parent.postMessage({ type: 'creatr-aframe-model', ...detail }, '*'); } catch (_) {}
+    try { diag(`aframe-model-${status}`, detail); } catch (_) {}
+  };
+  const modelSource = (entity) => {
+    const ref = String(entity?.getAttribute('gltf-model') || '');
+    if (!ref.startsWith('#')) return ref || '(missing gltf-model source)';
+    const asset = document.getElementById(ref.slice(1));
+    return String(asset?.getAttribute('src') || ref);
+  };
+  const recoverBinaryModel = (entity, source, onSuccess, onFailure) => {
+    const component = entity.components?.['gltf-model'];
+    const loaderClass = window.AFRAME?.THREE?.GLTFLoader || window.THREE?.GLTFLoader;
+    const loader = component?.loader || (loaderClass ? new loaderClass() : null);
+    if (!loader || !source || source === '(missing gltf-model source)') {
+      onFailure(new Error('A-Frame GLTFLoader.parse is unavailable.'));
+      return;
+    }
+    fetch(source, { credentials: 'same-origin' }).then((response) => {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return response.arrayBuffer();
+    }).then((bytes) => new Promise((resolve, reject) => {
+      const basePath = source.slice(0, Math.max(0, source.search(/[?#]/) >= 0 ? source.search(/[?#]/) : source.length)).replace(/[^/]*$/, '');
+      loader.parse(bytes, basePath, resolve, reject);
+    })).then((gltf) => {
+      const model = gltf?.scene || gltf?.scenes?.[0];
+      if (!model) throw new Error('The parsed GLB did not contain a scene.');
+      entity.setObject3D('mesh', model);
+      if (entity.components?.['gltf-model']) entity.components['gltf-model'].model = model;
+      onSuccess(model);
+    }).catch(onFailure);
+  };
+  const fitEntity = (entity) => {
+    const source = modelSource(entity);
+    if (entity.__creatrModelFitted) return;
+    const mesh = entity.getObject3D('mesh');
+    if (!mesh || !THREE_NS?.Box3 || !THREE_NS?.Vector3 || !THREE_NS?.Matrix4) {
+      emit(entity, 'invalid', { source, message: 'A-Frame loaded the model, but its mesh or Three.js bounds API is unavailable.' });
+      return;
+    }
+    mesh.updateWorldMatrix?.(true, true);
+    const box = new THREE_NS.Box3().setFromObject(mesh);
+    const size = box.getSize(new THREE_NS.Vector3());
+    const center = box.getCenter(new THREE_NS.Vector3());
+    const maxDim = Math.max(size.x, size.y, size.z);
+    if (!Number.isFinite(maxDim) || maxDim <= 0) {
+      emit(entity, 'invalid', { source, message: 'A-Frame loaded the model, but its bounding box is empty.', dimensions: [size.x, size.y, size.z] });
+      return;
+    }
+
+    // Convert the world-space box center back to the model root's local space
+    // before shifting the mesh. This keeps the authored entity position as a
+    // composition offset instead of silently moving the entity itself.
+    const inverse = new THREE_NS.Matrix4().copy(mesh.matrixWorld).invert();
+    center.applyMatrix4(inverse);
+    mesh.position.sub(center);
+
+    // Idempotent with generated code that already applied the documented
+    // target-size fit: once the model is roughly three scene units wide, this
+    // multiplier is effectively 1 and does not double-scale it.
+    const targetSize = 3;
+    const factor = targetSize / maxDim;
+    if (Number.isFinite(factor) && factor > 0) mesh.scale.multiplyScalar(factor);
+    entity.__creatrModelFitted = true;
+    emit(entity, 'loaded', {
+      source,
+      dimensions: [size.x, size.y, size.z],
+      targetSize,
+      fitScale: factor,
+      message: `Loaded and fitted ${source}.`,
+    });
+  };
+  const startBinaryFallback = (entity, source, initialMessage) => {
+    if (entity.__creatrBinaryModelFallbackStarted) return;
+    entity.__creatrBinaryModelFallbackStarted = true;
+    recoverBinaryModel(entity, source, () => {
+      fitEntity(entity);
+      entity.emit('model-loaded', { format: 'gltf', model: entity.getObject3D('mesh') });
+    }, (fallbackError) => {
+      const detail = `${initialMessage}; binary fallback failed: ${fallbackError?.message || fallbackError}`;
+      emit(entity, 'error', { source, message: `A-Frame model ${source} failed to load: ${detail}` });
+      showPieceError(`A-Frame model ${source} failed to load: ${detail}`);
+    });
+  };
+
+  scene.querySelectorAll('[gltf-model]').forEach((entity) => {
+    if (entity.__creatrModelDiagnosticsInstalled) return;
+    entity.__creatrModelDiagnosticsInstalled = true;
+    const source = modelSource(entity);
+    entity.addEventListener('model-loaded', () => fitEntity(entity), { once: true });
+    entity.addEventListener('model-error', (event) => {
+      const message = event?.detail?.src?.message || event?.detail?.message || 'The GLB could not be parsed or fetched.';
+      startBinaryFallback(entity, source, message);
+    }, { once: true });
+    // If A-Frame finished before listeners were attached, handle the already
+    // available mesh on the next task without disturbing normal boot order.
+    setTimeout(() => {
+      if (entity.getObject3D('mesh')) fitEntity(entity);
+      else if (!/\.gltf(?:[?#]|$)/i.test(source)) startBinaryFallback(entity, source, 'A-Frame did not produce a model after the initial load attempt');
+    }, 750);
+  });
 }
 async function bootThree() {
   // Created and inserted before the CDN imports below resolve, so a slow

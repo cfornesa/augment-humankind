@@ -10,6 +10,38 @@
 
 None.
 
+## 2026-07-14 — A-Frame GLB Immersive and Export Parity
+
+### Decision
+
+- A-Frame model assets remain on the canonical `/media/{id}` route. Asset
+  normalization preserves model URLs and marks extensionless responses as
+  binary glTF instead of treating them as images or JSON.
+- A first-party `aframe-model-runtime.js` shim is shared by immersive live and
+  exported A-Frame surfaces. It uses A-Frame's own GLTFLoader instance and
+  binary `parse()` path when needed, validates model bounds, fits and centers
+  the mesh while preserving authored composition offsets, and reports visible
+  load/error diagnostics.
+- Immersive ZIP exports explicitly resolve the model shim from
+  `runtime/aframe-model-runtime.js`; they do not use a root-absolute
+  `/assets/...` URL that becomes invalid under `file://`. ZIP preflight checks
+  validate referenced GLB payloads before assembly and report export failures
+  with piece, media, surface, and stage context in server logs.
+- Immersive A-Frame navigation now supports held Arrow keys through the same
+  camera movement contract as the live viewer. WASD remains reserved for
+  keyboard-note input, and regular live/download behavior is unchanged.
+- AI Refine rejects neutral A-Frame edits such as removing `scale="1 1 1"` or
+  repeating the same model reference, while accepting real placement changes.
+
+### Verification
+
+- Runtime consistency suite: 142 passed, 0 failed.
+- JavaScript/PHP syntax checks and `git diff --check` passed.
+- Export coverage verifies that immersive A-Frame ZIPs contain and reference
+  the bundle-local model runtime.
+- The generation/export suite retains one separately identified pre-existing
+  MediaPipe-path assertion failure; it is unrelated to the A-Frame fixes.
+
 ## 2026-07-13 — Collection Download Walk-the-Room Parity and Slideshow Sound Auto-Arm
 
 ### Decision

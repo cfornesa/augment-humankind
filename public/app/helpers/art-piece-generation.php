@@ -1924,6 +1924,42 @@ function art_piece_find_patch_match(string $code, string $search): array|string|
 }
 
 /**
+ * Returns whether an A-Frame refine changed something that can affect the
+ * rendered piece. Removing the neutral default scale from an entity, or
+ * reformatting/repeating the same model reference, is valid HTML but has no
+ * visual effect and must not be presented as a successful refinement.
+ */
+function art_piece_refine_has_meaningful_change(
+    string $engine,
+    ?string $beforeHtml,
+    ?string $afterHtml,
+    ?string $beforeCss,
+    ?string $afterCss,
+    ?string $beforeJs,
+    ?string $afterJs
+): bool {
+    if ($engine !== 'aframe') {
+        return true;
+    }
+
+    $normalizeHtml = static function (?string $html): string {
+        $html = trim((string) $html);
+        // scale="1 1 1" is the identity transform in A-Frame. Treat its
+        // addition/removal as equivalent so the AI cannot turn a no-op into
+        // an apparently meaningful model-placement refinement.
+        $html = preg_replace('/\s+scale\s*=\s*(["\'])\s*1(?:\s+1){2}\s*\1/i', '', $html) ?? $html;
+        return preg_replace('/\s+/u', ' ', $html) ?? $html;
+    };
+    $normalizeCode = static function (?string $code): string {
+        return preg_replace('/\s+/u', ' ', trim((string) $code)) ?? trim((string) $code);
+    };
+
+    return $normalizeHtml($beforeHtml) !== $normalizeHtml($afterHtml)
+        || $normalizeCode($beforeCss) !== $normalizeCode($afterCss)
+        || $normalizeCode($beforeJs) !== $normalizeCode($afterJs);
+}
+
+/**
  * Builds the repair prompt used when a refine attempt's patches fail to
  * parse or apply. Distinct from art_piece_repair_prompt() (generation's
  * repair prompt talks about infinite animations and visual fidelity to a

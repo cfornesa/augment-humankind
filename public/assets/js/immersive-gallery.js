@@ -2441,6 +2441,7 @@ export function resolveSketchFactory(code) {
 }
 
 let aframeRuntimePromise = null;
+let aframeModelRuntimePromise = null;
 function loadAFrameRuntime() {
   if (window.AFRAME) {
     disableAFrameWASD();
@@ -2467,6 +2468,28 @@ function loadAFrameRuntime() {
     document.head.appendChild(script);
   });
   return aframeRuntimePromise;
+}
+
+function loadAFrameModelRuntime() {
+  if (window.CreatrAFrameModelRuntime) return Promise.resolve(window.CreatrAFrameModelRuntime);
+  if (aframeModelRuntimePromise) return aframeModelRuntimePromise;
+  aframeModelRuntimePromise = new Promise((resolve, reject) => {
+    const existing = Array.from(document.scripts).find((script) => script.src && script.src.includes('/assets/js/aframe-model-runtime.js'));
+    if (existing) {
+      existing.addEventListener('load', () => resolve(window.CreatrAFrameModelRuntime), { once: true });
+      existing.addEventListener('error', () => reject(new Error('Could not load the A-Frame model runtime.')), { once: true });
+      return;
+    }
+    const script = document.createElement('script');
+    const configuredSource = typeof window.__creatrAFrameModelRuntimeSrc === 'string'
+      ? window.__creatrAFrameModelRuntimeSrc.trim()
+      : '';
+    script.src = configuredSource || ('/assets/js/aframe-model-runtime.js?v=' + Date.now());
+    script.onload = () => resolve(window.CreatrAFrameModelRuntime);
+    script.onerror = () => reject(new Error('Could not load the A-Frame model runtime.'));
+    document.head.appendChild(script);
+  });
+  return aframeModelRuntimePromise;
 }
 
 let p5RuntimePromise = null;
@@ -3972,6 +3995,8 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
   let handSteeringExclusive = false;
   let aframeControlsBeforeHand = [];
   let aframeTiltController = null;
+  const aframeKeyboardKeys = new Set();
+  let aframeKeyboardLastUpdate = null;
   const audioController = createAudioController(options.sonicParams, stageEl, { pieceId: options.pieceId, allowHandControl: options.handControl === true });
   let _aframeAudioPrev = null;
   const stopFrameHandles = [];
@@ -4093,6 +4118,43 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
     const THREE_NS = getAFrameThree();
     if (!THREE_NS || !Number.isFinite(verticalScale)) return;
     moveAFrameCameraByWorldDelta(new THREE_NS.Vector3(0, verticalScale * 0.14, 0));
+  }
+
+  function shouldIgnoreAFrameKeyboardTarget(target) {
+    if (!(target instanceof Element)) return false;
+    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) return true;
+    return target.isContentEditable || Boolean(target.closest('[contenteditable="true"], [contenteditable=""], input, textarea, select'));
+  }
+
+  function onAFrameKeyDown(event) {
+    if (!event.key.startsWith('Arrow') || shouldIgnoreAFrameKeyboardTarget(event.target)) return;
+    event.preventDefault();
+    aframeKeyboardKeys.add(event.key);
+  }
+
+  function onAFrameKeyUp(event) {
+    if (!event.key.startsWith('Arrow')) return;
+    aframeKeyboardKeys.delete(event.key);
+  }
+
+  function clearAFrameKeyboard() {
+    aframeKeyboardKeys.clear();
+    aframeKeyboardLastUpdate = null;
+  }
+
+  function updateAFrameKeyboardNavigation() {
+    if (aframeKeyboardKeys.size === 0) {
+      aframeKeyboardLastUpdate = performance.now();
+      return;
+    }
+    const now = performance.now();
+    const frameScale = aframeKeyboardLastUpdate === null
+      ? 1
+      : Math.min(4, Math.max(0, (now - aframeKeyboardLastUpdate) / (1000 / 60)));
+    aframeKeyboardLastUpdate = now;
+    const forwardScale = (aframeKeyboardKeys.has('ArrowUp') ? 1 : 0) + (aframeKeyboardKeys.has('ArrowDown') ? -1 : 0);
+    const rightScale = (aframeKeyboardKeys.has('ArrowRight') ? 1 : 0) + (aframeKeyboardKeys.has('ArrowLeft') ? -1 : 0);
+    applyAFrameDirectionalMove(forwardScale * frameScale, rightScale * frameScale);
   }
 
   function applyAFrameInitialViewState() {
@@ -4247,6 +4309,7 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
   function animateAFrameViewerControls() {
     if (disposed) return;
     frameId = requestAnimationFrame(animateAFrameViewerControls);
+    updateAFrameKeyboardNavigation();
     const THREE_NS = getAFrameThree();
     const mover = getAFrameCameraMover();
     // Sonification: sample camera world motion every frame (this runs even when
@@ -4282,7 +4345,11 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
     pointerTarget.addEventListener("lostpointercapture", clearAFramePointer);
   }
 
-  loadAFrameRuntime().then(() => {
+  window.addEventListener('keydown', onAFrameKeyDown);
+  window.addEventListener('keyup', onAFrameKeyUp);
+  window.addEventListener('blur', clearAFrameKeyboard);
+
+  loadAFrameRuntime().then(() => loadAFrameModelRuntime()).then(() => {
     if (disposed) return;
     mount.innerHTML = htmlCode?.trim() ? htmlCode : '<a-scene id="scene" embedded><a-sky color="#10151f"></a-sky><a-entity camera position="0 1.6 4"></a-entity></a-scene>';
     scene = mount.querySelector("a-scene#scene") || mount.querySelector("a-scene");
@@ -4318,6 +4385,10 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
         stopFrameHandles.push(cleanup);
       }
     }
+    window.CreatrAFrameModelRuntime.install(scene, {
+      fail: onError,
+      report: (detail) => { if (detail.status === 'error') onError(new Error(detail.message)); },
+    });
 
     resizeObserver = new ResizeObserver(resizeScene);
     resizeObserver.observe(stageEl);
@@ -4420,6 +4491,10 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
     pieceInteractionController.clearBackgroundVideo();
     disposed = true;
     cancelAnimationFrame(frameId);
+    window.removeEventListener('keydown', onAFrameKeyDown);
+    window.removeEventListener('keyup', onAFrameKeyUp);
+    window.removeEventListener('blur', clearAFrameKeyboard);
+    clearAFrameKeyboard();
     resizeObserver?.disconnect();
     viewerControls?.remove();
     if (pointerTarget) {

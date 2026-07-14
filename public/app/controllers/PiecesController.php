@@ -116,12 +116,25 @@ class PiecesController
         // piece/immersive views never take this path and keep the default,
         // lower-memory-footprint limit.
         ini_set('memory_limit', '512M');
-        $bundle = piece_export_bundle($data['piece'], $data['version'], [
-            'surface' => $surface,
-            'view_state' => $viewState,
-            'requested_voices' => $requestedVoices,
-            'exclude_camera' => $excludeCamera,
-        ]);
+        try {
+            $bundle = piece_export_bundle($data['piece'], $data['version'], [
+                'surface' => $surface,
+                'view_state' => $viewState,
+                'requested_voices' => $requestedVoices,
+                'exclude_camera' => $excludeCamera,
+            ]);
+        } catch (Throwable $error) {
+            error_log(sprintf(
+                '[piece-download] piece=%d surface=%s stage=bundle message=%s',
+                (int) ($data['piece']['id'] ?? 0),
+                $surface !== '' ? $surface : 'regular',
+                $error->getMessage()
+            ));
+            http_response_code(500);
+            header('Content-Type: text/plain; charset=UTF-8');
+            echo 'The piece download could not be created. The server rejected the export before the ZIP was ready.';
+            exit;
+        }
         $filename = $bundle['filename'];
         $path = $bundle['path'];
 

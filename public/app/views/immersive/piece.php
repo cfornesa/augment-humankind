@@ -1019,6 +1019,12 @@ try {
     (string) ($version['html_code'] ?? ''),
     (string) ($version['css_code'] ?? ''),
 ]);
+if ($engine === 'aframe') {
+    $immersiveInlinedHtml = piece_aframe_normalize_texture_assets(
+        $immersiveInlinedHtml,
+        static fn(string $src): string => piece_request_origin() . $src
+    );
+}
 ?>
 const code = <?= json_encode($immersiveInlinedCode) ?>;
 const htmlCode = <?= json_encode($immersiveInlinedHtml) ?>;

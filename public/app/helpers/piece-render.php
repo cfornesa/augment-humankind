@@ -58,7 +58,14 @@ function piece_render_document(array $piece, array $version, array $options = []
         $aframeResolver = static function (string $src) use ($captureSafeMedia, $mediaMap): string {
             if ($captureSafeMedia) {
                 $asset = $mediaMap[$src] ?? null;
-                return is_array($asset) ? (string) ($asset['data_url'] ?? $src) : $src;
+                if (!is_array($asset)) {
+                    return piece_request_origin() . $src;
+                }
+                $dataUrl = trim((string) ($asset['data_url'] ?? ''));
+                // Large GLBs are deliberately not inlined in live/capture
+                // documents to avoid exhausting PHP memory. Fall back to
+                // the same-origin URL so A-Frame can fetch the binary.
+                return $dataUrl !== '' ? $dataUrl : piece_request_origin() . $src;
             }
 
             return piece_request_origin() . $src;
@@ -152,6 +159,10 @@ function piece_render_document(array $piece, array $version, array $options = []
     // take effect on that device.
     $runtimeVersion = (int) @filemtime(dirname(__DIR__, 2) . '/assets/js/piece-runtime.js');
     $runtimeScriptUrl = htmlspecialchars($requestOrigin . '/assets/js/piece-runtime.js?v=' . $runtimeVersion, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    $aframeModelRuntimeVersion = (int) @filemtime(dirname(__DIR__, 2) . '/assets/js/aframe-model-runtime.js');
+    $aframeModelRuntimeTag = $engine === 'aframe'
+        ? '<script src="' . htmlspecialchars($requestOrigin . '/assets/js/aframe-model-runtime.js?v=' . $aframeModelRuntimeVersion, ENT_QUOTES | ENT_HTML5, 'UTF-8') . '"></script>'
+        : '';
     $spatialVersion = (int) @filemtime(dirname(__DIR__, 2) . '/assets/js/spatial-presentation.js');
     $spatialScriptUrl = htmlspecialchars($requestOrigin . '/assets/js/spatial-presentation.js?v=' . $spatialVersion, ENT_QUOTES | ENT_HTML5, 'UTF-8');
 
@@ -203,6 +214,7 @@ window.PIECE_PRESERVE_DRAWING_BUFFER = true;
 </script>
 {$aframeCaptureShim}
 <script src="{$spatialScriptUrl}"></script>
+{$aframeModelRuntimeTag}
 <script src="{$runtimeScriptUrl}"></script>
 </body>
 </html>
@@ -369,6 +381,9 @@ function piece_export_document(array $piece, array $version, array $options = []
     $bundleMeta = $runtimeMode === 'bundle'
         ? '<meta name="creatr-piece-export" content="portable-bundle">'
         : '';
+    $aframeModelRuntimeTag = $runtimeMode === 'bundle' && $engine === 'aframe'
+        ? '<script src="runtime/aframe-model-runtime.js"></script>'
+        : '';
 
     return <<<HTML
 <!DOCTYPE html>
@@ -381,6 +396,7 @@ function piece_export_document(array $piece, array $version, array $options = []
 {$bundleMeta}
 {$aframeCaptureShim}
 {$imports}
+{$aframeModelRuntimeTag}
 {$cssTag}
 {$inlineRuntime}
 </head>
@@ -1771,6 +1787,7 @@ window.__creatrToneSrc = 'runtime/tone/Tone.js';
 window.__creatrMediaPipeVisionSrc = 'runtime/mediapipe-hands/vision_bundle.mjs';
 window.__creatrMediaPipeWasmDir = 'runtime/mediapipe-hands/';
 window.__creatrMediaPipeModelSrc = 'runtime/mediapipe-hands/hand_landmarker.task';
+window.__creatrAFrameModelRuntimeSrc = 'runtime/aframe-model-runtime.js';
 
 const piece = {
   engine: {$jsonEngine},
@@ -2008,6 +2025,29 @@ function piece_aframe_normalize_texture_assets(string $html, callable $resolver)
         }
     }
 
+    // GLTF/GLB model assets must retain their actual URL. They are consumed
+    // by A-Frame's gltf-model component, not as image textures; rewriting a
+    // model src to an image id makes A-Frame fetch the HTML document as GLTF
+    // and fails with "Unexpected token '<'".
+    foreach ($xpath->query('.//a-asset-item[@src]', $assets) as $modelNode) {
+        if (!$modelNode instanceof DOMElement) {
+            continue;
+        }
+        $src = trim($modelNode->getAttribute('src'));
+        if ($src !== '' && str_starts_with($src, '/')) {
+            $modelNode->setAttribute('src', $resolver($src));
+        }
+        // A-Frame's asset preloader otherwise guesses JSON for extensionless
+        // CMS URLs such as /media/196. The response is a valid GLB, but the
+        // guess produces "Unexpected token 'g'" before GLTFLoader sees it.
+        $modelNode->setAttribute(
+            'type',
+            preg_match('/\.gltf(?:\?|$)/i', $src) === 1
+                ? 'model/gltf+json'
+                : 'model/gltf-binary'
+        );
+    }
+
     $nextAssetNumber = 1;
     $ensureAsset = static function (string $src) use ($dom, $assets, &$assetMap, &$nextAssetNumber, $resolver): string {
         if (isset($assetMap[$src])) {
@@ -2034,9 +2074,10 @@ function piece_aframe_normalize_texture_assets(string $html, callable $resolver)
             continue;
         }
 
-        if (strtolower($node->tagName) === 'img') {
+        $tagName = strtolower($node->tagName);
+        if ($tagName === 'img' || $tagName === 'a-asset-item') {
             $src = trim($node->getAttribute('src'));
-            if ($src !== '' && str_starts_with($src, '/')) {
+            if ($tagName === 'img' && $src !== '' && str_starts_with($src, '/')) {
                 $node->setAttribute('src', $resolver($src));
             }
             continue;
@@ -2128,7 +2169,9 @@ function piece_export_inline_runtime_markup(string $engine): string
         return '';
     }
 
+    $runtimeTag = '';
     if ($engine === 'aframe') {
+        $runtimeTag = '<script src="runtime/aframe-model-runtime.js"></script>\n';
         $source .= "\nif (window.AFRAME && window.AFRAME.components['wasd-controls']) {\n"
             . "  const proto = window.AFRAME.components['wasd-controls'].Component.prototype;\n"
             . "  const origKeyDown = proto.onKeyDown;\n"
@@ -2144,7 +2187,7 @@ function piece_export_inline_runtime_markup(string $engine): string
             . "}";
     }
 
-    return "<script>\n" . piece_escape_inline_script($source) . "\n</script>";
+    return $runtimeTag . "<script>\n" . piece_escape_inline_script($source) . "\n</script>";
 }
 
 function piece_export_runtime_inline_source(string $engine): string
@@ -2441,6 +2484,107 @@ function piece_export_download_bridge_script(): string
     return piece_escape_inline_script(
         piece_export_runtime_source_file('assets/js/public-piece-download.js')
     );
+}
+
+/**
+ * Shared behavior for standalone A-Frame exports: uploaded GLB files have
+ * arbitrary units/origins, so a successful load still needs diagnostics and
+ * an idempotent fit before it can be trusted to be visible.
+ */
+function piece_export_aframe_model_diagnostics_script(): string
+{
+    return <<<'JS'
+function installAFrameModelDiagnostics(scene) {
+  if (window.CreatrAFrameModelRuntime?.install) {
+    window.CreatrAFrameModelRuntime.install(scene);
+    return;
+  }
+  const THREE_NS = window.AFRAME?.THREE || window.THREE;
+  const emit = (entity, status, data = {}) => {
+    const detail = { status, entityId: entity?.id || '', ...data };
+    try { entity?.dispatchEvent(new CustomEvent('creatr-model-status', { detail })); } catch (_) {}
+    try { window.parent.postMessage({ type: 'creatr-aframe-model', ...detail }, '*'); } catch (_) {}
+  };
+  const modelSource = (entity) => {
+    const ref = String(entity?.getAttribute('gltf-model') || '');
+    if (!ref.startsWith('#')) return ref || '(missing gltf-model source)';
+    return String(document.getElementById(ref.slice(1))?.getAttribute('src') || ref);
+  };
+  const recoverBinaryModel = (entity, source, onSuccess, onFailure) => {
+    const component = entity.components?.['gltf-model'];
+    const loaderClass = window.AFRAME?.THREE?.GLTFLoader || window.THREE?.GLTFLoader;
+    const loader = component?.loader || (loaderClass ? new loaderClass() : null);
+    if (!loader || !source || source === '(missing gltf-model source)') {
+      onFailure(new Error('A-Frame GLTFLoader.parse is unavailable.'));
+      return;
+    }
+    fetch(source, { credentials: 'same-origin' }).then((response) => {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return response.arrayBuffer();
+    }).then((bytes) => new Promise((resolve, reject) => {
+      const basePath = source.slice(0, Math.max(0, source.search(/[?#]/) >= 0 ? source.search(/[?#]/) : source.length)).replace(/[^/]*$/, '');
+      loader.parse(bytes, basePath, resolve, reject);
+    })).then((gltf) => {
+      const model = gltf?.scene || gltf?.scenes?.[0];
+      if (!model) throw new Error('The parsed GLB did not contain a scene.');
+      entity.setObject3D('mesh', model);
+      if (entity.components?.['gltf-model']) entity.components['gltf-model'].model = model;
+      onSuccess(model);
+    }).catch(onFailure);
+  };
+  const fitEntity = (entity) => {
+    const source = modelSource(entity);
+    if (entity.__creatrModelFitted) return;
+    const mesh = entity.getObject3D('mesh');
+    if (!mesh || !THREE_NS?.Box3 || !THREE_NS?.Vector3 || !THREE_NS?.Matrix4) {
+      emit(entity, 'invalid', { source, message: 'A-Frame loaded the model, but its mesh or bounds API is unavailable.' });
+      return;
+    }
+    mesh.updateWorldMatrix?.(true, true);
+    const box = new THREE_NS.Box3().setFromObject(mesh);
+    const size = box.getSize(new THREE_NS.Vector3());
+    const center = box.getCenter(new THREE_NS.Vector3());
+    const maxDim = Math.max(size.x, size.y, size.z);
+    if (!Number.isFinite(maxDim) || maxDim <= 0) {
+      emit(entity, 'invalid', { source, message: 'A-Frame loaded the model, but its bounding box is empty.', dimensions: [size.x, size.y, size.z] });
+      return;
+    }
+    center.applyMatrix4(new THREE_NS.Matrix4().copy(mesh.matrixWorld).invert());
+    mesh.position.sub(center);
+    const targetSize = 3;
+    const fitScale = targetSize / maxDim;
+    if (Number.isFinite(fitScale) && fitScale > 0) mesh.scale.multiplyScalar(fitScale);
+    entity.__creatrModelFitted = true;
+    emit(entity, 'loaded', { source, dimensions: [size.x, size.y, size.z], targetSize, fitScale, message: `Loaded and fitted ${source}.` });
+  };
+  const startBinaryFallback = (entity, source, initialMessage) => {
+    if (entity.__creatrBinaryModelFallbackStarted) return;
+    entity.__creatrBinaryModelFallbackStarted = true;
+    recoverBinaryModel(entity, source, () => {
+      fitEntity(entity);
+      entity.emit('model-loaded', { format: 'gltf', model: entity.getObject3D('mesh') });
+    }, (fallbackError) => {
+      const text = `A-Frame model ${source} failed to load: ${initialMessage}; binary fallback failed: ${fallbackError?.message || fallbackError}`;
+      emit(entity, 'error', { source, message: text });
+      showPieceError(text);
+    });
+  };
+  scene.querySelectorAll('[gltf-model]').forEach((entity) => {
+    if (entity.__creatrModelDiagnosticsInstalled) return;
+    entity.__creatrModelDiagnosticsInstalled = true;
+    const source = modelSource(entity);
+    entity.addEventListener('model-loaded', () => fitEntity(entity), { once: true });
+    entity.addEventListener('model-error', (event) => {
+      const message = event?.detail?.src?.message || event?.detail?.message || 'The GLB could not be parsed or fetched.';
+      startBinaryFallback(entity, source, message);
+    }, { once: true });
+    setTimeout(() => {
+      if (entity.getObject3D('mesh')) fitEntity(entity);
+      else if (!/\.gltf(?:[?#]|$)/i.test(source)) startBinaryFallback(entity, source, 'A-Frame did not produce a model after the initial load attempt');
+    }, 750);
+  });
+}
+JS;
 }
 
 /**
@@ -3837,6 +3981,8 @@ try {
       : 'preserveDrawingBuffer: true';
     scene.setAttribute('renderer', rendererValue);
   }
+{$aframeModelDiagnostics}
+  if (scene) installAFrameModelDiagnostics(scene);
   function startFrame(callback) {
     let count = 0;
     function tick() {
@@ -3847,6 +3993,15 @@ try {
     requestAnimationFrame(tick);
   }
   if (scene && typeof window.sketch === 'function') window.sketch({ AFRAME: window.AFRAME, scene, startFrame });
+  if (scene) installAFrameModelDiagnostics(scene);
+  if (scene) {
+    let modelDiagnosticsAttempts = 0;
+    const modelDiagnosticsTimer = setInterval(() => {
+      installAFrameModelDiagnostics(scene);
+      modelDiagnosticsAttempts += 1;
+      if (modelDiagnosticsAttempts >= 20) clearInterval(modelDiagnosticsTimer);
+    }, 250);
+  }
   if (scene) {
     let pointerTarget = null;
     let frameId = 0;
@@ -4109,8 +4264,8 @@ HTML,
     // literal `{$...}` text inside them is the placeholder; the interpolating
     // three-bundle arm above already resolved its copy natively).
     return str_replace(
-        ['{$threeCameraQuadMembers}', '{$aframeCameraQuadMembers}'],
-        [$threeCameraQuadMembers, $aframeCameraQuadMembers],
+        ['{$threeCameraQuadMembers}', '{$aframeCameraQuadMembers}', '{$aframeModelDiagnostics}'],
+        [$threeCameraQuadMembers, $aframeCameraQuadMembers, piece_export_aframe_model_diagnostics_script()],
         $bootstrap
     );
 }
@@ -5013,6 +5168,7 @@ function piece_build_media_manifest(array $contents, bool $allowLargeInline = fa
     $mediaMap = [];
     foreach ($mediaRefs as $ref) {
         $asset = piece_export_resolve_media_ref($ref);
+        piece_export_validate_media_payload($ref, $asset);
         $mediaMap[$ref] = [
             'path' => piece_export_media_zip_path($ref, $asset, array_column($mediaMap, 'path')),
             'data_url' => piece_media_should_skip_inlining($asset, $allowLargeInline)
@@ -5022,6 +5178,24 @@ function piece_build_media_manifest(array $contents, bool $allowLargeInline = fa
     }
 
     return $mediaMap;
+}
+
+function piece_export_validate_media_payload(string $ref, array $asset): void
+{
+    $mimeType = strtolower(trim((string) ($asset['mime_type'] ?? '')));
+    $data = (string) ($asset['data'] ?? '');
+    if ($data === '') {
+        throw new RuntimeException('Referenced media file is empty: ' . $ref);
+    }
+    if ($mimeType === 'model/gltf-binary' && substr($data, 0, 4) !== 'glTF') {
+        throw new RuntimeException('Referenced GLB does not have a valid glTF binary header: ' . $ref);
+    }
+    if ($mimeType === 'model/gltf+json') {
+        json_decode($data, true);
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            throw new RuntimeException('Referenced GLTF JSON is invalid: ' . $ref);
+        }
+    }
 }
 
 /**
@@ -5590,6 +5764,8 @@ function piece_export_filename_extension(string $mimeType, string $filename = ''
         'video/webm' => 'webm',
         'audio/mpeg' => 'mp3',
         'audio/ogg' => 'ogg',
+        'model/gltf-binary' => 'glb',
+        'model/gltf+json' => 'gltf',
         'application/json' => 'json',
         'text/plain' => 'txt',
         default => 'bin',
@@ -5631,6 +5807,11 @@ function piece_export_runtime_files(string $engine): array
                 'source_path' => $publicRoot . '/assets/js/aframe.min.js',
                 'zip_path' => 'runtime/aframe/aframe.min.js',
                 'data' => piece_export_runtime_source_file('assets/js/aframe.min.js'),
+            ],
+            [
+                'source_path' => $publicRoot . '/assets/js/aframe-model-runtime.js',
+                'zip_path' => 'runtime/aframe-model-runtime.js',
+                'data' => piece_export_runtime_source_file('assets/js/aframe-model-runtime.js'),
             ],
         ],
         default => [],
@@ -5732,6 +5913,11 @@ function piece_export_immersive_runtime_files(string $engine, bool $handTracking
             'source_path' => $publicRoot . '/assets/js/aframe.min.js',
             'zip_path' => 'runtime/aframe/aframe.min.js',
             'data' => piece_export_runtime_source_file('assets/js/aframe.min.js'),
+        ];
+        $runtimeFiles[] = [
+            'source_path' => $publicRoot . '/assets/js/aframe-model-runtime.js',
+            'zip_path' => 'runtime/aframe-model-runtime.js',
+            'data' => piece_export_runtime_source_file('assets/js/aframe-model-runtime.js'),
         ];
     }
 

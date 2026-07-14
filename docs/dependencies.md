@@ -172,7 +172,9 @@
   package the pinned runtime locally instead of relying on the live site or a
   CDN.
 - **Package/runtime file:** A-Frame `1.6.0` (`aframe-master.min.js`),
-  vendored as `/assets/js/aframe.min.js`.
+  vendored as `/assets/js/aframe.min.js`; the first-party model shim is
+  `/assets/js/aframe-model-runtime.js` and is packaged as
+  `runtime/aframe-model-runtime.js` in exports.
 - **Data sent off-domain:** None at runtime. Browsers load the runtime from
   this site's own public assets, and offline exports load the packaged copy
   from the ZIP bundle.
@@ -181,12 +183,20 @@
   immersive stage until the runtime file or A-Frame-specific renderer code is
   restored. Offline exports can also stop rendering or exporting screenshots
   correctly if the pinned runtime becomes inconsistent with the packaging
-  logic.
+  logic. GLB pieces additionally need the model shim to parse extensionless
+  `/media/{id}` responses, fit and center arbitrary model bounds, and surface
+  useful load failures.
 - **Self-hosting alternative:** This is already self-hosted. Updating A-Frame
   requires intentionally replacing the vendored runtime file and testing
   generated A-Frame previews, embeds, fullscreen/immersive behavior, and
   capture.
 - **Required config:** None.
+
+The model shim deliberately uses the A-Frame model component's own loader and
+binary `parse()` path; it does not add a package, CDN, route, schema, or vendor
+dependency. Immersive exports set a bundle-local runtime path because a
+root-absolute `/assets/...` URL resolves to the wrong place when an archive is
+opened from `file://`.
 
 ## GuzzleHTTP 7
 

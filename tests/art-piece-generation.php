@@ -1094,6 +1094,42 @@ test('A-Frame preflight accepts same-origin uploaded model assets', function () 
     assert_eq($result['html'], $html);
 });
 
+test('A-Frame refine rejects removing the identity scale as a visual no-op', function () {
+    $before = '<a-entity id="center" gltf-model="#centerpiece" position="0 0 -3" scale="1 1 1"></a-entity>';
+    $after = '<a-entity id="center" gltf-model="#centerpiece" position="0 0 -3"></a-entity>';
+    assert_eq(
+        art_piece_refine_has_meaningful_change('aframe', $before, $after, '', '', '', ''),
+        false
+    );
+});
+
+test('A-Frame refine accepts a real model placement change', function () {
+    $before = '<a-entity id="center" gltf-model="#centerpiece" position="0 0 -3"></a-entity>';
+    $after = '<a-entity id="center" gltf-model="#centerpiece" position="0 1 -4" scale="2 2 2"></a-entity>';
+    assert_eq(
+        art_piece_refine_has_meaningful_change('aframe', $before, $after, '', '', '', ''),
+        true
+    );
+});
+
+test('A-Frame runtime and export bootstrap include model fit diagnostics', function () {
+    $runtime = (string) file_get_contents(__DIR__ . '/../public/assets/js/piece-runtime.js');
+    assert_contains($runtime, 'installAFrameModelDiagnostics(scene);');
+    assert_contains($runtime, "entity.addEventListener('model-loaded'");
+    assert_contains($runtime, "entity.addEventListener('model-error'");
+    assert_contains($runtime, 'recoverBinaryModel');
+    assert_contains($runtime, 'GLTFLoader.parse');
+    assert_contains($runtime, 'targetSize = 3');
+
+    $export = piece_export_aframe_model_diagnostics_script();
+    assert_contains($export, 'installAFrameModelDiagnostics(scene)');
+    assert_contains($export, "entity.addEventListener('model-loaded'");
+    assert_contains($export, "entity.addEventListener('model-error'");
+    assert_contains($export, 'recoverBinaryModel');
+    assert_contains($export, 'GLTFLoader.parse');
+    assert_contains($export, 'targetSize = 3');
+});
+
 test('A-Frame preflight rejects remote model assets', function () {
     assert_throws(
         fn() => art_piece_preflight_document('aframe', '<a-scene id="scene" embedded><a-assets><a-asset-item id="model" src="https://example.com/model.glb"></a-asset-item></a-assets><a-entity gltf-model="#model"></a-entity></a-scene>', '', 'window.sketch = ({ scene }) => {};'),
@@ -1349,6 +1385,40 @@ test('A-Frame render document normalizes direct texture refs into asset images',
     assert_contains($rendered, 'material="src: #creatr-export-asset-2"');
 });
 
+test('A-Frame model assets retain GLB URLs instead of becoming image asset ids', function () {
+    $_SERVER['HTTP_HOST'] = 'example.test';
+    $_SERVER['HTTPS'] = 'on';
+    $piece = ['id' => 117, 'title' => 'A-Frame GLB Piece', 'engine' => 'aframe'];
+    $version = [
+        'engine' => 'aframe',
+        'html_code' => '<a-scene id="scene" embedded><a-assets><a-asset-item id="centerpiece" src="/media/196"></a-asset-item></a-assets><a-entity id="center" gltf-model="#centerpiece"></a-entity></a-scene>',
+        'css_code' => '',
+        'generated_code' => 'window.sketch = ({ scene }) => {};',
+    ];
+
+    $rendered = piece_render_document($piece, $version);
+    assert_contains($rendered, '<a-asset-item id="centerpiece" src="https://example.test/media/196" type="model/gltf-binary">');
+    assert_not_contains($rendered, 'src="#creatr-export-asset-1"');
+
+    $exported = piece_export_document($piece, $version);
+    assert_contains($exported, '<a-asset-item id="centerpiece" src="https://example.test/media/196" type="model/gltf-binary">');
+    assert_not_contains($exported, 'src="#creatr-export-asset-1"');
+});
+
+test('A-Frame export maps binary GLB media to a .glb resource', function () {
+    assert_eq(piece_export_filename_extension('model/gltf-binary', ''), 'glb');
+});
+
+test('A-Frame export rejects invalid GLB payloads before packaging', function () {
+    assert_throws(
+        fn() => piece_export_validate_media_payload('/media/196', [
+            'mime_type' => 'model/gltf-binary',
+            'data' => '<!doctype html>',
+        ]),
+        'valid glTF binary header'
+    );
+});
+
 test('A-Frame bundle export embeds supported CMS media for direct-open screenshots', function () {
     $piece = ['id' => 96, 'title' => 'A-Frame Bundle Piece', 'engine' => 'aframe'];
     $version = [
@@ -1461,6 +1531,28 @@ test('regular and immersive A-Frame bundles package the same valid runtime', fun
     }
 
     assert_eq($runtimes[0], $runtimes[1], 'Regular and immersive A-Frame runtime preparation diverged.');
+});
+
+test('immersive A-Frame bundles resolve the model runtime from the ZIP', function () {
+    $piece = ['id' => 197, 'title' => 'Portable Immersive A-Frame', 'engine' => 'aframe'];
+    $version = [
+        'engine' => 'aframe',
+        'generation_mode' => 'aframe',
+        'html_code' => '<a-scene id="scene" embedded></a-scene>',
+        'css_code' => '',
+        'generated_code' => 'window.sketch = ({ scene, startFrame }) => { startFrame(() => {}); };',
+    ];
+
+    $bundle = piece_export_bundle($piece, $version, ['surface' => 'immersive']);
+    $zip = new ZipArchive();
+    $zip->open($bundle['path']);
+    $index = (string) $zip->getFromName('index.html');
+    $modelRuntime = $zip->getFromName('runtime/aframe-model-runtime.js');
+    $zip->close();
+    unlink($bundle['path']);
+
+    assert_contains($index, "window.__creatrAFrameModelRuntimeSrc = 'runtime/aframe-model-runtime.js';");
+    assert_true(is_string($modelRuntime) && $modelRuntime !== '', 'Expected the immersive ZIP to contain the A-Frame model runtime.');
 });
 
 test('all piece modes emit syntactically valid authored and runtime JavaScript', function () {

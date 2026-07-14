@@ -15,7 +15,7 @@ features always require a visitor gesture and browser permission.
 | Embed (Custom) | `/immersive/pieces/{id}?embed=1` | Immersive renderer and shared immersive toolbar through the custom wrapper |
 | Embed (CMS) | Custom plus `cms=1` | Same immersive capabilities with CMS-specific wrapper behavior |
 | Regular ZIP | Portable regular piece | Engine/capability controls and PNG capture work offline where browser security permits |
-| Immersive ZIP | Portable immersive piece | Shared immersive toolbar, view state, camera/hand controls, and PNG capture |
+| Immersive ZIP | Portable immersive piece | Shared immersive toolbar, view state, camera/hand/arrow-key controls, and PNG capture |
 | Immersive collection | One gallery-room runtime | Room navigation, active-work sound, visitor-activated wall camera, capture, and one dedicated room-hand inference owner |
 
 Regular collection pages and their embeds reuse that same immersive collection
@@ -72,6 +72,9 @@ stacking order.
   and avoid parallel inference.
 - `static=1` immersive embeds are intentionally bare and are the documented
   exception to control parity.
+- Camera navigation is arrow-keys-only across regular, immersive, and
+  downloaded Three.js/A-Frame surfaces. A-Frame's built-in WASD camera
+  handlers are disabled so the letter keys remain available to sound input.
 - Embed controls are surface-local: regular pages copy the regular iframe;
   immersive pages copy only Custom/CMS immersive variants.
 - PNG captures use title-derived timestamped filenames on live and downloaded
@@ -134,3 +137,11 @@ stacking order.
   camera video, not its potentially throttled/occluded display clone. A
   dedicated Three.js `VideoTexture` plane renders that source while spatially
   active, avoiding fullscreen freezes caused by Canvas2D video-frame copying.
+- A-Frame GLB assets retain their canonical `/media/{id}` reference and binary
+  model type through normalization. The first-party A-Frame model runtime is
+  loaded by live and exported immersive surfaces, parses extensionless binary
+  media through A-Frame's loader, validates bounds, fits and centers models
+  while preserving authored composition offsets, and exposes actionable
+  load/error diagnostics. Immersive ZIPs reference the bundled
+  `runtime/aframe-model-runtime.js` path so they work when extracted and
+  served locally.

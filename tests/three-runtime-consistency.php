@@ -547,6 +547,10 @@ test('A-Frame immersive pieces expose viewer zoom and tap-to-move controls witho
     assert_contains($immersive, 'onMoveRight: () => applyAFrameDirectionalMove(0, 1)');
     assert_contains($immersive, 'onFloatUp: () => applyAFrameFloatMove(1)');
     assert_contains($immersive, 'onFloatDown: () => applyAFrameFloatMove(-1)');
+    assert_contains($immersive, 'function onAFrameKeyDown(event)');
+    assert_contains($immersive, 'aframeKeyboardKeys.add(event.key)');
+    assert_contains($immersive, 'updateAFrameKeyboardNavigation();');
+    assert_contains($immersive, "window.addEventListener('keydown', onAFrameKeyDown);");
     assert_not_contains($immersive, 'import("/assets/js/aframe');
 });
 
