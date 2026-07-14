@@ -237,6 +237,10 @@ class PiecesAdminController
         $assignedCategoryIds = PlatformArtPiece::categoryIds((int) $id);
         [$profiles, $preferredProfileId, $personas] = self::loadProfilesData();
         $starterTemplates = class_exists('ArtPieceStarterTemplate') ? ArtPieceStarterTemplate::defaultMap() : [];
+        $existingMediaRefsJson = json_encode(
+            !empty($piece['current_version']['id']) ? ArtPieceVersionMediaRef::allForVersion((int) $piece['current_version']['id']) : [],
+            JSON_UNESCAPED_SLASHES
+        );
         require dirname(__DIR__, 2) . '/views/admin/pieces/form.php';
     }
 
@@ -1235,6 +1239,17 @@ class PiecesAdminController
                 ? trim($persona['system_prompt']) . "\n\nApply this to the following prompt:\n\n" . $prompt
                 : $prompt;
             $allowedMediaRefs = art_piece_extract_prompt_media_refs($prompt);
+            // Structured refs from the "Add media reference" picker (Task:
+            // fix pieces #114-116's silent GLB failure) — resolved against
+            // media_files directly, so there's no free-text phrase to guess
+            // at. Gate incompatible kind/engine combos BEFORE spending an AI
+            // call, per Rule 6 (no silent workarounds).
+            $structuredMediaRefs = art_piece_resolve_structured_media_refs($_POST['media_refs_json'] ?? null);
+            art_piece_assert_media_refs_engine_compatible($engine, $structuredMediaRefs);
+            foreach ($structuredMediaRefs as $structuredRef) {
+                $allowedMediaRefs[] = $structuredRef['ref'];
+            }
+            $allowedMediaRefs = array_values(array_unique($allowedMediaRefs));
 
             $aiClient = new \App\Lib\Ai\AiProviderClient($profile['vendor'], $profile['model'], $profile['endpoint_kind'], $apiKey);
 
@@ -1253,9 +1268,10 @@ class PiecesAdminController
                     $systemPrompt .= "\n\n" . $sonicCapability;
                 }
             }
+            $structuredMediaPrompt = art_piece_structured_media_refs_prompt($structuredMediaRefs);
             $userPromptForApi = $attemptNumber === 1
-                ? $basePrompt . "\n\n" . art_piece_media_policy_prompt($allowedMediaRefs)
-                : art_piece_repair_prompt($engine, $basePrompt, $previousRawResponse, $lastError !== '' ? $lastError : 'Unknown failure', $allowedMediaRefs);
+                ? $basePrompt . "\n\n" . art_piece_media_policy_prompt($allowedMediaRefs) . ($structuredMediaPrompt !== '' ? "\n\n" . $structuredMediaPrompt : '')
+                : art_piece_repair_prompt($engine, $basePrompt, $previousRawResponse, $lastError !== '' ? $lastError : 'Unknown failure', $allowedMediaRefs) . ($structuredMediaPrompt !== '' ? "\n\n" . $structuredMediaPrompt : '');
 
             $res = $aiClient->generate($systemPrompt, $userPromptForApi);
             if (!$res['ok']) {
@@ -1318,6 +1334,10 @@ class PiecesAdminController
                 // lineage intent is still audible).
                 'sound_feel' => $soundFeel,
                 'sound_enabled_lineage' => $soundEnabled,
+                // Carried through to generateSave() so the picker's
+                // selections get persisted against the version once one
+                // actually exists (see ArtPieceVersionMediaRef).
+                'media_refs' => $structuredMediaRefs,
             ]);
             echo json_encode(['success' => true]);
 
@@ -1383,6 +1403,7 @@ class PiecesAdminController
         // the regenerate endpoint derives purpose_domain PURELY from these.
         $soundFeelLineage = (string) ($original['sound_feel'] ?? '');
         $soundEnabledLineage = (bool) ($original['sound_enabled_lineage'] ?? false);
+        $mediaRefsJson = json_encode($original['media_refs'] ?? [], JSON_UNESCAPED_SLASHES);
 
         require dirname(__DIR__, 2) . '/views/admin/pieces/generate-preview.php';
     }
@@ -1482,6 +1503,12 @@ class PiecesAdminController
             ]);
 
             PlatformArtPiece::updateCurrentVersion($pieceId, $versionId);
+
+            $structuredMediaRefs = art_piece_resolve_structured_media_refs($_POST['media_refs_json'] ?? null);
+            if ($structuredMediaRefs !== []) {
+                ArtPieceVersionMediaRef::replaceForVersion($versionId, $structuredMediaRefs);
+            }
+
             self::clearPendingGeneration();
 
             echo json_encode(['success' => true, 'redirect' => '/admin/pieces']);
@@ -2029,6 +2056,29 @@ class PiecesAdminController
             $existingMediaRefs = art_piece_collect_cms_media_refs($html, $css, $js);
             $pieceId = (int) ($input['piece_id'] ?? 0);
             $piece = $pieceId > 0 ? PlatformArtPiece::find($pieceId) : false;
+            // Structured "Add media reference" picker selections. When the
+            // client didn't submit any (e.g. an unchanged refine that only
+            // touches wording), carry forward whatever the current version
+            // already had rather than silently dropping them.
+            $structuredMediaRefs = array_key_exists('media_refs_json', $input)
+                ? art_piece_resolve_structured_media_refs($input['media_refs_json'])
+                : [];
+            if ($structuredMediaRefs === [] && $piece && !empty($piece['current_version']['id'])) {
+                foreach (ArtPieceVersionMediaRef::allForVersion((int) $piece['current_version']['id']) as $existingRef) {
+                    $structuredMediaRefs[] = [
+                        'media_id' => (int) $existingRef['media_file_id'],
+                        'intent_text' => (string) ($existingRef['intent_text'] ?? ''),
+                        'mime_type' => (string) ($existingRef['mime_type'] ?? ''),
+                        'original_name' => (string) ($existingRef['original_name'] ?? ''),
+                        'ref' => '/media/' . (int) $existingRef['media_file_id'],
+                    ];
+                }
+            }
+            art_piece_assert_media_refs_engine_compatible($engine, $structuredMediaRefs);
+            foreach ($structuredMediaRefs as $structuredRef) {
+                $allowedMediaRefs[] = $structuredRef['ref'];
+            }
+            $allowedMediaRefs = array_values(array_unique($allowedMediaRefs));
             $persistedGenerationMode = $piece && !empty($piece['current_version'])
                 ? self::storedGenerationMode((array) $piece['current_version'], $engine)
                 : art_piece_normalize_generation_mode($engine, $engine);
@@ -2050,6 +2100,26 @@ class PiecesAdminController
             // via the patch force-clear backstop below for 'audio'). The
             // original creative prompt is always sent as CONTEXT, never as
             // the directive — see the ### PURPOSE OF THIS REFINEMENT header.
+            // Lets a refine request consist of ONLY media-reference intent
+            // (no separate refinement instruction typed) — e.g. picking a
+            // GLB and writing "center the composition on this model" with
+            // nothing in the main prompt field. Without this, that request
+            // would be rejected below as "Prompt is required," forcing the
+            // admin to restate the same instruction twice. The synthesized
+            // instruction explicitly scopes the change to what was asked,
+            // so the AI doesn't also plan unrelated edits.
+            if ($prompt === '') {
+                $mediaIntentLines = [];
+                foreach ($structuredMediaRefs as $mediaRef) {
+                    $intent = trim((string) ($mediaRef['intent_text'] ?? ''));
+                    if ($intent !== '') {
+                        $mediaIntentLines[] = "- {$mediaRef['ref']}: {$intent}";
+                    }
+                }
+                if ($mediaIntentLines !== []) {
+                    $prompt = "Apply ONLY the following media integration instruction(s). Do not make any other visual, structural, or behavioral changes to the piece:\n" . implode("\n", $mediaIntentLines);
+                }
+            }
             $inputDomain = trim((string) ($input['purpose_domain'] ?? ''));
             if ($inputDomain === 'audio' || $inputDomain === 'visual' || $inputDomain === 'audio_visual') {
                 $purposeDomain = $inputDomain;
@@ -2123,10 +2193,14 @@ class PiecesAdminController
                 $systemPrompt .= "\n\nPersona guidance:\n" . trim((string) $persona['system_prompt']) . "\n\nUse the persona to influence style and creative direction, but still obey all engine, safety, and output-format requirements.";
             }
 
+            $structuredMediaPrompt = art_piece_structured_media_refs_prompt($structuredMediaRefs);
             if ($attemptNumber === 1) {
                 $userPromptForApi = art_piece_refine_user_prompt($engine, $prompt, $html, $css, $js, $originalPrompt ?: null, $allowedMediaRefs, $purposeDomain);
             } else {
                 $userPromptForApi = art_piece_refine_repair_prompt($engine, $prompt, $clientPreviousRawResponse, $clientLastError !== '' ? $clientLastError : 'Unknown failure', $html, $css, $js, $allowedMediaRefs, $purposeDomain);
+            }
+            if ($structuredMediaPrompt !== '') {
+                $userPromptForApi .= "\n\n" . $structuredMediaPrompt;
             }
 
             // suppressPlanningPreamble=false: the PLAN+PATCH protocol
@@ -2211,6 +2285,9 @@ class PiecesAdminController
                 $pieceId, $engine, $persistedGenerationMode, $prompt, $extractedHtml, $extractedCss, $extractedJs,
                 $profileId, $personaId, $sequenceToken, $attemptNumber, 'pending', $sonicParams
             );
+            if ($draftVersionId !== null) {
+                ArtPieceVersionMediaRef::replaceForVersion($draftVersionId, $structuredMediaRefs);
+            }
 
             if (!$soundOnly) {
                 art_piece_preflight_document($engine, $extractedHtml, $extractedCss, $extractedJs, $persistedGenerationMode);
@@ -2504,6 +2581,16 @@ class PiecesAdminController
                     'sonic_params' => $sonicParams,
                 ]);
                 PlatformArtPiece::updateCurrentVersion((int) $id, $versionId);
+                // Legacy fallback path (no usable draft row) — carry the
+                // prior version's structured media refs forward onto the
+                // new version rather than silently dropping them.
+                ArtPieceVersionMediaRef::replaceForVersion(
+                    $versionId,
+                    array_map(
+                        static fn(array $r): array => ['media_id' => (int) $r['media_file_id'], 'intent_text' => (string) ($r['intent_text'] ?? '')],
+                        ArtPieceVersionMediaRef::allForVersion((int) $currentVersion['id'])
+                    )
+                );
             }
 
             // Delete the failed-attempt siblings from this same retry

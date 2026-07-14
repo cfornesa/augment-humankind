@@ -250,6 +250,31 @@ function piece_export_basename(array $piece): string
     return $base;
 }
 
+/**
+ * Resolves a media manifest entry to whatever a bundled export ZIP's
+ * index.html/scripts/styles should actually reference. Prefers an inline
+ * data: URI when one was built (small assets), otherwise falls back to the
+ * asset's relative in-ZIP path (e.g. `media/media-196.glb`) — every export
+ * writes the real file there regardless of whether it was also inlined (see
+ * piece_export_build_manifest()'s $mediaFiles), so the relative path always
+ * resolves correctly once extracted/opened via file://, unlike the
+ * site-absolute /media/{id} reference the code originally contained (which
+ * 404s/CORS-fails outside the live server). Only used by export/bundle
+ * functions — piece_render_document()'s capture_safe_media mode (the live
+ * same-origin admin preview iframe) intentionally keeps its own
+ * data_url-or-original-URL fallback, since there is no bundled folder next
+ * to that context and the absolute URL works fine there.
+ */
+function piece_export_asset_replacement(array $asset, string $fallback): string
+{
+    $dataUrl = (string) ($asset['data_url'] ?? '');
+    if ($dataUrl !== '') {
+        return $dataUrl;
+    }
+    $path = (string) ($asset['path'] ?? '');
+    return $path !== '' ? $path : $fallback;
+}
+
 function piece_export_document(array $piece, array $version, array $options = []): string
 {
     $title = htmlspecialchars((string) ($piece['title'] ?? 'Art piece'), ENT_QUOTES | ENT_HTML5, 'UTF-8');
@@ -267,7 +292,7 @@ function piece_export_document(array $piece, array $version, array $options = []
                 }
 
                 return $embedMedia
-                    ? (string) ($asset['data_url'] ?? '')
+                    ? piece_export_asset_replacement($asset, (string) ($asset['path'] ?? ''))
                     : (string) ($asset['path'] ?? '');
             });
         }
@@ -285,7 +310,7 @@ function piece_export_document(array $piece, array $version, array $options = []
                 }
 
                 return $embedMedia
-                    ? (string) ($asset['data_url'] ?? $src)
+                    ? piece_export_asset_replacement($asset, $src)
                     : (string) ($asset['path'] ?? $src);
             }
 
@@ -322,7 +347,8 @@ function piece_export_document(array $piece, array $version, array $options = []
             : "document.querySelector('#runtime-root canvas') || document.querySelector('canvas')";
         $spatialInteractive = $generationMode === 'c2_interactive' ? 'true' : 'false';
         $spatialPlacementJson = json_encode($exportCameraPlacement, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-        $spatialExportScript = "<script>\n{$spatialSource}\n</script>\n<script>\n(function(){var baseHooks=window.__pieceHandHooks||{};var spatial=window.CreatrSpatialPresentation&&window.CreatrSpatialPresentation.create({getSurface:function(){return {$surfaceExpr};},interactive:{$spatialInteractive},cameraPlacement:{$spatialPlacementJson},getCameraVideo:function(){return typeof baseHooks.getBackgroundVideo==='function'?baseHooks.getBackgroundVideo():baseHooks._cameraOverlay||null;},getCameraOpacity:function(){return typeof baseHooks.getBackgroundOpacity==='function'?baseHooks.getBackgroundOpacity():(baseHooks._cameraOpacity==null?0.35:baseHooks._cameraOpacity);}});if(spatial)window.__pieceHandHooks=Object.assign(baseHooks,spatial);})();\n</script>";
+        $spatialThreeModuleJson = json_encode($runtimeMode === 'bundle' ? 'runtime/three/three.module.js' : '', JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        $spatialExportScript = "<script>\n{$spatialSource}\n</script>\n<script>\n(function(){var baseHooks=window.__pieceHandHooks||{};var spatial=window.CreatrSpatialPresentation&&window.CreatrSpatialPresentation.create({getSurface:function(){return {$surfaceExpr};},interactive:{$spatialInteractive},cameraPlacement:{$spatialPlacementJson},threeModuleSrc:{$spatialThreeModuleJson},getCameraVideo:function(){return typeof baseHooks.getBackgroundVideo==='function'?baseHooks.getBackgroundVideo():baseHooks._cameraOverlay||null;},getCameraOpacity:function(){return typeof baseHooks.getBackgroundOpacity==='function'?baseHooks.getBackgroundOpacity():(baseHooks._cameraOpacity==null?0.35:baseHooks._cameraOpacity);}});if(spatial)window.__pieceHandHooks=Object.assign(baseHooks,spatial);})();\n</script>";
     }
     $handGuideVariant = $generationMode === 'c2_interactive' ? 'c2_interactive_latched' : 'default';
     $handGuideMarkup = !empty($exportCapabilities['hand_control'])
@@ -696,9 +722,8 @@ JS;
       }
       if (controlOk) {
         var activeHooks = window.__pieceHandHooks;
-        if (activeHooks && typeof activeHooks.setHandSteering === 'function') {
-          try { await activeHooks.setHandSteering(true); } catch (_e) { controlOk = false; }
-        }
+        if (!activeHooks || typeof activeHooks.setHandSteering !== 'function') controlOk = false;
+        else { try { controlOk = (await activeHooks.setHandSteering(true)) !== false; } catch (_e) { controlOk = false; } }
       }
       if (activationEpoch !== handControlActivationEpoch || !controlOk) {
         handControlActive = false;
@@ -823,6 +848,7 @@ JS;
       var hooks = window.__pieceHandHooks;
       if (hooks && hooks.clearBackgroundVideo) { try { hooks.clearBackgroundVideo(); } catch (_e) {} }
       if (typeof handControlActive !== 'undefined') handControlActive = false;
+      if (hooks && typeof hooks.setHandSteering === 'function') { try { hooks.setHandSteering(false); } catch (_e) {} }
       if (engine) {
         try { engine.onHandFrame(null); } catch(_e) {}
         try { engine.disableHandControl(); } catch(_e) {}
@@ -880,7 +906,11 @@ window.__creatrMediaPipeModelSrc = {$mediaPipeModelSrcJson};
 (function () {
   var capabilities = {$capabilitiesJson};
   var sonicParams = {$sonicJson};
-  if (!sonicParams) return;
+  // Camera view and hand control are valid for sound-less pieces. Keep the
+  // silent controller alive for those capabilities so downloaded exports use
+  // the same camera/gesture lifecycle as the live runtime.
+  if (!sonicParams && !capabilities.camera_view && !capabilities.hand_control) return;
+  sonicParams = sonicParams || { enabled: false };
   var pieceId = {$pieceIdJson};
 
   var getMover = null;
@@ -1235,6 +1265,13 @@ window.__creatrMediaPipeModelSrc = {$mediaPipeModelSrcJson};
           var CSC = await loadSonicControllerOnce();
           engine = CSC.create(sonicParams, {
             getMover: function () { return getMover ? getMover() : null; },
+            // The engine can be created by Sound or Live mic before the
+            // visitor asks to steer. Preserve the server-granted steering
+            // capability on that first creation path; otherwise
+            // enableHandControl() correctly rejects this already-created
+            // engine even though the same piece works when steering starts
+            // first.
+            allowHandControl: !!capabilities.hand_control,
             toneSrc: window.__creatrToneSrc,
             mediaPipeVisionSrc: window.__creatrMediaPipeVisionSrc,
             mediaPipeWasmDir: window.__creatrMediaPipeWasmDir,
@@ -1596,7 +1633,7 @@ function piece_export_immersive_document(array $piece, array $version, array $op
             }
 
             return $embedMedia
-                ? (string) ($asset['data_url'] ?? '')
+                ? piece_export_asset_replacement($asset, (string) ($asset['path'] ?? ''))
                 : (string) ($asset['path'] ?? '');
         });
     };
@@ -1610,7 +1647,7 @@ function piece_export_immersive_document(array $piece, array $version, array $op
             }
 
             return $embedMedia
-                ? (string) ($asset['data_url'] ?? $src)
+                ? piece_export_asset_replacement($asset, $src)
                 : (string) ($asset['path'] ?? $src);
         });
     }
@@ -1756,7 +1793,7 @@ const pngBtn = document.querySelector('[data-immersive-download-png]');
 let viewer = null;
 
 try {
-  const controls = { showViewerControls: true, initialViewState: piece.initialViewState, sonicParams: piece.sonicParams, pieceId: piece.pieceId };
+  const controls = { showViewerControls: true, initialViewState: piece.initialViewState, sonicParams: piece.sonicParams, pieceId: piece.pieceId, handControl: piece.handControl };
   if (piece.engine === 'three') {
     viewer = mountThreeImmersivePiece(stage, piece.code, piece.html, piece.css, showPieceError, controls);
   } else if (piece.engine === 'aframe') {
@@ -3018,6 +3055,8 @@ try {
     let animStart = 0;
     let isOrbitActive = false;
     let userHasInteracted = false;
+    let handSteeringExclusive = false;
+    let controlsEnabledBeforeHand = true;
 
     function getThreeNavigationLimit() {
       const box = new THREE.Box3();
@@ -3080,7 +3119,7 @@ try {
 
     function cancelThreeNavigationAnimation() {
       animFromTarget = animToTarget = animFromCam = animToCam = null;
-      controls.enabled = true;
+      controls.enabled = handSteeringExclusive ? false : controlsEnabledBeforeHand;
     }
 
     function moveThreeOrbitTo(hitPoint) {
@@ -3150,6 +3189,7 @@ try {
     }
 
     function onThreePointerDown(event) {
+      if (handSteeringExclusive) return;
       pointerState.set(event.pointerId, {
         pointerType: event.pointerType || 'mouse',
         button: event.button,
@@ -3163,6 +3203,7 @@ try {
     }
 
     function onThreePointerMove(event) {
+      if (handSteeringExclusive) return;
       const pointer = pointerState.get(event.pointerId);
       if (!pointer) return;
       if (Math.hypot(event.clientX - pointer.startX, event.clientY - pointer.startY) >= 6) {
@@ -3182,6 +3223,7 @@ try {
     }
 
     function onThreePointerUp(event) {
+      if (handSteeringExclusive) return;
       const pointer = pointerState.get(event.pointerId);
       const wasMultiTouch = hadMultiTouchGesture || activeTouchPointerCount() > 1;
       clearThreePointer(event);
@@ -3229,11 +3271,11 @@ try {
           state.camera.position.lerpVectors(animFromCam, animToCam, eased);
           externalMotion = true;
           if (t >= 1) {
-            controls.enabled = true;
+            controls.enabled = handSteeringExclusive ? false : controlsEnabledBeforeHand;
             animFromTarget = animToTarget = animFromCam = animToCam = null;
           }
         }
-        if (updateKeyboardNavigation()) externalMotion = true;
+        if (!handSteeringExclusive && updateKeyboardNavigation()) externalMotion = true;
         controls.update();
         if (isOrbitActive || externalMotion) userHasInteracted = true;
         if (!pieceDrivesOwnRender || userHasInteracted) {
@@ -3249,6 +3291,23 @@ try {
     // export twin of piece-runtime.js's three bootstrap block.
     window.__pieceHandHooks = {
       engine: 'three',
+      setHandSteering(active) {
+        if (!controls || !state.camera) return false;
+        const next = !!active;
+        if (next === handSteeringExclusive) return true;
+        if (next) {
+          controlsEnabledBeforeHand = controls.enabled;
+          controls.enabled = false;
+          keyboardKeys.clear();
+          pointerState.clear();
+          isOrbitActive = false;
+          animFromTarget = animToTarget = animFromCam = animToCam = null;
+        } else {
+          controls.enabled = controlsEnabledBeforeHand;
+        }
+        handSteeringExclusive = next;
+        return true;
+      },
       resetView() {
         if (!controls || !state.camera) return false;
         const fromCamera = state.camera.position.clone();
@@ -3270,7 +3329,7 @@ try {
         });
       },
       handPoint(nx, ny) {
-        if (!controls || !state.camera) return;
+        if (!handSteeringExclusive || !controls || !state.camera) return;
         const T = window.THREE;
         if (!T || !T.Spherical) return;
         const target = controls.target;
@@ -3287,7 +3346,7 @@ try {
         userHasInteracted = true;
       },
       handCommand(command) {
-        if (!controls || !state.camera || !command) return;
+        if (!handSteeringExclusive || !controls || !state.camera || !command) return;
         if (command.type === 'look') { this.handPoint(command.x, command.y); return; }
         const T = window.THREE;
         const target = controls.target;
@@ -3440,6 +3499,8 @@ try {
     let animStart = 0;
     let isOrbitActive = false;
     let userHasInteracted = false;
+    let handSteeringExclusive = false;
+    let controlsEnabledBeforeHand = true;
 
     function getThreeNavigationLimit() {
       const box = new THREE.Box3();
@@ -3502,7 +3563,7 @@ try {
 
     function cancelThreeNavigationAnimation() {
       animFromTarget = animToTarget = animFromCam = animToCam = null;
-      controls.enabled = true;
+      controls.enabled = handSteeringExclusive ? false : controlsEnabledBeforeHand;
     }
 
     function moveThreeOrbitTo(hitPoint) {
@@ -3651,11 +3712,11 @@ try {
           state.camera.position.lerpVectors(animFromCam, animToCam, eased);
           externalMotion = true;
           if (t >= 1) {
-            controls.enabled = true;
+            controls.enabled = handSteeringExclusive ? false : controlsEnabledBeforeHand;
             animFromTarget = animToTarget = animFromCam = animToCam = null;
           }
         }
-        if (updateKeyboardNavigation()) externalMotion = true;
+        if (!handSteeringExclusive && updateKeyboardNavigation()) externalMotion = true;
         controls.update();
         if (isOrbitActive || externalMotion) userHasInteracted = true;
         if (!pieceDrivesOwnRender || userHasInteracted) {
@@ -3671,6 +3732,23 @@ try {
     // export twin of piece-runtime.js's three bootstrap block.
     window.__pieceHandHooks = {
       engine: 'three',
+      setHandSteering(active) {
+        if (!controls || !state.camera) return false;
+        const next = !!active;
+        if (next === handSteeringExclusive) return true;
+        if (next) {
+          controlsEnabledBeforeHand = controls.enabled;
+          controls.enabled = false;
+          keyboardKeys.clear();
+          pointerState.clear();
+          isOrbitActive = false;
+          animFromTarget = animToTarget = animFromCam = animToCam = null;
+        } else {
+          controls.enabled = controlsEnabledBeforeHand;
+        }
+        handSteeringExclusive = next;
+        return true;
+      },
       resetView() {
         if (!controls || !state.camera) return false;
         const fromCamera = state.camera.position.clone();
@@ -3692,7 +3770,7 @@ try {
         });
       },
       handPoint(nx, ny) {
-        if (!controls || !state.camera) return;
+        if (!handSteeringExclusive || !controls || !state.camera) return;
         const T = window.THREE;
         if (!T || !T.Spherical) return;
         const target = controls.target;
@@ -3709,7 +3787,7 @@ try {
         userHasInteracted = true;
       },
       handCommand(command) {
-        if (!controls || !state.camera || !command) return;
+        if (!handSteeringExclusive || !controls || !state.camera || !command) return;
         if (command.type === 'look') { this.handPoint(command.x, command.y); return; }
         const T = window.THREE;
         const target = controls.target;
@@ -3773,6 +3851,8 @@ try {
     let pointerTarget = null;
     let frameId = 0;
     let initialAFramePose = null;
+    let handSteeringExclusive = false;
+    let aframeControlsBeforeHand = [];
     const aframeNav = {
       animFrom: null,
       animTo: null,
@@ -3804,6 +3884,7 @@ try {
     }
 
     function onAFramePointerDown(event) {
+      if (handSteeringExclusive) return;
       if ((event.pointerType || 'mouse') === 'touch') {
         aframeNav.activeTouches.add(event.pointerId);
         if (activeAFrameTouchCount() > 1) aframeNav.hadMultiTouch = true;
@@ -3819,6 +3900,7 @@ try {
     }
 
     function onAFramePointerMove(event) {
+      if (handSteeringExclusive) return;
       if (!aframeNav.pointer || aframeNav.pointer.id !== event.pointerId) return;
       if (Math.hypot(event.clientX - aframeNav.pointer.startX, event.clientY - aframeNav.pointer.startY) >= 6) {
         aframeNav.pointer.moved = true;
@@ -3856,6 +3938,7 @@ try {
     }
 
     function onAFramePointerUp(event) {
+      if (handSteeringExclusive) return;
       const THREE_NS = getAFrameThree();
       const pointer = aframeNav.pointer;
       const wasMultiTouch = aframeNav.hadMultiTouch || activeAFrameTouchCount() > 1;
@@ -3933,6 +4016,29 @@ try {
     }, { once: true });
     window.__pieceHandHooks = {
       engine: 'aframe',
+      setHandSteering(active) {
+        const next = !!active;
+        if (next === handSteeringExclusive) return true;
+        const cameraEl = scene.querySelector('[camera]') || scene.querySelector('a-camera');
+        if (next) {
+          aframeControlsBeforeHand = ['look-controls', 'wasd-controls'].map((name) => {
+            const component = cameraEl?.components?.[name];
+            const wasPlaying = !!component && component.isPlaying !== false;
+            component?.pause?.();
+            return { component, wasPlaying };
+          });
+          aframeNav.pointer = null;
+          aframeNav.activeTouches.clear();
+          aframeNav.animFrom = aframeNav.animTo = null;
+        } else {
+          aframeControlsBeforeHand.forEach(({ component, wasPlaying }) => {
+            if (wasPlaying) component?.play?.();
+          });
+          aframeControlsBeforeHand = [];
+        }
+        handSteeringExclusive = next;
+        return true;
+      },
       resetView() {
         captureInitialAFramePose();
         const cameraObject = getAFrameCameraObject();
@@ -3952,6 +4058,7 @@ try {
         });
       },
       handPoint(nx, ny) {
+        if (!handSteeringExclusive) return;
         const cameraObject = getAFrameCameraObject();
         if (!cameraObject) return;
         const desiredYaw = -(nx - 0.5) * Math.PI * 1.5;
@@ -3963,7 +4070,7 @@ try {
       },
       handCommand(command) {
         const cameraObject = getAFrameCameraObject();
-        if (!cameraObject || !command) return;
+        if (!handSteeringExclusive || !cameraObject || !command) return;
         if (command.type === 'look') { this.handPoint(command.x, command.y); return; }
         if (command.type === 'orbit') {
           cameraObject.rotation.order = 'YXZ';
@@ -4006,6 +4113,238 @@ HTML,
         [$threeCameraQuadMembers, $aframeCameraQuadMembers],
         $bootstrap
     );
+}
+
+/**
+ * A one-click local server, bundled into every export ZIP, so
+ * camera-based features (hand-tracking "Steer the piece", the theremin)
+ * actually work offline. Browsers permanently refuse getUserMedia() for a
+ * page opened directly as file:// — no client-side code can change that,
+ * it's an intentional browser security boundary (a raw local HTML file
+ * must never be able to silently access a webcam). http://127.0.0.1,
+ * unlike file://, IS treated as a fully secure context, identical to the
+ * live site — so serving the same extracted folder locally is the actual
+ * fix, not a workaround. Requires only Python 3 (bundled with macOS; a
+ * common default on Linux; installable on Windows), so no extra runtime
+ * dependency is added beyond what most machines already have.
+ */
+function piece_export_local_server_files(): array
+{
+    $py = <<<'PY'
+#!/usr/bin/env python3
+"""Serves this exported folder over http://127.0.0.1 so camera-based
+features (hand-tracking steering, theremin) work. Browsers block camera
+access entirely when index.html is opened directly (file://) — this is a
+browser security rule, not a bug in the export — but treat 127.0.0.1 as a
+secure origin exactly like the live site. Requires only Python 3."""
+import http.server
+import os
+import socket
+import threading
+import webbrowser
+
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
+
+
+def find_free_port():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+port = find_free_port()
+url = "http://127.0.0.1:{}/index.html".format(port)
+httpd = http.server.ThreadingHTTPServer(("127.0.0.1", port), http.server.SimpleHTTPRequestHandler)
+
+print("Serving this piece at " + url)
+print("Camera-based steering now works here (it cannot work when opening index.html directly).")
+print("Press Ctrl+C to stop.")
+
+threading.Timer(0.6, lambda: webbrowser.open(url)).start()
+try:
+    httpd.serve_forever()
+except KeyboardInterrupt:
+    pass
+PY;
+
+    $command = <<<'SH'
+#!/bin/bash
+cd "$(dirname "$0")"
+python3 start-server.py || python start-server.py
+SH;
+
+    $bat = <<<'BAT'
+@echo off
+cd /d "%~dp0"
+python start-server.py || py start-server.py
+BAT;
+
+    return [
+        ['zip_path' => 'start-server.py', 'data' => $py],
+        ['zip_path' => 'start-server.command', 'data' => $command, 'mode' => 0755],
+        ['zip_path' => 'start-server.bat', 'data' => $bat],
+    ];
+}
+
+/**
+ * Estimates a ZIP without constructing the export manifest. This function is
+ * called while live pages render, so it must never load media BLOBs or build
+ * the full downloadable document. The actual download still uses the full
+ * manifest; this estimate intentionally trades exact compression for a safe,
+ * low-memory approximation.
+ */
+function piece_export_estimated_zip_bytes(array $piece, array $version, array $options = []): ?int
+{
+    static $cache = [];
+    $cacheKey = sha1(serialize([
+        (int) ($piece['id'] ?? 0),
+        (int) ($version['id'] ?? 0),
+        $options,
+    ]));
+    if (array_key_exists($cacheKey, $cache)) {
+        return $cache[$cacheKey];
+    }
+
+    try {
+        $version = piece_export_apply_requested_voices($version, $options['requested_voices'] ?? null);
+        $excludeCamera = !empty($options['exclude_camera']);
+        if ($excludeCamera) {
+            $version['camera_overlay'] = 0;
+            $version['immersive_camera_overlay'] = 0;
+            $version['regular_hand_motion'] = 0;
+            $version = piece_export_force_voice_off($version, 'hand_tracking');
+        }
+        if (!empty($options['exclude_hand_tracking'])) {
+            $version = piece_export_force_voice_off($version, 'hand_tracking');
+            $version['regular_hand_motion'] = 0;
+        }
+
+        $html = (string) ($version['html_code'] ?? '');
+        $css = (string) ($version['css_code'] ?? '');
+        $code = (string) ($version['generated_code'] ?? '');
+        $bytes = strlen($html) + strlen($css) + strlen($code);
+
+        // Read only metadata for referenced media. Never call the export
+        // resolver here: it selects the BLOB and was the source of the live
+        // page memory exhaustion regression.
+        foreach (piece_export_collect_media_refs([$html, $css, $code]) as $ref) {
+            $path = (string) parse_url($ref, PHP_URL_PATH);
+            $id = 0;
+            $table = '';
+            if (preg_match('#^/(?:image|media)/([0-9]+)$#', $path, $matches)) {
+                $table = 'media_files';
+                $id = (int) $matches[1];
+            } elseif (preg_match('#^/api/media-assets/([0-9]+)$#', $path, $matches)) {
+                $table = 'media_assets';
+                $id = (int) $matches[1];
+            }
+            if ($table !== '' && $id > 0) {
+                try {
+                    $stmt = db()->prepare('SELECT byte_size FROM ' . $table . ' WHERE id = ? LIMIT 1');
+                    $stmt->execute([$id]);
+                    $bytes += max(0, (int) ($stmt->fetchColumn() ?: 0));
+                } catch (Throwable $error) {
+                    // Size metadata is optional; the label can still show a
+                    // useful lower-bound estimate when the table is absent.
+                }
+            }
+        }
+
+        $generationMode = art_piece_version_generation_mode($version, $piece);
+        $decodedSonic = json_decode((string) ($version['sonic_params'] ?? ''), true);
+        $decodedSonic = is_array($decodedSonic) ? $decodedSonic : ['enabled' => false];
+        $surface = strtolower(trim((string) ($options['surface'] ?? '')));
+        $surfaceName = $surface === 'immersive' ? 'immersive' : 'regular';
+        $capabilities = piece_sound_capability_contract(
+            $generationMode,
+            $decodedSonic,
+            piece_camera_overlay_enabled($version, $surfaceName),
+            piece_camera_placement($version, $surfaceName),
+            ($excludeCamera || !empty($options['exclude_hand_tracking']))
+                ? false
+                : ($surfaceName === 'immersive' ? true : piece_regular_hand_motion_enabled($version))
+        );
+        $needsMediaPipe = piece_export_version_has_hand_tracking($version) || !empty($capabilities['hand_control']);
+        $runtimeFiles = $surfaceName === 'immersive'
+            ? piece_export_immersive_runtime_files((string) ($version['engine'] ?? $piece['engine'] ?? 'p5'), false)
+            : piece_export_runtime_files((string) ($version['engine'] ?? $piece['engine'] ?? 'p5'));
+        if ($surfaceName !== 'immersive' && !empty($capabilities['hand_control']) && in_array($generationMode, ['p5', 'c2', 'c2_interactive', 'svg'], true)) {
+            $runtimeFiles[] = ['zip_path' => 'runtime/three/three.global.js', 'data' => piece_export_three_global_source()];
+        }
+        if ($surfaceName !== 'immersive' && (piece_export_version_has_enabled_sonic($version) || !empty($capabilities['camera_view']) || !empty($capabilities['hand_control']))) {
+            $runtimeFiles[] = ['source_path' => dirname(__DIR__, 2) . '/assets/vendor/tone/Tone.js', 'data' => piece_export_runtime_source_file('assets/vendor/tone/Tone.js')];
+            $runtimeFiles[] = ['source_path' => dirname(__DIR__, 2) . '/assets/js/sonic-controller.js', 'data' => piece_export_runtime_source_file('assets/js/sonic-controller.js')];
+        }
+        foreach ($runtimeFiles as $file) {
+            $bytes += array_key_exists('data', $file)
+                ? strlen((string) $file['data'])
+                : max(0, (int) @filesize((string) ($file['source_path'] ?? '')));
+        }
+        if ($needsMediaPipe) {
+            foreach (piece_export_mediapipe_hands_runtime_files() as $file) {
+                // Only stat these large camera assets. The live estimate must
+                // never load their contents into PHP memory.
+                $bytes += max(0, (int) @filesize((string) ($file['source_path'] ?? '')));
+            }
+        }
+        foreach (piece_export_local_server_files() as $file) {
+            $bytes += strlen((string) ($file['data'] ?? ''));
+        }
+
+        // Account for generated toolbar/runtime markup without constructing
+        // the media-expanded document. This keeps the estimate useful while
+        // keeping live rendering safely below the normal memory limit.
+        $bytes += 512 * 1024;
+        $cache[$cacheKey] = $bytes + 64 * 1024;
+    } catch (Throwable $error) {
+        $cache[$cacheKey] = null;
+    }
+
+    return $cache[$cacheKey];
+}
+
+function piece_export_format_estimated_size(?int $bytes): string
+{
+    if ($bytes === null || $bytes < 1) {
+        return 'size varies';
+    }
+    $megabytes = max(1, (int) round($bytes / (1024 * 1024)));
+    return '≈' . $megabytes . ' MB';
+}
+
+function piece_export_download_estimates(array $piece, array $version, string $surface = ''): array
+{
+    $baseOptions = $surface !== '' ? ['surface' => $surface] : [];
+    $fullBytes = piece_export_estimated_zip_bytes($piece, $version, $baseOptions);
+    $noCameraBytes = piece_export_estimated_zip_bytes($piece, $version, $baseOptions + ['exclude_camera' => true]);
+    $sonic = json_decode((string) ($version['sonic_params'] ?? ''), true);
+    $voiceCosts = [];
+    if (is_array($sonic)) {
+        foreach (['melodic', 'hand_tracking'] as $voice) {
+            $without = $sonic;
+            $without['extras']['voices'][$voice] = false;
+            $voiceCosts[$voice] = max(
+                0,
+                strlen(json_encode($sonic, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE))
+                    - strlen(json_encode($without, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE))
+            );
+        }
+    }
+    if (!empty($voiceCosts['hand_tracking'])) {
+        foreach (piece_export_mediapipe_hands_runtime_files() as $file) {
+            $voiceCosts['hand_tracking'] += array_key_exists('data', $file)
+                ? strlen((string) $file['data'])
+                : max(0, (int) @filesize((string) ($file['source_path'] ?? '')));
+        }
+    }
+
+    return [
+        'full' => piece_export_format_estimated_size($fullBytes),
+        'no_camera' => piece_export_format_estimated_size($noCameraBytes),
+        'full_bytes' => $fullBytes,
+        'no_camera_bytes' => $noCameraBytes,
+        'voice_costs' => $voiceCosts,
+    ];
 }
 
 function piece_export_bundle(array $piece, array $version, array $options = []): array
@@ -4061,6 +4400,21 @@ function piece_export_bundle(array $piece, array $version, array $options = []):
         }
     }
 
+    foreach (piece_export_local_server_files() as $serverFile) {
+        if (!$zip->addFromString($serverFile['zip_path'], $serverFile['data'])) {
+            $zip->close();
+            @unlink($tempPath);
+            throw new RuntimeException('Could not package local-server file: ' . $serverFile['zip_path']);
+        }
+        if (isset($serverFile['mode']) && method_exists($zip, 'setExternalAttributesName')) {
+            $zip->setExternalAttributesName(
+                $serverFile['zip_path'],
+                ZipArchive::OPSYS_UNIX,
+                (($serverFile['mode'] & 0xFFFF) << 16)
+            );
+        }
+    }
+
     $zip->close();
 
     return [
@@ -4097,6 +4451,13 @@ function collection_export_bundle(array $collection, array $items, array $option
             $zip->close();
             @unlink($tempPath);
             throw new RuntimeException('Could not package collection bundle file: ' . $bundleFile['zip_path']);
+        }
+        if (isset($bundleFile['mode']) && method_exists($zip, 'setExternalAttributesName')) {
+            $zip->setExternalAttributesName(
+                $bundleFile['zip_path'],
+                ZipArchive::OPSYS_UNIX,
+                (($bundleFile['mode'] & 0xFFFF) << 16)
+            );
         }
     }
 
@@ -4142,6 +4503,12 @@ function collection_export_build_manifest(array $collection, array $items, array
             'data' => collection_export_readme($collection),
         ],
     ];
+    // Once at the collection root, not per-piece — one local server here
+    // covers the whole extracted folder, including every pieces/{slug}/
+    // subpage. See piece_export_local_server_files()'s docblock for why
+    // this is needed at all (getUserMedia is permanently blocked for
+    // file://, unlike http://127.0.0.1).
+    $bundleFiles = array_merge($bundleFiles, piece_export_local_server_files());
 
     foreach ($items as $item) {
         if (($item['type'] ?? '') === 'art_piece' && !empty($item['piece']) && !empty($item['version'])) {
@@ -4220,6 +4587,15 @@ function collection_export_readme(array $collection): string
         . "Open index.html to run this full collection gallery.\n"
         . "\n"
         . "This is a collection-wall export, not a single-piece export. The gallery includes all supported exported collection items, fullscreen, slideshow/full-view behavior, and PNG capture from the rendered gallery view.\n"
+        . "\n"
+        . "CAMERA-BASED FEATURES (hand-tracking steering, theremin):\n"
+        . "Opening index.html directly (double-clicking it) cannot use your camera — browsers\n"
+        . "permanently block camera access for a raw local file, no matter what the page does.\n"
+        . "To use camera features, run the included local server instead:\n"
+        . "  - macOS/Linux: double-click start-server.command (or run start-server.py)\n"
+        . "  - Windows: double-click start-server.bat (or run start-server.py)\n"
+        . "This opens the same gallery at http://127.0.0.1 in your browser, where camera access\n"
+        . "works exactly like the live site. Requires Python 3 (already installed on macOS).\n"
         . "\n"
         . "Other files are supporting runtime files only. You should not need to manually open any file besides index.html.\n";
 }
@@ -4501,11 +4877,16 @@ function collection_export_piece_item_payload(array $piece, array $version): arr
     $htmlCode = (string) ($version['html_code'] ?? '');
     $cssCode = (string) ($version['css_code'] ?? '');
     $jsCode = (string) ($version['generated_code'] ?? '');
-    $mediaMap = piece_build_media_manifest([$htmlCode, $cssCode, $jsCode, (string) ($piece['thumbnail_url'] ?? '')]);
+    // allowLargeInline: this payload is embedded into the downloadable
+    // collection ZIP's self-contained index.html (collection_export_document()
+    // — confirmed the only caller), opened via file://, same as a single-piece
+    // export — never a live page. See piece_media_should_skip_inlining()'s
+    // docblock for why exports need this and live views must not.
+    $mediaMap = piece_build_media_manifest([$htmlCode, $cssCode, $jsCode, (string) ($piece['thumbnail_url'] ?? '')], true);
     $rewriteMedia = static function (string $content) use ($mediaMap): string {
         return piece_export_rewrite_media_refs($content, static function (string $normalizedRef) use ($mediaMap): ?string {
             $asset = $mediaMap[$normalizedRef] ?? null;
-            return is_array($asset) ? (string) ($asset['data_url'] ?? '') : null;
+            return is_array($asset) ? piece_export_asset_replacement($asset, $normalizedRef) : null;
         });
     };
 
@@ -4514,7 +4895,7 @@ function collection_export_piece_item_payload(array $piece, array $version): arr
     if ($engine === 'aframe') {
         $html = piece_aframe_normalize_texture_assets($html, static function (string $src) use ($mediaMap): string {
             $asset = $mediaMap[$src] ?? null;
-            return is_array($asset) ? (string) ($asset['data_url'] ?? $src) : $src;
+            return is_array($asset) ? piece_export_asset_replacement($asset, $src) : $src;
         });
     }
 
@@ -4584,7 +4965,49 @@ function collection_export_media_url(string $url): string
     return $url;
 }
 
-function piece_build_media_manifest(array $contents): array
+// Media whose kind/size makes data: URI inlining unsafe in a LIVE request
+// context. Inlining exists ONLY for gallery-wall/SVG rasterization through
+// an <img> tag (see piece_inline_local_media()'s docblock) — that rationale
+// never applied to 3D models (THREE.GLTFLoader fetches the URL directly, no
+// <img> step exists) and base64-encoding a large binary blob unconditionally,
+// as this used to do, reliably exhausts PHP's memory_limit for any sizeable
+// file. Confirmed in production: an 18.6MB GLB crashed
+// immersive/piece.php's json_encode() with a raw, unhandled fatal error
+// dumped mid-script, blanking the entire piece for every visitor.
+//
+// A downloaded/exported bundle is a DIFFERENT context: opened via file://,
+// where fetch()/XHR to any local file — even a relative, co-bundled one —
+// is blocked by the browser's CORS policy regardless of same-directory
+// placement (confirmed: relative-path fix alone did not fix the downloaded
+// ZIP). A data: URI is the only thing that loads there at all, so exports
+// must inline 3D models despite the size, and the download/export request
+// handlers (PiecesController::download(), CollectionsController's export
+// route) raise PHP's memory_limit for just that one request to afford it —
+// see $allowLargeInline below.
+const PIECE_MEDIA_INLINE_MAX_BYTES = 4 * 1024 * 1024;
+
+// Sanity ceiling even when $allowLargeInline is true — matches
+// MODEL_MAX_BYTES (upload.php), the largest a model upload could ever be, so
+// this never silently truncates a legitimately-uploaded asset but still
+// won't attempt something absurd if that ceiling ever changes.
+const PIECE_MEDIA_EXPORT_INLINE_MAX_BYTES = 64 * 1024 * 1024;
+
+function piece_media_should_skip_inlining(array $asset, bool $allowLargeInline = false): bool
+{
+    $size = strlen((string) ($asset['data'] ?? ''));
+    if ($allowLargeInline) {
+        return $size > PIECE_MEDIA_EXPORT_INLINE_MAX_BYTES;
+    }
+
+    $mimeType = strtolower((string) ($asset['mime_type'] ?? ''));
+    if ($mimeType === 'model/gltf-binary' || $mimeType === 'model/gltf+json') {
+        return true;
+    }
+
+    return $size > PIECE_MEDIA_INLINE_MAX_BYTES;
+}
+
+function piece_build_media_manifest(array $contents, bool $allowLargeInline = false): array
 {
     $mediaRefs = piece_export_collect_media_refs($contents);
     $mediaMap = [];
@@ -4592,7 +5015,9 @@ function piece_build_media_manifest(array $contents): array
         $asset = piece_export_resolve_media_ref($ref);
         $mediaMap[$ref] = [
             'path' => piece_export_media_zip_path($ref, $asset, array_column($mediaMap, 'path')),
-            'data_url' => piece_export_data_url((string) ($asset['mime_type'] ?? 'application/octet-stream'), (string) ($asset['data'] ?? '')),
+            'data_url' => piece_media_should_skip_inlining($asset, $allowLargeInline)
+                ? ''
+                : piece_export_data_url((string) ($asset['mime_type'] ?? 'application/octet-stream'), (string) ($asset['data'] ?? '')),
         ];
     }
 
@@ -4684,7 +5109,15 @@ function piece_export_build_manifest(array $piece, array $version, array $option
     $cssCode = (string) ($version['css_code'] ?? '');
     $jsCode = (string) ($version['generated_code'] ?? '');
 
-    $mediaMap = piece_build_media_manifest([$htmlCode, $cssCode, $jsCode]);
+    // allowLargeInline: this manifest feeds a downloadable ZIP (index.html
+    // opened via file://), which can only load large binaries — 3D models
+    // in particular — as an inline data: URI; relative co-bundled file
+    // paths alone still fail there since fetch()/XHR to any file:// target
+    // is blocked by the browser regardless of same-directory placement. The
+    // caller (PiecesController::download()) raises memory_limit for this
+    // one request to afford it. Never pass true for a live-request
+    // manifest — see piece_media_should_skip_inlining()'s docblock.
+    $mediaMap = piece_build_media_manifest([$htmlCode, $cssCode, $jsCode], true);
     $mediaFiles = [];
     foreach ($mediaMap as $ref => $mediaEntry) {
         $asset = piece_export_resolve_media_ref($ref);
@@ -4947,7 +5380,7 @@ function piece_export_stylesheet_content(array $piece, array $version, array $me
                 return $normalizedRef;
             }
 
-            return (string) ($target['data_url'] ?? $normalizedRef);
+            return piece_export_asset_replacement($target, $normalizedRef);
         }
     );
     $baseCss = <<<'CSS'
@@ -4976,7 +5409,7 @@ function piece_export_script_content(array $piece, array $version, array $mediaM
                 return $normalizedRef;
             }
 
-            return (string) ($target['data_url'] ?? $normalizedRef);
+            return piece_export_asset_replacement($target, $normalizedRef);
         }
     );
 
@@ -5006,6 +5439,15 @@ function piece_export_readme(array $piece, string $generationMode): string
         . "- runtime/ and media/ as portable supporting assets for rehosting\n"
         . "\n"
         . "This export includes lower-left fullscreen and screenshot controls directly inside index.html.\n"
+        . "\n"
+        . "CAMERA-BASED FEATURES (hand-tracking steering, theremin):\n"
+        . "Opening index.html directly (double-clicking it) cannot use your camera — browsers\n"
+        . "permanently block camera access for a raw local file, no matter what the page does.\n"
+        . "To use camera features, run the included local server instead:\n"
+        . "  - macOS/Linux: double-click start-server.command (or run start-server.py)\n"
+        . "  - Windows: double-click start-server.bat (or run start-server.py)\n"
+        . "This opens the same piece at http://127.0.0.1 in your browser, where camera access\n"
+        . "works exactly like the live site. Requires Python 3 (already installed on macOS).\n"
         . "\n"
         . "Please note that the following server-dependent features require the CMS and cannot run offline:\n"
         . "- Re-downloading the ZIP bundle with different voice options.\n"

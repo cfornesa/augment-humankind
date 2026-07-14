@@ -50,6 +50,9 @@ $pieceControlCapabilities = piece_sound_capability_contract(
 $soundToggleAvailable = !empty($pieceControlCapabilities['sound']);
 $cameraViewAvailable = !empty($pieceControlCapabilities['camera_view']);
 $handControlAvailable = !empty($pieceControlCapabilities['hand_control']);
+$pieceDownloadEstimates = is_array($version)
+    ? piece_export_download_estimates($piece, $version, 'immersive')
+    : ['full' => 'size varies', 'no_camera' => 'size varies'];
 $downloadVoiceOptions = [];
 if (!empty($pieceControlCapabilities['keyboard'])) {
     $downloadVoiceOptions['melodic'] = 'Keyboard (piano)';
@@ -601,20 +604,21 @@ canvas[aria-hidden="true"] {
                 'icon' => $showC2InteractiveOverlay ? 'interactive' : 'view',
             ] : null,
             'download_options' => !$isStaticEmbed ? [
+                'estimates' => $pieceDownloadEstimates,
                 'choices' => array_map(
                     static fn(string $label, string $value): array => ['label' => $label, 'value' => $value],
                     array_values($downloadVoiceOptions),
                     array_keys($downloadVoiceOptions)
                 ),
                 'actions' => [[
-                    'label' => 'Download Full ZIP',
+                    'label' => 'Download Full ZIP (' . ($pieceDownloadEstimates['full'] ?? 'size varies') . ')',
                     'attrs' => [
                         'href' => $pieceDownloadUrl,
                         'data-immersive-download-piece' => $pieceDownloadUrl,
                         'download' => true,
                     ],
                 ], [
-                    'label' => 'Download Non-Camera ZIP',
+                    'label' => 'Download Non-Camera ZIP (' . ($pieceDownloadEstimates['no_camera'] ?? 'size varies') . ')',
                     'attrs' => [
                         'href' => $pieceDownloadUrl . (str_contains($pieceDownloadUrl, '?') ? '&' : '?') . 'dl_camera=none',
                         'data-immersive-download-piece' => $pieceDownloadUrl,

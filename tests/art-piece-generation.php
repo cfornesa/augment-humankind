@@ -1682,6 +1682,21 @@ test('piece sound capability contract preserves sensible engine parity', functio
     assert_true($ctrlDisabled['hand_tracking'] && !$ctrlDisabled['hand_control']);
 });
 
+test('download exports keep silent camera controls and expose size estimates', function () {
+    $render = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
+    $stage = file_get_contents(__DIR__ . '/../public/app/views/partials/piece-stage.php');
+    $immersive = file_get_contents(__DIR__ . '/../public/app/views/immersive/piece.php');
+    $chrome = file_get_contents(__DIR__ . '/../public/app/helpers/immersive-chrome.php');
+    assert_contains($render, 'if (!sonicParams && !capabilities.camera_view && !capabilities.hand_control) return;');
+    assert_contains($render, 'function piece_export_estimated_zip_bytes');
+    assert_contains($render, 'function piece_export_download_estimates');
+    assert_contains($stage, 'data-download-estimate-full');
+    assert_contains($stage, 'data-piece-download-label="full"');
+    assert_contains($immersive, "'estimates' => \$pieceDownloadEstimates");
+    assert_contains($chrome, 'data-download-estimate-no-camera=');
+    assert_contains($chrome, 'data-piece-download-label=');
+});
+
 test('immersive bundle export keeps index.html as the immersive manual entry point', function () {
     $piece = ['id' => 98, 'title' => 'Immersive Bundle Piece', 'engine' => 'three'];
     $version = [
@@ -2000,7 +2015,27 @@ test('hand-enabled exports include steering and camera UI across 3D and flat eng
     unlink($bundle['path']);
     assert_contains($index, 'Steer the piece');
     assert_contains($index, 'Show camera');
+    assert_contains($index, 'runtime/sonic-controller.js');
+    assert_contains($index, 'runtime/mediapipe-hands/vision_bundle.mjs');
+    assert_not_contains($index, "turningOn && window.location && window.location.protocol === 'file:'");
+    $handReadyAt = strpos($index, 'await eng.enableHandControl()');
+    $steeringOnAt = strpos($index, 'activeHooks.setHandSteering(true)');
+    assert_true($handReadyAt !== false && $steeringOnAt !== false && $handReadyAt < $steeringOnAt, 'Regular export must acquire hand control before activating steering hooks.');
+    assert_contains($index, 'setHandSteering(active)');
+    assert_contains($index, 'handSteeringExclusive');
+    assert_contains($index, 'controlsEnabledBeforeHand');
+    assert_contains($index, 'aframeControlsBeforeHand');
+    assert_contains($index, "if (!activeHooks || typeof activeHooks.setHandSteering !== 'function') controlOk = false;");
+    $regularAudioBootstrap = substr($index, strpos($index, 'async function ensureEnabled()'));
+    assert_contains($regularAudioBootstrap, 'allowHandControl: !!capabilities.hand_control,', 'Regular ZIP must retain steering permission when Sound or Live mic creates the shared controller before steering.');
+    assert_not_contains($index, 'Camera steering requires the included local server.');
+    assert_contains($index, 'engine.onHandFrame(null); engine.disableHandControl();');
     assert_true(is_string($vision) && strlen($vision) > 1000, 'Expected A-Frame export to bundle MediaPipe.');
+
+    $immersiveSource = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
+    assert_contains($immersiveSource, "<script src=\"runtime/sonic-controller.js\"></script>");
+    assert_contains($immersiveSource, "window.__creatrMediaPipeVisionSrc = 'runtime/mediapipe-hands/vision_bundle.mjs';");
+    assert_contains($immersiveSource, 'handControlAllowed: piece.handControl');
 
     $unsupported = $version;
     $unsupported['engine'] = 'svg';

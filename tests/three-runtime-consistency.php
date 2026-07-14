@@ -84,7 +84,7 @@ test('OrbitControls loop creates OrbitControls bound to state.camera/canvas', fu
 test('regular piece runtime uses elapsed-time-scaled keyboard navigation instead of OrbitControls key panning', function () use ($runtime) {
     assert_contains($runtime, 'function createKeyboardNavigation');
     assert_contains($runtime, 'const TARGET_FRAME_MS = 1000 / 60;');
-    assert_contains($runtime, 'if (keyNav?.update())');
+    assert_contains($runtime, 'if (!handSteeringExclusive && keyNav?.update())');
     assert_not_contains($runtime, 'controls.listenToKeyEvents(window);');
 });
 
@@ -1292,17 +1292,25 @@ test('regular piece view inlines its critical CSS and the global stylesheet is c
     assert_contains($chrome, '.piece-export-overlay {');
     assert_contains($chrome, 'env(safe-area-inset-left)');
     assert_contains($chrome, "\$downloadOptions = \$opts['download_options'] ?? null;");
+    assert_contains($chrome, 'min-width: min(22rem, calc(100vw - 2rem));');
+    assert_contains($chrome, 'box-sizing: border-box;');
+    assert_contains($stage, 'Download Full ZIP (');
+    assert_contains($stage, 'Download Non-Camera ZIP (');
 
     $fullscreen = file_get_contents(__DIR__ . '/../public/assets/js/piece-fullscreen.js');
     assert_contains($fullscreen, "value === 'melodic' || value === 'hand_tracking'");
     assert_contains($fullscreen, "event.key !== 'Escape'");
     assert_contains($fullscreen, 'restoreFocus: true');
+    assert_contains($fullscreen, 'updateEstimates');
+    assert_contains($stage, 'data-download-estimate-voice-costs');
 
     $immersiveView = file_get_contents(__DIR__ . '/../public/app/views/immersive/piece.php');
     assert_contains($immersiveView, "'download_options' =>");
     assert_contains($immersiveView, "url.searchParams.set('surface', 'immersive')");
     assert_contains($immersiveView, "url.searchParams.set('dl_voices', chosen.join(','))");
     assert_contains($immersiveView, "url.searchParams.set('viewState', encoded)");
+    assert_contains($immersiveView, "'estimates' => \$pieceDownloadEstimates");
+    assert_contains($immersiveView, 'Download Full ZIP (');
 
     $header = file_get_contents(__DIR__ . '/../public/app/views/partials/header.php');
     assert_contains($header, '/assets/styles.css?v=');
@@ -1483,9 +1491,10 @@ test('flat engines receive regular presentation tilt and immersive room steering
     assert_contains($spatial, 'cancelAuthoredInput(el)');
     assert_contains($spatial, 'resetView: resetView');
     assert_contains($spatial, 'steeringEnabled = !!active');
-    assert_contains($spatial, 'return steeringEnabled ? wake() : Promise.resolve(true)');
+    assert_contains($spatial, 'return steeringEnabled ? wake() : sleep();');
+    assert_contains($spatial, 'options.threeModuleSrc');
     assert_contains($spatial, 'if (!interactive) return;');
-    assert_contains($spatial, "import(THREE_MODULE)");
+    assert_contains($spatial, 'import(moduleSrc || THREE_MODULE)');
     assert_not_contains($spatial, 'cdn.jsdelivr.net');
     assert_contains($spatial, 'new T.VideoTexture(video)');
     assert_contains($spatial, "cameraPlane.position.z = cameraPlacement === 'background' ? -0.01 : 0.01");
@@ -1609,13 +1618,40 @@ test('hand steering cancellation and pose reset stay independent from camera vis
     $gallery = file_get_contents(__DIR__ . '/../public/assets/js/immersive-gallery.js');
     $render = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
     $sonic = file_get_contents(__DIR__ . '/../public/assets/js/sonic-controller.js');
+    $spatial = file_get_contents(__DIR__ . '/../public/assets/js/spatial-presentation.js');
     assert_contains($runtime, 'handControlActivationEpoch');
+    assert_contains($runtime, 'const steeringHook = window.__pieceHandHooks?.setHandSteering;');
+    assert_contains($runtime, 'typeof steeringHook === \'function\'');
     assert_contains($runtime, 'setHandSteering?.(false)');
+    assert_contains($runtime, 'handSteeringExclusive');
+    assert_contains($runtime, 'controlsEnabledBeforeHand');
+    assert_contains($runtime, 'aframeControlsBeforeHand');
+    assert_contains($runtime, 'keyNav?.clearKeys?.();');
+    $threeStateStart = strpos($runtime, 'const state = { scene: null, camera: null, renderer: null };');
+    $threeSetupStart = strpos($runtime, 'if (state.camera && state.renderer) {', $threeStateStart);
+    $threeHookStart = strpos($runtime, 'window.__pieceHandHooks = Object.assign(', $threeSetupStart);
+    $threeOuterState = substr($runtime, $threeStateStart, $threeSetupStart - $threeStateStart);
+    assert_contains($threeOuterState, 'let handSteeringExclusive = false;', 'Live regular Three steering state must outlive the renderer setup block that the shared hook follows.');
+    assert_contains($threeOuterState, 'let pointerState = null;', 'Live regular Three steering hook must retain its manual-input state after setup.');
+    if ($threeHookStart === false || $threeHookStart <= $threeSetupStart) {
+        throw new RuntimeException('Live regular Three hook must remain registered after renderer setup.');
+    }
+    assert_contains($render, 'controlOk = (await activeHooks.setHandSteering(true)) !== false');
+    assert_contains($render, "'runtime/three/three.module.js'");
+    assert_not_contains($render, "turningOn && window.location && window.location.protocol === 'file:'");
+    assert_contains($gallery, "iframe.setAttribute('allow', 'camera; microphone')");
+    assert_contains($spatial, 'return steeringEnabled ? wake() : sleep();');
     assert_contains($runtime, "data.type === 'creatr-reset-view'");
     assert_contains($fullscreen, 'data-piece-reset-view');
     assert_contains($gallery, 'handActivationEpoch');
     assert_contains($gallery, 'data-immersive-reset-view');
     assert_contains($render, 'handControlActivationEpoch');
+    assert_contains($render, "if (!activeHooks || typeof activeHooks.setHandSteering !== 'function') controlOk = false;");
+    $regularAudioBootstrap = substr($render, strpos($render, 'async function ensureEnabled()'));
+    assert_contains($regularAudioBootstrap, 'allowHandControl: !!capabilities.hand_control,', 'Regular export audio/mic bootstrap retains the steering contract.');
+    assert_contains($render, 'keyboardKeys.clear();');
+    assert_contains($render, 'aframeControlsBeforeHand');
+    assert_not_contains($render, 'Camera steering requires the included local server.');
     assert_contains($render, 'resetViewButton');
     assert_contains($render, 'setHandSteering(false)');
     assert_contains($runtime, 'getCameraVideo: () => baseHooks.getBackgroundVideo?.() || baseHooks._cameraOverlay || null');

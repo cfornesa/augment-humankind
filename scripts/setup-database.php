@@ -496,6 +496,10 @@ function manifest(): array
             );
         }],
 
+        ['art piece version media refs (2026-07-13)', function (Ctx $ctx): void {
+            ensureTablesFromSql($ctx, 'docs/migrations/2026-07-13-art-piece-version-media-refs.sql');
+        }],
+
         ['null fabricated sonic params (2026-07-11)', function (Ctx $ctx): void {
             // See docs/migrations/2026-07-11-null-fabricated-sonic-params.sql:
             // a since-fixed admin-save bug materialized {enabled, extras}

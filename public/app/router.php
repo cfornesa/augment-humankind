@@ -43,6 +43,7 @@ require_once __DIR__ . '/models/Reaction.php';
 require_once __DIR__ . '/models/ExhibitMediaItem.php';
 require_once __DIR__ . '/models/PlatformArtPiece.php';
 require_once __DIR__ . '/models/PlatformArtPieceVersion.php';
+require_once __DIR__ . '/models/ArtPieceVersionMediaRef.php';
 require_once __DIR__ . '/models/FeedSource.php';
 require_once __DIR__ . '/models/SiteAsset.php';
 require_once __DIR__ . '/models/MediaAsset.php';

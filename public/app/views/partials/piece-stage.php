@@ -12,6 +12,11 @@ declare(strict_types=1);
  */
 
 $version = $version ?? null;
+$pieceDownloadEstimates = $pieceDownloadEstimates ?? (
+    is_array($version)
+        ? piece_export_download_estimates($piece, $version)
+        : ['full' => 'size varies', 'no_camera' => 'size varies', 'full_bytes' => 0, 'no_camera_bytes' => 0, 'voice_costs' => []]
+);
 $hasCode = $version && (!empty($version['html_code']) || !empty($version['css_code']) || !empty($version['generated_code']));
 $sonicParamsDecoded = !empty($version['sonic_params']) ? json_decode((string) $version['sonic_params'], true) : null;
 $pieceGenerationMode = is_array($version) ? art_piece_version_generation_mode($version, $piece) : 'p5';
@@ -62,7 +67,10 @@ $pieceStageReturnTo = $pieceStageReturnTo ?? ($_SERVER['REQUEST_URI'] ?? ('/piec
                         <button type="button" class="piece-export-icon-btn" data-piece-download-picker-trigger aria-haspopup="true" aria-expanded="false" aria-controls="piece-download-menu" aria-label="Open download menu">
                             <?= immersive_stage_toolbar_icon_svg('download') ?>
                         </button>
-                        <div id="piece-download-menu" class="piece-download-picker" data-piece-download-picker role="region" aria-label="ZIP download options" hidden>
+                        <div id="piece-download-menu" class="piece-download-picker" data-piece-download-picker role="region" aria-label="ZIP download options"
+                             data-download-estimate-full="<?= (int) ($pieceDownloadEstimates['full_bytes'] ?? 0) ?>"
+                             data-download-estimate-no-camera="<?= (int) ($pieceDownloadEstimates['no_camera_bytes'] ?? 0) ?>"
+                             data-download-estimate-voice-costs="<?= e(json_encode($pieceDownloadEstimates['voice_costs'] ?? [], JSON_UNESCAPED_SLASHES)) ?>" hidden>
                             <p class="piece-download-picker-heading">Include in this download:</p>
                             <?php foreach ($downloadVoiceOptions as $key => $label): ?>
                             <label class="piece-download-picker-choice">
@@ -72,11 +80,11 @@ $pieceStageReturnTo = $pieceStageReturnTo ?? ($_SERVER['REQUEST_URI'] ?? ('/piec
                             <?php endforeach; ?>
                             <a href="/pieces/<?= (int) $piece['id'] ?>/download" class="piece-download-picker-action" data-piece-download-link>
                                 <?= immersive_stage_toolbar_icon_svg('download-small') ?>
-                                <span>Download Full ZIP</span>
+                                <span data-piece-download-label="full">Download Full ZIP (<?= e($pieceDownloadEstimates['full'] ?? 'size varies') ?>)</span>
                             </a>
                             <a href="/pieces/<?= (int) $piece['id'] ?>/download?dl_camera=none" class="piece-download-picker-action" data-piece-download-link data-piece-download-camera="none">
                                 <?= immersive_stage_toolbar_icon_svg('download-small') ?>
-                                <span>Download Non-Camera ZIP</span>
+                                <span data-piece-download-label="no-camera">Download Non-Camera ZIP (<?= e($pieceDownloadEstimates['no_camera'] ?? 'size varies') ?>)</span>
                             </a>
                         </div>
                     </div>

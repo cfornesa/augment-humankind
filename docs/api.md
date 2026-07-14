@@ -261,6 +261,19 @@ movement contract for supported 3D engines: Three.js exports keep elapsed-
 time-scaled WASD/arrow movement plus click/tap-to-move teleport without
 showing the immersive viewer HUD, and A-Frame exports keep the same regular-
 view keyboard/tap movement behavior offline.
+Camera hand steering is an additional control layer: activating it must not
+consume mouse/touch dragging or keyboard controls, and turning it off releases
+only its camera/MediaPipe ownership while preserving the resulting manual pose.
+Camera view and microphone/audio remain independent capabilities, including for
+sound-less camera-enabled exports. Download menus keep the full download
+selected by default and display approximate ZIP sizes that update when optional
+voice choices change. The same regular controller permission is retained
+whether it is first created by Sound, Live mic, Camera view, or steering, so
+those controls are configuration-independent. Live regular Three.js steering
+keeps its hook state alive after renderer setup; failed activation reports a
+real unavailable state instead of appearing enabled. Direct `file://` opening
+does not by itself select device tilt: bundled camera/MediaPipe steering is
+attempted first, with tilt reserved for an actual hand-control failure.
 Interactive standalone exports for `c2_interactive`, `three`, and `aframe`
 also include the lower-left screenshot icon overlay inside `index.html`.
 Supported CMS media used by the piece are embedded in a file-open-safe way so
@@ -316,8 +329,8 @@ surfaces. In a collection/exhibit wall (live or exported), only the item
 nearest the current camera focus sonifies — the controller is torn down and
 rebuilt as focus moves between pieces.
 
-Immersive `/pieces/[id]` pages expose `Download ZIP` (a standalone button,
-since it's the only item) and a standalone `Download PNG` screenshot button
+Immersive `/pieces/[id]` pages expose a download menu with Full ZIP and
+Non-Camera ZIP actions, plus a standalone `Download PNG` screenshot button
 in the shared top stage toolbar (see the immersive route notes below). PNG
 capture reflects the visible immersive view from the
 current camera; for gallery-room engines this is the rendered Three.js
@@ -603,6 +616,41 @@ as repair context) or "Give Up" — mirroring `POST /admin/pieces/refine-ai`'s
 existing retry dialog. There is no separate cancel endpoint: aborting the
 in-flight attempt is purely client-side (`AbortController`), since there's
 no multi-attempt server-side loop left to interrupt.
+
+### Structured media references (`media_refs_json`)
+
+`POST /admin/pieces/generate`, `POST /admin/pieces/generate/save`,
+`POST /admin/pieces/refine-ai`, and `POST /admin/pieces/[id]/refine-save`
+additionally accept an optional `media_refs_json` field: a JSON array of
+`{"media_id": <int>, "intent_text": "<string>"}`, produced by the "Add media
+reference" picker in the generate form and the AI Refine tab. This is the
+recommended way to reference a specific uploaded asset — it resolves
+directly against `media_files` by ID, with no phrasing to parse, unlike the
+legacy free-text extraction below (which still runs unconditionally as a
+fallback for plain-text mentions in `prompt`).
+
+Server-side handling (`art-piece-generation.php`,
+`PiecesAdminController.php`):
+
+- Each ref is resolved to its `media_files` MIME type. If the resolved kind
+  doesn't match the selected engine (currently: any `model/gltf-binary` or
+  `model/gltf+json` asset requires engine `three` or `aframe`), the request
+  is rejected **before** calling the AI, with a message naming the specific
+  asset and required engine — never a silent partial generation.
+- Otherwise each ref's canonical `/media/{id}` path and stated
+  `intent_text` are appended to the AI's prompt as an unambiguous
+  "SELECTED MEDIA REFERENCES" instruction block, in addition to (not instead
+  of) the existing media policy prompt built from free-text extraction.
+- On `refine-ai`, if the main `prompt` field is empty but at least one ref
+  has non-empty `intent_text`, the server (and, redundantly, the client)
+  synthesizes a scoped instruction ("Apply ONLY the following media
+  integration instruction(s)...") so a media-only refine request doesn't
+  need a separate typed instruction and the AI doesn't plan unrelated
+  changes.
+- On save (`generate/save`, `refine-save`), resolved refs persist to
+  `art_piece_version_media_refs`, scoped to the resulting
+  `art_piece_versions` row, so regenerate/refine and future edits can read
+  back and re-edit exactly what was selected for that version.
 
 ## Platform Compatibility API Routes
 

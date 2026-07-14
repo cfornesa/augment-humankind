@@ -50,6 +50,23 @@ stacking order.
   every engine; it does not open the camera automatically.
 - Hand-tracking is a sound voice. Hand control is an independent steering
   capability available on Three.js, A-Frame, and C2 Interactive when allowed.
+- Every steerable surface owns an explicit hand-steering lifecycle: camera
+  view, live mic, and steering may be enabled in any order; steering alone
+  temporarily owns only conflicting manual navigation, then restores the
+  exact prior mouse, touch, keyboard, and engine-control state when it stops.
+  A missing ownership hook is a failed steering activation, never silent
+  success or a `file://`-based device-tilt substitution.
+- The regular live Three.js runtime keeps steering state in the same lifetime
+  as its shared hand hook. The hook must remain able to claim/release native
+  controls after renderer setup has completed; activation errors must not be
+  swallowed as a successful-looking toggle.
+- Every regular ZIP controller creation path carries the granted hand-control
+  capability. Starting Sound, Live mic, or Camera view before steering must
+  produce the same camera/MediaPipe steering lifecycle as starting steering
+  first; audio-context autoplay recovery is not a steering prerequisite.
+- A direct-open regular or immersive ZIP uses bundled MediaPipe assets and
+  attempts camera steering normally. `file://` alone never selects device
+  tilt; tilt is offered only after an actual camera or model failure.
 - Solo regular and immersive ZIPs bundle MediaPipe when hand tracking or hand
   control needs it. Collection ZIPs deliberately exclude both to bound size
   and avoid parallel inference.

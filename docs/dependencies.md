@@ -269,6 +269,29 @@
   screenshots. A-Frame normalization covers both generated `<a-assets><img>`
   texture references and common legacy/manual direct texture forms such as
   `src="/image/2"` and `material="src: /api/media-assets/7"`.
+- **Media-inlining size/kind limits (2026-07-13):** `piece_build_media_manifest()`
+  no longer unconditionally base64-inlines every referenced media file as a
+  `data:` URI. Live-request contexts (immersive piece/collection views, the
+  admin preview iframe) skip inlining for 3D-model MIME types and anything
+  over a small byte-size ceiling — inlining a large binary there previously
+  produced a raw, unhandled PHP `memory_limit` fatal error that blanked the
+  entire piece for every visitor. Export contexts (single-piece and
+  collection ZIP downloads) pass `$allowLargeInline = true` and still inline
+  large models, because a page opened via `file://` cannot `fetch()`/XHR any
+  local file at all — even a relative, co-bundled one — so it has no other
+  way to load one offline; `PiecesController::download()` and
+  `CollectionsController::download()` raise PHP's `memory_limit` for just
+  that one request to afford it.
+- **Bundled local-server launcher (2026-07-13):** Every single-piece and
+  collection ZIP export now includes `start-server.py` plus `.command`
+  (macOS/Linux, executable) and `.bat` (Windows) wrappers at the archive
+  root — a small, dependency-free script (Python 3 only) that serves the
+  extracted folder over `http://127.0.0.1` and opens it in the default
+  browser. Added after establishing that some camera-dependent behavior can
+  differ between a raw `file://` open and a real HTTP origin; kept as a
+  convenience/fallback rather than the fix for hand-control bugs found the
+  same session, which turned out to be real code defects reproducible over
+  plain HTTP too (see DECISIONS.md, 2026-07-13).
 - **A-Frame capture note:** Reliable A-Frame PNG export depends on a
   document-local WebGL context shim that forces `preserveDrawingBuffer` before
   A-Frame creates its renderer, plus a last-moment forced render and nonblank

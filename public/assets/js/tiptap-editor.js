@@ -1328,6 +1328,16 @@ function initMediaPicker() {
       }
     }
 
+    if (currentMode === 'art_media') {
+      return {
+        accept: 'image/*,video/mp4,video/webm,video/quicktime,.glb,.gltf,model/gltf-binary,model/gltf+json,audio/mpeg,audio/ogg,audio/wav',
+        types: [],
+        limit: 64 * 1024 * 1024,
+        hint: 'Any uploaded image, video, 3D model, or audio file',
+        empty: 'No media uploaded yet. Use Upload or Import from the media library first.',
+      }
+    }
+
     return {
       accept: 'image/*',
       types: ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/avif'],
@@ -1615,6 +1625,11 @@ function initMediaPicker() {
           const audioEnabled = fileInput?.dataset.mediaAudio === '1'
           return f.kind === 'image' || f.kind === 'video' || f.kind === 'iframe' || (audioEnabled && f.kind === 'audio')
         }
+        // Art piece "Add media reference" picker: every uploaded kind is
+        // shown, including 3D models (GLB/GLTF) — the generate/refine
+        // controller enforces engine/kind compatibility server-side, so
+        // there's no need to pre-filter here.
+        if (currentMode === 'art_media') return true
         return f.kind === 'image'
       })
       if (!_pickerAllItems.length) { grid.innerHTML = `<p class="media-picker-empty">${pickerModeConfig().empty}</p>`; return }

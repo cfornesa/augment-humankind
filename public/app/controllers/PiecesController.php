@@ -109,6 +109,13 @@ class PiecesController
         // that predates this feature.
         $requestedVoices = isset($_GET['dl_voices']) ? trim((string) $_GET['dl_voices']) : null;
         $excludeCamera = isset($_GET['dl_camera']) && strtolower(trim((string) $_GET['dl_camera'])) === 'none';
+        // A downloadable ZIP must inline large media (e.g. an uploaded GLB)
+        // as a data: URI so it still loads when opened via file:// — see
+        // piece_media_should_skip_inlining()'s docblock. Raised only for
+        // this one synchronous, single-admin-triggered request; the live
+        // piece/immersive views never take this path and keep the default,
+        // lower-memory-footprint limit.
+        ini_set('memory_limit', '512M');
         $bundle = piece_export_bundle($data['piece'], $data['version'], [
             'surface' => $surface,
             'view_state' => $viewState,

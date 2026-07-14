@@ -3116,3 +3116,177 @@ Implemented universal camera overlay overlays and full offline export feature pa
 - **Separation of Camera Controls in Admin Edit Panel:** Split the Audio tab in the piece edit panel (`/admin/pieces/[id]/edit`) into two separate fieldsets: "Public sound controls" (ambient, movement, melodic) and "Public camera controls" (hand-tracking, hand control), allowing camera steering to be toggled independently of sound playback. Updated the database model saving array, capability contract, and the front-end view layout accordingly to make Hand Control independent of the Hand Tracking voice.
 - **Always-Accessible Camera Toggles for Silent Pieces:** Changed `$audioTabAvailable` in `form.php` to align with `$soundControlsAvailable` (i.e. always true when the database schema supports it) rather than hiding the tab when the piece has no active sound design (`$currentSonicEnabled` is false). Refactored `resolveSonicParamsFromPost()` in `PiecesAdminController.php` to construct a default base payload `['enabled' => false]` if there is no existing sonic_params, ensuring toggled camera parameters (like `hand_control`) are successfully persisted to the database.
 - **Interact Tab & Inline Audio Separation:** Renamed the Audio tab to "Interact" across all piece types in `form.php`. Wrapped all audio-specific fieldsets/controls (Public sound controls, Default volume, Ambient sample, Synth controls, and Effects) inside checks for `$currentSonicEnabled` so they are completely hidden for pieces that do not have associated audio, revealing only the camera section under the "Interact" tab.
+
+## 2026-07-13 — Structured Media References for AI Generation, and a Chain of Real Export/Runtime Bugs Found Debugging Them
+
+### Decision
+
+Started from a specific complaint: pieces #114/#115/#116 referenced an
+uploaded GLB (media #196) in their creative prompt, but the 3D model never
+rendered — generation silently succeeded without it. Investigation found the
+free-text prompt parser (`art_piece_extract_prompt_media_refs()`,
+`art-piece-generation.php`) could resolve a media mention to either of two
+different backing tables (`media_files` via `/media/{id}`, or `media_assets`
+via `/api/media-assets/{id}`) depending on phrasing, and the Three.js
+capability prompt only ever emitted `GLTFLoader.load('/media/{id}')` — a
+namespace mismatch that made the AI's correct load call look "unexpected" to
+validation and get silently dropped on retry.
+
+Rather than patch the regex, replaced prompt-driven media references with a
+structured **"Add media reference" picker**: users pick a specific uploaded
+asset via the existing media-picker UI and state per-item usage intent,
+eliminating the phrasing-based namespace ambiguity by construction. This
+required, and the free-text extractor stays as an unmodified fallback for
+plain-text mentions:
+
+- New table `art_piece_version_media_refs` (`docs/migrations/2026-07-13-art-piece-version-media-refs.sql`
+  + probe-guarded step in `scripts/setup-database.php`) and model
+  `ArtPieceVersionMediaRef.php`, scoped to a version so refine/regenerate
+  history keeps whatever refs were actually in play for that generation.
+- `art_piece_assert_media_refs_engine_compatible()` (`art-piece-generation.php`)
+  rejects generation up front with a specific per-asset message (e.g. "Media
+  chair.glb is a 3D model — select Three.js or A-Frame") when a selected
+  asset's kind doesn't match the chosen engine, instead of silently
+  mishandling it — this is the actual fix for the original bug.
+- `art_piece_model_capability_prompt()`'s Three.js/A-Frame branches now
+  mandate an auto-fit step (bounding-box recenter + rescale) before adding a
+  loaded model to the scene — an uploaded GLB's native scale/pivot varies by
+  export tool, and skipping this reliably renders a correctly-loaded model
+  invisibly tiny, oversized past the camera, or off-frame.
+- New `art_media` media-picker mode (`tiptap-editor.js`) so 3D-model-kind
+  assets are selectable at all — no existing picker mode surfaced them.
+- UI added to `generate-form.php` and `form.php`'s AI Refine tab: title row
+  CSS-ellipsis-truncated (not JS-truncated) and prefixed `Media ID: {id} - `,
+  Remove button on its own row below the intent field.
+- A refine request may now be driven entirely by a media reference's stated
+  intent with the main prompt left blank; the client synthesizes a scoped
+  instruction ("Apply ONLY the following media integration instruction(s)...")
+  so the AI doesn't plan unrelated changes, and `purposeDomain` calculation
+  now treats a filled media intent the same as a filled visual prompt (it
+  previously ignored it entirely, which could route a request into sound-only
+  mode and silently discard the visual instruction — a bug caught turning
+  this feature on, not present before it).
+
+### A chain of real, independent bugs found while verifying the above
+
+Turning on the picker exposed several genuine, pre-existing defects that had
+simply never been triggered before (no piece had ever gotten far enough to
+actually load a real, large 3D model):
+
+1. **Immersive-view memory crash:** `piece_build_media_manifest()`
+   (`piece-render.php`) unconditionally base64-encoded every referenced local
+   media file into an inline `data:` URI — a rule that exists only for
+   gallery-wall/`<img>` rasterization, which a 3D model never uses
+   (`GLTFLoader` fetches its URL directly). For an 18.6 MB GLB this produced
+   a raw, unhandled PHP fatal error (`memory_limit` exhausted) dumped mid-script
+   into `immersive/piece.php`'s output, silently blanking the entire piece for
+   every visitor. Fixed by skipping inlining for 3D-model MIME types (plus a
+   general byte-size ceiling) in live-request contexts.
+2. **That fix broke the downloadable ZIP export in turn:** a page opened via
+   `file://` cannot `fetch()`/`XHR` any local file at all, even a relative,
+   co-bundled one — so leaving the model reference un-inlined (correct for
+   live views) left the export unable to load it offline. Exports need the
+   opposite behavior from live views: `piece_build_media_manifest()` gained
+   an `$allowLargeInline` parameter (default `false`, live-safe) that export
+   call sites (`piece_export_build_manifest()`,
+   `collection_export_piece_item_payload()`) pass `true`, restoring inline
+   embedding for exports specifically, with `memory_limit` raised only inside
+   `PiecesController::download()`/`CollectionsController::download()` (one
+   synchronous, admin-triggered request each) to afford it. A shared
+   `piece_export_asset_replacement()` helper (data URI, else the asset's real
+   in-ZIP relative path, else the original reference) replaced four
+   independent, inconsistent fallback implementations across
+   `piece_export_document()`, `piece_export_immersive_document()`,
+   `piece_export_script_content()`, and `piece_export_stylesheet_content()`.
+3. **Bundled a local-server launcher for exports** (`start-server.py` +
+   `.command`/`.bat` wrappers, added once at the root of both single-piece
+   and collection ZIPs) after establishing that some camera-dependent
+   behavior differs between `file://` and `http://127.0.0.1` — kept as a
+   convenience/fallback; it was not, on its own, the fix for the hand-control
+   bugs below (both turned out to be real code defects, reproducible over
+   plain HTTP too).
+4. **Immersive export: hand-control silently disabled.** `piece_export_immersive_document()`'s
+   bootstrap script built a `controls` options object for
+   `mountThreeImmersivePiece()`/`mountAFrameImmersivePiece()`/`mountGalleryPiece()`
+   that never included `handControl`, even though `piece.handControl` was
+   correctly computed as `true` elsewhere in the same document — the runtime
+   reads `options.handControl === true` and got `undefined === true` →
+   `false`, with no error, no fallback message, nothing. Fixed by adding
+   `handControl: piece.handControl` to that object
+   (`piece-render.php`). Confirmed via direct instrumentation of a real
+   downloaded export (captured the actual `CreatrSonicController.create()`
+   call's arguments before/after: `false` → `true`) — the regular
+   (non-immersive) export did not have this bug.
+5. **Hand-control toggle crash breaking ordinary controls afterward:**
+   `setupImmersiveStageChrome()` (`immersive-gallery.js`) defaults its `root`
+   option to `document` itself when no caller passes one — true for every
+   export bootstrap and some live call sites. That's harmless for the
+   `querySelector` lookups it's used for, but `setGestureModeIndicator()`
+   later does `root.appendChild(indicator)` — appending an element directly
+   onto the `Document` node throws `HierarchyRequestError: Only one element
+   on document allowed`, uncaught, in the middle of the hand-control toggle
+   handler. That aborted the handler mid-way, leaving pointer/orbit state
+   inconsistent — which is why ordinary drag/touch controls stopped
+   responding after using "Steer the piece," on both downloads and the live
+   site. Fixed by appending to `stageEl` (always a real element) instead of
+   `root`. Verified: downloaded a fresh export, toggled steering on then off,
+   confirmed drag/orbit still worked afterward with zero console errors.
+
+### Known open item (unresolved at session end)
+
+After item 5's fix, the user reported steering and ordinary button/drag
+controls still could not both work in downloads in a later attempt ("YOU
+REGRESSED STEERING FOR THE DOWNLOADS AGAIN") — this was **not investigated
+further before the session redirected to documentation** and should be
+picked up next. Real console output from the user's actual browser (not
+this session's sandboxed test browser, which cannot grant camera access at
+all) has been the only reliable way to make progress in this investigation;
+prioritize getting that over further static code reading or assumptions
+about `file://` behavior specifically — two earlier assumptions in this same
+session about what `file://` does or doesn't allow were both wrong and
+cost significant back-and-forth before being corrected by actual user-supplied
+console logs.
+
+### Files
+
+- `docs/migrations/2026-07-13-art-piece-version-media-refs.sql`,
+  `scripts/setup-database.php` (schema)
+- `public/app/models/ArtPieceVersionMediaRef.php` (new)
+- `public/app/helpers/art-piece-generation.php` (media-ref resolution, engine
+  compatibility gate, capability prompt auto-fit instructions)
+- `public/app/helpers/piece-render.php` (media-inlining safety, export
+  fallback consolidation, immersive `handControl` passthrough)
+- `public/assets/js/immersive-gallery.js` (`setGestureModeIndicator` append
+  target)
+- `public/assets/js/tiptap-editor.js` (`art_media` picker mode)
+- `public/app/controllers/Admin/PiecesAdminController.php` (structured refs
+  through generate/regenerate/refineAi/save; media-only refine prompt
+  synthesis)
+- `public/app/controllers/PiecesController.php`,
+  `public/app/controllers/CollectionsController.php` (export `memory_limit`)
+- `public/app/views/admin/pieces/generate-form.php`, `form.php` (picker UI)
+- `docs/api.md`, `docs/dependencies.md` (this session's documentation pass)
+
+### Verification
+
+- Local MySQL: ran the new migration via `setup-database.php --yes` twice,
+  confirmed idempotent skip on the second run; inspected the created table
+  directly.
+- Exercised `art_piece_assert_media_refs_engine_compatible()` and
+  `ArtPieceVersionMediaRef` against real DB rows (not just unit-style calls
+  in isolation).
+- Downloaded real ZIPs (regular and `surface=immersive`) from the running
+  local server for piece #115 repeatedly through this debugging chain;
+  inspected archive contents directly (`unzip -l`, extracted file greps) and
+  actually ran the bundled `start-server.py` to confirm it serves correctly.
+- Used direct JS instrumentation (monkey-patching `CreatrSonicController.create`,
+  capturing `document.dispatchEvent` calls) against real downloaded/extracted
+  exports served over local HTTP to get ground-truth runtime values rather
+  than relying on static code reading alone — this is what actually found
+  bugs 4 and 5 above after static analysis of the same code had missed them.
+- Did not verify: the item under "Known open item" above; also did not
+  independently re-test the collection-ZIP hand-control path (no collection
+  containing a 3D-model piece existed to test against) or the collection
+  gallery-wall JSON payload's own media-inlining path beyond confirming it
+  compiles and an existing 3D-model-free collection still downloads
+  correctly.

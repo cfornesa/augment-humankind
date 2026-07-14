@@ -13,6 +13,9 @@ $pieceFullscreenScriptVersion = (int) @filemtime(dirname(__DIR__, 3) . '/assets/
 $pieceId = (int) ($piece['id'] ?? 0);
 $versionId = isset($_GET['version']) ? max(0, (int) $_GET['version']) : 0;
 $versionParam = $versionId > 0 ? '?version=' . $versionId : '';
+$pieceDownloadEstimates = is_array($version)
+    ? piece_export_download_estimates($piece, $version)
+    : ['full' => 'size varies', 'no_camera' => 'size varies'];
 $origin = ($_SERVER['REQUEST_SCHEME'] ?? 'http') . '://' . ($_SERVER['HTTP_HOST'] ?? 'localhost');
 $embedTitle = htmlspecialchars((string) ($piece['title'] ?? 'Art piece'), ENT_QUOTES | ENT_HTML5, 'UTF-8');
 $regularEmbedCode = sprintf(

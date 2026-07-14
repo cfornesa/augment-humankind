@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 $isEdit = !empty($piece['id']);
 $pageTitle = $isEdit ? 'Edit Piece' : 'Create Piece';
+// Loads tiptap-editor.js + the shared #media-picker-modal markup (see
+// layout.php) — required for window.openMediaPicker, used by both the
+// ambient-sample picker and the AI Refine "Add media reference" picker.
+$needsEditor = true;
 
 ob_start();
 $piece = $piece ?? [];
@@ -697,6 +701,113 @@ if ($engineVal === 'p5') {
                             <textarea id="ai_refine_prompt" rows="6" placeholder="Describe the changes you want to make, e.g., 'Turn the background to deep blue and make the shapes expand and contract.'"></textarea>
                             <small>This will send your prompt and the current code blocks in the HTML/CSS/JS tabs above to the AI, then suggest changes that you can inspect, edit, and accept or reject.</small>
                         </div>
+                        <div class="field" id="ai-media-refs-field">
+                            <label>Media references <span style="font-weight:400;color:var(--ink-soft);">(optional)</span></label>
+                            <small>Pick specific uploaded media and say how each one should be used. A 3D model (GLB/GLTF) requires the Three.js or A-Frame engine — incompatible selections are rejected before the refine request runs.</small>
+                            <div id="ai-media-refs-list" style="margin-top:0.5rem;display:flex;flex-direction:column;gap:0.5rem;"></div>
+                            <button type="button" class="admin-btn admin-btn-ghost" id="ai-media-refs-add-btn" style="margin-top:0.5rem;">+ Add media reference</button>
+                            <input type="hidden" id="ai_media_refs_json" value="<?= e((string) ($existingMediaRefsJson ?? '[]')) ?>">
+                        </div>
+                        <script>
+                        (function () {
+                            var listEl = document.getElementById('ai-media-refs-list');
+                            var addBtn = document.getElementById('ai-media-refs-add-btn');
+                            var jsonField = document.getElementById('ai_media_refs_json');
+                            var refs = [];
+                            try {
+                                (JSON.parse(jsonField.value || '[]')).forEach(function (r) {
+                                    refs.push({
+                                        media_id: r.media_file_id,
+                                        intent_text: r.intent_text || '',
+                                        name: r.original_name || '',
+                                        mimeType: r.mime_type || '',
+                                        originalName: r.original_name || '',
+                                    });
+                                });
+                            } catch (e) {}
+
+                            function sync() {
+                                jsonField.value = JSON.stringify(refs.map(function (r) {
+                                    return { media_id: r.media_id, intent_text: r.intent_text };
+                                }));
+                            }
+
+                            function fileTypeLabel(mimeType, originalName) {
+                                if (originalName && originalName.lastIndexOf('.') > -1) {
+                                    return originalName.slice(originalName.lastIndexOf('.') + 1).toUpperCase();
+                                }
+                                if (mimeType === 'model/gltf-binary') return 'GLB';
+                                if (mimeType === 'model/gltf+json') return 'GLTF';
+                                if (!mimeType) return 'File';
+                                var parts = mimeType.split('/');
+                                return (parts[1] || parts[0] || 'file').toUpperCase();
+                            }
+
+                            function refLabel(ref) {
+                                var title = (ref.name || '').trim() || 'Untitled';
+                                var type = fileTypeLabel(ref.mimeType, ref.originalName);
+                                return 'Media ID: ' + ref.media_id + ' - ' + title + ' (' + type + ')';
+                            }
+
+                            function render() {
+                                listEl.innerHTML = '';
+                                refs.forEach(function (ref, index) {
+                                    var row = document.createElement('div');
+                                    row.style.cssText = 'display:flex;flex-direction:column;gap:0.4rem;padding:0.5rem;border:1px solid var(--border-soft, #ddd);border-radius:6px;';
+
+                                    var label = document.createElement('div');
+                                    // CSS-truncated, not JS-truncated: the title
+                                    // stays as long as the row's width allows
+                                    // (which varies by viewport) and only gets
+                                    // an ellipsis if it actually overflows.
+                                    label.style.cssText = 'font-size:0.85rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;';
+                                    label.textContent = refLabel(ref);
+                                    label.title = refLabel(ref);
+                                    row.appendChild(label);
+
+                                    var intentInput = document.createElement('input');
+                                    intentInput.type = 'text';
+                                    intentInput.placeholder = 'How should this be used?';
+                                    intentInput.value = ref.intent_text || '';
+                                    intentInput.style.cssText = 'width:100%;';
+                                    intentInput.addEventListener('input', function () {
+                                        refs[index].intent_text = intentInput.value;
+                                        sync();
+                                    });
+                                    row.appendChild(intentInput);
+
+                                    var removeRow = document.createElement('div');
+                                    removeRow.style.cssText = 'display:flex;justify-content:flex-end;';
+                                    var removeBtn = document.createElement('button');
+                                    removeBtn.type = 'button';
+                                    removeBtn.className = 'admin-btn admin-btn-ghost';
+                                    removeBtn.textContent = 'Remove';
+                                    removeBtn.addEventListener('click', function () {
+                                        refs.splice(index, 1);
+                                        render();
+                                        sync();
+                                    });
+                                    removeRow.appendChild(removeBtn);
+                                    row.appendChild(removeRow);
+
+                                    listEl.appendChild(row);
+                                });
+                            }
+
+                            addBtn.addEventListener('click', function () {
+                                if (!window.openMediaPicker) return;
+                                window.openMediaPicker(function (result) {
+                                    if (!result || !result.id) return;
+                                    refs.push({ media_id: result.id, intent_text: '', name: result.alt || '', mimeType: result.mime_type || '', originalName: '' });
+                                    render();
+                                    sync();
+                                }, 'select', { mode: 'art_media' });
+                            });
+
+                            render();
+                            sync();
+                        })();
+                        </script>
                         <?php if ($soundControlsAvailable): ?>
                         <div class="field">
                             <label class="checkbox-label">
@@ -1008,6 +1119,12 @@ if ($engineVal === 'p5') {
     // the failed siblings from the same sequence.
     var lastDraftVersionId = null;
     var lastSequenceToken = '';
+    // The actual instruction text sent to the AI for the current successful
+    // suggestion — may be a synthesized "media reference only" instruction
+    // when the main prompt textarea was left blank (see requestAiRefine()).
+    // Accept must save THIS, not re-read the (possibly still-blank)
+    // textarea, or the save step rejects a suggestion that already worked.
+    var lastEffectiveRefinementPrompt = '';
     var ART_PIECE_MAX_ATTEMPTS = 5;
     // PRELIMINARY value — not evidence-based (the two real timeouts seen so
     // far were 2-3 minutes apart, not rapid-fire, and this app's own
@@ -1378,8 +1495,15 @@ function renderVisualComparison() {
             return;
         }
         var soundOnly = aiSoundToggle && aiSoundToggle.checked && aiSoundFeelField && aiSoundFeelField.value.trim() !== '';
-        if (!prompt && !soundOnly) {
-            alert('Please enter a refinement instruction, or a Tone Feel with sound enabled.');
+        var mediaRefsField = document.getElementById('ai_media_refs_json');
+        var hasMediaIntent = false;
+        try {
+            hasMediaIntent = (JSON.parse((mediaRefsField && mediaRefsField.value) || '[]')).some(function (r) {
+                return (r.intent_text || '').trim() !== '';
+            });
+        } catch (e) {}
+        if (!prompt && !soundOnly && !hasMediaIntent) {
+            alert('Please enter a refinement instruction, a Tone Feel with sound enabled, or a media reference with usage instructions.');
             return;
         }
 
@@ -1402,6 +1526,23 @@ function renderVisualComparison() {
         }
         lastRefineFeedback = extraFeedback || '';
 
+        // Record what will actually drive this attempt so Accept can save
+        // the same thing later, rather than re-reading the (possibly still
+        // blank) prompt textarea — see lastEffectiveRefinementPrompt above.
+        lastEffectiveRefinementPrompt = promptForRequest;
+        if (!lastEffectiveRefinementPrompt && hasMediaIntent) {
+            var mediaIntentLines = [];
+            try {
+                (JSON.parse((mediaRefsField && mediaRefsField.value) || '[]')).forEach(function (r) {
+                    var intent = (r.intent_text || '').trim();
+                    if (intent) mediaIntentLines.push('Media #' + r.media_id + ': ' + intent);
+                });
+            } catch (e) {}
+            if (mediaIntentLines.length) {
+                lastEffectiveRefinementPrompt = 'Apply media reference instruction(s) — ' + mediaIntentLines.join('; ');
+            }
+        }
+
         // Clear any old banner and leftover save-status message from a
         // previous attempt.
         aiBanner.style.display = 'none';
@@ -1413,8 +1554,17 @@ function renderVisualComparison() {
         var visualPrompt = aiPromptField ? aiPromptField.value.trim() : '';
         var soundEnabled = aiSoundToggle && aiSoundToggle.checked;
         var soundFeel = aiSoundFeelField ? aiSoundFeelField.value.trim() : '';
+        // A media reference with usage instructions IS a visual-domain
+        // request (e.g. "replace the centerpiece with this model") even
+        // when the main prompt textarea is left blank — it must count the
+        // same as visualPrompt here. Without this, checking sound + leaving
+        // the main prompt empty forced purposeDomain to 'audio' (sound-only),
+        // which makes the server override the prompt with "keep the
+        // existing visuals exactly as they are" and force-clear any visual
+        // patches — silently discarding the media reference intent entirely.
+        var hasVisualIntent = !!visualPrompt || hasMediaIntent;
         var purposeDomain = 'visual';
-        if (visualPrompt && soundEnabled && soundFeel) {
+        if (hasVisualIntent && soundEnabled && soundFeel) {
             purposeDomain = 'audio_visual';
         } else if (soundEnabled && soundFeel) {
             purposeDomain = 'audio';
@@ -1437,7 +1587,8 @@ function renderVisualComparison() {
             // omitted (0) for a brand new, not-yet-saved piece, which the
             // server treats as "nothing to attach a version to yet" rather
             // than an error.
-            piece_id: currentPieceId || 0
+            piece_id: currentPieceId || 0,
+            media_refs_json: (document.getElementById('ai_media_refs_json') || {}).value || '[]'
         };
         if (aiSoundToggle && aiSoundToggle.checked) {
             basePayload.sound_enabled = true;
@@ -1800,7 +1951,13 @@ function renderVisualComparison() {
             return;
         }
 
-        var refinementPrompt = aiPromptField.value.trim();
+        // Prefer the prompt that actually produced this suggestion — the
+        // textarea may have been left blank when the request was driven
+        // entirely by a media reference's usage instructions, which the
+        // server accepted at generation time; re-reading the (still-blank)
+        // textarea here would fail the save with "Refinement prompt is
+        // required" even though the suggestion is real and already working.
+        var refinementPrompt = aiPromptField.value.trim() || lastEffectiveRefinementPrompt;
         btnAiAccept.disabled = true;
         btnAiReject.disabled = true;
         aiSaveStatus.className = 'ai-save-status';

@@ -278,7 +278,7 @@ function immersive_stage_toolbar_css(): string
   position: absolute;
   top: calc(100% + 0.55rem);
   left: 0;
-  min-width: 13rem;
+  min-width: min(22rem, calc(100vw - 2rem));
   display: grid;
   gap: 0.45rem;
   padding: 0.55rem;
@@ -320,6 +320,7 @@ function immersive_stage_toolbar_css(): string
   align-items: center;
   gap: 0.6rem;
   width: 100%;
+  box-sizing: border-box;
   min-height: 2.75rem;
   padding: 0.65rem 0.8rem;
   border: 1px solid rgba(255, 255, 255, 0.12);
@@ -358,7 +359,7 @@ function immersive_stage_toolbar_css(): string
     border-radius: 0.7rem;
   }
   .immersive-stage-download-menu {
-    min-width: min(12rem, calc(100vw - 2rem));
+    min-width: min(20rem, calc(100vw - 2rem));
   }
   .immersive-stage-menu-btn {
     min-height: 2.55rem;
@@ -684,7 +685,12 @@ function immersive_stage_toolbar_markup(array $opts = []): string
         $html .= '<button type="button" class="immersive-stage-icon-btn" data-immersive-download-trigger aria-haspopup="true" aria-expanded="false" aria-controls="' . $menuId . '" aria-label="Open download menu">'
             . immersive_stage_toolbar_icon_svg('download')
             . '</button>';
-        $html .= '<div id="' . $menuId . '" class="immersive-stage-download-menu" data-immersive-download-menu role="region" aria-label="ZIP download options" hidden>';
+        $estimateData = is_array($downloadOptions['estimates'] ?? null) ? $downloadOptions['estimates'] : [];
+        $estimateVoiceCosts = htmlspecialchars(json_encode($estimateData['voice_costs'] ?? [], JSON_UNESCAPED_SLASHES), ENT_QUOTES, 'UTF-8');
+        $html .= '<div id="' . $menuId . '" class="immersive-stage-download-menu" data-immersive-download-menu role="region" aria-label="ZIP download options"'
+            . ' data-download-estimate-full="' . (int) ($estimateData['full_bytes'] ?? 0) . '"'
+            . ' data-download-estimate-no-camera="' . (int) ($estimateData['no_camera_bytes'] ?? 0) . '"'
+            . ' data-download-estimate-voice-costs="' . $estimateVoiceCosts . '" hidden>';
         $html .= '<p class="immersive-stage-download-heading">Include in this download:</p>';
         foreach (($downloadOptions['choices'] ?? []) as $choice) {
             $value = htmlspecialchars((string) ($choice['value'] ?? ''), ENT_QUOTES, 'UTF-8');
@@ -697,7 +703,8 @@ function immersive_stage_toolbar_markup(array $opts = []): string
         foreach ($actions as $action) {
             $actionLabel = htmlspecialchars((string) ($action['label'] ?? 'Download ZIP'), ENT_QUOTES, 'UTF-8');
             $actionAttrs = immersive_stage_toolbar_attrs($action['attrs'] ?? []);
-            $html .= '<a class="immersive-stage-menu-btn" data-piece-download-link' . $actionAttrs . '>'
+            $estimateLabel = str_contains(strtolower((string) ($action['label'] ?? '')), 'non-camera') ? 'no-camera' : 'full';
+            $html .= '<a class="immersive-stage-menu-btn" data-piece-download-link data-piece-download-label="' . $estimateLabel . '"' . $actionAttrs . '>'
                 . immersive_stage_toolbar_icon_svg('download-small')
                 . '<span>' . $actionLabel . '</span></a>';
         }
@@ -917,7 +924,7 @@ function piece_view_critical_css(): string
     margin-top: 0.55rem;
     display: grid;
     gap: 0.45rem;
-    min-width: min(17rem, calc(100vw - 2rem));
+    min-width: min(22rem, calc(100vw - 2rem));
     padding: 0.55rem;
     border: 1px solid rgba(255, 255, 255, 0.14);
     border-radius: 1rem;
@@ -958,6 +965,7 @@ function piece_view_critical_css(): string
 
 .piece-download-picker-action {
     display: inline-flex;
+    box-sizing: border-box;
     align-items: center;
     gap: 0.6rem;
     min-height: 2.75rem;
@@ -968,6 +976,7 @@ function piece_view_critical_css(): string
     color: #fff;
     font-weight: 600;
     text-decoration: none;
+    width: 100%;
 }
 
 .piece-download-picker-action:hover,

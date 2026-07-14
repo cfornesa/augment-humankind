@@ -1732,6 +1732,32 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
 
   const onDownloadToggle = () => setMenuOpen(!isMenuOpen());
 
+  function updateDownloadEstimates() {
+    if (!downloadMenu) return;
+    const fullBase = Number(downloadMenu.dataset.downloadEstimateFull || 0);
+    const noCameraBase = Number(downloadMenu.dataset.downloadEstimateNoCamera || 0);
+    let voiceCosts = {};
+    try { voiceCosts = JSON.parse(downloadMenu.dataset.downloadEstimateVoiceCosts || '{}') || {}; } catch (_) {}
+    const choices = [...downloadMenu.querySelectorAll('[data-piece-download-voice]')];
+    const reduction = choices.filter((choice) => !choice.checked)
+      .reduce((sum, choice) => sum + Number(voiceCosts[choice.dataset.pieceDownloadVoice] || 0), 0);
+    const format = (bytes) => {
+      if (!Number.isFinite(bytes) || bytes < 1) return 'size varies';
+      return '≈' + Math.max(1, Math.round(bytes / (1024 * 1024))) + ' MB';
+    };
+    downloadMenu.querySelectorAll('[data-piece-download-label]').forEach((label) => {
+      const noCamera = label.dataset.pieceDownloadLabel === 'no-camera';
+      label.querySelector('span')?.replaceChildren(document.createTextNode(
+        'Download ' + (noCamera ? 'Non-Camera' : 'Full') + ' ZIP (' + format((noCamera ? noCameraBase : fullBase) - reduction) + ')'
+      ));
+    });
+  }
+
+  downloadMenu?.querySelectorAll('[data-piece-download-voice]').forEach((choice) => {
+    choice.addEventListener('change', updateDownloadEstimates);
+  });
+  updateDownloadEstimates();
+
   // Capture-phase pointerdown so an outside tap/click closes the menu before
   // whatever it lands on handles the event (mouse + touch + pen).
   const onDocumentPointerDown = (event) => {
@@ -1818,7 +1844,14 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
       indicator.setAttribute('role', 'status');
       indicator.setAttribute('aria-live', 'polite');
       indicator.style.cssText = 'position:absolute;left:50%;bottom:calc(1rem + env(safe-area-inset-bottom));transform:translateX(-50%);z-index:132;padding:.38rem .72rem;border:1px solid rgba(255,255,255,.2);border-radius:999px;background:rgba(0,0,0,.68);color:#fff;font:600 .72rem/1.2 system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;pointer-events:none;';
-      root.appendChild(indicator);
+      // NOT root.appendChild(): root defaults to `document` itself when the
+      // caller passes no options.root (true for every export bootstrap and
+      // some live call sites), and appendChild-ing an element directly onto
+      // the Document node throws HierarchyRequestError ("Only one element on
+      // document allowed") — an uncaught exception inside the hand-control
+      // toggle handler that aborts it mid-way, leaving pointer/orbit state
+      // stuck. stageEl is always a real element, never the Document.
+      (stageEl || document.body).appendChild(indicator);
     }
     const labels = { look: 'Look', orbit: 'Orbit', travel: 'Move', 'travel-ready': 'Point + pinch to move', 'orbit-ready': 'Pinch to orbit' };
     indicator.textContent = labels[mode] || '';
@@ -5333,6 +5366,7 @@ export function mountExhibitWall(stageEl, items, rows, cols, options = {}) {
         const iframe = document.createElement('iframe');
         iframe.style.cssText = `position:fixed;left:-10000px;top:0;width:${runtimeSize.width}px;height:${runtimeSize.height}px;pointer-events:none;border:none;`;
         iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin');
+        iframe.setAttribute('allow', 'camera; microphone');
 
         const proxyCanvas = document.createElement('canvas');
         proxyCanvas.width = runtimeSize.width;

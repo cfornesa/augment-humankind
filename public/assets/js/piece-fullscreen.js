@@ -514,6 +514,30 @@ document.querySelectorAll('[data-piece-download-picker-wrap]').forEach((wrap) =>
         });
     }
 
+    function formatEstimate(bytes) {
+        const numeric = Number(bytes);
+        if (!Number.isFinite(numeric) || numeric < 1) return 'size varies';
+        return '≈' + Math.max(1, Math.round(numeric / (1024 * 1024))) + ' MB';
+    }
+
+    function updateEstimates() {
+        const fullBase = Number(picker.dataset.downloadEstimateFull || 0);
+        const noCameraBase = Number(picker.dataset.downloadEstimateNoCamera || 0);
+        let voiceCosts = {};
+        try { voiceCosts = JSON.parse(picker.dataset.downloadEstimateVoiceCosts || '{}') || {}; } catch (_) {}
+        const reduction = Array.from(checkboxes)
+            .filter((cb) => !cb.checked)
+            .reduce((sum, cb) => sum + Number(voiceCosts[cb.dataset.pieceDownloadVoice] || 0), 0);
+        const estimates = {
+            full: formatEstimate(Math.max(0, fullBase - reduction)),
+            'no-camera': formatEstimate(Math.max(0, noCameraBase - reduction)),
+        };
+        picker.querySelectorAll('[data-piece-download-label]').forEach((label) => {
+            const kind = label.dataset.pieceDownloadLabel || 'full';
+            label.textContent = 'Download ' + (kind === 'no-camera' ? 'Non-Camera' : 'Full') + ' ZIP (' + (estimates[kind] || 'size varies') + ')';
+        });
+    }
+
     function isOpen() {
         return !picker.hidden;
     }
@@ -529,7 +553,11 @@ document.querySelectorAll('[data-piece-download-picker-wrap]').forEach((wrap) =>
     }
 
     trigger.addEventListener('click', () => setOpen(!isOpen()));
-    checkboxes.forEach((cb) => cb.addEventListener('change', updateHref));
+    checkboxes.forEach((cb) => cb.addEventListener('change', () => {
+        updateHref();
+        updateEstimates();
+    }));
+    updateEstimates();
     document.addEventListener('pointerdown', (event) => {
         if (!isOpen()) return;
         if (event.target instanceof Node && wrap.contains(event.target)) return;

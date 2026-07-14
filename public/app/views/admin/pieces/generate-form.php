@@ -3,6 +3,10 @@
 declare(strict_types=1);
 
 $pageTitle = 'Generate Piece with AI';
+// Loads tiptap-editor.js + the shared #media-picker-modal markup (see
+// layout.php) — required for window.openMediaPicker, used by the "Add
+// media reference" picker below.
+$needsEditor = true;
 ob_start();
 ?>
 <div class="admin-container">
@@ -134,6 +138,110 @@ ob_start();
                 <textarea id="prompt" name="prompt" rows="6" placeholder="Describe the visual effects, interaction, behavior, colors, and layout of the piece. E.g. 'A cascading waterfall of particles that bounce off obstacles when the mouse is dragged.'" required><?= e($prompt ?? '') ?></textarea>
                 <small>If an attempt fails syntax, namespace, or forbidden-API validation, you'll be asked whether to spend another attempt (up to <?= (int) ART_PIECE_MAX_ATTEMPTS ?> total) with the AI's own previous response as repair context.</small>
             </div>
+
+            <div class="field" id="media-refs-field">
+                <label>Media references <span style="font-weight:400;color:var(--ink-soft);">(optional)</span></label>
+                <small>Pick specific uploaded media instead of naming it in the prompt, and say how each one should be used. A 3D model (GLB/GLTF) requires the Three.js or A-Frame engine above — incompatible selections are rejected before generation runs.</small>
+                <div id="media-refs-list" style="margin-top:0.5rem;display:flex;flex-direction:column;gap:0.5rem;"></div>
+                <button type="button" class="admin-btn admin-btn-ghost" id="media-refs-add-btn" style="margin-top:0.5rem;">+ Add media reference</button>
+                <input type="hidden" id="media_refs_json" name="media_refs_json" value="[]">
+            </div>
+            <script>
+            (function () {
+                var listEl = document.getElementById('media-refs-list');
+                var addBtn = document.getElementById('media-refs-add-btn');
+                var jsonField = document.getElementById('media_refs_json');
+                var refs = [];
+
+                function sync() {
+                    jsonField.value = JSON.stringify(refs.map(function (r) {
+                        return { media_id: r.media_id, intent_text: r.intent_text };
+                    }));
+                }
+
+                function fileTypeLabel(mimeType, originalName) {
+                    if (originalName && originalName.lastIndexOf('.') > -1) {
+                        return originalName.slice(originalName.lastIndexOf('.') + 1).toUpperCase();
+                    }
+                    if (mimeType === 'model/gltf-binary') return 'GLB';
+                    if (mimeType === 'model/gltf+json') return 'GLTF';
+                    if (!mimeType) return 'File';
+                    var parts = mimeType.split('/');
+                    return (parts[1] || parts[0] || 'file').toUpperCase();
+                }
+
+                function refLabel(ref) {
+                    var title = (ref.name || '').trim() || 'Untitled';
+                    var type = fileTypeLabel(ref.mimeType, ref.originalName);
+                    return 'Media ID: ' + ref.media_id + ' - ' + title + ' (' + type + ')';
+                }
+
+                function render() {
+                    listEl.innerHTML = '';
+                    refs.forEach(function (ref, index) {
+                        var row = document.createElement('div');
+                        row.style.cssText = 'display:flex;flex-direction:column;gap:0.4rem;padding:0.5rem;border:1px solid var(--border-soft, #ddd);border-radius:6px;';
+
+                        var label = document.createElement('div');
+                        // CSS-truncated, not JS-truncated: the title stays as
+                        // long as the row's width allows (which varies by
+                        // viewport) and only gets an ellipsis if it actually
+                        // overflows, rather than a fixed character count that
+                        // wastes space on wide screens or still overflows on
+                        // narrow ones.
+                        label.style.cssText = 'font-size:0.85rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;';
+                        label.textContent = refLabel(ref);
+                        label.title = refLabel(ref);
+                        row.appendChild(label);
+
+                        var intentInput = document.createElement('input');
+                        intentInput.type = 'text';
+                        intentInput.placeholder = 'How should this be used? e.g. "center the composition on this 3D model"';
+                        intentInput.value = ref.intent_text || '';
+                        intentInput.style.cssText = 'width:100%;';
+                        intentInput.addEventListener('input', function () {
+                            refs[index].intent_text = intentInput.value;
+                            sync();
+                        });
+                        row.appendChild(intentInput);
+
+                        var removeRow = document.createElement('div');
+                        removeRow.style.cssText = 'display:flex;justify-content:flex-end;';
+                        var removeBtn = document.createElement('button');
+                        removeBtn.type = 'button';
+                        removeBtn.className = 'admin-btn admin-btn-ghost';
+                        removeBtn.textContent = 'Remove';
+                        removeBtn.addEventListener('click', function () {
+                            refs.splice(index, 1);
+                            render();
+                            sync();
+                        });
+                        removeRow.appendChild(removeBtn);
+                        row.appendChild(removeRow);
+
+                        listEl.appendChild(row);
+                    });
+                }
+
+                addBtn.addEventListener('click', function () {
+                    if (!window.openMediaPicker) return;
+                    window.openMediaPicker(function (result) {
+                        if (!result || !result.id) return;
+                        refs.push({
+                            media_id: result.id,
+                            intent_text: '',
+                            name: result.alt || '',
+                            mimeType: result.mime_type || '',
+                            originalName: '',
+                        });
+                        render();
+                        sync();
+                    }, 'select', { mode: 'art_media' });
+                });
+
+                sync();
+            })();
+            </script>
 
             <?php if (function_exists('art_piece_sonic_params_supported') && art_piece_sonic_params_supported()): ?>
             <div class="field" id="sound-field">

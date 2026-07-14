@@ -94,6 +94,13 @@ class CollectionsController
 
         $items = self::hydrateItemsForExport($collection['items'] ?? []);
         $viewState = isset($_GET['viewState']) ? trim((string) $_GET['viewState']) : '';
+        // Same rationale as PiecesController::download(): a downloadable ZIP
+        // must inline large media (e.g. an uploaded GLB) as a data: URI to
+        // work under file://. A collection can bundle several pieces, each
+        // with its own manifest built the same way, so this gets more
+        // headroom than the single-piece download. Raised only for this
+        // one synchronous, single-admin-triggered request.
+        ini_set('memory_limit', '1024M');
         $bundle = collection_export_bundle($collection, $items, [
             'view_state' => $viewState,
         ]);

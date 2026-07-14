@@ -286,12 +286,14 @@ as pointer input but has no scene-background hook. Mounted hand steering owns
 the camera until disabled, then restores gyro/manual controls at the resulting
 viewpoint. Camera frames are processed locally for landmarks or a live texture
 and are never recorded, persisted, or transmitted. A downloaded ZIP opened
-directly with a `file://` URL may not receive camera access—particularly in
-Safari—because browsers can require a secure context for `getUserMedia` and
-may also block the bundled MediaPipe module under direct-file CORS rules. If
-the camera controls remain off, serve the extracted folder from localhost
-(for example, `python3 -m http.server`) or deploy it over HTTPS; the export
-includes an on-page troubleshooting notice for this case.
+directly with `file://` uses its bundled MediaPipe runtime and attempts the
+same camera-first steering lifecycle as the live and immersive surfaces.
+Browsers that deny camera access in a particular local-file context can still
+use a localhost server or HTTPS, but direct-file detection never disables
+steering or preselects device tilt. Device tilt appears only after an actual
+camera or hand-model failure. Starting Sound, Live mic, or Show camera first
+does not change steering availability; Tone.js autoplay warnings are handled
+separately from camera steering.
 On supported web views, MediaPipe initialization is retryable and hand
 inference falls back from direct video frames to a throttled canvas copy when
 Safari rejects the video source. If hand inference still cannot run, steering

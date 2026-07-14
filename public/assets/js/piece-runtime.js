@@ -407,7 +407,13 @@ function createPieceRuntimeAudioController(sonicParams, getMover) {
         return;
       }
       if (controlOk) {
-        const steeringReady = await Promise.resolve(window.__pieceHandHooks?.setHandSteering?.(true) ?? true);
+        const steeringHook = window.__pieceHandHooks?.setHandSteering;
+        // A steerable surface must explicitly claim/release manual-control
+        // ownership. Treating a missing hook as success hid regular/export
+        // parity gaps and left native controls fighting hand input.
+        const steeringReady = typeof steeringHook === 'function'
+          ? await Promise.resolve(steeringHook.call(window.__pieceHandHooks, true))
+          : false;
         if (activationEpoch !== handControlActivationEpoch || steeringReady === false) {
           eng?.disableHandControl();
           await Promise.resolve(window.__pieceHandHooks?.setHandSteering?.(false));
@@ -903,6 +909,7 @@ function createPieceRuntimeAudioController(sonicParams, getMover) {
     dispose() {
       disposed = true;
       detachStandalonePianoKeys?.();
+      try { window.__pieceHandHooks?.setHandSteering?.(false); } catch (_) {}
       handControlBinding.detach();
       cameraBackgroundBinding.detach();
       if (cameraFeedHeld) {
@@ -2094,6 +2101,8 @@ function bootAFrame() {
       }
       let pointerTarget = null;
       let frameId = 0;
+      let handSteeringExclusive = false;
+      let aframeControlsBeforeHand = [];
       const aframeNav = {
         animFrom: null,
         animTo: null,
@@ -2125,6 +2134,7 @@ function bootAFrame() {
       }
 
       function onAFramePointerDown(event) {
+        if (handSteeringExclusive) return;
         if ((event.pointerType || 'mouse') === 'touch') {
           aframeNav.activeTouches.add(event.pointerId);
           if (activeAFrameTouchCount() > 1) aframeNav.hadMultiTouch = true;
@@ -2140,6 +2150,7 @@ function bootAFrame() {
       }
 
       function onAFramePointerMove(event) {
+        if (handSteeringExclusive) return;
         if (!aframeNav.pointer || aframeNav.pointer.id !== event.pointerId) return;
         if (Math.hypot(event.clientX - aframeNav.pointer.startX, event.clientY - aframeNav.pointer.startY) >= 6) {
           aframeNav.pointer.moved = true;
@@ -2177,6 +2188,7 @@ function bootAFrame() {
       }
 
       function onAFramePointerUp(event) {
+        if (handSteeringExclusive) return;
         const THREE_NS = getAFrameThree();
         const pointer = aframeNav.pointer;
         const wasMultiTouch = aframeNav.hadMultiTouch || activeAFrameTouchCount() > 1;
@@ -2277,7 +2289,31 @@ function bootAFrame() {
         window.__pieceHandHooks = Object.assign(
           {
             engine: 'aframe',
+            setHandSteering(active) {
+              const next = !!active;
+              if (next === handSteeringExclusive) return true;
+              const cameraEl = scene?.querySelector('[camera]') || scene?.querySelector('a-camera');
+              if (next) {
+                aframeControlsBeforeHand = ['look-controls', 'wasd-controls'].map((name) => {
+                  const component = cameraEl?.components?.[name];
+                  const wasPlaying = !!component && component.isPlaying !== false;
+                  component?.pause?.();
+                  return { component, wasPlaying };
+                });
+                aframeNav.pointer = null;
+                aframeNav.activeTouches.clear();
+                aframeNav.animFrom = aframeNav.animTo = null;
+              } else {
+                aframeControlsBeforeHand.forEach(({ component, wasPlaying }) => {
+                  if (wasPlaying) component?.play?.();
+                });
+                aframeControlsBeforeHand = [];
+              }
+              handSteeringExclusive = next;
+              return true;
+            },
             handPoint(nx, ny) {
+              if (!handSteeringExclusive) return;
               const cameraObject = getAFrameCameraObject();
               if (!cameraObject) return;
               const desiredYaw = (0.5 - nx) * Math.PI * 1.5;
@@ -2287,7 +2323,7 @@ function bootAFrame() {
             },
             handCommand(command) {
               const cameraObject = getAFrameCameraObject();
-              if (!cameraObject || !command) return;
+              if (!handSteeringExclusive || !cameraObject || !command) return;
               if (command.type === 'look') {
                 this.handPoint(command.x, command.y);
               } else if (command.type === 'orbit') {
@@ -2397,6 +2433,18 @@ async function bootThree() {
     let initialThreePose = null;
     let rafIds = [];
     let pieceDrivesOwnRender = false;
+    // These are also read by the shared hand hooks below. They cannot live
+    // inside the renderer setup block: the hook is deliberately registered
+    // after that block so camera-overlay hooks can be merged into it.
+    let pointerState = null;
+    let keyNav = null;
+    let animFromTarget = null;
+    let animToTarget = null;
+    let animFromCam = null;
+    let animToCam = null;
+    let isOrbitActive = false;
+    let handSteeringExclusive = false;
+    let controlsEnabledBeforeHand = true;
     let readySignaled = false;
     const ready = createReadyController(canvas);
     function signalThreeReadyOnce(source) {
@@ -2543,14 +2591,9 @@ async function bootThree() {
       controls.enablePan = true;
       initialThreePose = { camera: state.camera.position.clone(), target: controls.target.clone() };
       const threeRaycaster = new mod.Raycaster();
-      const pointerState = new Map();
+      pointerState = new Map();
       let hadMultiTouchGesture = false;
       let threeNavLimit = 5;
-      let keyNav = null;
-      let animFromTarget = null;
-      let animToTarget = null;
-      let animFromCam = null;
-      let animToCam = null;
       let animStart = 0;
 
       function getThreeNavigationLimit() {
@@ -2683,7 +2726,6 @@ async function bootThree() {
       canvas.addEventListener('pointercancel', clearThreePointer);
       canvas.addEventListener('lostpointercapture', clearThreePointer);
 
-      let isOrbitActive = false;
       let userHasInteracted = false;
       controls.addEventListener('start', () => { isOrbitActive = true; });
       controls.addEventListener('end', () => { isOrbitActive = false; });
@@ -2717,11 +2759,11 @@ async function bootThree() {
             state.camera.position.lerpVectors(animFromCam, animToCam, eased);
             externalMotion = true;
             if (t >= 1) {
-              controls.enabled = true;
+              controls.enabled = handSteeringExclusive ? false : controlsEnabledBeforeHand;
               animFromTarget = animToTarget = animFromCam = animToCam = null;
             }
           }
-          if (keyNav?.update()) {
+          if (!handSteeringExclusive && keyNav?.update()) {
             externalMotion = true;
           }
           controls.update();
@@ -2748,11 +2790,28 @@ async function bootThree() {
     window.__pieceHandHooks = Object.assign(
       {
         engine: 'three',
+        setHandSteering(active) {
+          if (!controls || !state.camera) return false;
+          const next = !!active;
+          if (next === handSteeringExclusive) return true;
+          if (next) {
+            controlsEnabledBeforeHand = controls.enabled;
+            controls.enabled = false;
+            keyNav?.clearKeys?.();
+            pointerState.clear();
+            isOrbitActive = false;
+            animFromTarget = animToTarget = animFromCam = animToCam = null;
+          } else {
+            controls.enabled = controlsEnabledBeforeHand;
+          }
+          handSteeringExclusive = next;
+          return true;
+        },
         // Wrist position (mirrored x, raw y in 0..1) steers the orbit like a
         // continuous drag: desired spherical angles around the current orbit
         // target, eased per frame so tracking jitter doesn't jolt the camera.
         handPoint(nx, ny) {
-          if (!controls || !state.camera) return;
+          if (!handSteeringExclusive || !controls || !state.camera) return;
           const target = controls.target;
           const offset = state.camera.position.clone().sub(target);
           const sph = new mod.Spherical().setFromVector3(offset);
@@ -2766,7 +2825,7 @@ async function bootThree() {
           controls.update();
         },
         handCommand(command) {
-          if (!controls || !state.camera || !command) return;
+          if (!handSteeringExclusive || !controls || !state.camera || !command) return;
           if (command.type === 'look') {
             this.handPoint(command.x, command.y);
             return;

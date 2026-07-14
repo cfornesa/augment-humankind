@@ -4,14 +4,17 @@
   var THREE_MODULE = '/assets/vendor/piece-runtime/three/three.module.js';
   var threePromise = null;
 
-  function loadThree() {
+  function loadThree(moduleSrc) {
     if (global.THREE && global.THREE.WebGLRenderer) return Promise.resolve(global.THREE);
-    if (!threePromise) threePromise = import(THREE_MODULE);
+    if (!threePromise) threePromise = import(moduleSrc || THREE_MODULE);
     return threePromise;
   }
 
   function create(options) {
     options = options || {};
+    var threeModuleSrc = typeof options.threeModuleSrc === 'string' && options.threeModuleSrc !== ''
+      ? options.threeModuleSrc
+      : THREE_MODULE;
     var getSurface = options.getSurface;
     var getCameraVideo = typeof options.getCameraVideo === 'function' ? options.getCameraVideo : function () { return null; };
     var getCameraOpacity = typeof options.getCameraOpacity === 'function' ? options.getCameraOpacity : function () { return 0.35; };
@@ -203,7 +206,7 @@
         var el = surface();
         if (!el || !el.parentElement) { state = 'sleep'; return false; }
         setInteractionBlocked(true);
-        var T = await loadThree();
+        var T = await loadThree(threeModuleSrc);
         var parent = el.parentElement;
         var parentStyle = global.getComputedStyle(parent);
         var previousParentPosition = parent.style.position;
@@ -339,7 +342,10 @@
     return {
       setHandSteering: function (active) {
         steeringEnabled = !!active;
-        return steeringEnabled ? wake() : Promise.resolve(true);
+        // Teardown is part of the control contract. Keeping the shell alive
+        // after steering is disabled leaves the authored surface hidden and
+        // prevents its native mouse/touch controls from receiving input.
+        return steeringEnabled ? wake() : sleep();
       },
       handPoint: function (x, y) { if (steeringEnabled && state === 'active') command({ type: 'look', x: x, y: y }); },
       handCommand: command,

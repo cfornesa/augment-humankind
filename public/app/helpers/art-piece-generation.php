@@ -268,6 +268,144 @@ function art_piece_extract_prompt_media_refs(string $prompt): array
     return array_keys($refs);
 }
 
+/**
+ * Coarse media kind derived from a media_files.mime_type prefix, used to
+ * decide whether a selected media reference is compatible with the piece's
+ * engine. 'model' covers GLTF/GLB (glTF's JSON variant is application/json
+ * or model/gltf+json depending on how it was uploaded, so both are matched
+ * explicitly rather than relying on a mime prefix).
+ */
+function art_piece_media_kind_from_mime(?string $mimeType): string
+{
+    $mimeType = strtolower(trim((string) $mimeType));
+    if ($mimeType === 'model/gltf-binary' || $mimeType === 'model/gltf+json') {
+        return 'model';
+    }
+    if (str_starts_with($mimeType, 'video/')) {
+        return 'video';
+    }
+    if (str_starts_with($mimeType, 'image/')) {
+        return 'image';
+    }
+    if (str_starts_with($mimeType, 'audio/')) {
+        return 'audio';
+    }
+    return 'other';
+}
+
+/**
+ * Engines that can actually load a given media kind as part of the generated
+ * piece. 3D models require Three.js/A-Frame's GLTFLoader capability (see
+ * art_piece_model_capability_prompt()); every engine's base system prompt
+ * only knows how to load images (loadImage/TextureLoader/<img>/SVG <image>).
+ * Video/audio have no generation-time loading path on any engine today.
+ */
+function art_piece_engine_supports_media_kind(string $engine, string $kind): bool
+{
+    return match ($kind) {
+        'model' => in_array($engine, ['three', 'aframe'], true),
+        'image' => true,
+        default => false, // video, audio, other: no engine can load these into generated code today
+    };
+}
+
+/**
+ * Parses the structured "Add media reference" picker payload (a JSON array
+ * of {media_id, intent_text} submitted as media_refs_json) into a resolved
+ * list carrying each media asset's mime type and canonical /media/{id} ref.
+ * Silently skips rows with a missing/deleted media_id — the picker only ever
+ * offers existing assets, so a missing row here means the asset was deleted
+ * out from under an in-progress form, not something to hard-fail on.
+ */
+function art_piece_resolve_structured_media_refs(mixed $rawRefsJson): array
+{
+    if ($rawRefsJson === null || $rawRefsJson === '') {
+        return [];
+    }
+    $decoded = is_array($rawRefsJson) ? $rawRefsJson : json_decode((string) $rawRefsJson, true);
+    if (!is_array($decoded)) {
+        return [];
+    }
+
+    $resolved = [];
+    foreach ($decoded as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        $mediaId = (int) ($row['media_id'] ?? 0);
+        if ($mediaId <= 0 || !class_exists('MediaFile')) {
+            continue;
+        }
+        $media = MediaFile::find($mediaId);
+        if (!$media || ($media['deleted_at'] ?? null) !== null) {
+            continue;
+        }
+        $resolved[] = [
+            'media_id' => $mediaId,
+            'intent_text' => trim((string) ($row['intent_text'] ?? '')),
+            'mime_type' => (string) ($media['mime_type'] ?? ''),
+            'original_name' => (string) ($media['original_name'] ?? ''),
+            'ref' => '/media/' . $mediaId,
+        ];
+    }
+    return $resolved;
+}
+
+/**
+ * Rule 6 gate: rejects generation up front, with a specific per-asset
+ * message, rather than letting an incompatible media kind + engine
+ * combination silently fail downstream (the exact failure mode behind
+ * pieces #114-116 — a GLB referenced under conditions where nothing in the
+ * generated code could actually load it as geometry).
+ */
+function art_piece_assert_media_refs_engine_compatible(string $engine, array $resolvedRefs): void
+{
+    foreach ($resolvedRefs as $ref) {
+        $kind = art_piece_media_kind_from_mime($ref['mime_type'] ?? '');
+        if ($kind === 'image') {
+            continue; // every engine can load images
+        }
+        if (art_piece_engine_supports_media_kind($engine, $kind)) {
+            continue;
+        }
+        $label = trim((string) ($ref['original_name'] ?? '')) !== ''
+            ? $ref['original_name'] . ' (' . $ref['ref'] . ')'
+            : $ref['ref'];
+        $kindLabel = match ($kind) {
+            'model' => '3D model',
+            'video' => 'video',
+            'audio' => 'audio file',
+            default => 'unsupported media type',
+        };
+        $suggestion = $kind === 'model'
+            ? ' Select the Three.js or A-Frame engine to use it.'
+            : '';
+        throw new RuntimeException("Media {$label} is a {$kindLabel} — this cannot be used with the {$engine} engine.{$suggestion}");
+    }
+}
+
+/**
+ * Builds the appendable prompt text describing each structured media
+ * reference and the admin's stated intent for it, so the AI receives
+ * unambiguous per-asset guidance instead of having to infer usage from
+ * free-text prose. Returns '' when there are no structured refs (legacy
+ * free-text prompts still flow through art_piece_media_policy_prompt() only).
+ */
+function art_piece_structured_media_refs_prompt(array $resolvedRefs): string
+{
+    if ($resolvedRefs === []) {
+        return '';
+    }
+    $lines = [];
+    foreach ($resolvedRefs as $ref) {
+        $intent = trim((string) ($ref['intent_text'] ?? ''));
+        $lines[] = $intent !== ''
+            ? "- {$ref['ref']}: {$intent}"
+            : "- {$ref['ref']}: (no specific usage instruction given — use your judgment)";
+    }
+    return "SELECTED MEDIA REFERENCES: The user explicitly selected the following CMS media for this piece via the media picker (not by naming them in prose). Use exactly these paths and follow each one's stated usage:\n" . implode("\n", $lines);
+}
+
 function art_piece_media_policy_prompt(array $allowedMediaRefs, bool $allowExisting = false): string
 {
     $allowedMediaRefs = array_values(array_unique(array_filter($allowedMediaRefs, 'is_string')));
@@ -882,12 +1020,15 @@ function art_piece_model_capability_prompt(string $engine): string
 {
     return match ($engine) {
         'three' => implode(' ', [
-            "3D MODEL CAPABILITY: If the user's prompt references an uploaded 3D model at an allowed /media/{id} path (GLTF/GLB), load it with the runtime-provided loader — `new THREE.GLTFLoader().load('/media/{id}', gltf => scene.add(gltf.scene))`.",
-            "Do NOT use fetch, XMLHttpRequest, or import statements; THREE.GLTFLoader is already provided on the THREE object. Preserve the loaded model's embedded materials, textures, UVs, transparency, vertex colors, and color data; do NOT replace loaded meshes with new MeshBasicMaterial, MeshStandardMaterial, MeshPhongMaterial, or similar materials unless the user explicitly asks to restyle the model. You may set castShadow/receiveShadow, transform, scale, rotate, animate, add lights, and frame the camera around the loaded model.",
+            "3D MODEL CAPABILITY: If the user's prompt references an uploaded 3D model at an allowed /media/{id} path (GLTF/GLB), load it with the runtime-provided loader — `new THREE.GLTFLoader().load('/media/{id}', gltf => { ... })`.",
+            "Do NOT use fetch, XMLHttpRequest, or import statements; THREE.GLTFLoader is already provided on the THREE object. Preserve the loaded model's embedded materials, textures, UVs, transparency, vertex colors, and color data; do NOT replace loaded meshes with new MeshBasicMaterial, MeshStandardMaterial, MeshPhongMaterial, or similar materials unless the user explicitly asks to restyle the model.",
+            "CRITICAL — AUTO-FIT THE MODEL, do not assume it already matches the scene's scale: an uploaded GLB/GLTF can carry ANY real-world scale and any pivot/origin from whatever tool exported it. Loading it and adding it to the scene with no adjustment routinely makes it render invisibly tiny, absurdly oversized (camera ends up inside the mesh), or offset far outside the camera's view — which looks exactly like nothing loaded at all, even though the load succeeded. Inside the load callback, ALWAYS compute `const box = new THREE.Box3().setFromObject(gltf.scene); const size = box.getSize(new THREE.Vector3()); const center = box.getCenter(new THREE.Vector3());`, then recenter the model with `gltf.scene.position.sub(center);` and uniformly rescale it with `const maxDim = Math.max(size.x, size.y, size.z); const targetSize = 3; gltf.scene.scale.multiplyScalar(targetSize / maxDim);` (adjust targetSize to whatever scale matches the rest of the composition), BEFORE adding it to the group/scene or letting the camera frame it. Skipping this auto-fit step is the single most common reason a correctly-loaded model appears not to render at all.",
+            "You may set castShadow/receiveShadow, additional transform/rotate/animate on top of the auto-fit, add lights, and frame the camera around the loaded model.",
         ]),
         'aframe' => implode(' ', [
             "3D MODEL CAPABILITY: If the user's prompt references an uploaded 3D model at an allowed /media/{id} path (GLTF/GLB), you MAY — as a specific exception to the no-<a-asset-item> rule — include a single `<a-assets>` block containing one `<a-asset-item id=\"model\" src=\"/media/{id}\">`, then place `<a-entity gltf-model=\"#model\">` in the scene.",
             "This exception applies ONLY to an allowed /media/{id} 3D-model reference — do NOT load any other external URL or remote asset, and keep all other A-Frame safety rules.",
+            "CRITICAL — AUTO-FIT THE MODEL: an uploaded GLB/GLTF can carry any real-world scale/origin from whatever tool exported it, so a fixed guessed `scale`/`position` attribute routinely renders it invisibly tiny, absurdly oversized, or outside the camera's view — indistinguishable from nothing loading at all. In `window.sketch`, listen for the entity's `model-loaded` event, then inside the handler get the loaded mesh with `const mesh = event.detail.model || entity.getObject3D('mesh'); const box = new THREE.Box3().setFromObject(mesh); const size = box.getSize(new THREE.Vector3()); const center = box.getCenter(new THREE.Vector3());`, recenter with `mesh.position.sub(center);`, and uniformly rescale the ENTITY (not the mesh) via `entity.setAttribute('scale', ...)` so its largest dimension matches a reasonable on-screen size (e.g. 2-4 meters) relative to the rest of the scene, before relying on any static scale/position values.",
         ]),
         default => '',
     };

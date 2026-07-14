@@ -56,6 +56,9 @@ $defaultTitle = 'AI ' . $generationModeLabel . ' Piece - ' . date('M d, Y H:i');
              scope, never changes it). -->
         <input type="hidden" id="sound_feel_lineage" name="sound_feel_lineage" value="<?= e($soundFeelLineage ?? '') ?>">
         <input type="hidden" id="sound_enabled_lineage" name="sound_enabled_lineage" value="<?= $soundEnabledLineage ? '1' : '0' ?>">
+        <!-- Structured "Add media reference" picker selections carried
+             through from the generate form, persisted on Save. -->
+        <input type="hidden" id="media_refs_json" name="media_refs_json" value="<?= e((string) ($mediaRefsJson ?? '[]')) ?>">
 
         <div class="admin-tabs piece-preview-tabs" role="tablist" style="margin-bottom: 1.5rem;">
             <button type="button" class="admin-tab active" data-tab="meta">Metadata</button>
