@@ -108,6 +108,7 @@ ob_start();
                         </span>
                         <span class="media-card-meta">
                             <span class="media-card-id"><?= htmlspecialchars((string) $f['label']) ?></span>
+                            <span class="media-card-rawid">ID <?= htmlspecialchars((string) $f['id']) ?></span>
                             <span class="media-card-type"><?= htmlspecialchars((string) ($f['mime_type'] ?? 'Unknown type')) ?></span>
                             <span class="media-card-date"><?= !empty($f['created_at']) ? date('Y-m-d', strtotime((string) $f['created_at'])) : '—' ?></span>
                         </span>

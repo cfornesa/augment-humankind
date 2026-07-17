@@ -279,6 +279,9 @@ The OBJ removal and the sonic-controller extraction had left it stale; source: D
 
 2026-07-09 DECISION Client-side upload gating for the Media Library has two independent layers that must both be updated together — the PHP-rendered accept/hint in layout.php, AND tiptap-editor.js's `pickerModeConfig()`, which unconditionally overwrites the DOM's accept/hint/type-check on every picker open. Check both whenever a new upload type is added.
 
+2026-07-17 CORRECTION When media-in-pieces (or any DB-backed) features fail silently, run `php scripts/setup-database.php --dry-run` before blaming the generating tool — the deployment had never applied the 2026-07-13 media-refs migration, so `ArtPieceVersionMediaRef`'s table-missing no-op dropped every picked media ref while looking like an Opencode Go generation bug.
+Source: DECISIONS.md 2026-07-17 Mobile Media Picker + A-Frame Media Reliability.
+
 # Closed Investigations — do not re-litigate
 
 2026-06-21 DECISION Three.js mesh/object-count validation is permanently removed: object count never predicted renderability at any threshold tried (150, then 1000 — a 728-object piece failed while a 1400+ one rendered fine); what matters is instancing, not count. `art_piece_count_three_object_calls()` survives only as a silent audit-log diagnostic. Do not propose a third threshold number. InstancedMesh guidance (including non-uniform per-instance scale and per-frame `setMatrixAt` updates) stays in the shared Three.js system prompt as voluntary advice.
@@ -290,3 +293,6 @@ The OBJ removal and the sonic-controller extraction had left it stale; source: D
 2026-06-21 CORRECTION The thumbnail/comparison capture pipeline's final form: `signalCanvasReady()` fires only after a real drawn frame (P5 polls frameCount, C2 wraps startFrame, Three.js fires from both render paths); the capture iframe extracts from the live preview iframe first, falling back to a background iframe wrapped in a 1px overflow-hidden parent overlaid on top (WebKit occlusion culling defeats `opacity:0` and `z-index:-1` iframes — it skips WebGL backing-store allocation and throttles rAF); `requestAnimationFrame` is shimmed with setTimeout inside capture iframes; captures run sequentially, never `Promise.all`; a `webglcontextlost` listener surfaces context loss as a real error. Ghost clicks within 500ms of dialog close are discarded; disabled buttons get `pointer-events: none !important`.
 
 2026-06-20 CORRECTION `art_piece_preflight_code()`'s `window.sketch` check requires a real `=` assignment (excluding `==`/`===`) — substring presence alone let non-assigning references pass and fail silently at capture time.
+
+2026-07-17 DECISION Piece-error overlays showing only bare `@…piece-runtime.js:NNNN` frames were sketch-thrown errors surfaced at the `window.sketch()` call site with the message hidden by Safari/Firefox stack formatting — `formatPieceError()` now always prints `Name: message` plus `[sketch]`/`[runtime]`-labeled frames, and thumbnail-capture failure is the same error re-surfaced, never a second bug. Do not re-investigate piece-runtime.js line ~2111.
+Source: DECISIONS.md 2026-07-17 Mobile Media Picker + A-Frame Media Reliability.

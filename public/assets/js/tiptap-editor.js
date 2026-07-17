@@ -1539,6 +1539,10 @@ function initMediaPicker() {
         media.className = 'media-picker-video-thumb';
         media.textContent = '♪ Audio';
       }
+    } else if (f.kind === 'model') {
+      media = document.createElement('div');
+      media.className = 'media-picker-video-thumb';
+      media.textContent = '◈ 3D Model';
     } else if (f.kind === 'iframe') {
       media = document.createElement('div');
       media.className = 'media-picker-iframe-thumb';
@@ -1557,7 +1561,27 @@ function initMediaPicker() {
 
     media.loading = 'lazy'
     media.alt = `Media ${f.id}`
-    item.appendChild(media)
+    const thumb = document.createElement('div')
+    thumb.className = 'media-picker-thumb'
+    thumb.appendChild(media)
+    item.appendChild(thumb)
+
+    const meta = document.createElement('div')
+    meta.className = 'media-picker-item-meta'
+    const titleLine = document.createElement('span')
+    titleLine.className = 'media-picker-item-title'
+    titleLine.textContent = f.title || f.original_name || `Media ${f.id}`
+    const idLine = document.createElement('span')
+    idLine.className = 'media-picker-item-id'
+    idLine.textContent = `ID ${f.id}`
+    const typeLine = document.createElement('span')
+    typeLine.className = 'media-picker-item-type'
+    typeLine.textContent = [
+      f.mime_type || null,
+      f.created_at ? String(f.created_at).slice(0, 10) : null
+    ].filter(Boolean).join(' · ')
+    meta.append(titleLine, idLine, typeLine)
+    item.appendChild(meta)
 
     item.addEventListener('click', () => {
       dialog.querySelectorAll('.media-picker-item').forEach(i => i.classList.remove('selected'))

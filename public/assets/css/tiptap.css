@@ -231,6 +231,27 @@ dialog#ai-profile-picker-modal::backdrop {
     background: rgba(21, 55, 74, 0.55);
 }
 
+/* Fullscreen picker dialogs on small screens so grid items stay visible.
+   Overrides the UA <dialog> defaults max-width/max-height: calc((100% - 6px) - 2em). */
+@media (max-width: 1024px) {
+    dialog#media-picker-modal,
+    dialog#piece-picker-modal,
+    dialog#iframe-picker-modal,
+    dialog#ai-profile-picker-modal {
+        width: 100vw;
+        height: 100dvh;
+        max-width: none;
+        max-height: none;
+        margin: 0;
+        inset: 0;
+        border: 0;
+    }
+
+    .media-picker-grid {
+        grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+    }
+}
+
 .media-picker-header {
     display: flex;
     align-items: center;
@@ -315,7 +336,8 @@ dialog#ai-profile-picker-modal::backdrop {
 }
 
 .media-picker-item {
-    aspect-ratio: 1;
+    display: flex;
+    flex-direction: column;
     border: 2px solid transparent;
     overflow: hidden;
     cursor: pointer;
@@ -324,7 +346,41 @@ dialog#ai-profile-picker-modal::backdrop {
 }
 .media-picker-item:hover { border-color: var(--line); }
 .media-picker-item.selected { border-color: var(--orange); }
+.media-picker-thumb {
+    aspect-ratio: 1;
+    overflow: hidden;
+    flex-shrink: 0;
+}
 .media-picker-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.media-picker-item-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    padding: 0.3rem 0.35rem 0.35rem;
+    font-size: 0.68rem;
+    line-height: 1.3;
+    color: var(--ink);
+    border-top: 1px solid var(--line);
+    min-width: 0;
+}
+.media-picker-item-title {
+    font-weight: 700;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.media-picker-item-id {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-weight: 950;
+    letter-spacing: 0.05em;
+}
+.media-picker-item-type {
+    opacity: 0.65;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
 
 .media-picker-video-thumb {
     width: 100%;

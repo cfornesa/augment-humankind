@@ -1118,6 +1118,13 @@ button.admin-btn-danger:hover {
     font-weight: 950;
 }
 
+.media-card-rawid {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.8em;
+    letter-spacing: 0.05em;
+    opacity: 0.75;
+}
+
 .media-code-input-wrap {
     display: flex;
     gap: 0.5rem;

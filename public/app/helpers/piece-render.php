@@ -1982,6 +1982,13 @@ function piece_aframe_normalize_texture_assets(string $html, callable $resolver)
         return $html;
     }
 
+    // Generated markup frequently leaves <a-asset-item> unclosed; libxml then
+    // treats the unknown element as a container and swallows every following
+    // sibling (other assets) into it. a-asset-item never has children, so
+    // normalize each one to an explicitly closed empty tag before parsing.
+    $html = (string) preg_replace('#</a-asset-item\s*>#i', '', $html);
+    $html = (string) preg_replace('#<a-asset-item\b([^>]*?)/?>#i', '<a-asset-item$1></a-asset-item>', $html);
+
     $dom = new DOMDocument('1.0', 'UTF-8');
     $wrapped = '<div id="creatr-aframe-root">' . $html . '</div>';
     $internalErrors = libxml_use_internal_errors(true);

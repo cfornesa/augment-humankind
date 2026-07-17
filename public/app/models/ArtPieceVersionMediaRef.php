@@ -15,10 +15,17 @@ class ArtPieceVersionMediaRef
     private static function tableExists(): bool
     {
         try {
-            return ah_table_exists('art_piece_version_media_refs');
+            $exists = ah_table_exists('art_piece_version_media_refs');
         } catch (Throwable) {
-            return false;
+            $exists = false;
         }
+        if (!$exists) {
+            error_log(
+                'ArtPieceVersionMediaRef: art_piece_version_media_refs table missing — '
+                . 'media refs are being dropped; run scripts/setup-database.php --yes'
+            );
+        }
+        return $exists;
     }
 
     public static function allForVersion(int $versionId): array

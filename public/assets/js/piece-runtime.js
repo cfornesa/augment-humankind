@@ -31,10 +31,27 @@ function diag(label, data) {
   // no cross-window messaging involved at all.
   try { document.documentElement.dataset.creatrDiagLast = label; } catch (_) {}
 }
+function formatPieceError(error) {
+  if (!error || typeof error !== 'object') return String(error);
+  const name = error.name || 'Error';
+  const headline = error.message ? name + ': ' + error.message : String(error);
+  let stack = typeof error.stack === 'string' ? error.stack : '';
+  // V8 stacks repeat "Name: message" as the first line — keep one copy only.
+  if (stack.startsWith(headline)) stack = stack.slice(headline.length);
+  if (!stack.trim()) return headline;
+  // Label each frame so authored-piece frames stand out from runtime ones
+  // (Safari/Firefox frames often have empty function names, rendering as "@…").
+  const frames = stack.trim().split('\n').map((line) => {
+    const t = line.trim();
+    if (!t) return null;
+    return (/piece-runtime\.js/.test(t) ? '[runtime] ' : '[sketch] ') + t;
+  }).filter(Boolean).join('\n');
+  return headline + '\n' + frames;
+}
 function showPieceError(error) {
   const el = document.getElementById('piece-error');
   if (!el) return;
-  el.textContent = (error && (error.stack || error.message)) ? (error.stack || error.message) : String(error);
+  el.textContent = formatPieceError(error);
   el.style.display = 'block';
   try { window.parent.postMessage({ type: 'sketch-status', valid: false, error: el.textContent }, '*'); } catch (_) {}
 }
@@ -2099,9 +2116,11 @@ function bootAFrame() {
       // Re-scan after authored code has run; the per-entity marker keeps this
       // idempotent for markup that was already present.
       installAFrameModelDiagnostics(scene);
+      installAFrameBackdropAspectFix(scene);
       let modelDiagnosticsAttempts = 0;
       const modelDiagnosticsTimer = setInterval(() => {
         installAFrameModelDiagnostics(scene);
+        installAFrameBackdropAspectFix(scene);
         modelDiagnosticsAttempts += 1;
         if (modelDiagnosticsAttempts >= 20) clearInterval(modelDiagnosticsTimer);
       }, 250);
@@ -2403,6 +2422,59 @@ function bootAFrame() {
 // arbitrary units and pivots, so a valid model can otherwise be present but
 // invisible (or far outside the camera). Keep this safety net in the shared
 // runtime so generated pieces and downloaded exports get the same behavior.
+// Generated A-Frame markup often puts a CMS image on a backdrop plane with a
+// hardcoded width/height (e.g. 72x46), stretching the image to an arbitrary
+// aspect ratio. Once the underlying texture image is measurable, correct the
+// plane's height to preserve the image's natural aspect. Only fires for
+// CMS-served images; never touches a-sky (equirectangular by design).
+function installAFrameBackdropAspectFix(scene) {
+  const CMS_SRC = /^(?:https?:\/\/[^/]+)?\/(?:image|media|api\/media-assets)\//;
+
+  function isCmsUrl(url) {
+    if (typeof url !== 'string' || url === '') return false;
+    try { return CMS_SRC.test(new URL(url, window.location.href).pathname); } catch (_) { return false; }
+  }
+
+  function resolveImage(el) {
+    let src = null;
+    try { src = el.getAttribute('src'); } catch (_) { return null; }
+    if (src && typeof src === 'object' && typeof src.src === 'string') {
+      return isCmsUrl(src.src) ? src : null;
+    }
+    if (typeof src !== 'string' || src === '') return null;
+    if (src.startsWith('#')) {
+      const asset = document.querySelector(src);
+      if (!asset || asset.tagName !== 'IMG') return null;
+      return isCmsUrl(asset.getAttribute('src') || asset.src) ? asset : null;
+    }
+    if (!isCmsUrl(src)) return null;
+    const img = new Image();
+    img.src = src;
+    return img;
+  }
+
+  scene.querySelectorAll('a-plane, a-image').forEach((el) => {
+    if (el.dataset.creatrAspectChecked) return;
+    el.dataset.creatrAspectChecked = '1';
+    const img = resolveImage(el);
+    if (!img) return;
+    const apply = () => {
+      const naturalAspect = img.naturalWidth > 0 && img.naturalHeight > 0
+        ? img.naturalWidth / img.naturalHeight : 0;
+      if (!naturalAspect) return;
+      const width = parseFloat(el.getAttribute('width'));
+      const height = parseFloat(el.getAttribute('height'));
+      if (!(width > 0) || !(height > 0)) return;
+      const current = width / height;
+      if (Math.abs(current / naturalAspect - 1) <= 0.02) return;
+      el.setAttribute('height', (width / naturalAspect).toFixed(3));
+      diag('aframe-backdrop-aspect-fixed', { id: el.id || null, width, from: height, to: width / naturalAspect });
+    };
+    if (img.complete && img.naturalWidth > 0) apply();
+    else img.addEventListener('load', apply, { once: true });
+  });
+}
+
 function installAFrameModelDiagnostics(scene) {
   const THREE_NS = window.AFRAME?.THREE || window.THREE;
   const emit = (entity, status, data = {}) => {

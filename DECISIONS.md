@@ -3322,3 +3322,94 @@ console logs.
   gallery-wall JSON payload's own media-inlining path beyond confirming it
   compiles and an existing 3D-model-free collection still downloads
   correctly.
+
+## 2026-07-17 — Mobile Media Picker + A-Frame Media Reliability (Claude Code)
+
+### Context
+User wish list: (1) fullscreen media-selection overlay on mobile everywhere a
+picker opens; (2) more labeling on picker thumbnails plus raw media IDs on
+both picker items and the /admin/media overview grid; (3) investigate
+recurring failures of Opencode Go-generated A-Frame pieces with inserted
+media, and the odd background rendering on piece 119.
+
+### Investigation findings
+- **Root cause of the media-ref failures is NOT Opencode Go**: the
+  `art_piece_version_media_refs` table did not exist in the production DB.
+  The 2026-07-13 migration and its `setup-database.php` manifest step both
+  existed (dual-ship intact); the setup script simply had never been re-run
+  on the deployment. `ArtPieceVersionMediaRef` silently no-ops when the
+  table is missing, so picker media refs were silently dropped.
+- The `@ @…piece-runtime.js:2111:22` red-overlay text is a Safari/Firefox
+  stack whose error message was hidden by `showPieceError` printing
+  `error.stack || error.message`; line 2111 is merely the `window.sketch()`
+  call site in `bootAFrame`. Thumbnail-capture failure is the same runtime
+  error re-surfaced by admin-piece-capture.js (by design, not a second bug).
+- Piece 119's backdrop distortion is AI-authored content: the background
+  image is stretched onto a fixed `<a-plane width="72" height="46">` (image
+  is 1920×1080) with a 360° Y-rotation drift. The `.a-canvas {100%}` CSS was
+  verified NOT to distort (canvas backing ratio == CSS ratio in the 16:9
+  iframe) — no CSS change made (Rule 7).
+- Verified libxml bug: an unclosed `<a-asset-item>` swallows following
+  sibling assets inside itself during `piece_aframe_normalize_texture_assets`
+  DOM round-trip (one sibling's src was mangled in testing).
+
+### Decisions (user-approved via AskUserQuestion)
+- Run `setup-database.php` against the deployment: dry-run showed exactly
+  one pending step; applied with `--yes`; re-ran twice to confirm idempotent.
+- Piece 119: generic runtime fix + prompt rules only; do NOT edit the
+  piece's stored code (regenerate later if the Y-spin still bothers).
+- Fullscreen mobile treatment covers all four picker dialogs (media, piece,
+  iframe, AI profile — shared CSS classes).
+
+### Changes
+- `public/assets/css/tiptap.css`: first-ever `@media (max-width:1024px)`
+  block — all four picker dialogs go fullscreen (100vw/100dvh, UA dialog
+  max-width/height overridden); picker items become flex-column cards with
+  a `.media-picker-item-meta` caption (title, `ID n`, mime · date).
+- `public/assets/js/tiptap-editor.js` `renderGridItem`: thumbnail wrapped in
+  `.media-picker-thumb`; caption appended (fields already in the
+  /admin/media/library payload — no backend change); new `model` kind branch
+  renders a "◈ 3D Model" text thumb instead of a broken `<img>`.
+- `public/app/views/admin/media.php` + `public/assets/admin.css`: overview
+  cards now show `ID <n>` (`.media-card-rawid`) under the label.
+- `public/assets/js/piece-runtime.js`: `formatPieceError()` — headline
+  `Name: message` always shown, stack deduped, frames labeled `[runtime]`
+  (piece-runtime.js) vs `[sketch]` (authored code) for all engines;
+  `installAFrameBackdropAspectFix()` — corrects `a-plane`/`a-image` height
+  to the CMS image's natural aspect (>2% deviation, CMS paths only, a-sky
+  untouched); wired next to installAFrameModelDiagnostics (initial + 250ms
+  rescan window for sketch-created planes). An initial skip-if-scale-
+  animation guard was removed after verification showed scale animations are
+  orthogonal to geometry height (piece 119's own breathe animation had
+  blocked the fix).
+- `public/app/helpers/piece-render.php`: pre-parse normalization closes all
+  `<a-asset-item>` tags (element never has children) before DOM load —
+  fixes the sibling-swallowing bug; regression-tested unclosed/closed/
+  self-closed cases.
+- `public/app/helpers/art-piece-generation.php` (aframe rules): backdrop
+  planes must preserve image natural aspect; never Y/X-rotate flat
+  backdrops; `<a-assets>` children must be explicitly closed. Generic
+  wording only.
+- `public/app/models/ArtPieceVersionMediaRef.php`: `error_log()` warning
+  when the table is missing so the silent-drop failure mode is visible.
+
+### Verification
+- Piece 119 on local server (shared DB): backdrop height auto-corrected
+  46 → 40.5 (72 / (1920/1080)), no error overlay, model loads; canvas
+  backing vs CSS ratio identical (0.543 = 0.543).
+- Picker verified via a temporary harness page (real tiptap.css + real
+  dialog markup + real tiptap-editor.js, stubbed library fetch; deleted
+  after): fullscreen at 375×812, captions with IDs for native, model,
+  video-no-poster, and legacy `asset-…` items; `art_media` mode shows the
+  3D-model text thumb. Admin-auth pages themselves not exercised (OAuth
+  only — no credentials available to the agent).
+- `formatPieceError` unit-tested against V8 and Safari/Firefox stack styles
+  (the exact `@ @…2111:22` case now yields `TypeError: … + labeled frames`)
+  and proved itself live by surfacing a bug during development.
+- All touched PHP passes `php -l`; both JS files pass `node --check`.
+
+### Known open items
+- The 2026-06-14 "REVIEW REQUIRED Before Platform Deletion" block remains
+  open (surfaced to user this session; unrelated).
+- Piece 119's authored Y-spin drift on the backdrop remains (user chose not
+  to edit stored piece code).
