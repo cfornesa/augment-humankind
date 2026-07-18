@@ -490,36 +490,8 @@ class Form
 
     private static function smtpTransportConfiguration(array &$errors): array
     {
-        $requiredConfig = [
-            'SMTP_HOST',
-            'SMTP_PORT',
-            'SMTP_ENCRYPTION',
-            'SMTP_USERNAME',
-            'SMTP_PASSWORD',
-            'SMTP_FROM_EMAIL',
-            'SMTP_FROM_NAME',
-        ];
-
-        $config = [];
-        foreach ($requiredConfig as $key) {
-            $config[$key] = function_exists('configValue') ? configValue($key) : '';
-            if ($config[$key] === '') {
-                $errors[] = 'The form email configuration is incomplete.';
-                return [];
-            }
-        }
-
-        $encryption = strtolower($config['SMTP_ENCRYPTION']);
-        $port = (int) $config['SMTP_PORT'];
-        if (!filter_var($config['SMTP_FROM_EMAIL'], FILTER_VALIDATE_EMAIL)
-            || !in_array($encryption, ['smtps', 'ssl', 'starttls', 'tls'], true)
-            || (($encryption === 'smtps' || $encryption === 'ssl') && $port !== 465)
-            || (($encryption === 'starttls' || $encryption === 'tls') && $port !== 587)) {
-            $errors[] = 'The form email configuration is incomplete.';
-            return [];
-        }
-
-        return $config;
+        // Shared with magic-link sign-in; see app/helpers/mailer.php.
+        return app_smtp_config($errors);
     }
 
     private static function normalizeKey(string $key): string

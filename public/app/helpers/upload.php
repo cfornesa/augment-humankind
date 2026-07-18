@@ -43,6 +43,32 @@ const ALLOWED_MODEL_EXT = [
 // insert cannot exceed what the DB will accept in one packet.
 const MODEL_MAX_BYTES = 64 * 1024 * 1024;
 
+// Single source of truth for classifying a stored MIME type into the media
+// kinds the admin library, picker, and serving layers agree on.
+function media_kind_from_mime(string $mime): string
+{
+    if (str_starts_with($mime, 'video/')) {
+        return 'video';
+    }
+    if (str_starts_with($mime, 'audio/')) {
+        return 'audio';
+    }
+    if ($mime === 'text/html' || str_starts_with($mime, 'iframe')) {
+        return 'iframe';
+    }
+    if (str_starts_with($mime, 'model/')) {
+        return 'model';
+    }
+    return 'image';
+}
+
+// Every non-image kind (video, audio, 3D model, embed) can carry a linked
+// image poster/thumbnail via media_files.poster_media_file_id.
+function media_kind_can_have_poster(string $mime): bool
+{
+    return media_kind_from_mime($mime) !== 'image';
+}
+
 function upload_ini_limit_message(): string
 {
     $uploadMax = ini_get('upload_max_filesize') ?: 'unknown';

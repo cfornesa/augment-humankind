@@ -1,0 +1,51 @@
+name: Curl cron endpoint
+description: >
+  POST a cron endpoint with retries and backoff. Hostinger intermittently
+  throttles datacenter IPs, so a single connect attempt is not reliable from
+  GitHub runners; spaced retries give the throttle window a chance to lift.
+
+inputs:
+  base-url:
+    description: Site base URL (trailing slash tolerated)
+    required: true
+  path:
+    description: Endpoint path, starting with /
+    required: true
+  cron-secret:
+    description: Value for the X-Cron-Secret header
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: POST endpoint with retries
+      shell: bash
+      env:
+        CRON_BASE_URL: ${{ inputs.base-url }}
+        CRON_PATH: ${{ inputs.path }}
+        CRON_SECRET: ${{ inputs.cron-secret }}
+      run: |
+        CRON_URL="${CRON_BASE_URL%/}${CRON_PATH}"
+        attempts=5
+        for i in $(seq 1 "$attempts"); do
+          echo "Attempt $i of $attempts"
+          if curl --fail-with-body -sS -X POST -4 \
+              --connect-timeout 15 --max-time 60 \
+              -H "X-Cron-Secret: ${CRON_SECRET}" \
+              -H "Accept: application/json" \
+              "$CRON_URL"; then
+            echo
+            echo "Succeeded on attempt $i"
+            exit 0
+          else
+            rc=$?
+          fi
+          echo "Attempt $i failed with curl exit code $rc"
+          if [ "$i" -lt "$attempts" ]; then
+            delay=$(( (2 ** (i - 1)) * 15 + RANDOM % 15 ))
+            echo "Waiting ${delay}s before retry"
+            sleep "$delay"
+          fi
+        done
+        echo "All $attempts attempts failed (last curl exit code $rc)"
+        exit "$rc"

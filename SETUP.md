@@ -56,7 +56,7 @@ Fill in `.env`. The file is annotated section by section; the short version:
 | `DB_HOST`, `DB_NAME`, `DB_USER`, `DB_PASS` | **Required** | Database connection. Missing → installer aborts; site shows "This site isn't configured yet". |
 | `DB_PORT` | Optional | Defaults to `3306`. |
 | `DB_SSL` | Optional | `true` only if the host requires TLS to MySQL. |
-| `GITHUB_CLIENT_ID` + `GITHUB_CLIENT_SECRET` + `ADMIN_GITHUB_USERNAMES` — **or** — `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` + `ADMIN_GOOGLE_EMAILS` | **At least one provider required** | Admin sign-in. Without a complete provider + allowlist, no one can ever reach `/admin` and the public site stays behind the setup gate. |
+| One complete sign-in method: `GITHUB_CLIENT_ID` + `GITHUB_CLIENT_SECRET` + `ADMIN_GITHUB_USERNAMES`, or the Google / Microsoft / Facebook equivalents, or `SMTP_*` + `ADMIN_EMAILS` (email magic-link) | **At least one method required** | Admin sign-in. Credentials are the toggle: blank values simply hide that provider's button; filled values activate it. Without one complete method + allowlist, no one can ever reach `/admin` and the public site stays behind the setup gate. |
 | `APP_NAME` | Recommended | Fallback site name until Site Identity is configured (defaults to "My Site"). |
 | `PUBLIC_SITE_URL` | Recommended | Canonical origin for feeds/OG/canonical URLs (falls back to the request Host header). No trailing slash. |
 | `AI_SETTINGS_ENCRYPTION_KEY` | Recommended | AES-256-GCM key for encrypting AI vendor keys, platform tokens, and DB-stored reCAPTCHA secrets. Generate: `openssl rand -hex 32`. If unset when `RECAPTCHA_SECRET_KEY` is present, the installer warns and seeds form secrets as NULL. |
@@ -79,18 +79,38 @@ values and one complete OAuth provider + allowlist.
 
 ## 4. Create the OAuth app(s)
 
+All providers are free to register. Configure only the ones you want — a
+provider with blank credentials simply doesn't appear on the login pages.
+
 - **GitHub:** https://github.com/settings/developers → New OAuth App →
   callback URL `https://yourdomain.com/auth/github/callback`
   (local dev: `http://127.0.0.1:8080/auth/github/callback`).
 - **Google:** https://console.cloud.google.com/apis/credentials →
   OAuth client → callback URL `https://yourdomain.com/auth/google/callback`.
+- **Microsoft:** https://portal.azure.com → Microsoft Entra ID → App
+  registrations → New registration (choose "Accounts in any organizational
+  directory and personal Microsoft accounts") → redirect URI
+  `https://yourdomain.com/auth/microsoft/callback`.
+- **Facebook:** https://developers.facebook.com → Create app → Facebook
+  Login → redirect URI `https://yourdomain.com/auth/facebook/callback`.
+  The app must be switched to Live mode (free App Review for the `email`
+  permission) before the general public can sign in.
+- **Email magic-link:** no app to create — it activates when the `SMTP_*`
+  values (shared with the contact form) are configured, plus `ADMIN_EMAILS`
+  for the admin variant.
 
-Put the client ID/secret in `.env`, and your GitHub username(s) in
-`ADMIN_GITHUB_USERNAMES` (or Google email(s) in `ADMIN_GOOGLE_EMAILS`) —
-only allowlisted identities can become the site's admin on first login.
+Put each client ID/secret in `.env`, and the matching admin allowlist:
+`ADMIN_GITHUB_USERNAMES` (usernames), `ADMIN_GOOGLE_EMAILS` /
+`ADMIN_MICROSOFT_EMAILS` / `ADMIN_EMAILS` (email addresses), or
+`ADMIN_FACEBOOK_IDS` (numeric app-scoped ids) — only allowlisted identities
+can become the site's admin on first login. The same providers also serve
+public member sign-in at `/user/login`; the allowlists gate `/admin` only.
 
-**Expected outcome:** exactly one callback URL registered per provider, and
-the allowlist names the person who will do the first login.
+Verify at any time with `php scripts/check_oauth_setup.php`, which prints
+each provider's enabled/disabled state and expected callback URLs.
+
+**Expected outcome:** exactly one callback URL registered per configured
+provider, and one allowlist names the person who will do the first login.
 
 ## 5. Run the database installer
 
@@ -158,8 +178,9 @@ and `/auth/*` remain reachable.
 
 ## 8. First admin login
 
-Visit `http://127.0.0.1:8080/admin` (or your domain) and sign in with the
-allowlisted GitHub/Google identity.
+Visit `http://127.0.0.1:8080/admin` (or your domain) and sign in with any
+allowlisted identity (GitHub, Google, Microsoft, Facebook, or an email
+magic-link).
 
 **Expected outcome:** the OAuth callback creates the first `admin_identities`
 row, the 503 setup gate lifts immediately, and the public site renders

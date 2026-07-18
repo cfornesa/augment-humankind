@@ -140,6 +140,52 @@
   permitted to bootstrap an admin identity)
 - **Callback URL to register:** `https://yourdomain.com/auth/google/callback`
 
+## Microsoft OAuth (Login)
+
+- **Purpose:** Authenticates members and admins via "Continue with
+  Microsoft" (personal and organizational Microsoft accounts).
+- **Data sent off-domain:** The browser is redirected to Microsoft for
+  sign-in; the server exchanges the returned code for an access token and
+  fetches the user's subject id/email/name via the Microsoft Graph OIDC
+  userinfo endpoint (falling back to id_token claims).
+- **External endpoints:**
+  `https://login.microsoftonline.com/common/oauth2/v2.0/authorize`,
+  `https://login.microsoftonline.com/common/oauth2/v2.0/token`,
+  `https://graph.microsoft.com/oidc/userinfo`
+- **What breaks if unavailable or changed:** Sign-in via Microsoft stops
+  working; all other configured providers remain available. Existing
+  Microsoft-linked accounts cannot log in until restored.
+- **Self-hosting alternative:** The email magic-link login (uses your own
+  SMTP) or a self-hosted credential form.
+- **Required config:** `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`;
+  `ADMIN_MICROSOFT_EMAILS` for admin access.
+- **Callback URL to register:** `https://yourdomain.com/auth/microsoft/callback`
+
+## Facebook OAuth (Login)
+
+- **Purpose:** Authenticates members and admins via "Continue with Facebook".
+- **Data sent off-domain:** The browser is redirected to Facebook for
+  sign-in; the server exchanges the returned code for an access token and
+  fetches the user's app-scoped id/name/email/picture from the Graph API.
+  Users can decline the email permission — the account is then keyed on the
+  app-scoped id alone.
+- **External endpoints:** `https://www.facebook.com/v18.0/dialog/oauth`,
+  `https://graph.facebook.com/v18.0/oauth/access_token`,
+  `https://graph.facebook.com/v18.0/me`
+- **What breaks if unavailable or changed:** Sign-in via Facebook stops
+  working; other providers remain available. The Meta app must be in **Live
+  mode** (with the email permission approved via App Review) for the general
+  public to sign in — in Development mode only app-role holders can.
+- **Self-hosting alternative:** The email magic-link login (uses your own
+  SMTP) or a self-hosted credential form.
+- **Required config:** `FACEBOOK_CLIENT_ID`, `FACEBOOK_CLIENT_SECRET`;
+  `ADMIN_FACEBOOK_IDS` (numeric app-scoped user ids) for admin access.
+- **Callback URL to register:** `https://yourdomain.com/auth/facebook/callback`
+
+> **Email magic-link login** needs no separate external service: it reuses
+> the outbound SMTP transport already documented for the contact form
+> (`SMTP_*` config). `ADMIN_EMAILS` gates the admin variant.
+
 ## Tiptap (Rich Text Editor, via esm.sh CDN)
 
 - **Purpose:** Provides the rich-text editing toolbar (headings, formatting,

@@ -62,7 +62,7 @@ class AuthController
             'state' => $state,
         ];
 
-        if ($provider === 'google') {
+        if (!empty($config['select_account'])) {
             $params['access_type'] = 'online';
             $params['prompt'] = 'select_account';
         }
@@ -119,7 +119,7 @@ class AuthController
         }
 
         try {
-            $profile = self::fetchOauthProfile($provider, $code);
+            $profile = oauth_fetch_profile($provider, $code, 'PhpCmsAdminOAuth/1.0');
             if (!oauth_allowed_identity($provider, $profile)) {
                 audit_log_event('admin_oauth', 'admin_oauth_callback', 'denied', [
                     'subject_hash' => $subjectHash,
@@ -134,7 +134,7 @@ class AuthController
                 'provider' => $provider,
                 'provider_subject' => (string) $profile['provider_subject'],
                 'email' => $profile['email'] ?? null,
-                'display_name' => (string) $profile['display_name'],
+                'display_name' => (string) ($profile['display_name'] !== '' ? $profile['display_name'] : ($profile['email'] ?? 'Admin')),
                 'avatar_url' => $profile['avatar_url'] ?? null,
             ]);
             $identity = AdminIdentity::find($identityId);
@@ -379,90 +379,135 @@ class AuthController
     private static function requestedProvider(): string
     {
         $path = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?: '';
-        if (preg_match('#/admin/auth/(github|google)/#', $path, $matches)) {
+        if (preg_match('#/admin/auth/([a-z]+)/#', $path, $matches)
+            && array_key_exists($matches[1], oauth_provider_registry())) {
             return $matches[1];
         }
 
         throw new InvalidArgumentException('Unknown OAuth provider.');
     }
 
-    private static function fetchOauthProfile(string $provider, string $code): array
+    // ── Email magic-link sign-in ────────────────────────────────────────────
+
+    public static function magicLinkForm(): void
     {
-        $config = oauth_provider_config($provider);
-        $tokenResponse = oauth_http_request(
-            'POST',
-            $config['token_url'],
-            [
-                'Accept' => 'application/json',
-                'Content-Type' => 'application/x-www-form-urlencoded',
-            ],
-            http_build_query([
-                'client_id' => $config['client_id'],
-                'client_secret' => $config['client_secret'],
-                'code' => $code,
-                'redirect_uri' => shared_oauth_redirect_uri($provider),
-                'grant_type' => 'authorization_code',
-            ])
-        );
-        $tokenPayload = json_decode($tokenResponse['body'], true);
-        $accessToken = is_array($tokenPayload) ? (string) ($tokenPayload['access_token'] ?? '') : '';
-        if ($accessToken === '') {
-            $errorDescription = is_array($tokenPayload) ? (string) ($tokenPayload['error_description'] ?? $tokenPayload['error'] ?? '') : '';
-            throw new RuntimeException('OAuth token exchange failed.' . ($errorDescription !== '' ? ' ' . $errorDescription : ''));
+        if (!empty($_SESSION['admin_identity_id'])) {
+            header('Location: /admin');
+            exit;
+        }
+        if (!magic_link_enabled() || oauth_env('ADMIN_EMAILS') === '') {
+            header('Location: /admin/login?error=provider');
+            exit;
+        }
+        $error = $_GET['error'] ?? null;
+        $sent = isset($_GET['sent']);
+        require dirname(__DIR__, 2) . '/views/admin/magic-link-request.php';
+    }
+
+    public static function magicLinkRequest(): void
+    {
+        if (!magic_link_enabled() || oauth_env('ADMIN_EMAILS') === '') {
+            header('Location: /admin/login?error=provider');
+            exit;
         }
 
-        if ($provider === 'github') {
-            $userResponse = oauth_http_request('GET', $config['user_url'], [
-                'Accept' => 'application/vnd.github+json',
-                'Authorization' => 'Bearer ' . $accessToken,
-                'User-Agent' => 'PhpCmsAdminOAuth/1.0',
+        $subjectHash = rate_limit_subject_for_scope('admin_oauth_start');
+        $limit = rate_limit_consume('admin_oauth_start', $subjectHash);
+        if (!$limit['allowed']) {
+            audit_log_event('admin_oauth', 'admin_magic_link_request', 'throttled', [
+                'subject_hash' => $subjectHash,
+                'http_status' => 429,
+                'metadata' => ['retry_after' => $limit['retry_after']],
             ]);
-            $user = json_decode($userResponse['body'], true);
-            if (!is_array($user) || empty($user['id']) || empty($user['login'])) {
-                throw new RuntimeException('GitHub profile could not be loaded from the provider response.');
+            self::renderRateLimited((int) $limit['retry_after']);
+        }
+
+        $email = magic_link_normalize_email((string) ($_POST['email'] ?? ''));
+        if ($email === '') {
+            header('Location: /admin/auth/email?error=email');
+            exit;
+        }
+
+        // Send only to allowlisted addresses, but confirm neutrally either
+        // way so the allowlist can't be probed.
+        if (oauth_allowed_identity('email', ['email' => $email]) && !magic_link_rate_limited($email)) {
+            magic_link_issue($email, 'admin');
+        }
+        audit_log_event('admin_oauth', 'admin_magic_link_request', 'accepted', [
+            'subject_hash' => $subjectHash,
+            'http_status' => 302,
+        ]);
+
+        header('Location: /admin/auth/email?sent=1');
+        exit;
+    }
+
+    public static function magicLinkVerify(): void
+    {
+        $subjectHash = rate_limit_subject_for_scope('admin_oauth_callback');
+        $limit = rate_limit_consume('admin_oauth_callback', $subjectHash);
+        if (!$limit['allowed']) {
+            self::renderRateLimited((int) $limit['retry_after']);
+        }
+
+        $email = magic_link_consume((string) ($_GET['token'] ?? ''), 'admin');
+        if ($email === '' || !oauth_allowed_identity('email', ['email' => $email])) {
+            audit_log_event('admin_oauth', 'admin_magic_link_verify', 'denied', [
+                'subject_hash' => $subjectHash,
+                'http_status' => 302,
+            ]);
+            header('Location: /admin/login?error=denied');
+            exit;
+        }
+
+        try {
+            $profile = [
+                'provider_subject' => $email,
+                'email' => $email,
+                'display_name' => $email,
+                'avatar_url' => null,
+            ];
+            $identityId = AdminIdentity::upsertFromProfile([
+                'provider' => 'email',
+                'provider_subject' => $email,
+                'email' => $email,
+                'display_name' => $email,
+                'avatar_url' => null,
+            ]);
+            $identity = AdminIdentity::find($identityId);
+            if (!$identity) {
+                throw new RuntimeException('Identity could not be loaded after login.');
             }
 
-            $email = isset($user['email']) && $user['email'] !== '' ? (string) $user['email'] : null;
-            if ($email === null) {
-                $emailResponse = oauth_http_request('GET', $config['emails_url'], [
-                    'Accept' => 'application/vnd.github+json',
-                    'Authorization' => 'Bearer ' . $accessToken,
-                    'User-Agent' => 'PhpCmsAdminOAuth/1.0',
-                ]);
-                $emails = json_decode($emailResponse['body'], true);
-                if (is_array($emails)) {
-                    foreach ($emails as $entry) {
-                        if (!empty($entry['primary']) && !empty($entry['verified']) && !empty($entry['email'])) {
-                            $email = (string) $entry['email'];
-                            break;
-                        }
+            if (class_exists('PlatformUser')) {
+                $ownerUserId = PlatformUser::upsertOwnerFromAdminProfile('email', $profile);
+                if ($ownerUserId !== null) {
+                    $stmt = db()->prepare('SELECT * FROM users WHERE id = ? LIMIT 1');
+                    $stmt->execute([$ownerUserId]);
+                    $ownerUser = $stmt->fetch();
+                    if ($ownerUser) {
+                        user_login($ownerUser);
                     }
                 }
             }
 
-            return [
-                'provider_subject' => (string) $user['id'],
-                'login' => (string) $user['login'],
-                'email' => $email,
-                'display_name' => (string) ($user['name'] ?: $user['login']),
-                'avatar_url' => (string) ($user['avatar_url'] ?? ''),
-            ];
+            admin_login_identity($identity);
+            audit_log_event('admin_oauth', 'admin_magic_link_verify', 'success', [
+                'actor_admin_identity_id' => (int) $identity['id'],
+                'subject_hash' => $subjectHash,
+                'http_status' => 302,
+            ]);
+            header('Location: /admin');
+            exit;
+        } catch (Throwable $e) {
+            error_log('[admin-magic-link] ' . $e->getMessage());
+            audit_log_event('admin_oauth', 'admin_magic_link_verify', 'error', [
+                'subject_hash' => $subjectHash,
+                'http_status' => 302,
+                'metadata' => ['error' => $e->getMessage()],
+            ]);
+            header('Location: /admin/login?error=oauth');
+            exit;
         }
-
-        $userResponse = oauth_http_request('GET', $config['userinfo_url'], [
-            'Authorization' => 'Bearer ' . $accessToken,
-            'Accept' => 'application/json',
-        ]);
-        $user = json_decode($userResponse['body'], true);
-        if (!is_array($user) || empty($user['sub']) || empty($user['email'])) {
-            throw new RuntimeException('Google profile could not be loaded from the provider response.');
-        }
-
-        return [
-            'provider_subject' => (string) $user['sub'],
-            'email' => (string) $user['email'],
-            'display_name' => (string) ($user['name'] ?? $user['email']),
-            'avatar_url' => (string) ($user['picture'] ?? ''),
-        ];
     }
 }

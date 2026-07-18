@@ -1156,6 +1156,10 @@ function initMediaPicker() {
   const confirmPosterClearBtn = document.getElementById('mp-confirm-poster-clear-btn')
   const confirmPosterFile = document.getElementById('mp-confirm-poster-file')
   const confirmPosterStatus = document.getElementById('mp-confirm-poster-status')
+  const pickerSearchInput = document.getElementById('mp-search')
+  const pickerSortSelect = document.getElementById('mp-sort')
+  const kindFilterRow = document.getElementById('mp-kind-filter')
+  const filterCountEl = document.getElementById('mp-filter-count')
 
   function updateAltRowLabel(kind) {
     if (!altLabel) return
@@ -1284,6 +1288,9 @@ function initMediaPicker() {
     const onSelect = tabName === 'select' && !_libraryMode
     selectBtn.style.display = onSelect ? '' : 'none'
     if (altRow) altRow.hidden = !(onSelect && selectedUrl)
+    // The grid is loaded when the picker opens on Select; a picker opened on
+    // Upload/Import (e.g. + New Asset) must load it on first switch here.
+    if (tabName === 'select' && dialog.open && !_pickerBaseItems.length) loadGrid()
   }
 
   tabs.forEach(t => t.addEventListener('click', () => switchTab(t.dataset.tab)))
@@ -1369,6 +1376,20 @@ function initMediaPicker() {
     const isVideo = asset.kind === 'video' || (asset.mime_type || '').startsWith('video/')
     const isAudio = asset.kind === 'audio' || (asset.mime_type || '').startsWith('audio/')
     const isImage = asset.kind === 'image' || (asset.mime_type || '').startsWith('image/')
+    const isModel = asset.kind === 'model' || (asset.mime_type || '').startsWith('model/')
+    if (isModel) {
+      if (asset.poster_url && confirmPreviewImg) {
+        confirmPreviewImg.classList.remove('is-hidden')
+        confirmPreviewImg.src = asset.poster_url
+        confirmPreviewImg.alt = asset.alt_text || asset.title || 'Model thumbnail'
+      } else {
+        const shell = document.createElement('div')
+        shell.className = 'media-picker-video-thumb'
+        shell.textContent = '◈ 3D Model'
+        confirmPreviewHost.appendChild(shell)
+      }
+      return
+    }
     if (isVideo) {
       const video = document.createElement('video')
       video.className = 'dynamic-media-preview'
@@ -1396,15 +1417,23 @@ function initMediaPicker() {
       }
       return
     }
+    // Embeds and any other non-image kind: show the linked poster when set.
+    if (asset.poster_url && confirmPreviewImg) {
+      confirmPreviewImg.classList.remove('is-hidden')
+      confirmPreviewImg.src = asset.poster_url
+      confirmPreviewImg.alt = asset.alt_text || asset.title || 'Media thumbnail'
+      return
+    }
     confirmPreviewHost.appendChild(renderVideoThumb(null))
   }
 
   function updateConfirmPosterUi() {
     if (!confirmPosterField || !confirmPosterUrl || !draftAsset) return
-    const isVideo = draftAsset.kind === 'video' || (draftAsset.mime_type || '').startsWith('video/')
-    const isAudio = draftAsset.kind === 'audio' || (draftAsset.mime_type || '').startsWith('audio/')
-    confirmPosterField.classList.toggle('is-hidden', !isVideo && !isAudio)
-    if (!isVideo && !isAudio) return
+    // Every non-image kind (video, audio, 3D model, embed) can carry a poster.
+    const isImage = draftAsset.kind === 'image' || (draftAsset.mime_type || '').startsWith('image/')
+    const posterable = !isImage
+    confirmPosterField.classList.toggle('is-hidden', !posterable)
+    if (!posterable) return
     confirmPosterUrl.value = draftAsset.poster_url || ''
   }
 
@@ -1540,20 +1569,30 @@ function initMediaPicker() {
         media.textContent = '♪ Audio';
       }
     } else if (f.kind === 'model') {
-      media = document.createElement('div');
-      media.className = 'media-picker-video-thumb';
-      media.textContent = '◈ 3D Model';
+      if (f.poster_url) {
+        media = document.createElement('img');
+        media.src = f.poster_url;
+      } else {
+        media = document.createElement('div');
+        media.className = 'media-picker-video-thumb';
+        media.textContent = '◈ 3D Model';
+      }
     } else if (f.kind === 'iframe') {
-      media = document.createElement('div');
-      media.className = 'media-picker-iframe-thumb';
-      media.innerHTML = '&lt;/&gt; Embed';
-      media.style.display = 'flex';
-      media.style.alignItems = 'center';
-      media.style.justifyContent = 'center';
-      media.style.height = '100%';
-      media.style.background = 'var(--paper)';
-      media.style.color = 'var(--orange)';
-      media.style.fontWeight = 'bold';
+      if (f.poster_url) {
+        media = document.createElement('img');
+        media.src = f.poster_url;
+      } else {
+        media = document.createElement('div');
+        media.className = 'media-picker-iframe-thumb';
+        media.innerHTML = '&lt;/&gt; Embed';
+        media.style.display = 'flex';
+        media.style.alignItems = 'center';
+        media.style.justifyContent = 'center';
+        media.style.height = '100%';
+        media.style.background = 'var(--paper)';
+        media.style.color = 'var(--orange)';
+        media.style.fontWeight = 'bold';
+      }
     } else {
       media = document.createElement('img');
       media.src = f.legacy_url || `/image/${f.id}`;
@@ -1604,6 +1643,7 @@ function initMediaPicker() {
 
   const PICKER_PAGE_SIZE = 48
   let _pickerAllItems = [], _pickerShown = 0, _pickerPreselectUrl = null
+  let _pickerBaseItems = [], _pickerKindFilter = 'all'
 
   // "Load more" button sits below the grid, never inside it
   const loadMoreBtn = document.createElement('button')
@@ -1634,15 +1674,91 @@ function initMediaPicker() {
 
   loadMoreBtn.addEventListener('click', renderPickerBatch)
 
+  // Label order mirrors the library page's filter row.
+  const PICKER_KIND_LABELS = { image: 'Images', video: 'Videos', audio: 'Audio', iframe: 'Embeds', model: 'Models' }
+
+  function updatePickerKindChips() {
+    if (!kindFilterRow) return
+    kindFilterRow.innerHTML = ''
+    _pickerKindFilter = 'all'
+    // The chip row mirrors the library page's kind buttons: a fixed set per
+    // mode, shown even when a kind currently has no items. Single-kind modes
+    // (image/video/audio) and poster selection stay chipless — the mode
+    // already restricts what is selectable.
+    let kinds = null
+    if (!posterSelectionMode) {
+      if (_libraryMode || currentMode === 'art_media') {
+        kinds = ['image', 'video', 'audio', 'iframe', 'model']
+      } else if (currentMode === 'media') {
+        kinds = ['image', 'video', 'iframe']
+        if (fileInput?.dataset.mediaAudio === '1') kinds.push('audio')
+      }
+    }
+    const show = kinds !== null
+    kindFilterRow.classList.toggle('is-hidden', !show)
+    if (!show) return
+    const makeChip = (value, label) => {
+      const btn = document.createElement('button')
+      btn.type = 'button'
+      btn.className = 'admin-tab' + (value === 'all' ? ' active' : '')
+      btn.dataset.kind = value
+      btn.textContent = label
+      btn.addEventListener('click', () => {
+        _pickerKindFilter = value
+        kindFilterRow.querySelectorAll('.admin-tab').forEach(b => b.classList.toggle('active', b === btn))
+        applyPickerFilters()
+      })
+      return btn
+    }
+    kindFilterRow.appendChild(makeChip('all', 'All'))
+    Object.keys(PICKER_KIND_LABELS).filter(k => kinds.includes(k)).forEach(k => kindFilterRow.appendChild(makeChip(k, PICKER_KIND_LABELS[k])))
+  }
+
+  function applyPickerFilters() {
+    grid.innerHTML = ''
+    _pickerShown = 0
+    loadMoreBtn.style.display = 'none'
+    if (!_pickerBaseItems.length) {
+      grid.innerHTML = `<p class="media-picker-empty">${pickerModeConfig().empty}</p>`
+      if (filterCountEl) filterCountEl.textContent = ''
+      return
+    }
+    const helper = window.AHMediaFilter
+    const query = pickerSearchInput?.value || ''
+    let items = _pickerBaseItems.filter(f => (_pickerKindFilter === 'all' || f.kind === _pickerKindFilter) && (!helper || helper.matches(f, query)))
+    if (helper) items = items.slice().sort(helper.comparator(pickerSortSelect?.value || 'newest'))
+    _pickerAllItems = items
+    if (filterCountEl) filterCountEl.textContent = `Showing ${items.length} of ${_pickerBaseItems.length} assets`
+    if (!items.length) {
+      grid.innerHTML = '<p class="media-picker-empty">No media match your search.</p>'
+      return
+    }
+    renderPickerBatch()
+  }
+
+  if (pickerSearchInput) {
+    const onPickerSearch = window.AHMediaFilter ? window.AHMediaFilter.debounce(applyPickerFilters, 200) : applyPickerFilters
+    pickerSearchInput.addEventListener('input', onPickerSearch)
+  }
+  pickerSortSelect?.addEventListener('change', applyPickerFilters)
+
   async function loadGrid(preselectUrl = null) {
-    grid.innerHTML = ''; _pickerAllItems = []; _pickerShown = 0; _pickerPreselectUrl = preselectUrl
+    grid.innerHTML = ''; _pickerBaseItems = []; _pickerAllItems = []; _pickerShown = 0; _pickerPreselectUrl = preselectUrl
     loadMoreBtn.style.display = 'none'
     selectedUrl = null; selectedAsset = null; selectBtn.disabled = true
     if (altRow) altRow.hidden = true
+    // Client-side search/sort state starts fresh whenever the grid reloads
+    // (open, tab switch, poster selection) so preselection behaves as before.
+    if (pickerSearchInput) pickerSearchInput.value = ''
+    if (pickerSortSelect) pickerSortSelect.value = 'newest'
     try {
       const res = await fetch('/admin/media/library')
       const files = await res.json()
-      _pickerAllItems = files.filter(f => {
+      _pickerBaseItems = files.filter(f => {
+        // Library-management mode (+ New Asset on /admin/media) browses the
+        // full library, exactly like the library grid behind it — except
+        // while picking a poster, which stays image-only.
+        if (_libraryMode && !posterSelectionMode) return true
         if (currentMode === 'video') return f.kind === 'video'
         if (currentMode === 'audio') return f.kind === 'audio'
         if (currentMode === 'media') {
@@ -1655,9 +1771,9 @@ function initMediaPicker() {
         // there's no need to pre-filter here.
         if (currentMode === 'art_media') return true
         return f.kind === 'image'
-      })
-      if (!_pickerAllItems.length) { grid.innerHTML = `<p class="media-picker-empty">${pickerModeConfig().empty}</p>`; return }
-      renderPickerBatch()
+      }).map((f, i) => ({ ...f, _idx: i }))
+      updatePickerKindChips()
+      applyPickerFilters()
     } catch { grid.innerHTML = '<p class="media-picker-empty">Failed to load media library.</p>' }
   }
 

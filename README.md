@@ -406,17 +406,35 @@ configuration-error behavior before setup is complete. Managed pages,
 `/portfolio/*`, `/blog/*`, public APIs, and `/admin/*` require a configured
 database.
 
-Admin sign-in also requires at least one OAuth provider to be configured:
+Admin sign-in also requires at least one sign-in method to be configured.
+Each method activates itself when its env values are present and stays
+invisible when they are blank — the credential is the toggle; there is no
+separate flag to flip:
 
 - GitHub: `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, and
   `ADMIN_GITHUB_USERNAMES`
 - Google: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and
   `ADMIN_GOOGLE_EMAILS`
+- Microsoft: `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`, and
+  `ADMIN_MICROSOFT_EMAILS`
+- Facebook: `FACEBOOK_CLIENT_ID`, `FACEBOOK_CLIENT_SECRET`, and
+  `ADMIN_FACEBOOK_IDS` (numeric app-scoped user ids; the Meta app must be
+  in Live mode for the general public to sign in)
+- Email magic-link: the contact form's `SMTP_*` values plus `ADMIN_EMAILS`
+  (no third-party app needed)
 
-Register exactly one callback URL per provider:
+The same providers power public member sign-in (`/user/login`); the
+`ADMIN_*` allowlists only gate who can reach `/admin`, so a provider can be
+enabled for members without granting anyone admin access through it.
+`php scripts/check_oauth_setup.php` prints each provider's enabled/disabled
+state and expected callback URLs.
+
+Register exactly one callback URL per OAuth provider:
 
 - GitHub: `https://yourdomain.com/auth/github/callback`
 - Google: `https://yourdomain.com/auth/google/callback`
+- Microsoft: `https://yourdomain.com/auth/microsoft/callback`
+- Facebook: `https://yourdomain.com/auth/facebook/callback`
 
 Feature-gated values are only required when you enable those features:
 `AI_SETTINGS_ENCRYPTION_KEY` is required before storing AI keys, platform
@@ -539,6 +557,17 @@ The repository includes `.github/workflows/scheduled-tasks.yml`, which runs ever
 - **Post publishing** — calls `POST $PUBLIC_SITE_URL/api/cron/publish-posts` on the PHP app to transition any scheduled posts whose `scheduled_at` time has passed.
 
 Both jobs can also be triggered manually from the Actions tab via `workflow_dispatch`.
+
+Both jobs call the endpoint through the shared composite action
+`.github/actions/curl-cron/action.yml`, which retries up to 5 times with
+exponential backoff (~15s → 2min), a 15-second connect timeout, and forced
+IPv4. This exists because shared hosts (observed with Hostinger) sometimes
+throttle traffic from datacenter IP ranges — which GitHub's runners are —
+so a single connect attempt can hang and fail even while the site is
+serving normal visitors fine. Spaced retries usually outlast the throttle
+window; if a run still fails after all attempts, the per-attempt log lines
+show whether the block was sustained (the signal that a host-side cron
+would be needed instead).
 
 ### Required GitHub repository secrets
 

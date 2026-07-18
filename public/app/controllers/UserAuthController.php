@@ -40,7 +40,7 @@ class UserAuthController
             'state' => $state,
         ];
 
-        if ($provider === 'google') {
+        if (!empty($config['select_account'])) {
             $params['access_type'] = 'online';
             $params['prompt'] = 'select_account';
         }
@@ -73,7 +73,7 @@ class UserAuthController
         }
 
         try {
-            $profile = self::fetchOauthProfile($provider, $code);
+            $profile = oauth_fetch_profile($provider, $code, 'PhpCmsOAuth/1.0');
             $user = self::upsertMember($provider, $profile);
             user_login($user);
 
@@ -132,9 +132,11 @@ class UserAuthController
 
         if ($accountRow) {
             $userId = (string) $accountRow['user_id'];
-            // Refresh display info
+            // Refresh display info; empty provider values must not clobber
+            // what is already stored.
             $stmt2 = db()->prepare(
-                'UPDATE users SET name = ?, image = ?, last_login_at = NOW(), updated_at = NOW() WHERE id = ?'
+                "UPDATE users SET name = COALESCE(NULLIF(?, ''), name), image = COALESCE(NULLIF(?, ''), image),
+                 last_login_at = NOW(), updated_at = NOW() WHERE id = ?"
             );
             $stmt2->execute([
                 $profile['display_name'] ?? null,
@@ -161,7 +163,7 @@ class UserAuthController
                 );
                 $stmt4->execute([
                     $userId,
-                    $profile['display_name'] ?? 'Member',
+                    ($profile['display_name'] ?? '') !== '' ? $profile['display_name'] : 'Member',
                     $username,
                     $email !== '' ? $email : null,
                     $profile['avatar_url'] ?? null,
@@ -256,6 +258,9 @@ class UserAuthController
         $base = $provider === 'github'
             ? (string) ($profile['login'] ?? $profile['display_name'] ?? '')
             : (string) ($profile['display_name'] ?? '');
+        if (trim($base) === '' && !empty($profile['email'])) {
+            $base = (string) strstr((string) $profile['email'], '@', true);
+        }
         $base = strtolower(trim((string) preg_replace('/[^a-zA-Z0-9_]+/', '-', $base), '-'));
         $base = $base !== '' ? substr($base, 0, 60) : 'user';
 
@@ -273,96 +278,106 @@ class UserAuthController
         return $candidate;
     }
 
-    private static function fetchOauthProfile(string $provider, string $code): array
-    {
-        $config = oauth_provider_config($provider);
-        $tokenResponse = oauth_http_request(
-            'POST',
-            $config['token_url'],
-            [
-                'Accept' => 'application/json',
-                'Content-Type' => 'application/x-www-form-urlencoded',
-            ],
-            http_build_query([
-                'client_id' => $config['client_id'],
-                'client_secret' => $config['client_secret'],
-                'code' => $code,
-                'redirect_uri' => shared_oauth_redirect_uri($provider),
-                'grant_type' => 'authorization_code',
-            ])
-        );
-        $tokenPayload = json_decode($tokenResponse['body'], true);
-        $accessToken = is_array($tokenPayload) ? (string) ($tokenPayload['access_token'] ?? '') : '';
-        if ($accessToken === '') {
-            $err = is_array($tokenPayload) ? (string) ($tokenPayload['error_description'] ?? $tokenPayload['error'] ?? '') : '';
-            throw new RuntimeException('OAuth token exchange failed.' . ($err !== '' ? ' ' . $err : ''));
-        }
-
-        if ($provider === 'github') {
-            $userResponse = oauth_http_request('GET', $config['user_url'], [
-                'Accept' => 'application/vnd.github+json',
-                'Authorization' => 'Bearer ' . $accessToken,
-                'User-Agent' => 'PhpCmsOAuth/1.0',
-            ]);
-            $user = json_decode($userResponse['body'], true);
-            if (!is_array($user) || empty($user['id']) || empty($user['login'])) {
-                throw new RuntimeException('GitHub profile could not be loaded.');
-            }
-
-            $email = isset($user['email']) && $user['email'] !== '' ? (string) $user['email'] : null;
-            if ($email === null) {
-                $emailResponse = oauth_http_request('GET', $config['emails_url'], [
-                    'Accept' => 'application/vnd.github+json',
-                    'Authorization' => 'Bearer ' . $accessToken,
-                    'User-Agent' => 'PhpCmsOAuth/1.0',
-                ]);
-                $emails = json_decode($emailResponse['body'], true);
-                if (is_array($emails)) {
-                    foreach ($emails as $entry) {
-                        if (!empty($entry['primary']) && !empty($entry['verified']) && !empty($entry['email'])) {
-                            $email = (string) $entry['email'];
-                            break;
-                        }
-                    }
-                }
-            }
-
-            return [
-                'provider_subject' => (string) $user['id'],
-                'login' => (string) $user['login'],
-                'email' => $email,
-                'display_name' => (string) ($user['name'] ?: $user['login']),
-                'avatar_url' => (string) ($user['avatar_url'] ?? ''),
-            ];
-        }
-
-        $userResponse = oauth_http_request('GET', $config['userinfo_url'], [
-            'Authorization' => 'Bearer ' . $accessToken,
-            'Accept' => 'application/json',
-        ]);
-        $user = json_decode($userResponse['body'], true);
-        if (!is_array($user) || empty($user['sub']) || empty($user['email'])) {
-            throw new RuntimeException('Google profile could not be loaded.');
-        }
-
-        return [
-            'provider_subject' => (string) $user['sub'],
-            'email' => (string) $user['email'],
-            'display_name' => (string) ($user['name'] ?? $user['email']),
-            'avatar_url' => (string) ($user['picture'] ?? ''),
-        ];
-    }
-
     private static function requestedProvider(): string
     {
         $path = parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?: '';
-        if (preg_match('#/user/auth/(github|google)/#', $path, $matches)) {
-            return $matches[1];
-        }
-        if (preg_match('#/user/auth/(github|google)/start#', $path, $matches)) {
+        if (preg_match('#/user/auth/([a-z]+)/#', $path, $matches)
+            && array_key_exists($matches[1], oauth_provider_registry())) {
             return $matches[1];
         }
         throw new InvalidArgumentException('Unknown OAuth provider.');
+    }
+
+    // ── Email magic-link sign-in ────────────────────────────────────────────
+
+    public static function magicLinkForm(): void
+    {
+        if (user_logged_in()) {
+            header('Location: /user/' . urlencode($_SESSION['user_username'] ?? ''));
+            exit;
+        }
+        if (!magic_link_enabled()) {
+            header('Location: /user/login?error=provider');
+            exit;
+        }
+        $error = $_GET['error'] ?? null;
+        $sent = isset($_GET['sent']);
+        $redirect = trim((string) ($_GET['redirect'] ?? ''));
+        require dirname(__DIR__) . '/views/user/magic-link-request.php';
+    }
+
+    public static function magicLinkRequest(): void
+    {
+        if (!magic_link_enabled()) {
+            header('Location: /user/login?error=provider');
+            exit;
+        }
+
+        $email = magic_link_normalize_email((string) ($_POST['email'] ?? ''));
+        $redirect = trim((string) ($_POST['redirect'] ?? ''));
+        $redirectParam = $redirect !== '' ? '&redirect=' . urlencode($redirect) : '';
+
+        if ($email === '') {
+            header('Location: /user/auth/email?error=email' . $redirectParam);
+            exit;
+        }
+
+        if (!magic_link_rate_limited($email)) {
+            $_SESSION['user_magic_link_redirect'] = $redirect;
+            magic_link_issue($email, 'member');
+        }
+
+        // Always confirm neutrally — never reveal whether the address exists
+        // or whether a message was actually sent.
+        header('Location: /user/auth/email?sent=1' . $redirectParam);
+        exit;
+    }
+
+    public static function magicLinkVerify(): void
+    {
+        $email = magic_link_consume((string) ($_GET['token'] ?? ''), 'member');
+        if ($email === '') {
+            header('Location: /user/auth/email?error=link');
+            exit;
+        }
+
+        $redirect = (string) ($_SESSION['user_magic_link_redirect'] ?? '');
+        unset($_SESSION['user_magic_link_redirect']);
+
+        try {
+            $profile = [
+                'provider_subject' => $email,
+                'email' => $email,
+                'display_name' => $email,
+                'avatar_url' => null,
+            ];
+            $user = self::upsertMember('email', $profile);
+            user_login($user);
+
+            // Same admin-session mirror as the OAuth callback: only addresses
+            // already on the ADMIN_EMAILS allowlist gain the admin session.
+            if (class_exists('AdminIdentity') && oauth_allowed_identity('email', $profile)) {
+                $identityId = AdminIdentity::upsertFromProfile([
+                    'provider' => 'email',
+                    'provider_subject' => $email,
+                    'email' => $email,
+                    'display_name' => $email,
+                    'avatar_url' => null,
+                ]);
+                $identity = AdminIdentity::find($identityId);
+                if ($identity) {
+                    admin_login_identity($identity);
+                }
+            }
+
+            $dest = ($redirect !== '' && str_starts_with($redirect, '/')) ? $redirect : '/user/' . urlencode($user['username'] ?? '');
+            header('Location: ' . $dest);
+            exit;
+        } catch (Throwable $e) {
+            error_log('[user-magic-link] ' . $e->getMessage());
+            header('Location: /user/auth/email?error=link');
+            exit;
+        }
     }
 
     private static function uuid(): string

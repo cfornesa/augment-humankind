@@ -500,6 +500,17 @@ function manifest(): array
             ensureTablesFromSql($ctx, 'docs/migrations/2026-07-13-art-piece-version-media-refs.sql');
         }],
 
+        ['auth provider expansion (2026-07-17)', function (Ctx $ctx): void {
+            // Mirrors docs/migrations/2026-07-17-auth-provider-expansion.sql.
+            ensureEnumValue(
+                $ctx,
+                'admin_identities',
+                'provider',
+                ['microsoft', 'facebook', 'email'],
+                "ENUM('github', 'google', 'microsoft', 'facebook', 'email') NOT NULL"
+            );
+        }],
+
         ['null fabricated sonic params (2026-07-11)', function (Ctx $ctx): void {
             // See docs/migrations/2026-07-11-null-fabricated-sonic-params.sql:
             // a since-fixed admin-save bug materialized {enabled, extras}

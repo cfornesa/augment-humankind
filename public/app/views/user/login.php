@@ -23,7 +23,7 @@ $redirectParam = $redirect !== '' ? '?redirect=' . urlencode($redirect) : '';
     <main id="main">
         <div class="managed-section" style="max-width: 480px; margin: 4rem auto; padding: 2.5rem; border: 3px solid var(--line); box-shadow: 6px 6px 0 var(--line);">
             <h1 style="margin: 0 0 0.5rem; font-size: 1.6rem;">Sign In</h1>
-            <p style="margin: 0 0 2rem; color: var(--ink-soft);">Sign in with GitHub or Google to leave comments and manage your profile.</p>
+            <p style="margin: 0 0 2rem; color: var(--ink-soft);">Sign in to leave comments and manage your profile.</p>
 
             <?php if ($error): ?>
                 <p role="alert" style="margin: 0 0 1.5rem; padding: 0.75rem 1rem; border: 2px solid var(--line); background: #fce4e4; color: #7a1010;">
@@ -36,18 +36,25 @@ $redirectParam = $redirect !== '' ? '?redirect=' . urlencode($redirect) : '';
             <?php endif ?>
 
             <div style="display: flex; flex-direction: column; gap: 0.75rem;">
-                <a href="/user/auth/github/start<?= $redirectParam ?>"
-                   style="display: block; padding: 0.85rem 1.25rem; border: 3px solid var(--line); box-shadow: 4px 4px 0 var(--line); background: var(--paper); font-weight: 700; text-decoration: none; color: var(--ink); text-align: center; transition: transform 0.1s, box-shadow 0.1s;"
-                   onmouseover="this.style.transform='translate(2px,2px)';this.style.boxShadow='2px 2px 0 var(--line)'"
-                   onmouseout="this.style.transform='';this.style.boxShadow='4px 4px 0 var(--line)'">
-                    Continue with GitHub
-                </a>
-                <a href="/user/auth/google/start<?= $redirectParam ?>"
-                   style="display: block; padding: 0.85rem 1.25rem; border: 3px solid var(--line); box-shadow: 4px 4px 0 var(--line); background: var(--paper); font-weight: 700; text-decoration: none; color: var(--ink); text-align: center; transition: transform 0.1s, box-shadow 0.1s;"
-                   onmouseover="this.style.transform='translate(2px,2px)';this.style.boxShadow='2px 2px 0 var(--line)'"
-                   onmouseout="this.style.transform='';this.style.boxShadow='4px 4px 0 var(--line)'">
-                    Continue with Google
-                </a>
+                <?php foreach (oauth_enabled_providers() as $providerSlug => $providerConfig): ?>
+                    <a href="/user/auth/<?= e($providerSlug) ?>/start<?= $redirectParam ?>"
+                       style="display: block; padding: 0.85rem 1.25rem; border: 3px solid var(--line); box-shadow: 4px 4px 0 var(--line); background: var(--paper); font-weight: 700; text-decoration: none; color: var(--ink); text-align: center; transition: transform 0.1s, box-shadow 0.1s;"
+                       onmouseover="this.style.transform='translate(2px,2px)';this.style.boxShadow='2px 2px 0 var(--line)'"
+                       onmouseout="this.style.transform='';this.style.boxShadow='4px 4px 0 var(--line)'">
+                        Continue with <?= e($providerConfig['label']) ?>
+                    </a>
+                <?php endforeach ?>
+                <?php if (magic_link_enabled()): ?>
+                    <a href="/user/auth/email<?= $redirectParam ?>"
+                       style="display: block; padding: 0.85rem 1.25rem; border: 3px solid var(--line); box-shadow: 4px 4px 0 var(--line); background: var(--paper); font-weight: 700; text-decoration: none; color: var(--ink); text-align: center; transition: transform 0.1s, box-shadow 0.1s;"
+                       onmouseover="this.style.transform='translate(2px,2px)';this.style.boxShadow='2px 2px 0 var(--line)'"
+                       onmouseout="this.style.transform='';this.style.boxShadow='4px 4px 0 var(--line)'">
+                        Continue with Email
+                    </a>
+                <?php endif ?>
+                <?php if (oauth_enabled_providers() === [] && !magic_link_enabled()): ?>
+                    <p style="margin: 0; color: var(--ink-soft);">No sign-in providers are configured yet.</p>
+                <?php endif ?>
             </div>
 
             <p style="margin: 2rem 0 0; font-size: 0.85rem; color: var(--ink-soft);">

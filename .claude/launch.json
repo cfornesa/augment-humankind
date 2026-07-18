@@ -7,6 +7,21 @@
       "runtimeArgs": ["-S", "127.0.0.1:8080", "-t", "public", "public/index.php"],
       "port": 8080,
       "autoPort": false
+    },
+    {
+      "name": "PHP Dev Server (scratch DB)",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "DB_HOST=127.0.0.1",
+        "DB_PORT=3306",
+        "DB_NAME=ah_scratch_media",
+        "DB_USER=ah_scratch",
+        "DB_PASS=scratchpw123",
+        "ADMIN_EMAILS=admin@example.test",
+        "php", "-S", "127.0.0.1:8081", "-t", "public", "public/index.php"
+      ],
+      "port": 8081,
+      "autoPort": false
     }
   ]
 }

@@ -23,15 +23,13 @@ class MediaAdminController
     {
         $id = (int) $file['id'];
         $mime = (string) ($file['mime_type'] ?? '');
-        $isVideo = str_starts_with($mime, 'video/');
-        $isAudio = str_starts_with($mime, 'audio/');
-        $isHtml = $mime === 'text/html' || str_starts_with($mime, 'iframe');
-        $isModel = str_starts_with($mime, 'model/');
-        $posterUrl = ($isVideo || $isAudio) ? self::nativePosterUrl($file) : null;
+        $kind = media_kind_from_mime($mime);
+        $hasPoster = media_kind_can_have_poster($mime);
+        $posterUrl = $hasPoster ? self::nativePosterUrl($file) : null;
 
         return $file + [
             'source' => 'file',
-            'preview' => ($isVideo || $isAudio) ? $posterUrl : ($isHtml || $isModel ? null : '/image/' . $id),
+            'preview' => $hasPoster ? $posterUrl : '/image/' . $id,
             'direct_url' => '/media/' . $id,
             'label' => trim((string) ($file['title'] ?? '')) !== '' ? (string) $file['title'] : ('Asset #' . $id),
             'alt_text_supported' => MediaFile::supportsAltText(),
@@ -45,17 +43,7 @@ class MediaAdminController
     private static function nativeLibraryItem(array $file): array
     {
         $mime = (string) ($file['mime_type'] ?? '');
-        if (str_starts_with($mime, 'video/')) {
-            $kind = 'video';
-        } elseif (str_starts_with($mime, 'audio/')) {
-            $kind = 'audio';
-        } elseif ($mime === 'text/html' || str_starts_with($mime, 'iframe')) {
-            $kind = 'iframe';
-        } elseif (str_starts_with($mime, 'model/')) {
-            $kind = 'model';
-        } else {
-            $kind = 'image';
-        }
+        $kind = media_kind_from_mime($mime);
 
         return $file + [
             'kind' => $kind,
@@ -239,7 +227,7 @@ class MediaAdminController
         $posterMediaId = (int) ($_POST['poster_media_file_id'] ?? 0);
         $posterMediaId = $posterMediaId > 0 ? $posterMediaId : null;
         $rowMime = (string) ($row['mime_type'] ?? '');
-        if (str_starts_with($rowMime, 'video/') || str_starts_with($rowMime, 'audio/')) {
+        if (media_kind_can_have_poster($rowMime)) {
             if ($posterMediaId !== null && !MediaFile::supportsPosterMediaFileId()) {
                 echo json_encode(['ok' => false, 'error' => 'Posters aren\'t supported until the media schema migration is applied.']);
                 exit;
@@ -392,7 +380,7 @@ class MediaAdminController
             exit;
         }
         $rowMime = (string) ($row['mime_type'] ?? '');
-        if (str_starts_with($rowMime, 'video/') || str_starts_with($rowMime, 'audio/')) {
+        if (media_kind_can_have_poster($rowMime)) {
             if ($posterMediaId !== null && !MediaFile::supportsPosterMediaFileId()) {
                 if (self::wantsJson()) {
                     header('Content-Type: application/json');

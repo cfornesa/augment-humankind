@@ -35,13 +35,31 @@ ob_start();
         </div>
 
         <?php if (!empty($files)): ?>
+            <div class="media-library-toolbar">
+                <div class="field media-library-search-field">
+                    <label for="media-search">Search</label>
+                    <input type="search" id="media-search" placeholder="Title, filename, alt text, or ID" autocomplete="off">
+                </div>
+                <div class="field media-library-sort-field">
+                    <label for="media-sort">Sort by</label>
+                    <select id="media-sort">
+                        <option value="newest" selected>Newest first</option>
+                        <option value="oldest">Oldest first</option>
+                        <option value="title">Title A–Z</option>
+                        <option value="type">File type</option>
+                        <option value="size">Largest first</option>
+                    </select>
+                </div>
+            </div>
             <div class="admin-tabs media-type-filter" role="group" aria-label="Filter media by type">
                 <button type="button" class="admin-tab active" data-media-filter="all">All</button>
                 <button type="button" class="admin-tab" data-media-filter="image">Images</button>
                 <button type="button" class="admin-tab" data-media-filter="video">Videos</button>
+                <button type="button" class="admin-tab" data-media-filter="audio">Audio</button>
                 <button type="button" class="admin-tab" data-media-filter="embed">Embeds</button>
                 <button type="button" class="admin-tab" data-media-filter="model">Models</button>
             </div>
+            <p class="admin-hint" id="media-filter-count" aria-live="polite"></p>
         <?php endif ?>
 
         <?php if (empty($files)): ?>
@@ -51,11 +69,9 @@ ob_start();
                 <?php foreach ($files as $f): ?>
                     <?php
                         $cardMime = (string) ($f['mime_type'] ?? '');
-                        $cardKind = str_starts_with($cardMime, 'video/')
-                            ? 'video'
-                            : (str_starts_with($cardMime, 'model/')
-                                ? 'model'
-                                : ((($cardMime === 'text/html') || str_starts_with($cardMime, 'iframe')) ? 'embed' : 'image'));
+                        $cardKind = media_kind_from_mime($cardMime);
+                        // The filter buttons use "embed" as the visitor-facing word.
+                        $cardKind = $cardKind === 'iframe' ? 'embed' : $cardKind;
                     ?>
                     <button
                         type="button"
@@ -82,7 +98,7 @@ ob_start();
                             <?php if (($f['status'] ?? 'ready') === 'draft'): ?>
                                 <span class="media-card-badge">Draft</span>
                             <?php endif ?>
-                            <?php if (str_starts_with((string) ($f['mime_type'] ?? ''), 'video/')): ?>
+                            <?php if ($cardKind === 'video'): ?>
                                 <?php if (!empty($f['poster_url'])): ?>
                                     <img
                                         src="<?= htmlspecialchars((string) $f['poster_url']) ?>"
@@ -93,10 +109,21 @@ ob_start();
                                 <?php else: ?>
                                     <span class="media-thumb-video-empty">No poster</span>
                                 <?php endif ?>
-                            <?php elseif (($f['mime_type'] ?? '') === 'text/html' || str_starts_with((string) ($f['mime_type'] ?? ''), 'iframe')): ?>
-                                <span class="media-thumb-iframe">&lt;/&gt; Embed</span>
-                            <?php elseif (str_starts_with((string) ($f['mime_type'] ?? ''), 'model/')): ?>
-                                <span class="media-thumb-model">◈ 3D Model</span>
+                            <?php elseif ($cardKind === 'embed' || $cardKind === 'model' || $cardKind === 'audio'): ?>
+                                <?php if (!empty($f['poster_url'])): ?>
+                                    <img
+                                        src="<?= htmlspecialchars((string) $f['poster_url']) ?>"
+                                        alt=""
+                                        loading="lazy"
+                                        onerror="this.parentElement.classList.add('media-thumb-missing')"
+                                    >
+                                <?php elseif ($cardKind === 'embed'): ?>
+                                    <span class="media-thumb-iframe">&lt;/&gt; Embed</span>
+                                <?php elseif ($cardKind === 'model'): ?>
+                                    <span class="media-thumb-model">◈ 3D Model</span>
+                                <?php else: ?>
+                                    <span class="media-thumb-audio">♪ Audio</span>
+                                <?php endif ?>
                             <?php else: ?>
                                 <img
                                     src="<?= htmlspecialchars((string) $f['preview']) ?>"
@@ -195,12 +222,14 @@ ob_start();
                     </div>
 
                     <div class="field is-hidden" id="media-asset-poster-field">
-                        <label>Video Poster Image <span class="form-hint">(optional)</span></label>
+                        <label>Poster / Thumbnail Image <span class="form-hint">(optional)</span></label>
                         <div class="media-code-input-wrap">
                             <input type="text" id="media-asset-poster-url" readonly placeholder="No poster selected">
                             <button type="button" class="admin-btn admin-btn-ghost" id="media-asset-poster-choose-btn">Choose Poster</button>
                         </div>
                         <div class="media-picker-panel-actions">
+                            <label class="admin-btn admin-btn-ghost" for="media-asset-poster-file">Upload Poster</label>
+                            <input type="file" id="media-asset-poster-file" accept="image/*" class="is-hidden">
                             <button type="button" class="admin-btn admin-btn-ghost" id="media-asset-poster-clear-btn">Clear Poster</button>
                         </div>
                         <p class="media-picker-status" id="media-asset-poster-status" aria-live="polite"></p>
@@ -234,15 +263,59 @@ ob_start();
 document.addEventListener('DOMContentLoaded', () => {
     const cards = Array.from(document.querySelectorAll('.media-card'));
     const filterBtns = Array.from(document.querySelectorAll('[data-media-filter]'));
+    const searchInput = document.getElementById('media-search');
+    const sortSelect = document.getElementById('media-sort');
+    const filterCount = document.getElementById('media-filter-count');
+    const mediaGrid = document.querySelector('.media-grid');
+    let activeKindFilter = 'all';
+
+    function applyFilters() {
+        const query = searchInput?.value || '';
+        const helper = window.AHMediaFilter;
+        // Rebuilt on every pass so edits made in the asset modal (title,
+        // alt text) are searchable without a reload.
+        const cardItems = cards.filter(card => card.isConnected).map((card, index) => ({
+            card,
+            _idx: index,
+            id: card.dataset.id || '',
+            title: card.dataset.title || '',
+            originalName: card.dataset.originalName || '',
+            altText: card.dataset.altText || '',
+            mime: card.dataset.mime || '',
+            date: card.dataset.date || '',
+            size: Number(card.dataset.size || 0),
+        }));
+        let visible = cardItems.filter(item => {
+            const kindOk = activeKindFilter === 'all' || item.card.dataset.kind === activeKindFilter;
+            const queryOk = !helper || helper.matches(item, query);
+            return kindOk && queryOk;
+        });
+        if (helper) {
+            visible = visible.slice().sort(helper.comparator(sortSelect?.value || 'newest'));
+        }
+        const visibleSet = new Set(visible.map(item => item.card));
+        cardItems.forEach(item => item.card.classList.toggle('is-hidden', !visibleSet.has(item.card)));
+        if (mediaGrid) {
+            visible.forEach(item => mediaGrid.appendChild(item.card));
+        }
+        if (filterCount) {
+            filterCount.textContent = `Showing ${visible.length} of ${cardItems.length} assets`;
+        }
+    }
+
     filterBtns.forEach(btn => {
         btn.addEventListener('click', () => {
-            const filter = btn.dataset.mediaFilter;
+            activeKindFilter = btn.dataset.mediaFilter;
             filterBtns.forEach(b => b.classList.toggle('active', b === btn));
-            cards.forEach(card => {
-                card.classList.toggle('is-hidden', filter !== 'all' && card.dataset.kind !== filter);
-            });
+            applyFilters();
         });
     });
+    if (searchInput) {
+        const onSearch = window.AHMediaFilter ? window.AHMediaFilter.debounce(applyFilters, 200) : applyFilters;
+        searchInput.addEventListener('input', onSearch);
+    }
+    sortSelect?.addEventListener('change', applyFilters);
+    applyFilters();
 
     const modal = document.getElementById('media-asset-modal');
     const modalForm = document.getElementById('media-asset-form');
@@ -290,7 +363,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function clearPreview() {
-        previewHost.querySelectorAll('video.dynamic-media-preview, iframe.dynamic-media-preview, .media-thumb-video-empty, .media-thumb-model').forEach(node => node.remove());
+        previewHost.querySelectorAll('video.dynamic-media-preview, audio.dynamic-media-preview, iframe.dynamic-media-preview, .media-thumb-video-empty, .media-thumb-model, .media-thumb-audio').forEach(node => node.remove());
         previewImg.classList.add('is-hidden');
         previewImg.removeAttribute('src');
         previewImg.alt = '';
@@ -310,10 +383,23 @@ document.addEventListener('DOMContentLoaded', () => {
         return label;
     }
 
+    function createAudioThumb() {
+        const label = document.createElement('span');
+        label.className = 'media-thumb-audio';
+        label.textContent = '♪ Audio';
+        return label;
+    }
+
+    // Every non-image upload (video, audio, 3D model, embed) can carry an
+    // image poster/thumbnail.
+    function supportsPoster(mime) {
+        return /^(video|audio|model)\//.test(mime || '') || mime === 'text/html' || (mime || '').startsWith('iframe');
+    }
+
     function updatePosterField(card) {
-        const isNativeVideo = card?.dataset.source !== 'asset' && (card?.dataset.mime || '').startsWith('video/');
-        posterField.classList.toggle('is-hidden', !isNativeVideo);
-        if (!isNativeVideo) {
+        const posterable = card?.dataset.source !== 'asset' && supportsPoster(card?.dataset.mime);
+        posterField.classList.toggle('is-hidden', !posterable);
+        if (!posterable) {
             posterUrlInput.value = '';
             posterStatus.textContent = '';
             return;
@@ -355,15 +441,33 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         if (mime === 'text/html' || mime.startsWith('iframe')) {
-            const label = document.createElement('span');
-            label.className = 'media-thumb-iframe';
-            label.textContent = '</> Embed';
-            thumb.appendChild(label);
+            if (card.dataset.posterUrl) {
+                const img = document.createElement('img');
+                img.src = card.dataset.posterUrl;
+                img.alt = '';
+                img.loading = 'lazy';
+                img.onerror = () => thumb.classList.add('media-thumb-missing');
+                thumb.appendChild(img);
+            } else {
+                const label = document.createElement('span');
+                label.className = 'media-thumb-iframe';
+                label.textContent = '</> Embed';
+                thumb.appendChild(label);
+            }
             return;
         }
 
-        if (mime.startsWith('model/')) {
-            thumb.appendChild(createModelThumb());
+        if (mime.startsWith('model/') || mime.startsWith('audio/')) {
+            if (card.dataset.posterUrl) {
+                const img = document.createElement('img');
+                img.src = card.dataset.posterUrl;
+                img.alt = '';
+                img.loading = 'lazy';
+                img.onerror = () => thumb.classList.add('media-thumb-missing');
+                thumb.appendChild(img);
+            } else {
+                thumb.appendChild(mime.startsWith('model/') ? createModelThumb() : createAudioThumb());
+            }
             return;
         }
 
@@ -406,7 +510,7 @@ document.addEventListener('DOMContentLoaded', () => {
         fd.append('ajax', '1');
         fd.append('title', titleInput.value.trim());
         fd.append('alt_text', descriptionInput.value.trim());
-        if (activeCard.dataset.source !== 'asset' && (activeCard.dataset.mime || '').startsWith('video/')) {
+        if (activeCard.dataset.source !== 'asset' && supportsPoster(activeCard.dataset.mime)) {
             fd.append('poster_media_file_id', activeCard.dataset.posterMediaId || '');
         }
 
@@ -444,8 +548,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (mime.startsWith('image/')) {
             aiBtn.hidden = !aiAltEnabled;
             aiBtn.disabled = !aiAltEnabled;
-        } else if (mime.startsWith('video/')) {
-            // Refine-only: AI cannot watch the video, so it needs existing text to improve.
+        } else if (mime.startsWith('video/') || mime.startsWith('audio/')) {
+            // Refine-only: AI cannot watch or listen, so it needs existing text to improve.
             aiBtn.hidden = !aiTextMediaEnabled;
             aiBtn.disabled = !aiTextMediaEnabled || descriptionInput.value.trim() === '';
         } else {
@@ -482,8 +586,29 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
+        if (mime.startsWith('audio/')) {
+            if (posterUrl) {
+                previewImg.src = posterUrl;
+                previewImg.alt = descriptionInput.value.trim() || titleInput.value.trim() || 'Audio thumbnail';
+                previewImg.classList.remove('is-hidden');
+            }
+            const audio = document.createElement('audio');
+            audio.className = 'dynamic-media-preview';
+            audio.src = assetUrl;
+            audio.controls = true;
+            audio.preload = 'metadata';
+            previewHost.appendChild(audio);
+            return;
+        }
+
         if (mime.startsWith('model/')) {
-            previewHost.appendChild(createModelThumb());
+            if (posterUrl) {
+                previewImg.src = posterUrl;
+                previewImg.alt = descriptionInput.value.trim() || titleInput.value.trim() || 'Model thumbnail';
+                previewImg.classList.remove('is-hidden');
+            } else {
+                previewHost.appendChild(createModelThumb());
+            }
             return;
         }
 
@@ -527,11 +652,12 @@ document.addEventListener('DOMContentLoaded', () => {
         saveBtn.disabled = !canSaveMetadata;
 
         const isVideo = (card.dataset.mime || '').startsWith('video/');
-        const isImage = (card.dataset.mime || '').startsWith('image/');
-        if (isVideo) {
+        const isAudio = (card.dataset.mime || '').startsWith('audio/');
+        if (isVideo || isAudio) {
+            const medium = isVideo ? 'video' : 'audio';
             descriptionLabel.textContent = 'Description';
-            descriptionHint.textContent = 'Describe this video for accessibility (e.g. as a caption/transcript summary). AI cannot watch the video — it can only refine text you write here.';
-            descriptionInput.placeholder = 'Describe this video for screen readers and future reuse.';
+            descriptionHint.textContent = `Describe this ${medium} for accessibility (e.g. as a caption/transcript summary). AI cannot ${isVideo ? 'watch' : 'listen to'} the ${medium} — it can only refine text you write here.`;
+            descriptionInput.placeholder = `Describe this ${medium} for screen readers and future reuse.`;
             aiBtn.title = 'Refine description with AI';
             aiBtn.setAttribute('aria-label', 'Refine description with AI');
         } else {
@@ -599,14 +725,16 @@ document.addEventListener('DOMContentLoaded', () => {
         aiBtn.addEventListener('click', async () => {
             if (!activeCard) return;
             const mime = activeCard.dataset.mime || '';
-            const isVideo = mime.startsWith('video/');
+            // Video and audio share the refine-only text path; only images
+            // support AI generation from the pixels themselves.
+            const isVideo = mime.startsWith('video/') || mime.startsWith('audio/');
             const isImage = mime.startsWith('image/');
             if (!isImage && !isVideo) {
-                aiStatus.textContent = 'Select an image or video asset first.';
+                aiStatus.textContent = 'Select an image, video, or audio asset first.';
                 return;
             }
             if (isVideo && !descriptionInput.value.trim()) {
-                aiStatus.textContent = 'Write a description first — AI can only refine existing text for video, not invent one.';
+                aiStatus.textContent = 'Write a description first — AI can only refine existing text for video or audio, not invent one.';
                 return;
             }
 
@@ -647,9 +775,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     updateAiBtnState();
                 }
             }, isVideo ? {
-                title: 'Refine Video Description',
+                title: 'Refine Description',
                 taskKey: 'video-description',
-                hint: 'Choose an AI profile and an optional persona to polish the wording of the description you already wrote. AI cannot watch the video itself.'
+                hint: 'Choose an AI profile and an optional persona to polish the wording of the description you already wrote. AI cannot watch or listen to the media itself.'
             } : {
                 capability: 'vision',
                 title: 'Generate Image Description',
@@ -715,7 +843,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     posterChooseBtn?.addEventListener('click', () => {
-        if (!activeCard || (activeCard.dataset.mime || '').startsWith('video/') === false) return;
+        if (!activeCard || !supportsPoster(activeCard.dataset.mime)) return;
         if (window.openMediaPicker) {
             window.openMediaPicker(result => {
                 if (!result?.id || result.kind !== 'image') return;
@@ -741,6 +869,39 @@ document.addEventListener('DOMContentLoaded', () => {
         updateCardThumb(activeCard);
         setPreview(activeCard);
         aiStatus.textContent = 'Poster cleared. Save to persist the change.';
+    });
+
+    const posterFileInput = document.getElementById('media-asset-poster-file');
+    posterFileInput?.addEventListener('change', async () => {
+        if (!activeCard || !supportsPoster(activeCard.dataset.mime) || !posterFileInput.files?.length) {
+            posterFileInput.value = '';
+            return;
+        }
+        const fd = new FormData();
+        fd.append('media_file', posterFileInput.files[0]);
+        posterStatus.textContent = 'Uploading poster...';
+        try {
+            const res = await fetch('/admin/media/poster-upload', { method: 'POST', body: fd, headers: { Accept: 'application/json' } });
+            const data = await res.json();
+            if (!data.ok) {
+                posterStatus.textContent = data.error || 'Poster upload failed.';
+                return;
+            }
+            activeCard.dataset.posterMediaId = String(data.asset.id);
+            activeCard.dataset.posterUrl = data.asset.legacy_url || data.asset.url || '';
+            updatePosterField(activeCard);
+            updateCardThumb(activeCard);
+            setPreview(activeCard);
+            if ((activeCard.dataset.status || 'ready') === 'draft') {
+                aiStatus.textContent = 'Poster uploaded. Confirm the draft to persist it.';
+            } else {
+                void persistActiveAsset('Poster uploaded and metadata saved.');
+            }
+        } catch (error) {
+            posterStatus.textContent = 'Poster upload failed.';
+        } finally {
+            posterFileInput.value = '';
+        }
     });
 
     async function requestModalClose() {

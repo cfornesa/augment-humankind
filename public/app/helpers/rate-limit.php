@@ -27,6 +27,8 @@ function rate_limit_rule(string $scope): array
     return match ($scope) {
         'admin_oauth_start' => ['max_requests' => 8, 'window_seconds' => 300],
         'admin_oauth_callback' => ['max_requests' => 12, 'window_seconds' => 300],
+        'magic_link_request' => ['max_requests' => 10, 'window_seconds' => 3600],
+        'magic_link_email' => ['max_requests' => 3, 'window_seconds' => 900],
         'contact_submit' => ['max_requests' => 5, 'window_seconds' => 3600],
         'ai_process_text' => ['max_requests' => 12, 'window_seconds' => 900],
         'ai_describe_image' => ['max_requests' => 12, 'window_seconds' => 900],

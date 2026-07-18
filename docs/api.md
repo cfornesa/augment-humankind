@@ -84,19 +84,29 @@ the Contact Form on the Contact page, cannot be deleted from that page.
 
 ## Public User Routes
 
-- `GET /user/login` — login form (OAuth buttons: GitHub, Google)
+- `GET /user/login` — login form. Renders one button per *enabled* sign-in
+  method: an OAuth provider (GitHub, Google, Microsoft, Facebook) is enabled
+  when its client ID + secret env vars are set; the email magic-link entry is
+  enabled when `SMTP_*` is configured.
 - `GET /user/logout` — ends the current user session and redirects to `/`
-- `GET /user/auth/github/start` — begins GitHub OAuth flow
-- `GET /user/auth/google/start` — begins Google OAuth flow
-- `GET /auth/github/callback` — shared GitHub OAuth callback for admin and public user login
-- `GET /auth/google/callback` — shared Google OAuth callback for admin and public user login
+- `GET /user/auth/[provider]/start` — begins the OAuth flow for `github`,
+  `google`, `microsoft`, or `facebook` (unconfigured providers redirect back
+  with `?error=provider`)
+- `GET /auth/[provider]/callback` — shared OAuth callback for admin and
+  public user login, one URL per provider
+- `GET|POST /user/auth/email` — magic-link request form / submission
+  (neutral confirmation regardless of outcome; rate-limited per address and
+  per IP)
+- `GET /auth/email/verify?token=…&context=member|admin` — consumes a
+  single-use, 15-minute magic-link token and signs the user in (`context=admin`
+  additionally requires the address to be on `ADMIN_EMAILS`)
 - `GET /user/settings` — profile settings page (requires login; redirects to `/user/login?redirect=...` otherwise)
 - `POST /user/settings/profile` — updates the signed-in user's display name, bio, and website
 - `POST /user/settings/photo` — uploads a profile photo for the signed-in user. Accepts a `profile_photo` multipart file (JPEG, PNG, GIF, WebP, or AVIF). Stores the binary in `profile_photo_assets` and sets `users.image` to `/api/profile-photos/{filename}`. Redirects to `/user/settings?success=photo` on success or `?error=...` on failure.
 - `POST /user/settings/style` — updates the signed-in user's palette, theme, and per-mode color overrides
 - `GET /user/[username]` — public profile page for a user. Resolves by `users.username`; falls back to `users.id` lookup if the slug is all digits. Accepts `?show_pieces=all` to display all pieces instead of the default 12.
 
-User photo URLs follow the `/api/profile-photos/[filename]` pattern (served by the platform compatibility API; see below). There is no `/user/register` route — account creation happens through OAuth only.
+User photo URLs follow the `/api/profile-photos/[filename]` pattern (served by the platform compatibility API; see below). There is no `/user/register` route — account creation happens through OAuth or the email magic-link only.
 
 ## Public Blog and Platform Compatibility Routes
 
@@ -932,8 +942,10 @@ returns JSON for picker dialogs.
 `/admin/media/library` returns a JSON array for the existing Tiptap/media
 picker. It includes native uploads (`media_files`) plus migrated platform
 media (`media_assets`). Picker responses default to `ready` assets only.
-Native video rows may also include `poster_media_file_id` and `poster_url`.
-Both entry types include `alt_text`:
+Native video, audio, and 3D model rows may also include
+`poster_media_file_id` and `poster_url` (an image asset used as their
+poster/thumbnail in the library grid and picker). Both entry types include
+`alt_text`:
 
 ```json
 [
@@ -966,15 +978,16 @@ response returns the created draft payload, and callers are expected to
 complete confirmation via `POST /admin/media/[id]/confirm` before the asset is
 insertable from pickers. `POST /admin/media/[id]/discard` permanently deletes a
 draft asset. `POST /admin/media/poster-upload` is an admin-only helper that
-creates a ready image asset for use as a linked video poster. Media is stored
-in the database and is not written to repo files.
+creates a ready image asset for use as a linked poster/thumbnail on any
+non-image asset (video, audio, 3D model, embed). Media is stored in the
+database and is not written to repo files.
 
 `POST /admin/media/[id]/confirm` validates and persists metadata for a draft
 native upload, including:
 
 - `title` (optional, max 255 chars)
 - `alt_text` (required for confirmation, max 500 chars)
-- `poster_media_file_id` (optional; image assets only, meaningful for videos)
+- `poster_media_file_id` (optional; image assets only, meaningful for every non-image kind — video, audio, 3D model, and embed files)
 
 On success, the native asset flips from `status='draft'` to `status='ready'`
 and receives `confirmed_at`.

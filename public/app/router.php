@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/helpers/auth.php';
 require_once __DIR__ . '/helpers/oauth.php';
+require_once __DIR__ . '/helpers/mailer.php';
+require_once __DIR__ . '/helpers/magic-link.php';
 require_once __DIR__ . '/helpers/icons.php';
 require_once __DIR__ . '/helpers/slugify.php';
 require_once __DIR__ . '/helpers/seo.php';
@@ -194,12 +196,19 @@ $publicRoutes = [
     ['GET',  '/user/logout',                          [UserAuthController::class, 'logout']],
     ['GET',  '/user/auth/github/start',               [UserAuthController::class, 'oauthStart']],
     ['GET',  '/user/auth/google/start',               [UserAuthController::class, 'oauthStart']],
+    ['GET',  '/user/auth/microsoft/start',            [UserAuthController::class, 'oauthStart']],
+    ['GET',  '/user/auth/facebook/start',             [UserAuthController::class, 'oauthStart']],
+    ['GET',  '/user/auth/email',                      [UserAuthController::class, 'magicLinkForm']],
+    ['POST', '/user/auth/email',                      [UserAuthController::class, 'magicLinkRequest']],
 
     // Shared OAuth callback — one callback URL per provider, registered once
-    // with GitHub/Google, used by both admin and member login (disambiguated
+    // with each provider, used by both admin and member login (disambiguated
     // internally via which pending session state matches).
     ['GET',  '/auth/github/callback',                 [SharedAuthController::class, 'oauthCallback']],
     ['GET',  '/auth/google/callback',                 [SharedAuthController::class, 'oauthCallback']],
+    ['GET',  '/auth/microsoft/callback',              [SharedAuthController::class, 'oauthCallback']],
+    ['GET',  '/auth/facebook/callback',               [SharedAuthController::class, 'oauthCallback']],
+    ['GET',  '/auth/email/verify',                    [SharedAuthController::class, 'magicLinkVerify']],
     ['GET',  '/user/settings',                        [UserProfileController::class, 'settings']],
     ['POST', '/user/settings/profile',                [UserProfileController::class, 'settingsProfileUpdate']],
     ['POST', '/user/settings/photo',                  [UserProfileController::class, 'settingsPhotoUpload']],
@@ -213,6 +222,10 @@ $adminRoutes = [
     ['GET',  '/admin/login',                [AuthController::class, 'loginForm']],
     ['GET',  '/admin/auth/github/start',    [AuthController::class, 'oauthStart']],
     ['GET',  '/admin/auth/google/start',    [AuthController::class, 'oauthStart']],
+    ['GET',  '/admin/auth/microsoft/start', [AuthController::class, 'oauthStart']],
+    ['GET',  '/admin/auth/facebook/start',  [AuthController::class, 'oauthStart']],
+    ['GET',  '/admin/auth/email',           [AuthController::class, 'magicLinkForm']],
+    ['POST', '/admin/auth/email',           [AuthController::class, 'magicLinkRequest']],
     ['GET',  '/admin/logout',               [AuthController::class, 'logout']],
 
     ['GET',  '/admin/pages',                           [PagesController::class, 'index']],

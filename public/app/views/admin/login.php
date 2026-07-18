@@ -14,7 +14,7 @@ $pageTitle = 'Admin Login — ' . app_site_name();
     <div class="login-wrap">
         <p class="login-kicker">Administration</p>
         <h1 class="login-title">Admin Access</h1>
-        <p class="login-copy">Sign in with an approved GitHub or Google account.</p>
+        <p class="login-copy">Sign in with an approved account.</p>
         <?php if ($error): ?>
             <p class="login-error" role="alert">
                 <?php
@@ -32,8 +32,17 @@ $pageTitle = 'Admin Login — ' . app_site_name();
             <?php endif ?>
         <?php endif ?>
         <div class="login-provider-list">
-            <a class="login-provider-btn" href="/admin/auth/github/start">Continue with GitHub</a>
-            <a class="login-provider-btn login-provider-btn-alt" href="/admin/auth/google/start">Continue with Google</a>
+            <?php $providerIndex = 0; ?>
+            <?php foreach (oauth_enabled_providers() as $providerSlug => $providerConfig): ?>
+                <a class="login-provider-btn<?= $providerIndex++ % 2 === 1 ? ' login-provider-btn-alt' : '' ?>"
+                   href="/admin/auth/<?= htmlspecialchars($providerSlug, ENT_QUOTES, 'UTF-8') ?>/start">
+                    Continue with <?= htmlspecialchars($providerConfig['label'], ENT_QUOTES, 'UTF-8') ?>
+                </a>
+            <?php endforeach ?>
+            <?php if (magic_link_enabled() && oauth_env('ADMIN_EMAILS') !== ''): ?>
+                <a class="login-provider-btn<?= $providerIndex++ % 2 === 1 ? ' login-provider-btn-alt' : '' ?>"
+                   href="/admin/auth/email">Continue with Email</a>
+            <?php endif ?>
         </div>
     </div>
 </body>

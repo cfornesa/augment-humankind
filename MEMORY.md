@@ -20,6 +20,9 @@ are independent; immersive hand motion is universal across engines. Piece
 downloads offer Full ZIP and a Non-Camera ZIP that retains non-camera sound
 while omitting camera UI, camera theremin, visual steering, and MediaPipe.
 
+2026-07-18 STACK Admin E2E verification must use a local scratch DB (`.env` holds production credentials); process env overrides `.env`, and admin login works by inserting a 64-hex token's sha256 into `verification_tokens` (identifier `email|admin`) with `ADMIN_EMAILS` set, then visiting `/auth/email/verify`.
+Local MySQL 9 rejects setup-database's TEXT-DEFAULT steps (`footer_credit`, `copyright_line`) — widen both manually without DEFAULT and re-run; production MariaDB is unaffected. Source: DECISIONS.md 2026-07-18.
+
 2026-06-11 STACK Augment Humankind v1 is a no-framework PHP site with durable routes at `/`, `/services`, `/notes`, and `/contact`.
 
 2026-06-20 CONSTRAINT augmenthumankind.com production runs on Hostinger/PHP. The legacy platform/Replit app has since been removed from the repo (folder deleted 2026-07-03); only its exported database survives — read/export-only via `PLATFORM_*`, never written.
@@ -224,6 +227,8 @@ Source: DECISIONS.md 2026-07-03 C2.js Interactive pointer-coordinate fix.
 2026-06-15 NOTE The `<dialog>`-based `.media-picker-*` pattern is the standard for all TipTap insertion UIs (media, pieces/exhibits, iframe, AI profile) — never `window.prompt()`.
 
 2026-06-19 DECISION Native media uploads/imports are draft-first: `media_files.status` governs readiness; pickers only insert `ready` assets; `alt_text` must persist before an asset is reusable; video posters are linked image assets via `poster_media_file_id`.
+
+2026-07-18 DECISION `poster_media_file_id` is the single thumbnail mechanism for every non-image media kind (video, audio, 3D model, embed) across the library grid, picker grid, asset editor, and confirm previews, gated by `media_kind_can_have_poster()` in upload.php — never a new column. Source: DECISIONS.md 2026-07-18.
 
 2026-06-19 DECISION URL fields use type="text", not type="url", so picker-selected relative paths (`/image/83`) pass validation.
 

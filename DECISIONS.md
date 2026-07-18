@@ -10,6 +10,188 @@
 
 None.
 
+## 2026-07-18 — Media Search/Sort/Filter, Model & Audio Thumbnails, Admin Form Overflow Fix
+
+### Context
+
+- On mobile, the Generate Piece and Edit Piece admin panels overflowed the
+  viewport: long `<select>` option labels (AI profile "name (vendor: model) —
+  By user") drove the fields' min-content width past the screen because the
+  shared `.admin-form`/`.field`/`.form-row` flex/grid chain never granted
+  `min-width: 0`.
+- The media library (320+ files in production) and the media picker modal had
+  no search, sort, or text filter — only client-side kind buttons; the library
+  page also misclassified audio files as images (broken `<img>` cards) and had
+  no Audio filter button; 3D models showed only a "◈ 3D Model" placeholder
+  with no way to designate an image thumbnail.
+
+### Decision
+
+- **Overflow fix (admin.css, shared by ~30 admin views):** `min-width: 0` on
+  `.admin-form`, `.field`, `.form-row`, `.form-fieldset`, plus
+  `max-width: 100%; min-width: 0` on `.admin-form` inputs/selects/textareas.
+  Unconditional, not breakpoint-gated — these properties only allow shrinking
+  below min-content, never force layout change on content that already fits.
+- **Client-side search/sort/filter** (user-selected over server-side): a new
+  shared classic script `public/assets/js/media-filter.js`
+  (`window.AHMediaFilter`: substring `matches` over title/filename/alt/ID,
+  `comparator` for newest/oldest/title/type/size with position tiebreak,
+  `debounce`) is consumed by both the library page (`media.php` toolbar +
+  `applyFilters()` over card `data-*`, rebuilt per pass so modal edits stay
+  searchable) and the picker (`tiptap-editor.js`: `_pickerBaseItems` →
+  `applyPickerFilters()` → existing `renderPickerBatch()`, so "Load more"
+  batching re-batches over the filtered list). Kind chips render in the
+  picker for multi-kind modes as a **fixed set mirroring the library page's
+  buttons** (revised same day from present-kinds-only, which made the row
+  vanish in mostly-image libraries): `media` shows Images/Videos/Embeds
+  (+Audio when flagged), `art_media` and library mode show all five kinds.
+  Single-kind modes and poster selection stay chipless. Library mode
+  (+ New Asset, null-callback) now lists the **entire** library including
+  models, matching the grid behind it; insertion modes keep their
+  restricted listings. Search/sort state resets on every grid reload so URL
+  preselection behaves as before. Counts announce via `aria-live="polite"`.
+- **Fixed a pre-existing picker gap surfaced by this work**: `loadGrid()`
+  only ran when the picker opened on the Select tab, so + New Asset (which
+  opens on Upload) showed an empty Select grid until reopened. `switchTab()`
+  now loads the grid on first switch to Select when the base list is empty.
+- **MIME→kind classification centralized** in `media_kind_from_mime()`
+  (upload.php), used by `MediaAdminController` and the library view — fixing
+  the audio-as-image bug; an Audio filter button joins the library filter row
+  (unconditional, per the Models-button precedent).
+- **Posters are universal for every non-image kind** (extended same day from
+  video/audio/model to embeds at user request): `media_kind_can_have_poster()`
+  in upload.php (`kind !== 'image'`) now drives the
+  `poster_media_file_id` guards in `confirmFile()`/`updateFile()` and
+  `nativeMediaCard()` (no schema change — the column and
+  `POST /admin/media/poster-upload` already existed). The asset editor's
+  poster field (renamed "Poster / Thumbnail Image") appears for video, audio,
+  model, and embed natives, with both Choose-from-library (existing
+  nested-picker flow, guard widened from video-only) and a new Upload Poster
+  input mirroring the picker confirm panel. Poster images replace the
+  ◈/♪/&lt;/&gt; placeholders in the library grid, the picker grid, the
+  asset-editor preview, and the picker confirm preview.
+- **Audio is a fully managed library citizen**: `<audio controls>` playback
+  preview in the asset editor, poster thumbnails, and the refine-only AI
+  description path (same contract as video — AI cannot listen). Per user
+  decision, `art_media` piece-reference picker kinds are unchanged.
+- No schema, route, vendor dependency, or feature-flag contract changed.
+  docs/api.md updated for the widened poster scope.
+
+### Verification
+
+- New `tests/media-kind.php`: 8 passed, 0 failed (incl.
+  `media_kind_can_have_poster()` non-image coverage). Regression:
+  feature-flags 20/20, runtime consistency all passed, generation suite
+  161 passed with only the known pre-existing MediaPipe-path failure
+  (recorded 2026-07-14, unrelated).
+- Scratch-DB E2E (local MySQL `ah_scratch_media`, seeded 61 media files,
+  magic-link admin login; DB/user dropped afterward): library search by
+  title/ID, all five sort keys, Audio filter, live count; picker in image
+  mode (chips hidden) with search narrowing 55→1 and Load more batching at
+  48; `art_media` chips All/Images/Videos/Embeds/Audio/Models with model
+  chip filtering; choose-from-library poster on a model persisted
+  (`poster_media_file_id` round-trip confirmed in DB) and replaced the
+  placeholder in both grids; nested picker-over-editor dialog flow intact;
+  audio editor showed a working `<audio>` player and poster field; `.glb`
+  upload → draft → confirm-with-poster succeeded server-side.
+- Follow-up round (same scratch recipe, re-seeded): + New Asset picker now
+  lists 61 of 61 assets with the full All/Images/Videos/Audio/Embeds/Models
+  chip row, and its Select tab populates on first switch from Upload
+  (previously empty); Embeds/Models chips narrowed to 1/2 items; an embed
+  (`text/html`) took a choose-from-library poster through the widened
+  `updateFile()` guard (`poster_media_file_id` round-trip confirmed in DB)
+  and rendered it in the library card, picker tile, and `art_media` mode;
+  poster selection inside library mode stayed image-only.
+- Overflow: 375px viewport on `/admin/pieces/generate` with a seeded
+  150-char profile option — `scrollWidth` 375, no horizontal scroll.
+  Regression sweep over media, site-identity, features, navigation, forms,
+  feed-sources, ai-settings: no new overflow (features' 383px overflow
+  reproduced identically with the fix stashed — pre-existing, unrelated).
+- Local MySQL 9 note: the pre-existing `footer_credit` TEXT-DEFAULT setup
+  failure also affects `copyright_line`; both accepted manual
+  `MODIFY ... TEXT NOT NULL` (no DEFAULT) before re-running setup. MariaDB
+  in production is unaffected.
+
+### Agent loops
+
+- Two Explore agents (media subsystem survey; overflow root-cause) and one
+  Plan agent during plan mode, per the approved workflow.
+
+## 2026-07-17 — Scheduled-Task Hardening and Sign-In Provider Expansion
+
+### Context
+
+- GitHub Actions scheduled tasks repeatedly failed with connect timeouts to
+  augmenthumankind.com:443. Diagnosis: site responds normally from
+  residential IPs; Hostinger intermittently throttles datacenter IP ranges
+  (GitHub runners). User chose hardening the Action only (no host-side cron,
+  no external pinger).
+- User requested Microsoft, Apple, Facebook, and email magic-link sign-in,
+  for both member and admin login. **Revised same day:** the user rejected
+  any provider requiring payment, so Apple (the only paid one — $99/yr
+  developer account) was removed before commit; Microsoft, Facebook, and
+  magic-link (all free) remain. The Apple removal also deleted the ES256
+  client-secret JWT and the form_post POST-callback redirect hop, which
+  were Apple-only. The explicit SameSite=Lax/secure/httponly session cookie
+  params were kept as general hardening.
+- User asked why a setup-database step is needed at all when keys are env
+  vars: credentials are and were env-only; the DB step exists solely to
+  widen the `admin_identities.provider` ENUM (a schema constraint), via the
+  repo's standard `git pull && php scripts/setup-database.php --yes`
+  upgrade path. Member login and verification_tokens need no schema change.
+
+### Decision
+
+- `.github/actions/curl-cron` composite action: 5 attempts, exponential
+  backoff with jitter, `--connect-timeout 15 --max-time 60 -4`,
+  `timeout-minutes: 10` per job. Both jobs kept separate.
+- OAuth refactored to a data-driven registry (`oauth_provider_registry()`);
+  provider enablement is env-credential presence — deliberately no
+  features.php flag (env already gates per deployment). Both login views now
+  loop over enabled providers.
+- Profile fetching centralized in `oauth_fetch_profile()` (was duplicated in
+  the member and admin controllers).
+- Empty repeat-login display names never overwrite stored names (general
+  guard, retained after the Apple removal that motivated it).
+- Facebook: missing email degrades gracefully (users.email is nullable;
+  account keyed on app-scoped id). Admin allowlist uses numeric app-scoped
+  ids (`ADMIN_FACEBOOK_IDS`) — Facebook guarantees no stable email/username.
+- Magic-link: reuses the previously unused `verification_tokens` table
+  (identifier = "email|context"), sha256-hashed single-use 15-minute tokens,
+  DB-clock expiry, neutral anti-enumeration responses, per-IP and per-email
+  rate limits; SMTP transport extracted from Form.php into
+  `app/helpers/mailer.php` (behavior-preserving delegation).
+- Schema dual-ship: `docs/migrations/2026-07-17-auth-provider-expansion.sql`
+  + `ensureEnumValue` manifest step extend `admin_identities.provider` ENUM
+  to `('github','google','microsoft','facebook','email')` (edited in place
+  during the Apple removal — the migration had not been applied anywhere).
+- Fixed pre-existing fatal in `scripts/check_oauth_setup.php` (called
+  nonexistent `oauth_redirect_uri()`); extended it and the mock provider
+  script for the new providers.
+
+### Verification
+
+- `php -l` clean on all touched files.
+- Scratch-DB run of `setup-database.php`: ENUM applied on first pass,
+  "already applied" on second; scratch DB dropped afterward. (Local MySQL 8
+  fails a pre-existing unrelated step — TEXT DEFAULT on `footer_credit` —
+  that MariaDB in production accepts.)
+- 14/14 CLI harness checks: no-email upsert, repeat-login identity, empty
+  Apple name preserved, email-merge, token consume/reuse/expiry/context.
+- Live dev-server E2E on scratch DB: provider buttons reflect configured
+  env; github/google flows byte-identical; magic-link request is neutral
+  for allowlisted vs unknown addresses; full admin magic-link login
+  (token → `provider='email'` identity → /admin 200). Re-verified after
+  the Apple removal, including that the apple routes now 404.
+- Production deployment still requires: `php scripts/setup-database.php
+  --yes` on the server, new provider env vars, and registering each
+  provider app (Azure and Meta — both free).
+
+### Agent loops
+
+- One Explore agent (auth architecture survey) and one Plan agent
+  (implementation design) during plan mode, per the approved workflow.
+
 ## 2026-07-14 — A-Frame GLB Immersive and Export Parity
 
 ### Decision

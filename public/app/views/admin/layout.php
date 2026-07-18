@@ -26,6 +26,7 @@ $aiTextMediaEnabled = !$aiFlagsAvailable || feature_enabled('ai_text_media');
 $adminNavItems = function_exists('admin_navigation_ordered_items') ? admin_navigation_ordered_items() : [];
 $tiptapCssVersion = ($needsEditor ?? false) ? @filemtime(dirname(__DIR__, 3) . '/assets/css/tiptap.css') : null;
 $tiptapJsVersion = ($needsEditor ?? false) ? @filemtime(dirname(__DIR__, 3) . '/assets/js/tiptap-editor.js') : null;
+$mediaFilterJsVersion = ($needsEditor ?? false) ? @filemtime(dirname(__DIR__, 3) . '/assets/js/media-filter.js') : null;
 $ownerAiPrefs = class_exists('PlatformUser') ? (PlatformUser::owner() ?: []) : [];
 $aiPickerPersonas = [];
 if (function_exists('ah_table_exists') && ah_table_exists('ai_personas')) {
@@ -183,6 +184,24 @@ if (function_exists('ah_table_exists') && ah_table_exists('ai_personas')) {
 
         <!-- Select panel -->
         <div class="media-picker-panel" id="mp-panel-select" role="tabpanel">
+            <div class="media-picker-toolbar">
+                <div class="field media-picker-search-field">
+                    <label for="mp-search">Search</label>
+                    <input type="search" id="mp-search" placeholder="Title, filename, alt text, or ID" autocomplete="off">
+                </div>
+                <div class="field media-picker-sort-field">
+                    <label for="mp-sort">Sort by</label>
+                    <select id="mp-sort">
+                        <option value="newest" selected>Newest first</option>
+                        <option value="oldest">Oldest first</option>
+                        <option value="title">Title A&ndash;Z</option>
+                        <option value="type">File type</option>
+                        <option value="size">Largest first</option>
+                    </select>
+                </div>
+            </div>
+            <div class="admin-tabs media-picker-kind-filter is-hidden" id="mp-kind-filter" role="group" aria-label="Filter media by type"></div>
+            <p class="media-picker-status" id="mp-filter-count" aria-live="polite"></p>
             <div class="media-picker-grid"></div>
         </div>
 
@@ -277,7 +296,7 @@ if (function_exists('ah_table_exists') && ah_table_exists('ai_personas')) {
                     </div>
 
                     <div class="field is-hidden" id="mp-confirm-poster-field">
-                        <label>Video Poster Image <span class="form-hint">(optional)</span></label>
+                        <label>Poster / Thumbnail Image <span class="form-hint">(optional)</span></label>
                         <div class="media-code-input-wrap">
                             <input type="text" id="mp-confirm-poster-url" readonly placeholder="No poster selected">
                             <button type="button" class="admin-btn admin-btn-ghost" id="mp-confirm-poster-choose-btn">Choose Poster</button>
@@ -420,6 +439,7 @@ if (function_exists('ah_table_exists') && ah_table_exists('ai_personas')) {
     </script>
     <script src="/assets/js/main.js" defer></script>
     <?php if ($needsEditor ?? false): ?>
+    <script src="/assets/js/media-filter.js?v=<?= (int) $mediaFilterJsVersion ?>" defer></script>
     <script type="module" src="/assets/js/tiptap-editor.js?v=<?= (int) $tiptapJsVersion ?>"></script>
     <?php endif ?>
 </body>
