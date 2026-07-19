@@ -646,6 +646,15 @@
       }
       if (result === undefined) return;
       var hand = result && result.landmarks && result.landmarks[0];
+      // MediaPipe reports frequent low-confidence false positives (desk
+      // edges, resting hands at the frame border) that would otherwise
+      // stream junk wrist coordinates into steering and the theremin.
+      // Handedness score is the model's own confidence for the detection;
+      // pass through when the field is absent (older vision bundles).
+      if (hand && result.handednesses && result.handednesses[0] && result.handednesses[0][0]) {
+        var handScore = Number(result.handednesses[0][0].score);
+        if (Number.isFinite(handScore) && handScore < 0.75) hand = null;
+      }
       // Hand-control subscriber (piece interaction) sees every frame,
       // including hand-lost frames (null), independent of the theremin.
       if (handControlOn && typeof handFrameSubscriber === 'function') {
@@ -1194,8 +1203,49 @@
   // Converts the existing single-hand, 21-landmark MediaPipe result into a
   // small, deliberate camera-command vocabulary. This is an input adapter:
   // it never owns a camera, starts inference, or replaces surface navigation.
+  // Per-engine wrist→command mapping strategies for un-pinched ("look")
+  // steering. The default is RELATIVE motion with a deadzone: the camera
+  // turns with wrist MOVEMENT and holds still for a static wrist — so
+  // resting hands and MediaPipe false positives (which sit frozen at the
+  // frame edge) produce zero commands by construction. Every steering
+  // surface (piece aframe/three, export twins, collection rooms) already
+  // implements relative `orbit` deltas, so the strategy needs no new
+  // command types. Engines needing a different feel register an override
+  // keyed by the hooks' engine name.
+  // Tuned live against a real webcam: typing/resting hands jitter with
+  // per-frame smoothed wrist deltas below ~0.006, deliberate steering
+  // sweeps produce >= 0.01. 0.008 keeps the camera still for incidental
+  // hands while remaining responsive to intentional motion.
+  var GESTURE_LOOK_DEADZONE = 0.008;
+  var GESTURE_LOOK_YAW_GAIN = Math.PI * 2.2;
+  var GESTURE_LOOK_PITCH_GAIN = Math.PI * 1.4;
+  var relativeLookMapping = {
+    update: function (smoothWrist, lastWrist, emit) {
+      if (!lastWrist) return;
+      var dx = smoothWrist.x - lastWrist.x;
+      var dy = smoothWrist.y - lastWrist.y;
+      if (Math.abs(dx) < GESTURE_LOOK_DEADZONE && Math.abs(dy) < GESTURE_LOOK_DEADZONE) return;
+      emit({ type: 'orbit', yaw: -dx * GESTURE_LOOK_YAW_GAIN, pitch: dy * GESTURE_LOOK_PITCH_GAIN });
+    },
+  };
+  // c2_interactive positions a synthetic POINTER, not a camera — it needs
+  // the absolute wrist location, so it keeps the legacy look command.
+  var absoluteLookMapping = {
+    update: function (smoothWrist, lastWrist, emit) {
+      emit({ type: 'look', x: 1 - smoothWrist.x, y: smoothWrist.y });
+    },
+  };
+  var GESTURE_MAPPINGS = {
+    default: relativeLookMapping,
+    aframe: relativeLookMapping,
+    three: relativeLookMapping,
+    room: relativeLookMapping,
+    c2_interactive: absoluteLookMapping,
+  };
+
   function createClutchedGestureRouter(options) {
     options = options || {};
+    var lookMapping = GESTURE_MAPPINGS[options.engine] || GESTURE_MAPPINGS.default;
     var onCommand = typeof options.onCommand === 'function' ? options.onCommand : function () {};
     var onMode = typeof options.onMode === 'function' ? options.onMode : function () {};
     var dwellMs = Math.max(80, Number(options.dwellMs) || 180);
@@ -1217,6 +1267,8 @@
     var nominalFrameMs = 1000 / 60;
     var cadenceCarry = 0;
     var classificationGraceMs = Math.max(50, Number(options.classificationGraceMs) || 100);
+    var pinchDwellMs = Math.max(80, Number(options.pinchDwellMs) || 160);
+    var pinchCandidateSince = 0;
 
     function emitMode(mode) {
       if (visibleMode === mode) return;
@@ -1309,6 +1361,7 @@
       lastKnownPose = 'unknown';
       lastKnownPoseAt = 0;
       cadenceCarry = 0;
+      pinchCandidateSince = 0;
       emitMode('idle');
     }
 
@@ -1348,7 +1401,19 @@
       updateStablePose(pose, now);
       var scale = palmScale(hand);
       var pinchRatio = distance(hand[4], hand[8]) / scale;
-      var nextPinched = pinched ? pinchRatio < 0.62 : pinchRatio < 0.42;
+      var pinchGeometry = pinched ? pinchRatio < 0.62 : pinchRatio < 0.42;
+      // Dwell before the clutch engages: incidental thumb–index proximity
+      // (typing, resting hands) produces sub-100ms pinch blips that used to
+      // fire zoom/travel bursts and fling the camera; a deliberate pinch is
+      // held far longer than 160ms, so the delay is imperceptible.
+      var nextPinched = pinched;
+      if (pinchGeometry && !pinched) {
+        if (!pinchCandidateSince) pinchCandidateSince = now;
+        if (now - pinchCandidateSince >= pinchDwellMs) nextPinched = true;
+      } else if (!pinchGeometry) {
+        pinchCandidateSince = 0;
+        if (pinched) nextPinched = false;
+      }
 
       if (nextPinched && !pinched) {
         // Lock the previewed pose for the lifetime of this clutch. Landmark
@@ -1370,12 +1435,19 @@
 
       if (!pinched) {
         cancelCadencedCommands();
-        if (stablePose === 'open') {
-          emitMode('look');
-          try { onCommand({ type: 'look', x: 1 - smoothWrist.x, y: smoothWrist.y }); } catch (_e) {}
-        } else {
-          emitMode(stablePose === 'point' ? 'travel-ready' : stablePose === 'fist' ? 'orbit-ready' : 'idle');
-        }
+        // Direct steering is the baseline contract: once the camera has a
+        // visible hand, wrist movement must reach the active surface even
+        // when pose classification is unknown or fluctuating. Classification
+        // is used only when a pinch begins to choose travel vs orbit; it must
+        // never gate ordinary look steering (the former gate made steering
+        // appear active while emitting no commands on real devices).
+        // The engine-selected mapping (relative by default) decides what a
+        // wrist sample means; a static wrist emits nothing under the default
+        // strategy, so junk detections can no longer pin the camera.
+        emitMode('look');
+        try {
+          lookMapping.update(smoothWrist, lastWrist, function (command) { onCommand(command); });
+        } catch (_e) {}
         lastWrist = { x: smoothWrist.x, y: smoothWrist.y };
         return true;
       }

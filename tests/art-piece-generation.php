@@ -2115,7 +2115,7 @@ test('hand-enabled exports include steering and camera UI across 3D and flat eng
     assert_true($handReadyAt !== false && $steeringOnAt !== false && $handReadyAt < $steeringOnAt, 'Regular export must acquire hand control before activating steering hooks.');
     assert_contains($index, 'setHandSteering(active)');
     assert_contains($index, 'handSteeringExclusive');
-    assert_contains($index, 'controlsEnabledBeforeHand');
+    assert_contains($index, 'aframeLookControlsEnabledBeforeHand');
     assert_contains($index, 'aframeControlsBeforeHand');
     assert_contains($index, "if (!activeHooks || typeof activeHooks.setHandSteering !== 'function') controlOk = false;");
     $regularAudioBootstrap = substr($index, strpos($index, 'async function ensureEnabled()'));

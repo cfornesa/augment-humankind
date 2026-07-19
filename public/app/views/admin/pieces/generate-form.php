@@ -198,7 +198,7 @@ ob_start();
                         intentInput.type = 'text';
                         intentInput.placeholder = 'How should this be used? e.g. "center the composition on this 3D model"';
                         intentInput.value = ref.intent_text || '';
-                        intentInput.style.cssText = 'width:100%;';
+                        intentInput.style.cssText = 'width:100%;max-width:100%;min-width:0;box-sizing:border-box;';
                         intentInput.addEventListener('input', function () {
                             refs[index].intent_text = intentInput.value;
                             sync();

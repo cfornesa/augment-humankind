@@ -938,6 +938,10 @@ h3 {
 .field select,
 .field textarea {
     width: 100%;
+    max-width: 100%;
+    /* min-width: 0 lets controls shrink inside grid/flex parents; without it
+       their intrinsic size can push past narrow viewports. */
+    min-width: 0;
     min-height: 3rem;
     border: 3px solid var(--line);
     background: var(--paper);

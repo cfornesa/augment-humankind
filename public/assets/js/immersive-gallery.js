@@ -178,10 +178,16 @@ export function createFloorClickNavigation(camera, controls, floorMesh, domEleme
   const raycaster = new THREE.Raycaster();
   let animFromTarget = null, animToTarget = null, animFromCam = null, animToCam = null, animStart = 0;
   let downX = 0, downY = 0;
+  let enabled = true;
 
-  function onPointerDown(e) { downX = e.clientX; downY = e.clientY; }
+  function onPointerDown(e) {
+    if (!enabled) return;
+    downX = e.clientX;
+    downY = e.clientY;
+  }
 
   function onPointerUp(e) {
+    if (!enabled) return;
     if (Math.hypot(e.clientX - downX, e.clientY - downY) >= 6) return;
     const rect = domElement.getBoundingClientRect();
     raycaster.setFromCamera(
@@ -226,7 +232,14 @@ export function createFloorClickNavigation(camera, controls, floorMesh, domEleme
 
   domElement.addEventListener("pointerdown", onPointerDown);
   domElement.addEventListener("pointerup", onPointerUp);
-  return { update, dispose };
+  function setEnabled(next) {
+    enabled = !!next;
+    if (!enabled) {
+      animFromTarget = animToTarget = animFromCam = animToCam = null;
+    }
+  }
+
+  return { update, dispose, setEnabled };
 }
 
 export function computeOrbitKeyboardMotion(forward, keys, speed) {
@@ -945,6 +958,11 @@ function createImmersiveViewerControls(stageEl, handlers = {}) {
   root.appendChild(zoomEdge);
   stageEl.appendChild(root);
   return {
+    setEnabled(enabled) {
+      root.querySelectorAll("button, input, select").forEach((control) => {
+        control.disabled = !enabled;
+      });
+    },
     setZoomValue(value) {
       if (Number.isFinite(value)) zoomSlider.value = String(Math.max(0, Math.min(100, value)));
     },
@@ -953,6 +971,10 @@ function createImmersiveViewerControls(stageEl, handlers = {}) {
       root.remove();
     },
   };
+}
+
+function setImmersiveViewerControlsEnabled(controller, enabled) {
+  controller?.setEnabled?.(enabled);
 }
 
 function createSharedGyroController(stageEl, camera, options = {}) {
@@ -1905,6 +1927,9 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
       handControlRow.hidden = !interaction?.supportsHandControl;
     }
     if (handControlToggle) handControlToggle.setAttribute("aria-pressed", handControlActive ? "true" : "false");
+    if (resetViewButton && resetViewButton.getAttribute("aria-busy") !== "true") {
+      resetViewButton.disabled = handControlActive || handActivationPending || tiltFallbackActive;
+    }
   }
 
   const onCameraOpacityInput = () => {
@@ -2082,6 +2107,7 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
       if (typeof interaction.handCommand === 'function' && window.CreatrSonicController?.createClutchedGestureRouter) {
         if (!gestureRouter) {
           gestureRouter = window.CreatrSonicController.createClutchedGestureRouter({
+            engine: interaction.engine || 'room',
             onCommand: (command) => interaction.handCommand(command),
             onMode: setGestureModeIndicator,
           });
@@ -2138,6 +2164,7 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
   };
 
   const onResetView = async () => {
+    if (handControlActive || handActivationPending || tiltFallbackActive) return;
     const interaction = getPieceInteractionController();
     if (typeof interaction?.resetView !== "function" || !resetViewButton) return;
     resetViewButton.disabled = true;
@@ -3724,14 +3751,21 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
 
   try {
     const sketchFactory = resolveSketchFactory(code);
-    cleanup = sketchFactory({
-      THREE: instrumentedThree,
-      canvas,
-      startFrame,
-      size: runtimeSize,
-      width: runtimeSize.width,
-      height: runtimeSize.height,
-    });
+    try {
+      cleanup = sketchFactory({
+        THREE: instrumentedThree,
+        canvas,
+        startFrame,
+        size: runtimeSize,
+        width: runtimeSize.width,
+        height: runtimeSize.height,
+      });
+    } catch (artworkError) {
+      // Shield platform interaction ownership from artwork-authored startup
+      // failures. If the sketch established its core Three.js objects before
+      // failing, manual controls and steering can still operate them.
+      onError(artworkError);
+    }
 
     if (!state.renderer || !state.camera) {
       throw new Error("This Three.js piece did not initialize a renderer and camera for immersive mode.");
@@ -3806,6 +3840,7 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
         onFloatUp: () => applyThreeFloatMove(1),
         onFloatDown: () => applyThreeFloatMove(-1),
       });
+      setImmersiveViewerControlsEnabled(viewerControls, !handSteeringExclusive);
     }
 
     controls.addEventListener("start", () => {
@@ -3846,6 +3881,7 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
       setHandSteering(active) {
         const next = !!active;
         if (next === handSteeringExclusive) return;
+        setImmersiveViewerControlsEnabled(viewerControls, !next);
         if (next) controlsEnabledBeforeHand = controls.enabled;
         handSteeringExclusive = next;
         cancelThreeNavigationAnimation();
@@ -3994,6 +4030,7 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
   let frameId = 0;
   let handSteeringExclusive = false;
   let aframeControlsBeforeHand = [];
+  let aframeLookControlsEnabledBeforeHand = null;
   let aframeTiltController = null;
   const aframeKeyboardKeys = new Set();
   let aframeKeyboardLastUpdate = null;
@@ -4375,14 +4412,20 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
 
     if ((code || "").trim()) {
       const sketchFactory = resolveSketchFactory(code);
-      const cleanup = sketchFactory({
-        AFRAME: window.AFRAME,
-        scene,
-        startFrame,
-        size: { width: Math.max(stageEl.clientWidth, 1), height: Math.max(stageEl.clientHeight, 1) },
-      });
-      if (typeof cleanup === "function") {
-        stopFrameHandles.push(cleanup);
+      try {
+        const cleanup = sketchFactory({
+          AFRAME: window.AFRAME,
+          scene,
+          startFrame,
+          size: { width: Math.max(stageEl.clientWidth, 1), height: Math.max(stageEl.clientHeight, 1) },
+        });
+        if (typeof cleanup === "function") {
+          stopFrameHandles.push(cleanup);
+        }
+      } catch (artworkError) {
+        // The scene remains a platform-controlled interaction surface even
+        // when an authored optional effect fails during startup.
+        onError(artworkError);
       }
     }
     window.CreatrAFrameModelRuntime.install(scene, {
@@ -4411,6 +4454,7 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
         onFloatUp: () => applyAFrameFloatMove(1),
         onFloatDown: () => applyAFrameFloatMove(-1),
       });
+      setImmersiveViewerControlsEnabled(viewerControls, !handSteeringExclusive);
     }
   }).catch(onError);
 
@@ -4431,29 +4475,38 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
     setHandSteering(active) {
       const next = !!active;
       if (next === handSteeringExclusive) return;
-      handSteeringExclusive = next;
+      setImmersiveViewerControlsEnabled(viewerControls, !next);
       aframeNav.animFrom = aframeNav.animTo = null;
       aframeNav.pointer = null;
       aframeNav.activeTouches.clear();
       const cameraEl = scene?.querySelector("[camera]") || scene?.querySelector("a-camera");
-      const controlNames = ["look-controls", "wasd-controls"];
+      const lookControls = cameraEl?.components?.["look-controls"];
       if (next) {
-        aframeControlsBeforeHand = controlNames.map((name) => {
-          const component = cameraEl?.components?.[name];
-          const wasPlaying = !!component && component.isPlaying !== false;
-          component?.pause?.();
-          return { component, wasPlaying };
-        });
+        aframeLookControlsEnabledBeforeHand = lookControls ? lookControls.data.enabled !== false : null;
+        if (lookControls) cameraEl.setAttribute("look-controls", "enabled", false);
+        const wasd = cameraEl?.components?.["wasd-controls"];
+        aframeControlsBeforeHand = wasd ? [{ component: wasd, wasPlaying: wasd.isPlaying !== false }] : [];
+        aframeControlsBeforeHand.forEach(({ component }) => component?.pause?.());
       } else {
+        const mover = getAFrameCameraMover();
+        if (lookControls && mover) {
+          if (lookControls.pitchObject) lookControls.pitchObject.rotation.x = mover.rotation.x;
+          if (lookControls.yawObject) lookControls.yawObject.rotation.y = mover.rotation.y;
+        }
+        if (lookControls && aframeLookControlsEnabledBeforeHand !== null) {
+          cameraEl.setAttribute("look-controls", "enabled", aframeLookControlsEnabledBeforeHand);
+        }
+        aframeLookControlsEnabledBeforeHand = null;
         aframeControlsBeforeHand.forEach(({ component, wasPlaying }) => {
           if (wasPlaying) component?.play?.();
         });
         aframeControlsBeforeHand = [];
       }
+      handSteeringExclusive = next;
     },
     handPoint(nx, ny, fromTilt) {
       if (!handSteeringExclusive && !fromTilt) return;
-      const cameraObject = getAFrameCameraObject();
+      const cameraObject = getAFrameCameraMover();
       if (!cameraObject) return;
       const desiredYaw = -(nx - 0.5) * Math.PI * 1.5;
       const desiredPitch = -(ny - 0.5) * Math.PI * 0.7;
@@ -4468,7 +4521,7 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
         this.handPoint(command.x, command.y);
         return;
       }
-      const cameraObject = getAFrameCameraObject();
+      const cameraObject = getAFrameCameraMover();
       if (!cameraObject) return;
       if (command.type === "orbit") {
         cameraObject.rotation.order = "YXZ";
@@ -4639,7 +4692,10 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
     viewerControls?.setZoomValue(galleryZoomValueFromDistance(shell.camera.position.distanceTo(shell.controls.target)));
   }
 
+  let galleryHandSteering = false;
+
   function applyGalleryZoomValue(value) {
+    if (galleryHandSteering) return;
     if (!Number.isFinite(value)) return;
     const minDistance = shell.controls.minDistance || 0.6;
     const currentDistance = shell.camera.position.distanceTo(shell.controls.target);
@@ -4654,7 +4710,8 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
     syncViewerControlZoom();
   }
 
-  function applyGalleryDirectionalMove(forwardScale, rightScale) {
+  function applyGalleryDirectionalMove(forwardScale, rightScale, fromSteering = false) {
+    if (galleryHandSteering && !fromSteering) return;
     shell.camera.getWorldDirection(galleryButtonForward);
     galleryButtonForward.y = 0;
     if (galleryButtonForward.lengthSq() < 1e-6) {
@@ -4681,6 +4738,7 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
   }
 
   function applyGalleryFloatMove(verticalScale) {
+    if (galleryHandSteering) return;
     if (!Number.isFinite(verticalScale)) return;
     const step = Math.max(0.08, shell.controls.target.distanceTo(shell.camera.position) * 0.03);
     const nextCamY = Math.max(0.1, Math.min(24, shell.camera.position.y + (verticalScale * step)));
@@ -4882,8 +4940,13 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
       (Array.isArray(options.fullView?.items) && options.fullView.items.length > 0)) {
     const clickRaycaster = new THREE.Raycaster();
     let downX = 0, downY = 0;
-    const onPointerDown = (e) => { downX = e.clientX; downY = e.clientY; };
+    const onPointerDown = (e) => {
+      if (galleryHandSteering) return;
+      downX = e.clientX;
+      downY = e.clientY;
+    };
     const onPointerUp = (e) => {
+      if (galleryHandSteering) return;
       if (Math.hypot(e.clientX - downX, e.clientY - downY) >= 6) return;
       const rect = stageEl.getBoundingClientRect();
       clickRaycaster.setFromCamera(
@@ -4917,6 +4980,7 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
       onFloatUp: () => applyGalleryFloatMove(1),
       onFloatDown: () => applyGalleryFloatMove(-1),
     });
+    setImmersiveViewerControlsEnabled(viewerControls, !galleryHandSteering);
   }
 
   if (Array.isArray(options.fullView?.items) && options.fullView.items.length > 0) {
@@ -5000,23 +5064,23 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
     } catch (_) {}
   };
   let galleryLastHandPoint = null;
-  let galleryHandSteering = false;
-  let galleryRotateBeforeHand = shell.controls.enableRotate;
+  let galleryControlsEnabledBeforeHand = shell.controls.enabled;
   const pieceInteractionController = {
     supportsHandControl: true,
     supportsCameraBackground: true,
     setHandSteering(active) {
       const next = !!active;
       if (next === galleryHandSteering) return;
+      setImmersiveViewerControlsEnabled(viewerControls, !next);
       galleryHandSteering = next;
+      floorNav.setEnabled(!next);
       if (next) {
-        // Match direct immersive ownership without disabling translation or
-        // zoom: hand steering owns look direction; gallery navigation stays.
-        galleryRotateBeforeHand = shell.controls.enableRotate;
-        shell.controls.enableRotate = false;
+        galleryControlsEnabledBeforeHand = shell.controls.enabled;
+        shell.controls.enabled = false;
+        keyNav?.clearKeys?.();
       } else {
-        shell.controls.enableRotate = galleryRotateBeforeHand;
         bakeOrbitHandPose(shell.camera, shell.controls, gyroController);
+        shell.controls.enabled = galleryControlsEnabledBeforeHand;
       }
     },
     handPoint(nx, ny) {
@@ -5040,7 +5104,7 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
         offset.setFromSpherical(spherical);
         shell.camera.position.copy(shell.controls.target).add(offset);
       } else if (command.type === "travel") {
-        applyGalleryDirectionalMove(command.forward || 0, command.right || 0);
+        applyGalleryDirectionalMove(command.forward || 0, command.right || 0, true);
       } else if (command.type === "zoom") {
         const offset = shell.camera.position.clone().sub(shell.controls.target);
         const distance = Math.max(0.45, Math.min(80, offset.length() * (1 - (command.delta || 0))));
@@ -5050,7 +5114,7 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
       syncViewerControlZoom();
     },
     handPress(down) {
-      if (!galleryLastHandPoint) return;
+      if (!galleryHandSteering || !galleryLastHandPoint) return;
       dispatchGalleryHandPointer(down ? "pointerdown" : "pointerup", galleryLastHandPoint.nx, galleryLastHandPoint.ny);
     },
     handLost() { galleryLastHandPoint = null; gyroController?.clearHandOffset?.(); },

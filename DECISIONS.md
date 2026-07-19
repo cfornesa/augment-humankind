@@ -3595,3 +3595,414 @@ media, and the odd background rendering on piece 119.
   open (surfaced to user this session; unrelated).
 - Piece 119's authored Y-spin drift on the backdrop remains (user chose not
   to edit stored piece code).
+
+## 2026-07-18 — A-Frame look-controls normalization + mobile input width constraints
+
+### Context
+Piece 122 (`/pieces/122`) had no mouse/touch movement while hand steering
+worked. Root cause: the generator authored
+`<a-camera … look-controls="enabled: false">`; drag-look comes only from
+look-controls, and hand steering bypasses it. Separately, several mobile
+pages had inputs overflowing the viewport (`.field` rule lacked
+`min-width:0` / `max-width:100%`).
+
+### Agent loops
+- 2 Explore agents (controls architecture; responsive CSS conventions) and
+  plan-mode planning were used before implementation (user-approved plan).
+
+### Decisions
+- Camera-controls normalization added inside
+  `piece_aframe_normalize_texture_assets()` (piece-render.php) so all five
+  call sites (live render, capture, immersive view, exports) are covered:
+  missing look-controls → injected; `enabled: false` → rewritten to true.
+  User explicitly chose to override `enabled: false` rather than treat it
+  as authorial intent.
+- Generation prompt (art-piece-generation.php, aframe rules) now forbids
+  `enabled: false` and requires look-controls on any authored camera.
+- Global `.field input/select/textarea` rule (styles.css) extended with
+  `max-width:100%; min-width:0` to match the `.admin-form` convention;
+  spot fixes: JS-injected media-reference inputs (generate-form.php),
+  `.media-picker-url-input` (tiptap.css), and 320/340px editor popovers
+  capped at ≤640px viewports.
+
+### Verification
+- Piece 122 live: rendered camera now `look-controls="enabled: true"`;
+  synthetic drag updates the component's pitch/yaw; component enabled and
+  registered in scene behaviors. (Headless pane suppresses the iframe's
+  rAF loop, so end-to-end camera rotation could not be observed there —
+  state-level verification only.)
+- Piece 119 (older, active): authored look-controls untouched, scene loads,
+  hand hooks register — no regression.
+- 375px viewport: no horizontal overflow on public pages; a size=80 input
+  in a 200px flex `.field` parent now renders at 200px (was ~700px).
+- Admin-auth pages (generate form, media modal) not exercised directly
+  (OAuth only — no credentials available to the agent); their inputs are
+  covered by the same global rule verified above.
+
+## 2026-07-18 — Background image missing on /pieces (asset load-event race)
+
+### Context
+Piece 122's background rendered on /immersive/pieces/122 but not /pieces/122.
+Diagnosed live: the texture loaded fine; the backdrop plane stayed at
+A-Frame's default 1x1 geometry because the generated sketch sizes it inside
+`img.addEventListener('load', …)`, and on /pieces the capture-safe media
+inlining turns the asset into a data: URL that is already `complete` before
+the listener attaches — the event never fires. A-Frame-specific (other
+engines use loader callbacks).
+
+### Agent loops
+- 1 Explore agent (render-path comparison; its CORS hypothesis was
+  disproved by live browser diagnosis) + plan-mode planning (user-approved).
+
+### Decisions
+- `replayAFrameAssetImageLoads(scene)` added to piece-runtime.js and called
+  right after `window.sketch(...)` in bootAFrame; identical inline twin
+  added after the export bundle's sketch call (piece-render.php ~4025).
+  Replay only fires for images already complete, so URL-served assets keep
+  their natural single 'load'.
+- `resolveImage` in `installAFrameBackdropAspectFix` now also accepts
+  `#id` asset images with data: URLs so the aspect correction works on
+  inlined (/pieces) documents.
+- A-Frame generation prompt now mandates the
+  `if (img.complete && img.naturalWidth > 0) ready(); else addEventListener`
+  pattern for any asset-image-dependent JS.
+
+### Verification
+- /pieces/122: #bg-plane now 47.7×26.9 (was 1×1); background visible in
+  screenshot alongside GLB centerpiece and particles.
+- /immersive/pieces/122: unchanged, same plane size — no regression.
+- Piece 119 on /pieces: backdrop aspect fix applies (72 → 40.5 height),
+  look-controls enabled, hand hooks registered — no regression.
+- php -l clean on both PHP files; node --check clean on piece-runtime.js.
+
+## 2026-07-18 — Hand-steering regression fix (steering ↔ manual controls handoff)
+
+### Context
+Force-enabling look-controls (earlier today) broke A-Frame hand steering:
+handPoint/handCommand rotated the CHILD PerspectiveCamera (scene.camera)
+while look-controls drives the PARENT entity object3D every tick — writes
+were fought/irrelevant. The pause()-based disable was timing-fragile and
+never synced pose state (snap-back on disarm), violating the documented
+ownership-handoff contract (docs/api.md:274, 1204; piece-surface-parity.md:51).
+
+### Agent loops
+- 2 Explore agents (steering architecture incl. vendored A-Frame internals;
+  docs contract + collections wiring) + plan-mode planning (user-approved).
+
+### Decisions (piece-runtime.js bootAFrame hooks + piece-render.php export twin)
+- Hand hooks (handPoint/handCommand/resetView/initial pose) now operate on
+  the camera ENTITY object3D via getAFrameCameraMover() — one shared
+  transform with look-controls, mirroring three's single-camera pattern.
+- setHandSteering disables look-controls at the data level
+  (setAttribute enabled:false — its tick gate) instead of component.pause();
+  wasd-controls still paused. Prior enabled value recorded and restored.
+- Disarm seeds look-controls pitchObject/yawObject from the steered pose
+  before re-enabling — ownership handoff at pose, no snap-back.
+- Runtime handPoint gained rotation.order='YXZ' + ±0.45π pitch clamp
+  (parity with export twin).
+- handleTiltToggle now brackets the tilt controller with
+  setHandSteering(true/false) — device-tilt frames were silently dropped on
+  3D engines (handSteeringExclusive guard).
+- Collections (immersive-gallery.js createRoomHandNavigation) untouched:
+  already the correct OrbitControls controls.enabled pattern; unaffected by
+  the look-controls change.
+
+### Verification (headless pane, simulated via __pieceHandHooks)
+- Piece 122 and 119: (a) drag updates look-controls pitch/yaw; (b) armed →
+  look-controls data.enabled=false, handPoint moves entity rotation;
+  (c) disarmed → look-controls re-enabled, pitch/yaw exactly match steered
+  pose (handoff verified), wasd restored to playing.
+- Three piece 121: setHandSteering(true/false) round-trips (unchanged code).
+- Collection /immersive/collections/apocalyptic: room + chrome mount, no
+  console errors ("Walk the room" button gated by immersive_hand_nav flag).
+- node --check + php -l clean.
+- Real MediaPipe hand tracking cannot run in the headless pane — physical
+  device confirmation left to the user.
+
+## 2026-07-18 — OPEN: Hand steering broken on ALL pieces
+
+### Status
+OPEN — user-reported after real-device testing. The fix logged in the
+previous entry ("Hand-steering regression fix (steering ↔ manual controls
+handoff)") did NOT resolve the problem in practice, despite the simulated
+hook-level verification passing. Treat this as a live regression affecting
+ALL pieces (not just A-Frame piece 122), introduced by today's changes.
+
+### 2026-07-18 correction after piece 122 retest
+- The later claim below that live-browser verification resolved steering was
+  also incorrect: it proved camera acquisition, ownership lockout, and a
+  synthetic gesture classification, but did not prove that a person's hand
+  produced continuous camera movement on piece 122.
+- The specific upstream regression is in `createClutchedGestureRouter()`:
+  unpinched wrist movement was emitted only when `stablePose === 'open'`.
+  Real hands that remained `unknown`, `point`, or `fist` therefore produced
+  no look command at all while the UI continued to show steering as active.
+- User selected the Direct approach: every visible, unpinched hand emits
+  `look` from wrist position. Pose classification remains responsible only
+  for selecting travel versus orbit when a pinch begins.
+- Status remains OPEN until actual camera-pose movement is demonstrated on
+  piece 122 in both standard and immersive views; state-only checks do not
+  qualify as resolution.
+
+### 2026-07-18 scoped remediation (Shield approach)
+- Platform steering initialization is isolated from artwork-authored startup
+  failures in standard, immersive/VR, and export runtimes.
+- Steering now owns interaction exclusively while active: cursor/touch drag,
+  keyboard/manual navigation, and action buttons are disabled; switching
+  steering off restores those controls immediately at the steered pose.
+- Manual dragging and action buttons remain enabled by default for every
+  piece. C2 interactive pieces now follow the same ownership contract.
+- Automated result: `tests/three-runtime-consistency.php` passes 142/142.
+- Fresh live-browser camera verification exercised the real MediaPipe path,
+  not direct hook simulation. A-Frame 122, Three.js 121, and C2 Interactive
+  114 each reached active steering; the gesture router emitted `Look` for
+  all three immersive engines. Standard 122 also ran MediaPipe inference and
+  completed the ownership toggle through the iframe bridge.
+- In both standard and immersive views, controls were enabled by default,
+  disabled while steering was active, and restored after steering stopped.
+  A-Frame `look-controls` changed true → false → true; immersive movement,
+  zoom, and Reset actions changed enabled → disabled → enabled. Three.js and
+  C2 standard Reset actions followed the same cycle.
+- The completion audit additionally fixed two C2 immersive conflicts found
+  after the initial implementation: floor-click navigation could re-enable
+  OrbitControls during steering, and hand travel reused a manual-only guard
+  that discarded its command.
+
+### What the user observed
+- Hand steering does not work on pieces (user report: "completely disabled
+  the ability to steer the piece"; after the attempted fix: "your fixes did
+  not work", scope: ALL pieces).
+- Required behavior (per docs/api.md:274 & 1204, docs/piece-surface-parity.md:51,
+  MEMORY.md): hand steering and manual drag/touch/cursor controls are
+  mutually exclusive, at least one always functional; disarming steering is
+  an ownership handoff that preserves the pose.
+
+### Today's changes that are in scope as possible causes (all uncommitted)
+1. piece-render.php — `piece_aframe_normalize_texture_assets()`: forces
+   look-controls enabled on every authored A-Frame camera (rewrites
+   `enabled: false` → true, injects when missing).
+2. piece-runtime.js — bootAFrame hand hooks rewritten: target entity
+   object3D via getAFrameCameraMover(); look-controls disabled via
+   setAttribute('look-controls','enabled',false) on arm; pitch/yaw seeded
+   on disarm; YXZ + pitch clamp in handPoint.
+3. piece-runtime.js — `handleTiltToggle` now calls setHandSteering(true/false)
+   around the tilt controller.
+4. piece-runtime.js — `replayAFrameAssetImageLoads()` after window.sketch
+   (background-image race fix); resolveImage accepts data: URLs.
+5. piece-render.php — export-twin mirrors of items 2 and 4;
+   captureInitialAFramePose/resetView/handPoint/handCommand switched from
+   getAFrameCameraObject() to getAFrameCameraMover().
+6. Generation prompt changes (art-piece-generation.php) — look-controls
+   mandate + img.complete pattern (should not affect existing pieces).
+7. CSS/viewport fixes (styles.css, tiptap.css, generate-form.php) —
+   unlikely related, listed for completeness.
+
+### Historical leads (superseded by the live verification above)
+- "ALL pieces" includes three.js pieces, whose steering hooks were NOT
+  functionally changed — suggesting the break may be upstream of the
+  engine hooks: e.g. the host→iframe bridge (piece-fullscreen.js
+  gestureCall / handleHandControlToggle), handControlBinding attach, the
+  MediaPipe pipeline, or capability handshake — rather than the A-Frame
+  camera math itself. Investigate the full chain on a real device.
+- The former verification gap was hook-only simulation. The remediation
+  above is instead verified through live camera acquisition, MediaPipe
+  inference, gesture classification, and the host/iframe ownership bridge.
+- getAFrameCameraObject() vs getAFrameCameraMover(): sonic controller and
+  camera-blend-quad hooks still use scene.camera in places; check for
+  mixed-transform consumers.
+- If needed, the safest rollback slice is item 2 (and its export twin in
+  item 5) while keeping the background-image fix (item 4) and CSS fixes;
+  note that rolling back item 1 alone restores piece 122's original
+  "steering works, dragging dead" state.
+
+### Next steps
+1. Reproduce on a real device with the camera/hand pipeline active; trace
+   where the chain stops (button → gestureCall → handleHandControlToggle →
+   setHandSteering → handControlBinding → handPoint/handCommand frames).
+2. Fix or roll back the offending slice; re-verify BOTH modes on A-Frame,
+   three.js, and a platform collection, live + downloaded export.
+3. Only then update this entry and close the REVIEW REQUIRED flag.
+
+### Note on prior entry
+The previous entry's "Verification" section overstates confidence: it
+validated hook-level state transitions only, not end-to-end steering. Its
+conclusions should not be trusted until re-verified on-device.
+
+## 2026-07-18 — Hand steering root cause CONFIRMED + relative-motion gesture mapping
+
+### Root cause (reproduced live in real Chrome with the actual webcam)
+The full activation chain was proven working (button → bridge → engine →
+camera → MediaPipe → frames → router → handCommand → armed). The camera
+still froze because look commands carried CONSTANT saturated coordinates —
+MediaPipe detects incidental "hands" (resting/typing hands, faces, frame-
+edge objects) in ~66% of frames, and the ABSOLUTE wrist-position→camera-
+angle mapping slewed the camera to a pinned extreme and held it there.
+History: pre-Codex, look was gated on a stable 'open' pose that real-device
+classification rarely produced (armed, zero commands = "disabled"); Codex
+removed the gate, so junk coordinates then pinned the camera ("still
+broken"). Earlier hook-level "verification" passed because synthetic
+coordinates varied — the real webcam's don't.
+
+### Fix (user-approved plan: strategy classes + relative mapping)
+- sonic-controller.js: new per-engine gesture-mapping registry
+  (GESTURE_MAPPINGS keyed by hooks.engine) feeding the router's un-pinched
+  branch. Default strategy = RELATIVE motion: orbit deltas from wrist
+  movement with a deadzone (0.008, tuned live), so a static detection emits
+  nothing by construction. c2_interactive keeps absolute wrist→pointer
+  mapping (it positions a cursor, not a camera). aframe/three/room alias
+  default; per-engine overrides now have a seam.
+- handFrameStep: MediaPipe handedness-score filter (<0.75 → no hand).
+- Router creation passes engine: piece-runtime handControlBinding,
+  immersive-gallery (room), piece-render.php export twin. Exports inherit
+  via the embedded sonic-controller source.
+- docs/api.md hand-steering paragraph updated (movement-based contract);
+  tests/three-runtime-consistency.php assertions updated (142 pass).
+
+### Verification
+- Synthetic (pane): static wrist at frame edge → 0 commands, camera frozen;
+  sweeping wrist → −1.42 rad yaw on aframe 122; three 121 identical
+  (0 static / 41 sweep commands); pinch clutch still emits start/orbit.
+- Real webcam (Chrome): relative orbit deltas flow (no absolute look);
+  static-pin failure eliminated. Residual: INCIDENTAL moving hands/false
+  positives near the camera still cause slow drift and occasional pinch
+  clutches while steering is armed — inherent to ungated steering; revisit
+  only if the user finds it disruptive in deliberate use.
+- STILL OPEN pending the user's on-device confirmation with deliberate
+  gestures (steer, release, drag-at-pose). Keep the REVIEW REQUIRED flag
+  from the earlier entry until then.
+
+## 2026-07-18 — Camera view × steering matrix: root cause found (runaway gestures), fixed
+
+### Investigation (automated, real Chrome + real webcam, per user request)
+Matrix driven via real UI buttons/bridges. Findings:
+- Pieces 121/122 have camera_overlay NULL — camera view is not even available
+  there; earlier "combo passes" on 122 were vacuous. Camera-enabled test
+  pieces: 109 (aframe), 107 (three).
+- The camera pipeline composes correctly: ref-counted shared stream, frames
+  and hand detections flow identically with the camera view on/off
+  (319/338 hand frames with the view on). The suspected blend-quad
+  re-parenting and DOM-overlay input-swallowing hazards did NOT reproduce
+  (parent stays the mover entity; overlays have pointer-events:none).
+- ACTUAL root cause: unbounded gesture travel/zoom + accidental pinch
+  clutches. With the camera view on, incidental pinches fired zoom/travel
+  bursts (96 zoom commands in 8s observed) that carried the three camera to
+  |position|≈86 (content sits at ~5) — the artwork vanishes from view and
+  steering "doesn't move the camera" from the visitor's perspective. Camera
+  view correlates because visitors gesture more when they can see
+  themselves.
+
+### Fixes
+- sonic-controller.js router: pinch clutch now requires a 160ms dwell
+  (pinchDwellMs) — sub-dwell pinch blips (typing, hand jitter) emit
+  nothing; deliberate pinches are unaffected. Reset clears the dwell state.
+- piece-runtime.js three hooks: zoom clamped relative to the authored
+  framing (0.2×–4× initial camera–target distance, min floor), travel
+  clamped to a max roam of 4× initial distance (≥12) around the initial
+  target.
+- piece-runtime.js aframe hooks: clampAFrameGestureRoam keeps the camera
+  within 24 units of its initial pose for travel/zoom.
+- Export twins mirrored (fixed 40-unit zoom cap + same aframe roam clamp;
+  no stored three initial pose in exports).
+- Hardening kept although not implicated: blend quad re-parents an
+  orphaned A-Frame camera to its entity object3D (never the scene root),
+  live + export.
+- docs/piece-surface-parity.md: explicit contract — camera view and
+  steering compose in every combination/order; gesture motion stays within
+  roaming range of the authored pose.
+
+### Verification (real Chrome, real webcam)
+- 107 (three): camera view + steering armed → position pinned at 5 with no
+  hand (no junk drift); adversarial bursts: 300 zoom-out → 18.9 (cap 20),
+  500 travel → 19.2, reset → 5; pinch blips → 0 clutch commands; deliberate
+  400ms pinch → start/orbit.
+- 109 (aframe): steer moves with camera on; 800-travel/300-zoom burst →
+  roam clamped at exactly 24; scene.camera parent = mover entity with quad
+  attached; disarm handoff yaw exact; drag −0.24 rad plain, with camera on,
+  and after handoff with camera still on.
+- Immersive 109: real "Show camera" + "Steer the piece" buttons arm
+  (aria-pressed true), drag with camera on −0.24. Exports covered by
+  mirrored twins + parity suite (142 assertions pass); art-piece tests 162
+  pass.
+- Note: an intermediate "drag dead" scare was a test-harness bug (synthetic
+  mousemove without screenX/screenY — look-controls uses screenX deltas);
+  corrected probes pass everywhere.
+- Awaiting user's deliberate-gesture confirmation (steer with camera view
+  on/off, both orders) to close the REVIEW REQUIRED chain.
+
+## 2026-07-18 — REVIEW REQUIRED (still open): steering failure confirmed with MIC, not camera alone
+
+### Status
+OPEN. After this session's camera×steering matrix work (previous entry),
+the user confirmed on-device that the actual regression trigger is
+**mic ON**, not camera view alone. The precise reproduction sequence
+reported by the user:
+
+| Combination tested (in order) | Result |
+|---|---|
+| Mic ON → Camera ON → Steer ON | **FAILS** — steering dead |
+| Camera ON → Steer ON | PASS — steering works |
+| Steer ON (alone) | PASS — steering works |
+
+This means the camera×steering matrix completed this session was
+insufficient: the MIC axis was not exercised. docs/piece-surface-parity.md
+explicitly requires "camera view, live mic, and steering may be enabled in
+any order," making the mic+camera+steer triple the first unverified (and
+now user-confirmed broken) cell.
+
+The camera-only path was **never the cause**. The previous session's
+camera-view root cause (runaway gesture travel/zoom) was real but
+orthogonal — that is now fixed. The remaining open regression is triggered
+specifically by mic activation before steering.
+
+### Suspect paths to investigate next session
+- **getUserMedia re-negotiation**: sonic-controller.js `enableMic` calls
+  `getUserMedia({audio:true})` SEPARATELY from the shared camera stream.
+  Chrome can restart the capture pipeline when an audio+video device
+  combination changes, which may stall `handFrameStep`'s video element
+  (readyState drops, currentTime stops advancing) and halt hand frames
+  entirely — causing steering to appear frozen.
+- **Capability message interference**: mic enable may call into engine
+  `enable()`/`ensureSynth()` which, via shared state (Tone.js context
+  start, capability messages), could disturb `handControlOn`, the landmark
+  loop, or the gesture router.
+- **Main-thread load**: audio worklet or Tone.js startup could starve the
+  rAF-based landmark loop, dropping enough frames that the gesture state
+  machine never fires commands.
+- **Host popover interaction**: piece-fullscreen.js `toggleMic →
+  gestureCall` may interact with the hand-control toggle state in
+  piece-runtime.js in a way that silently disarms steering without the UI
+  reflecting it.
+- **Audio context / stream sharing collision**: if the mic acquisition
+  creates a new MediaStream or closes and reopens a track that the camera
+  pipeline already holds, the video element's srcObject reference could
+  become stale.
+
+### Matrix to run next session
+{mic on/off} × {camera view on/off} × {steering on/off}, both engines
+(107/109), real webcam+mic, real UI buttons — same instrumentation as the
+camera matrix (frames, hands, commands, camera pose, video
+readyState/currentTime and srcObject identity before/after mic toggle).
+The toggle order mic→camera→steer is the priority repro case.
+
+### This session's shipped changes (all uncommitted, verified, and kept)
+1. Gesture mapping: per-engine strategy registry in sonic-controller.js;
+   relative-motion look with deadzone 0.008 (absolute retained for
+   c2_interactive); MediaPipe handedness-score filter (<0.75 → no hand).
+2. Pinch clutch dwell 160ms (kills accidental zoom/travel bursts).
+3. Content-aware gesture bounds: three zoom 0.2×–4× authored framing +
+   travel roam clamp; aframe 24-unit roam clamp; export twins mirrored
+   (fixed 40-unit zoom cap in exports).
+4. Blend-quad hardening: orphaned A-Frame camera re-parents to its entity
+   object3D, never the scene root (live + export).
+5. Router creation sites pass engine (piece-runtime, immersive-gallery,
+   export twin).
+6. docs/api.md (relative steering contract), docs/piece-surface-parity.md
+   (camera×steering composition + roam bounds contract),
+   tests/three-runtime-consistency.php updated — 142 + 162 tests pass.
+
+### Verification state
+Camera×steering matrix (no mic) green on real Chrome/webcam (pieces 107,
+109, immersive 109, exports via parity suite). The mic dimension is the
+confirmed open failure axis. User's on-device deliberate-gesture
+confirmation for the full matrix (including mic-armed) is pending and
+cannot happen until the mic path is diagnosed and fixed.

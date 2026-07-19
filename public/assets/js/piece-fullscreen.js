@@ -370,10 +370,14 @@
     const cameraBgToggle = root.querySelector('[data-piece-sound-camera-bg-toggle]');
     const cameraOpacityRow = root.querySelector('[data-piece-sound-camera-opacity-row]');
     const cameraOpacity = root.querySelector('[data-piece-sound-camera-opacity]');
+    const syncSteeringActionOwnership = (active) => {
+        if (resetViewButton) resetViewButton.disabled = !!active;
+    };
 
     handControlToggle?.addEventListener('click', () => {
         const nextOn = handControlToggle.getAttribute('aria-pressed') !== 'true';
         handControlToggle.setAttribute('aria-pressed', nextOn ? 'true' : 'false');
+        syncSteeringActionOwnership(nextOn);
         if (handControlToggle.dataset.capabilityFallback === 'device_tilt') {
             gestureCall('toggleTilt', nextOn, 'creatr-sound-hand-control-toggle');
         } else {
@@ -403,6 +407,7 @@
         if (event.source !== frame.contentWindow || !event.data) return;
         if (event.data.type === 'creatr-sound-hand-control-state') {
             handControlToggle?.setAttribute('aria-pressed', event.data.enabled ? 'true' : 'false');
+            syncSteeringActionOwnership(event.data.enabled);
             if (handControlToggle && event.data.mode === 'device_tilt') {
                 handControlToggle.dataset.capabilityFallback = 'device_tilt';
                 handControlToggle.textContent = 'Use device tilt';

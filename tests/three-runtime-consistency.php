@@ -1515,13 +1515,13 @@ test('flat engines receive regular presentation tilt and immersive room steering
     assert_contains($gallery, 'stabilizeHand: true');
     assert_contains($gallery, 'handInputDeadband: 0.012');
     assert_contains($gallery, 'handMaxAngularStep: 0.022');
-    assert_contains($gallery, 'shell.controls.enableRotate = false');
-    assert_contains($gallery, 'shell.controls.enableRotate = galleryRotateBeforeHand');
+    assert_contains($gallery, 'shell.controls.enabled = false');
+    assert_contains($gallery, 'shell.controls.enabled = galleryControlsEnabledBeforeHand');
     if (
-        strpos($gallery, 'shell.controls.enableRotate = galleryRotateBeforeHand')
-        >= strpos($gallery, 'bakeOrbitHandPose(shell.camera, shell.controls, gyroController)')
+        strpos($gallery, 'bakeOrbitHandPose(shell.camera, shell.controls, gyroController)')
+        >= strpos($gallery, 'shell.controls.enabled = galleryControlsEnabledBeforeHand')
     ) {
-        throw new Exception('Gallery OrbitControls rotation must be restored before the hand-directed pose is baked.');
+        throw new Exception('Gallery hand-directed pose must be baked before manual OrbitControls ownership is restored.');
     }
 });
 
@@ -1544,6 +1544,17 @@ test('clutched gesture navigation reuses one landmark loop across regular, immer
     assert_contains($sonic, 'cadenceCarry += sampleFrameScale');
     assert_contains($sonic, '1 - Math.pow(1 - 0.22, sampleFrameScale)');
     assert_contains($sonic, 'classificationGraceMs');
+    assert_contains($sonic, 'Direct steering is the baseline contract');
+    assert_contains($sonic, "emitMode('look');");
+    // Un-pinched steering routes through the per-engine mapping registry:
+    // relative orbit deltas with a deadzone by default, absolute wrist
+    // pointer mapping only for c2_interactive.
+    assert_contains($sonic, 'lookMapping.update(smoothWrist, lastWrist');
+    assert_contains($sonic, 'GESTURE_MAPPINGS[options.engine] || GESTURE_MAPPINGS.default');
+    assert_contains($sonic, 'GESTURE_LOOK_DEADZONE');
+    assert_contains($sonic, "c2_interactive: absoluteLookMapping");
+    assert_contains($sonic, "emit({ type: 'look', x: 1 - smoothWrist.x, y: smoothWrist.y })");
+    assert_not_contains($sonic, "if (stablePose === 'open')");
     assert_contains($sonic, 'queueCadencedCommands(spatialCommands, cadenceSteps)');
     assert_contains($sonic, "command.type === 'travel' || count === 1");
     assert_contains($sonic, 'cadenceRaf = requestAnimationFrame(flushFrame)');
@@ -1605,10 +1616,11 @@ test('instructional hand guide is mobile-first, accessible, surface-parity marku
         'hand_control' => true,
         'hand_guide_variant' => 'c2_interactive_latched',
     ]);
-    assert_contains($c2Toolbar, 'Interaction pauses');
+    assert_contains($c2Toolbar, 'Interaction ownership');
     assert_contains($c2Toolbar, 'Return to interact');
-    assert_contains($c2Toolbar, 'remains non-interactive whenever it is spatially displaced');
-    assert_contains($c2Toolbar, 'Reset returns home without disabling steering');
+    assert_contains($c2Toolbar, 'cursor, touch, drag, and action controls pause');
+    assert_contains($c2Toolbar, 'restore cursor, touch, drag, and action controls immediately');
+    assert_contains($c2Toolbar, 'Reset view is optional');
     assert_contains($c2Toolbar, 'data-immersive-reset-view');
     assert_contains(file_get_contents(__DIR__ . '/../public/app/views/immersive/piece.php'), "'hand_guide_variant' => ''");
     $css = immersive_stage_hand_guide_css();
@@ -1631,6 +1643,13 @@ test('hand steering cancellation and pose reset stay independent from camera vis
     assert_contains($runtime, 'controlsEnabledBeforeHand');
     assert_contains($runtime, 'aframeControlsBeforeHand');
     assert_contains($runtime, 'keyNav?.clearKeys?.();');
+    assert_contains($runtime, 'blockManualC2InputWhileSteering');
+    assert_contains($runtime, 'if (!c2HandSteeringExclusive || event.isTrusted === false) return;');
+    assert_contains($runtime, "engine: 'c2_interactive',\n        setHandSteering(active)");
+    assert_contains($runtime, 'Artwork startup is not allowed to take the platform interaction');
+    assert_contains($runtime, 'Keep platform camera ownership independent from artwork startup');
+    assert_contains($runtime, 'try { ready.noteInlineMedia(scene); } catch (_) {}');
+    assert_contains($runtime, 'initializeAFramePlatformInteraction();');
     $threeStateStart = strpos($runtime, 'const state = { scene: null, camera: null, renderer: null };');
     $threeSetupStart = strpos($runtime, 'if (state.camera && state.renderer) {', $threeStateStart);
     $threeHookStart = strpos($runtime, 'window.__pieceHandHooks = Object.assign(', $threeSetupStart);
@@ -1649,12 +1668,34 @@ test('hand steering cancellation and pose reset stay independent from camera vis
     assert_contains($fullscreen, 'data-piece-reset-view');
     assert_contains($gallery, 'handActivationEpoch');
     assert_contains($gallery, 'data-immersive-reset-view');
+    assert_contains($gallery, 'Shield platform interaction ownership from artwork-authored startup');
+    assert_contains($gallery, 'if (galleryHandSteering) return;');
+    assert_contains($gallery, 'setImmersiveViewerControlsEnabled(viewerControls, !next);');
+    assert_contains($gallery, 'controller?.setEnabled?.(enabled);');
+    assert_contains($gallery, 'floorNav.setEnabled(!next);');
+    assert_contains($gallery, 'if (galleryHandSteering && !fromSteering) return;');
+    assert_contains($gallery, 'applyGalleryDirectionalMove(command.forward || 0, command.right || 0, true);');
+    assert_contains($gallery, 'galleryControlsEnabledBeforeHand');
+    assert_contains($gallery, 'shell.controls.enabled = false;');
+    assert_contains($gallery, 'shell.controls.enabled = galleryControlsEnabledBeforeHand;');
+    assert_contains($gallery, 'resetViewButton.disabled = handControlActive || handActivationPending || tiltFallbackActive;');
+    assert_contains($fullscreen, 'syncSteeringActionOwnership(nextOn);');
+    assert_contains($fullscreen, 'syncSteeringActionOwnership(event.data.enabled);');
+    assert_contains($gallery, 'aframeLookControlsEnabledBeforeHand');
+    assert_contains($gallery, 'cameraEl.setAttribute("look-controls", "enabled", false);');
+    assert_contains($gallery, 'const cameraObject = getAFrameCameraMover();');
     assert_contains($render, 'handControlActivationEpoch');
     assert_contains($render, "if (!activeHooks || typeof activeHooks.setHandSteering !== 'function') controlOk = false;");
     $regularAudioBootstrap = substr($render, strpos($render, 'async function ensureEnabled()'));
     assert_contains($regularAudioBootstrap, 'allowHandControl: !!capabilities.hand_control,', 'Regular export audio/mic bootstrap retains the steering contract.');
     assert_contains($render, 'keyboardKeys.clear();');
     assert_contains($render, 'aframeControlsBeforeHand');
+    assert_contains($render, 'blockManualC2InputWhileSteering');
+    assert_contains($render, 'if (handControlActive) return;');
+    assert_contains($runtime, 'if (!c2HandSteeringExclusive || !lastHandClient) return;');
+    assert_contains($render, 'if (!c2HandSteeringExclusive || !lastHandClient) return;');
+    assert_contains($render, 'Preserve the platform interaction layer when an authored optional');
+    assert_contains($render, 'Steering/manual ownership is platform infrastructure');
     assert_not_contains($render, 'Camera steering requires the included local server.');
     assert_contains($render, 'resetViewButton');
     assert_contains($render, 'setHandSteering(false)');

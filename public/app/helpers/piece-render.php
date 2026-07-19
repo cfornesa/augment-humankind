@@ -563,9 +563,9 @@ function piece_export_sonic_script(string $engine, string $sonicParamsJson, stri
         : rtrim(piece_request_origin(), '/') . '/assets/vendor/mediapipe-hands/hand_landmarker.task?v=' . (int) @filemtime(dirname(__DIR__, 2) . '/assets/vendor/mediapipe-hands/hand_landmarker.task');
     $toneSrcJson = json_encode($toneSrc);
     $sonicControllerSrcJson = json_encode($sonicControllerSrc);
-    $mediaPipeVisionSrcJson = json_encode($mediaPipeVisionSrc);
-    $mediaPipeWasmDirJson = json_encode($mediaPipeWasmDir);
-    $mediaPipeModelSrcJson = json_encode($mediaPipeModelSrc);
+    $mediaPipeVisionSrcJson = json_encode($mediaPipeVisionSrc, JSON_UNESCAPED_SLASHES);
+    $mediaPipeWasmDirJson = json_encode($mediaPipeWasmDir, JSON_UNESCAPED_SLASHES);
+    $mediaPipeModelSrcJson = json_encode($mediaPipeModelSrc, JSON_UNESCAPED_SLASHES);
     $pieceIdJson = json_encode($pieceId);
     // KEEP IN SYNC with SONIC_INSTRUMENTS in public/assets/js/sonic-controller.js.
     $instrumentOptionsJson = json_encode([
@@ -714,10 +714,12 @@ JS;
         var tiltOk = turningOn && tiltController ? await tiltController.enable() : false;
         if (!turningOn && tiltController) tiltController.disable();
         handControlToggle.setAttribute('aria-pressed', tiltOk ? 'true' : 'false');
+        resetViewButton.disabled = !!tiltOk;
         return;
       }
       if (!turningOn) {
         handControlActive = false;
+        resetViewButton.disabled = false;
         if (engine) { engine.onHandFrame(null); engine.disableHandControl(); }
         var disabledHooks = window.__pieceHandHooks;
         if (disabledHooks && typeof disabledHooks.setHandSteering === 'function') {
@@ -730,6 +732,7 @@ JS;
         return;
       }
       handControlToggle.setAttribute('aria-pressed', 'true');
+      resetViewButton.disabled = true;
       var eng = createEngineSyncForCamera();
       var controlOk = eng ? await eng.enableHandControl() : false;
       if (activationEpoch !== handControlActivationEpoch || handControlToggle.getAttribute('aria-pressed') !== 'true') {
@@ -743,6 +746,7 @@ JS;
       }
       if (activationEpoch !== handControlActivationEpoch || !controlOk) {
         handControlActive = false;
+        resetViewButton.disabled = false;
         if (eng) { eng.onHandFrame(null); eng.disableHandControl(); }
         handControlToggle.setAttribute('aria-pressed', 'false');
         return;
@@ -757,6 +761,7 @@ JS;
           if (typeof hooks.handCommand === 'function' && window.CreatrSonicController && window.CreatrSonicController.createClutchedGestureRouter) {
             if (!gestureRouter) {
               gestureRouter = window.CreatrSonicController.createClutchedGestureRouter({
+                engine: hooks.engine,
                 onCommand: function(command) { hooks.handCommand(command); },
                 onMode: setGestureModeIndicator
               });
@@ -786,6 +791,7 @@ JS;
       }
     });
     resetViewButton.addEventListener('click', async function () {
+      if (handControlActive) return;
       var hooks = window.__pieceHandHooks;
       if (!hooks || typeof hooks.resetView !== 'function') return;
       resetViewButton.disabled = true;
@@ -2120,6 +2126,29 @@ function piece_aframe_normalize_texture_assets(string $html, callable $resolver)
         }
     }
 
+    // Generated markup sometimes authors a camera with look-controls disabled
+    // (or missing entirely). Declaring any camera suppresses A-Frame's default
+    // camera — the only other source of look-controls — leaving the piece with
+    // no drag/mouse look at all. Hand steering bypasses look-controls, which
+    // is why it still works on such pieces; force look-controls on so every
+    // authored camera keeps pointer/touch movement.
+    foreach ($xpath->query('.//a-camera | .//a-entity[@camera]', $scene) as $cameraNode) {
+        if (!$cameraNode instanceof DOMElement) {
+            continue;
+        }
+
+        $lookControls = trim((string) $cameraNode->getAttribute('look-controls'));
+        if ($lookControls === '') {
+            $cameraNode->setAttribute('look-controls', 'magicWindowTrackingEnabled: false');
+            continue;
+        }
+
+        $updated = preg_replace('/\benabled\s*:\s*false\b/i', 'enabled: true', $lookControls);
+        if (is_string($updated) && $updated !== $lookControls) {
+            $cameraNode->setAttribute('look-controls', $updated);
+        }
+    }
+
     $result = '';
     foreach ($root->childNodes as $child) {
         $result .= $dom->saveHTML($child);
@@ -2700,11 +2729,26 @@ try {
   let updateC2Mover = null;
   {$pointerWiring}
   let lastHandClient = null;
+  let c2HandSteeringExclusive = false;
+  const blockManualC2InputWhileSteering = (event) => {
+    if (!c2HandSteeringExclusive || event.isTrusted === false) return;
+    event.preventDefault?.();
+    event.stopImmediatePropagation?.();
+  };
+  ['pointerdown', 'pointermove', 'pointerup', 'click', 'mousedown', 'mousemove', 'mouseup', 'touchstart', 'touchmove', 'touchend']
+    .forEach((type) => canvas.addEventListener(type, blockManualC2InputWhileSteering, { capture: true, passive: false }));
   const dispatchHandPointer = (type, clientX, clientY) => {
     try { canvas.dispatchEvent(new PointerEvent(type, { clientX, clientY, bubbles: true, isPrimary: true, pointerType: 'touch', button: 0, buttons: type === 'pointerup' ? 0 : 1 })); } catch (_) {}
   };
   window.__pieceHandHooks = {
     engine: 'c2_interactive',
+    setHandSteering(active) {
+      c2HandSteeringExclusive = !!active;
+      if (!c2HandSteeringExclusive && lastHandClient) {
+        dispatchHandPointer('pointerup', lastHandClient.x, lastHandClient.y);
+      }
+      return true;
+    },
     handPoint(nx, ny) {
       const rect = canvas.getBoundingClientRect();
       if (!rect.width || !rect.height) return;
@@ -2719,7 +2763,7 @@ try {
     // Pinch gesture → pointer button (see handControlBinding twin in
     // piece-runtime.js): drag-driven c2 sketches need pointerdown/up.
     handPress(down) {
-      if (!lastHandClient) return;
+      if (!c2HandSteeringExclusive || !lastHandClient) return;
       dispatchHandPointer(down ? 'pointerdown' : 'pointerup', lastHandClient.x, lastHandClient.y);
     },
   };
@@ -3067,7 +3111,12 @@ function piece_export_camera_blend_quad_members(string $threeExpr, string $scene
           const height = 2 * dist * Math.tan((cam.fov * Math.PI) / 360);
           quad.scale.set(height * (cam.aspect || 1), height, 1);
         };
-        if (!quadCamera.parent) quadScene.add(quadCamera);
+        // An A-Frame camera belongs to its entity object3D — the transform
+        // hand steering rotates; scene-root parenting would decouple them.
+        if (!quadCamera.parent) {
+          if (quadCamera.el && quadCamera.el.object3D) quadCamera.el.object3D.add(quadCamera);
+          else quadScene.add(quadCamera);
+        }
         quadCamera.add(quad);
         this._cameraQuad = quad;
         this._videoTexture = texture;{$afterChangeJs}
@@ -3186,7 +3235,15 @@ try {
   }
   sizeCanvas();
   window.THREE = instrumentedThree;
-  if (typeof window.sketch === 'function') window.sketch({ THREE: instrumentedThree, canvas, startFrame, width: canvas.width, height: canvas.height, size: { width: canvas.width, height: canvas.height }, OrbitControls });
+  if (typeof window.sketch === 'function') {
+    try {
+      window.sketch({ THREE: instrumentedThree, canvas, startFrame, width: canvas.width, height: canvas.height, size: { width: canvas.width, height: canvas.height }, OrbitControls });
+    } catch (artworkError) {
+      // Preserve the platform interaction layer when an authored optional
+      // effect fails after creating a usable scene/camera/renderer.
+      showPieceError(artworkError);
+    }
+  }
   if (state.camera && state.renderer && state.scene) {
     const controls = new OrbitControls(state.camera, canvas);
     const initialCameraPosition = state.camera.position.clone();
@@ -3516,7 +3573,7 @@ try {
           state.camera.position.add(delta); target.add(delta);
         } else if (command.type === 'zoom') {
           const offset = state.camera.position.clone().sub(target);
-          offset.setLength(Math.max(0.35, Math.min(100, offset.length() * (1 - (command.delta || 0)))));
+          offset.setLength(Math.max(0.35, Math.min(40, offset.length() * (1 - (command.delta || 0)))));
           state.camera.position.copy(target).add(offset);
         }
         controls.update();
@@ -3630,7 +3687,13 @@ try {
   }
   sizeCanvas();
   window.THREE = instrumentedThree;
-  if (typeof window.sketch === 'function') window.sketch({ THREE: instrumentedThree, canvas, startFrame, width: canvas.width, height: canvas.height, size: { width: canvas.width, height: canvas.height }, OrbitControls });
+  if (typeof window.sketch === 'function') {
+    try {
+      window.sketch({ THREE: instrumentedThree, canvas, startFrame, width: canvas.width, height: canvas.height, size: { width: canvas.width, height: canvas.height }, OrbitControls });
+    } catch (artworkError) {
+      showPieceError(artworkError);
+    }
+  }
   if (state.camera && state.renderer && state.scene) {
     const controls = new OrbitControls(state.camera, canvas);
     const initialCameraPosition = state.camera.position.clone();
@@ -3957,7 +4020,7 @@ try {
           state.camera.position.add(delta); target.add(delta);
         } else if (command.type === 'zoom') {
           const offset = state.camera.position.clone().sub(target);
-          offset.setLength(Math.max(0.35, Math.min(100, offset.length() * (1 - (command.delta || 0)))));
+          offset.setLength(Math.max(0.35, Math.min(40, offset.length() * (1 - (command.delta || 0)))));
           state.camera.position.copy(target).add(offset);
         }
         controls.update();
@@ -3999,7 +4062,25 @@ try {
     }
     requestAnimationFrame(tick);
   }
-  if (scene && typeof window.sketch === 'function') window.sketch({ AFRAME: window.AFRAME, scene, startFrame });
+  if (scene && typeof window.sketch === 'function') {
+    try {
+      window.sketch({ AFRAME: window.AFRAME, scene, startFrame });
+    } catch (artworkError) {
+      // Steering/manual ownership is platform infrastructure and must still
+      // initialize when artwork-authored startup reports an error.
+      showPieceError(artworkError);
+    }
+  }
+  // Exports inline media as data: URLs, so asset images can be complete
+  // before the sketch attached its 'load' listeners — replay the event for
+  // those (twin of replayAFrameAssetImageLoads in piece-runtime.js).
+  if (scene) {
+    scene.querySelectorAll('a-assets img').forEach((img) => {
+      if (img.complete && img.naturalWidth > 0) {
+        try { img.dispatchEvent(new Event('load')); } catch (_) {}
+      }
+    });
+  }
   if (scene) installAFrameModelDiagnostics(scene);
   if (scene) {
     let modelDiagnosticsAttempts = 0;
@@ -4015,6 +4096,7 @@ try {
     let initialAFramePose = null;
     let handSteeringExclusive = false;
     let aframeControlsBeforeHand = [];
+    let aframeLookControlsEnabledBeforeHand = null;
     const aframeNav = {
       animFrom: null,
       animTo: null,
@@ -4162,9 +4244,24 @@ try {
       pointerTarget.addEventListener('lostpointercapture', clearAFramePointer);
     }
 
+    // Twin of piece-runtime.js clampAFrameGestureRoam — keep in sync.
+    function clampAFrameGestureRoam(cameraObject) {
+      if (!initialAFramePose || !cameraObject) return;
+      const origin = initialAFramePose.position;
+      const dx = cameraObject.position.x - origin.x;
+      const dy = cameraObject.position.y - origin.y;
+      const dz = cameraObject.position.z - origin.z;
+      const dist = Math.hypot(dx, dy, dz);
+      const maxRoam = 24;
+      if (dist > maxRoam) {
+        const s = maxRoam / dist;
+        cameraObject.position.set(origin.x + dx * s, origin.y + dy * s, origin.z + dz * s);
+      }
+    }
+
     function captureInitialAFramePose() {
       if (initialAFramePose) return;
-      const cameraObject = getAFrameCameraObject();
+      const cameraObject = getAFrameCameraMover();
       if (!cameraObject) return;
       initialAFramePose = {
         position: cameraObject.position.clone(),
@@ -4182,17 +4279,31 @@ try {
         const next = !!active;
         if (next === handSteeringExclusive) return true;
         const cameraEl = scene.querySelector('[camera]') || scene.querySelector('a-camera');
+        const lookControls = cameraEl?.components?.['look-controls'];
         if (next) {
-          aframeControlsBeforeHand = ['look-controls', 'wasd-controls'].map((name) => {
-            const component = cameraEl?.components?.[name];
-            const wasPlaying = !!component && component.isPlaying !== false;
-            component?.pause?.();
-            return { component, wasPlaying };
-          });
+          // Disable look-controls at the data level (its tick gates on
+          // data.enabled) — pausing the component is timing-fragile. Twin of
+          // piece-runtime.js setHandSteering; keep in sync.
+          aframeLookControlsEnabledBeforeHand = lookControls ? lookControls.data.enabled !== false : null;
+          if (lookControls) cameraEl.setAttribute('look-controls', 'enabled', false);
+          const wasd = cameraEl?.components?.['wasd-controls'];
+          aframeControlsBeforeHand = wasd ? [{ component: wasd, wasPlaying: wasd.isPlaying !== false }] : [];
+          aframeControlsBeforeHand.forEach(({ component }) => component?.pause?.());
           aframeNav.pointer = null;
           aframeNav.activeTouches.clear();
           aframeNav.animFrom = aframeNav.animTo = null;
         } else {
+          // Ownership handoff: seed look-controls' pitch/yaw from the
+          // hand-driven pose so manual dragging resumes from it (no snap).
+          const mover = getAFrameCameraMover();
+          if (lookControls && mover) {
+            if (lookControls.pitchObject) lookControls.pitchObject.rotation.x = mover.rotation.x;
+            if (lookControls.yawObject) lookControls.yawObject.rotation.y = mover.rotation.y;
+          }
+          if (lookControls && aframeLookControlsEnabledBeforeHand !== null) {
+            cameraEl.setAttribute('look-controls', 'enabled', aframeLookControlsEnabledBeforeHand);
+          }
+          aframeLookControlsEnabledBeforeHand = null;
           aframeControlsBeforeHand.forEach(({ component, wasPlaying }) => {
             if (wasPlaying) component?.play?.();
           });
@@ -4203,7 +4314,7 @@ try {
       },
       resetView() {
         captureInitialAFramePose();
-        const cameraObject = getAFrameCameraObject();
+        const cameraObject = getAFrameCameraMover();
         if (!cameraObject || !initialAFramePose) return false;
         const fromPosition = cameraObject.position.clone();
         const fromQuaternion = cameraObject.quaternion.clone();
@@ -4221,7 +4332,7 @@ try {
       },
       handPoint(nx, ny) {
         if (!handSteeringExclusive) return;
-        const cameraObject = getAFrameCameraObject();
+        const cameraObject = getAFrameCameraMover();
         if (!cameraObject) return;
         const desiredYaw = -(nx - 0.5) * Math.PI * 1.5;
         const desiredPitch = -(ny - 0.5) * Math.PI * 0.7;
@@ -4231,7 +4342,7 @@ try {
         cameraObject.rotation.x = Math.max(-Math.PI * 0.45, Math.min(Math.PI * 0.45, cameraObject.rotation.x));
       },
       handCommand(command) {
-        const cameraObject = getAFrameCameraObject();
+        const cameraObject = getAFrameCameraMover();
         if (!handSteeringExclusive || !cameraObject || !command) return;
         if (command.type === 'look') { this.handPoint(command.x, command.y); return; }
         if (command.type === 'orbit') {
@@ -4241,8 +4352,10 @@ try {
         } else if (command.type === 'travel') {
           cameraObject.translateX((command.right || 0) * 0.08);
           cameraObject.translateZ(-(command.forward || 0) * 0.11);
+          clampAFrameGestureRoam(cameraObject);
         } else if (command.type === 'zoom') {
           cameraObject.translateZ((command.delta || 0) * 1.4);
+          clampAFrameGestureRoam(cameraObject);
         }
       },
 {$aframeCameraQuadMembers}

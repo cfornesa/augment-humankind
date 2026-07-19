@@ -377,6 +377,14 @@ dialog#ai-profile-picker-modal::backdrop {
     .media-picker-toolbar {
         grid-template-columns: minmax(0, 1fr);
     }
+
+    /* Fixed min-widths (320/340px) overflow narrow viewports once borders,
+       padding, and shadows are added — cap the popovers to the screen. */
+    .tiptap-img-popover,
+    .tiptap-link-popover {
+        min-width: 0;
+        max-width: calc(100vw - 32px);
+    }
 }
 
 /* Select panel grid */
@@ -601,6 +609,8 @@ dialog#ai-profile-picker-modal::backdrop {
 }
 .media-picker-url-input {
     flex: 1;
+    min-width: 0;
+    max-width: 100%;
     background: var(--white);
     border: 2px solid var(--line);
     color: var(--ink);

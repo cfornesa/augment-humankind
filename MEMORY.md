@@ -12,6 +12,26 @@ were folded into their final entries — see "Closed Investigations". -->
 and immediately restore pre-steering controls across live and downloaded
 immersive surfaces; Reset View alone restores the initial pose.
 
+2026-07-18 CORRECTION Steering infrastructure must initialize independently of
+authored sketch or asset failures; while active it exclusively disables
+cursor/touch, keyboard, and action controls, and disabling it restores those
+controls at the current pose across standard, immersive, and exported pieces.
+
+2026-07-18 CORRECTION Steering remains nonfunctional on real piece 122 after
+both the Shield remediation and the Direct unpinched-wrist router remediation;
+neither approach may be described as a fix or resolution.
+
+2026-07-18 CONSTRAINT Steering is verified only when a physical hand visibly
+changes the camera pose on piece 122 in both standard and immersive views and
+disabling steering restores manual dragging and action buttons; toggles,
+lockout state, synthetic landmarks, gesture labels, and automated checks alone
+are insufficient evidence.
+
+2026-07-18 CORRECTION The failed Direct remediation disproves pose
+classification as a sufficient root cause; future work must instrument the
+real-device chain from camera frames through landmarks and commands to the
+rendered camera before selecting another fix.
+
 2026-07-12 DECISION Spatial hand navigation uses one stabilized, single-hand clutched-gestural router that emits look, orbit, travel, and zoom commands through existing surface controllers without replacing other input or rendering systems.
 
 2026-07-12 DECISION Camera/video presentation and visual hand motion are never

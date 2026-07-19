@@ -274,6 +274,12 @@ view keyboard/tap movement behavior offline.
 Camera hand steering is an additional control layer: activating it must not
 consume mouse/touch dragging or keyboard controls, and turning it off releases
 only its camera/MediaPipe ownership while preserving the resulting manual pose.
+Un-pinched steering is movement-based: the camera turns with wrist motion
+(relative deltas with a small deadzone, selected per engine by the gesture
+mapping registry in sonic-controller.js), so a stationary or low-confidence
+hand detection leaves the camera exactly where it is; c2-interactive surfaces
+instead keep absolute wrist-to-pointer mapping because they position a
+synthetic cursor rather than a camera.
 Camera view and microphone/audio remain independent capabilities, including for
 sound-less camera-enabled exports. Download menus keep the full download
 selected by default and display approximate ZIP sizes that update when optional

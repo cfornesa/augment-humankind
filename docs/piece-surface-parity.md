@@ -56,6 +56,19 @@ stacking order.
   exact prior mouse, touch, keyboard, and engine-control state when it stops.
   A missing ownership hook is a failed steering activation, never silent
   success or a `file://`-based device-tilt substitution.
+  > **REVIEW REQUIRED (2026-07-18):** The combination **mic ON → camera ON →
+  > steer ON** is user-confirmed broken (steering dead). Camera-only + steer
+  > and steer-alone both pass. Root cause under investigation (getUserMedia
+  > re-negotiation, Tone.js startup, capability message interference, or
+  > stream-sharing collision). This cell must be verified green before
+  > this REVIEW REQUIRED can be closed. See DECISIONS.md
+  > "steering failure confirmed with MIC, not camera alone."
+- Camera view and steering compose in every combination and order on every
+  surface: the camera blend quad must never re-parent the render camera away
+  from the transform steering rotates, DOM camera overlays never intercept
+  pointer input, and gesture travel/zoom stay within roaming range of the
+  authored pose so command bursts can never carry the view out of sight of
+  the artwork (which reads as "steering is dead").
 - The regular live Three.js runtime keeps steering state in the same lifetime
   as its shared hand hook. The hook must remain able to claim/release native
   controls after renderer setup has completed; activation errors must not be

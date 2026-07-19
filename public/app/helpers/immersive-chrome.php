@@ -417,8 +417,8 @@ function immersive_stage_hand_guide_markup(string $idPrefix = 'immersive', strin
         ['Stop safely', 'Release the pinch to stop immediately. If your hand leaves the camera frame, movement stops without resetting your current view.'],
     ];
     if ($variant === 'c2_interactive_latched') {
-        $slides[] = ['Interaction pauses', 'The C2 artwork keeps animating but remains non-interactive whenever it is spatially displaced. Turning off Steer the piece freezes that displaced pose; it does not restore clicking, dragging, touch, or hand-pointer interaction.'];
-        $slides[] = ['Return to interact', 'Choose Reset view after turning steering off to return to the original framed view and restore interaction. If steering is still on, Reset returns home without disabling steering, so the artwork remains ready for spatial movement and stays non-interactive.'];
+        $slides[] = ['Interaction ownership', 'While Steer the piece is on, hand steering exclusively owns interaction and cursor, touch, drag, and action controls pause.'];
+        $slides[] = ['Return to interact', 'Turn Steer the piece off to restore cursor, touch, drag, and action controls immediately at the current pose. Reset view is optional and only returns the view home.'];
     }
     $html = '<button type="button" class="' . $buttonClass . '" data-hand-guide-trigger aria-haspopup="dialog" aria-expanded="false" aria-controls="' . $dialogId . '" aria-label="Show hand gesture guide" title="Hand gesture guide">' . $handIcon . '</button>';
     $html .= '<div id="' . $dialogId . '" class="hand-guide-dialog" data-hand-guide-dialog role="dialog" aria-modal="true" aria-labelledby="' . $dialogId . '-title" hidden>';
