@@ -50,19 +50,30 @@ stacking order.
   every engine; it does not open the camera automatically.
 - Hand-tracking is a sound voice. Hand control is an independent steering
   capability available on Three.js, A-Frame, and C2 Interactive when allowed.
+- Opening a surface's control panel or focusing Steer begins document-scoped
+  MediaPipe preparation without requesting camera permission. Vendored
+  MediaPipe assets use a stable asset-specific fingerprint so unrelated
+  controller edits do not invalidate the browser's model/WASM cache.
+- On model-preparation intent, regular, immersive, and exported surfaces
+  synchronously expose a visually distinct, non-blocking, non-debug
+  `role="status"` announcement; they do not wait for an iframe/model event and
+  replay preparation when a late iframe becomes ready. Loading and success are
+  shown for a perceptible minimum before removal; a failure remains visible.
+  Visitors still explicitly activate Steer before any camera permission request
+  or inference.
 - Every steerable surface owns an explicit hand-steering lifecycle: camera
   view, live mic, and steering may be enabled in any order; steering alone
   temporarily owns only conflicting manual navigation, then restores the
   exact prior mouse, touch, keyboard, and engine-control state when it stops.
   A missing ownership hook is a failed steering activation, never silent
   success or a `file://`-based device-tilt substitution.
-  > **REVIEW REQUIRED (2026-07-18):** The combination **mic ON → camera ON →
-  > steer ON** is user-confirmed broken (steering dead). Camera-only + steer
-  > and steer-alone both pass. Root cause under investigation (getUserMedia
-  > re-negotiation, Tone.js startup, capability message interference, or
-  > stream-sharing collision). This cell must be verified green before
-  > this REVIEW REQUIRED can be closed. See DECISIONS.md
-  > "steering failure confirmed with MIC, not camera alone."
+  > **REVIEW REQUIRED (2026-07-19):** The combination **mic ON → camera ON →
+  > steer ON** remains open on piece 122. Automated remediation now preserves
+  > camera leases/video identity across stream replacement, accumulates slow
+  > wrist motion against the last emitted anchor, and traces the full command →
+  > rendered-pose chain under `?sonicdebug=1`; physical-hand verification is
+  > still required in regular and immersive views before this can be marked
+  > resolved. See DECISIONS.md "Trace-First Steering Remediation."
 - Camera view and steering compose in every combination and order on every
   surface: the camera blend quad must never re-parent the render camera away
   from the transform steering rotates, DOM camera overlays never intercept

@@ -100,6 +100,19 @@ function immersive_stage_toolbar_css(): string
 .immersive-stage-sound-row[hidden] {
   display: none !important;
 }
+.immersive-stage-hand-control-status {
+  margin: -0.15rem 0 0;
+  padding: 0.48rem 0.58rem;
+  border: 1px solid rgba(103, 232, 249, 0.48);
+  border-radius: 0.55rem;
+  background: rgba(8, 47, 73, 0.72);
+  color: rgba(236, 254, 255, 0.96);
+  font-size: 0.76rem;
+  line-height: 1.35;
+}
+.immersive-stage-hand-control-status[hidden] {
+  display: none !important;
+}
 .immersive-stage-sound-switch,
 .immersive-stage-sound-keyboard-toggle {
   border: 1px solid rgba(255, 255, 255, 0.18);
@@ -788,6 +801,7 @@ function immersive_stage_toolbar_markup(array $opts = []): string
                     . '<span>Hand control</span>'
                     . '<button type="button" class="immersive-stage-sound-keyboard-toggle" data-immersive-sound-hand-control-toggle aria-pressed="false">' . $handControlLabel . '</button>'
                     . '</div>';
+                $html .= '<p class="immersive-stage-hand-control-status" data-immersive-hand-control-status role="status" aria-live="polite" aria-atomic="true" hidden></p>';
                 $html .= '<div class="immersive-stage-sound-row" data-immersive-reset-view-row>'
                     . '<span>View pose</span>'
                     . '<button type="button" class="immersive-stage-sound-keyboard-toggle" data-immersive-reset-view>Reset view</button>'
@@ -1111,6 +1125,21 @@ function piece_view_critical_css(): string
     justify-content: space-between;
     gap: 0.6rem;
     font-size: 0.8rem;
+}
+
+.piece-hand-control-status {
+    margin: -0.15rem 0 0;
+    padding: 0.48rem 0.58rem;
+    border: 1px solid rgba(103, 232, 249, 0.48);
+    border-radius: 0.55rem;
+    background: rgba(8, 47, 73, 0.72);
+    color: rgba(236, 254, 255, 0.96);
+    font-size: 0.76rem;
+    line-height: 1.35;
+}
+
+.piece-hand-control-status[hidden] {
+    display: none !important;
 }
 
 .piece-sound-switch,

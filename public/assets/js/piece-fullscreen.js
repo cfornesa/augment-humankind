@@ -233,6 +233,7 @@
     function setPanelOpen(open) {
         panel.hidden = !open;
         panelTrigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+        if (open) requestHandControlPreparation();
     }
 
     panelTrigger.addEventListener('click', () => setPanelOpen(!isPanelOpen()));
@@ -366,14 +367,80 @@
     // until the iframe's capability handshake says the active engine
     // supports them.
     const handControlToggle = root.querySelector('[data-piece-sound-hand-control-toggle]');
+    const handControlStatus = root.querySelector('[data-piece-hand-control-status]');
     const resetViewButton = root.querySelector('[data-piece-reset-view]');
     const cameraBgToggle = root.querySelector('[data-piece-sound-camera-bg-toggle]');
     const cameraOpacityRow = root.querySelector('[data-piece-sound-camera-opacity-row]');
     const cameraOpacity = root.querySelector('[data-piece-sound-camera-opacity]');
-    const syncSteeringActionOwnership = (active) => {
-        if (resetViewButton) resetViewButton.disabled = !!active;
+    // Reset view stays available in every state — steering, camera, mic, or
+    // any combination. The runtime ignores steering commands during the reset
+    // animation, so no host-side lockout is needed (or wanted).
+    const syncSteeringActionOwnership = () => {};
+    // Steering status and gesture-mode labels render bottom-center ON the
+    // stage view itself (same spot the immersive surface uses), not inside
+    // the control popover — the visitor is watching the piece, not the panel.
+    const stageStatusHost = () => {
+        const host = frame?.parentElement || null;
+        if (host && getComputedStyle(host).position === 'static') host.style.position = 'relative';
+        return host;
     };
+    let stageStatusEl = null;
+    const setStageStatus = (text) => {
+        if (!stageStatusEl) {
+            const host = stageStatusHost();
+            if (!host) return;
+            stageStatusEl = document.createElement('div');
+            stageStatusEl.dataset.pieceStageStatus = '';
+            stageStatusEl.setAttribute('role', 'status');
+            stageStatusEl.setAttribute('aria-live', 'polite');
+            stageStatusEl.setAttribute('aria-atomic', 'true');
+            stageStatusEl.style.cssText = 'position:absolute;left:50%;bottom:calc(1rem + env(safe-area-inset-bottom));transform:translateX(-50%);z-index:40;padding:.38rem .72rem;border:1px solid rgba(255,255,255,.2);border-radius:999px;background:rgba(0,0,0,.68);color:#fff;font:600 .72rem/1.2 system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;pointer-events:none;max-width:88%;text-align:center;';
+            host.appendChild(stageStatusEl);
+        }
+        stageStatusEl.textContent = text || '';
+        stageStatusEl.hidden = !text;
+    };
+    let handControlStatusTimer = 0;
+    const setHandControlStatus = (message, { removeAfter = 0 } = {}) => {
+        window.clearTimeout(handControlStatusTimer);
+        setStageStatus(message || '');
+        // The popover element stays as a hidden mirror so assistive tech
+        // reading the panel still finds the state.
+        if (handControlStatus) {
+            handControlStatus.textContent = message || '';
+            handControlStatus.hidden = true;
+        }
+        if (message && removeAfter > 0) {
+            handControlStatusTimer = window.setTimeout(() => {
+                setStageStatus('');
+                if (handControlStatus) handControlStatus.textContent = '';
+            }, removeAfter);
+        }
+    };
+    // Gesture-mode labels ("Look", "Orbit", "Move") from the iframe's router
+    // share the same bottom-center indicator.
+    window.addEventListener('message', (event) => {
+        if (event.source !== frame?.contentWindow || !event.data || event.data.type !== 'creatr-hand-gesture-mode') return;
+        const labels = { look: 'Look', orbit: 'Orbit', travel: 'Move', 'travel-ready': 'Point + pinch to move', 'orbit-ready': 'Pinch to orbit' };
+        const label = labels[event.data.mode];
+        window.clearTimeout(handControlStatusTimer);
+        setStageStatus(label || '');
+    });
 
+    let handControlPreparingAt = 0;
+    const requestHandControlPreparation = () => {
+        if (!handControlToggle) return;
+        handControlPreparingAt = Date.now();
+        handControlStatus?.setAttribute('aria-busy', 'true');
+        if (handControlStatus) handControlStatus.dataset.state = 'loading';
+        setHandControlStatus('Preparing hand steering…');
+        gestureCall('prepareHandControl', true, 'creatr-hand-control-prepare');
+    };
+    frame.addEventListener('load', () => {
+        if (isPanelOpen()) requestHandControlPreparation();
+    });
+
+    handControlToggle?.addEventListener('focus', requestHandControlPreparation);
     handControlToggle?.addEventListener('click', () => {
         const nextOn = handControlToggle.getAttribute('aria-pressed') !== 'true';
         handControlToggle.setAttribute('aria-pressed', nextOn ? 'true' : 'false');
@@ -447,6 +514,27 @@
     window.addEventListener('message', (event) => {
         if (event.source !== frame.contentWindow || event.data?.type !== 'creatr-sonic-capability-state') return;
         const detail = event.data.detail || {};
+        if (detail.capability === 'hand_control_model' || detail.capability === 'hand_control') {
+            if (detail.state === 'loading') {
+                if (!handControlPreparingAt) handControlPreparingAt = Date.now();
+                handControlStatus?.setAttribute('aria-busy', 'true');
+                if (handControlStatus) handControlStatus.dataset.state = 'loading';
+                setHandControlStatus('Preparing hand steering…');
+            } else if (detail.state === 'ready' || detail.state === 'active') {
+                handControlStatus?.setAttribute('aria-busy', 'false');
+                if (handControlStatus) handControlStatus.dataset.state = 'ready';
+                const elapsed = handControlPreparingAt ? Date.now() - handControlPreparingAt : 0;
+                setHandControlStatus('Hand steering ready.', { removeAfter: Math.max(1600, 2400 - elapsed) });
+                handControlPreparingAt = 0;
+            } else if (detail.state === 'inactive') {
+                setHandControlStatus('');
+            } else if (detail.state === 'unavailable') {
+                handControlStatus?.setAttribute('aria-busy', 'false');
+                if (handControlStatus) handControlStatus.dataset.state = 'unavailable';
+                setHandControlStatus(detail.reason || 'Hand steering is unavailable on this device.');
+                handControlPreparingAt = 0;
+            }
+        }
         const target = detail.capability === 'hand_tracking'
             ? panelHandToggle
             : detail.capability === 'hand_control'

@@ -1233,7 +1233,7 @@ test('mic acquisition recovers the audio session (context resume + ambient sampl
 test('iOS hand tracking retries failed model initialization and falls back from video frames to throttled canvas inference', function () {
     $sonicSrc = file_get_contents(__DIR__ . '/../public/assets/js/sonic-controller.js');
     assert_contains($sonicSrc, '_handLandmarkerPromise = null');
-    assert_contains($sonicSrc, 'async function loadHandLandmarkerWithRetry()');
+    assert_contains($sonicSrc, 'async function loadHandLandmarkerWithRetry(overrideOpts)');
     assert_contains($sonicSrc, "handInferenceMode = 'canvas'");
     assert_contains($sonicSrc, 'handInferenceFrame % 3 !== 0');
     assert_contains($sonicSrc, 'handInferenceContext.drawImage(sharedCameraVideo');
@@ -1273,6 +1273,37 @@ test('sonicdebug is opt-in, local-only, and capability controls expose loading/a
     assert_contains($sonicSrc, "detail: { capability: capability, state: state");
     assert_not_contains($sonicSrc, 'fetch(');
     assert_not_contains($sonicSrc, 'localStorage.setItem');
+});
+
+test('MediaPipe cache identity is stable across steering-controller edits', function () {
+    $sonicSrc = file_get_contents(__DIR__ . '/../public/assets/js/sonic-controller.js');
+    assert_contains($sonicSrc, "mopts.mediaPipeAssetVersion || 'mp-55d7ab62-fbc2a300'");
+    assert_contains($sonicSrc, "var assetVersion = '?v=' + encodeURIComponent(mediaPipeAssetVersion)");
+    assert_not_contains($sonicSrc, '/sonic-controller\\.js\\?v=([^&#]+)/');
+});
+
+test('hand steering prepares on control intent and exposes non-debug accessible loading status across surfaces', function () {
+    $sonicSrc = file_get_contents(__DIR__ . '/../public/assets/js/sonic-controller.js');
+    $runtime = file_get_contents(__DIR__ . '/../public/assets/js/piece-runtime.js');
+    $fullscreen = file_get_contents(__DIR__ . '/../public/assets/js/piece-fullscreen.js');
+    $immersive = file_get_contents(__DIR__ . '/../public/assets/js/immersive-gallery.js');
+    $chrome = file_get_contents(__DIR__ . '/../public/app/helpers/immersive-chrome.php');
+    $stage = file_get_contents(__DIR__ . '/../public/app/views/partials/piece-stage.php');
+    $render = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
+    assert_contains($sonicSrc, "capabilityState('hand_control_model', 'loading')");
+    assert_contains($sonicSrc, "capabilityState('hand_control_model', 'ready')");
+    assert_contains($runtime, 'prepareHandControl,');
+    assert_contains($runtime, "data.type === 'creatr-hand-control-prepare'");
+    assert_contains($fullscreen, "gestureCall('prepareHandControl', true, 'creatr-hand-control-prepare')");
+    assert_contains($fullscreen, 'requestHandControlPreparation');
+    assert_contains($fullscreen, "frame.addEventListener('load'");
+    assert_contains($fullscreen, "setHandControlStatus('Preparing hand steering…')");
+    assert_contains($immersive, 'function prepareHandControl()');
+    assert_contains($immersive, 'setHandControlStatus("Preparing hand steering…")');
+    assert_contains($chrome, 'data-immersive-hand-control-status role="status" aria-live="polite"');
+    assert_contains($stage, 'data-piece-hand-control-status role="status" aria-live="polite"');
+    assert_contains($render, "handControlToggle.addEventListener('focus', prepareHandControl)");
+    assert_contains($render, "setHandControlStatus('Preparing hand steering…', 0)");
 });
 
 test('regular piece view inlines its critical CSS and the global stylesheet is cache-busted', function () {
@@ -1549,11 +1580,13 @@ test('clutched gesture navigation reuses one landmark loop across regular, immer
     // Un-pinched steering routes through the per-engine mapping registry:
     // relative orbit deltas with a deadzone by default, absolute wrist
     // pointer mapping only for c2_interactive.
-    assert_contains($sonic, 'lookMapping.update(smoothWrist, lastWrist');
+    assert_contains($sonic, 'lookMapping.update(smoothWrist, lookAnchor');
+    assert_contains($sonic, 'return lookAnchor;', 'Sub-deadzone motion must keep the last emitted anchor so slow movement accumulates.');
+    assert_contains($sonic, 'lookAnchor = lookMapping.update', 'The router must advance its look anchor only through the selected mapping.');
     assert_contains($sonic, 'GESTURE_MAPPINGS[options.engine] || GESTURE_MAPPINGS.default');
     assert_contains($sonic, 'GESTURE_LOOK_DEADZONE');
     assert_contains($sonic, "c2_interactive: absoluteLookMapping");
-    assert_contains($sonic, "emit({ type: 'look', x: 1 - smoothWrist.x, y: smoothWrist.y })");
+    assert_contains($sonic, "var command = { type: 'look', x: 1 - smoothWrist.x, y: smoothWrist.y }");
     assert_not_contains($sonic, "if (stablePose === 'open')");
     assert_contains($sonic, 'queueCadencedCommands(spatialCommands, cadenceSteps)');
     assert_contains($sonic, "command.type === 'travel' || count === 1");
@@ -1561,6 +1594,12 @@ test('clutched gesture navigation reuses one landmark loop across regular, immer
     // The existing single inference result remains authoritative.
     assert_contains($sonic, 'numHands: 1');
     assert_not_contains($sonic, 'numHands: 2');
+    assert_contains($sonic, "steeringTrace('landmark-frame'");
+    assert_contains($sonic, "steeringTrace('router-command'");
+    assert_contains($runtime, "pieceSteeringTrace('hook-command'");
+    assert_contains($runtime, "pieceSteeringTrace('aframe-pose-applied'");
+    assert_contains($runtime, 'this.routerHooks !== hooks || this.routerEngine !== hooks.engine');
+    assert_contains($render, 'gestureRouterHooks !== hooks || gestureRouterEngine !== hooks.engine');
 
     foreach ([$runtime, $gallery, $render] as $src) {
         assert_contains($src, 'createClutchedGestureRouter');
@@ -1678,9 +1717,12 @@ test('hand steering cancellation and pose reset stay independent from camera vis
     assert_contains($gallery, 'galleryControlsEnabledBeforeHand');
     assert_contains($gallery, 'shell.controls.enabled = false;');
     assert_contains($gallery, 'shell.controls.enabled = galleryControlsEnabledBeforeHand;');
-    assert_contains($gallery, 'resetViewButton.disabled = handControlActive || handActivationPending || tiltFallbackActive;');
-    assert_contains($fullscreen, 'syncSteeringActionOwnership(nextOn);');
-    assert_contains($fullscreen, 'syncSteeringActionOwnership(event.data.enabled);');
+    // Reset view must stay available in every state (steering, tilt, camera,
+    // mic, or any combination) — the runtime ignores steering commands during
+    // the reset animation, so hosts never lock the button out.
+    assert_contains($gallery, 'resetViewButton.disabled = false;');
+    assert_not_contains($gallery, 'resetViewButton.disabled = handControlActive');
+    assert_not_contains($fullscreen, 'resetViewButton.disabled = !!active');
     assert_contains($gallery, 'aframeLookControlsEnabledBeforeHand');
     assert_contains($gallery, 'cameraEl.setAttribute("look-controls", "enabled", false);');
     assert_contains($gallery, 'const cameraObject = getAFrameCameraMover();');
@@ -1705,6 +1747,29 @@ test('hand steering cancellation and pose reset stay independent from camera vis
     assert_contains($render, "typeof baseHooks.getBackgroundVideo==='function'?baseHooks.getBackgroundVideo():baseHooks._cameraOverlay||null");
     assert_contains(file_get_contents(__DIR__ . '/../public/assets/js/spatial-presentation.js'), 'var video = getCameraVideo();');
     assert_contains($sonic, "capabilityState('hand_control', 'inactive')");
+    assert_contains($sonic, 'sharedCameraVideo.srcObject = sharedCameraStream;');
+    assert_contains($sonic, 'sharedCameraRefs += 1;');
+    assert_not_contains($sonic, '// Stream tracks are dead. Clean up cached stream completely.', 'Replacing a dead stream must not erase outstanding camera leases.');
+    assert_not_contains($sonic, 'handLandmarker && handLandmarker.close', 'Controller disposal must not close the shared document landmarker.');
+    assert_contains($sonic, "global.addEventListener('pagehide'", 'The document owns final landmarker disposal.');
+    assert_contains($render, "'sonicDebug' => \$sonicDebug", 'The outer query flag must reach sandboxed srcdoc runtimes.');
+
+    $aframeRuntimeStart = strpos($runtime, 'function bootAFrame()');
+    $aframeRuntimeEnd = strpos($runtime, 'async function bootThree()', $aframeRuntimeStart);
+    $aframeRuntime = substr($runtime, $aframeRuntimeStart, $aframeRuntimeEnd - $aframeRuntimeStart);
+    $cameraMoverAt = strpos($aframeRuntime, 'function getAFrameCameraMover()');
+    $captureAt = strpos($aframeRuntime, 'function captureInitialAFramePose()');
+    if ($cameraMoverAt === false || $captureAt === false || $captureAt <= $cameraMoverAt) {
+        throw new RuntimeException('Initial A-Frame pose capture must share the camera-mover lexical scope.');
+    }
+    assert_contains($aframeRuntime, 'if (initialAFramePose) return true;', 'Initial A-Frame pose capture must be one-shot.');
+    $runtimeReset = substr($aframeRuntime, strpos($aframeRuntime, 'resetView()'), 900);
+    assert_not_contains($runtimeReset, 'captureInitialAFramePose();', 'Reset must not overwrite its own destination with the current pose.');
+
+    $exportAframeStart = strpos($render, "engine: 'aframe',", strpos($render, 'function captureInitialAFramePose()'));
+    $exportReset = substr($render, strpos($render, 'resetView()', $exportAframeStart), 900);
+    assert_not_contains($exportReset, 'captureInitialAFramePose();', 'Export Reset must preserve its first valid pose.');
+    assert_contains($exportReset, 'resettingView = true;');
 
     $assertCanonicalBeforeLaunch = static function (string $canonical, string $launch, string $surface) use ($gallery): void {
         $canonicalAt = strpos($gallery, $canonical);

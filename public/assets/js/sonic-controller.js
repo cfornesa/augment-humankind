@@ -26,12 +26,23 @@
     plucksynth: 'PluckSynth', duosynth: 'DuoSynth',
   };
 
+  // The shared controller script is deliberately loaded before the inline
+  // piece context in srcdoc documents. Resolve the opt-in lazily so that a
+  // later CREATR_PIECE_CONTEXT assignment can enable diagnostics; caching a
+  // false value here made the trace facility inert on the surface it was
+  // intended to diagnose.
   var sonicDebugEnabled = false;
-  try { sonicDebugEnabled = new URLSearchParams(global.location && global.location.search || '').get('sonicdebug') === '1'; } catch (_e) {}
-  function sonicDebug(stage, detail) {
-    if (!sonicDebugEnabled) return;
-    var text = stage + (detail ? ': ' + detail : '');
-    try { console.info('[sonicdebug]', text); } catch (_e) {}
+  function isSonicDebugEnabled() {
+    if (sonicDebugEnabled) return true;
+    sonicDebugEnabled = !!(global.CREATR_PIECE_CONTEXT && global.CREATR_PIECE_CONTEXT.sonicDebug === true);
+    try { sonicDebugEnabled = sonicDebugEnabled || new URLSearchParams(global.location && global.location.search || '').get('sonicdebug') === '1'; } catch (_e) {}
+    return sonicDebugEnabled;
+  }
+  var STEERING_TRACE_LIMIT = 200;
+  var DEBUG_PANEL_LINE_LIMIT = 80;
+  var steeringPanelLastAt = {};
+  var steeringPanelEmissions = 0;
+  function appendSonicDebugPanel(text) {
     try {
       var panel = document.getElementById('creatr-sonic-debug');
       if (!panel) {
@@ -41,8 +52,56 @@
         panel.style.cssText = 'position:fixed;left:0.5rem;right:0.5rem;bottom:0.5rem;z-index:2147483647;max-height:38vh;overflow:auto;margin:0;padding:0.65rem;border:1px solid #67e8f9;border-radius:0.5rem;background:rgba(3,7,18,.94);color:#cffafe;font:11px/1.4 ui-monospace,monospace;white-space:pre-wrap;pointer-events:none;';
         (document.body || document.documentElement).appendChild(panel);
       }
-      panel.textContent += (panel.textContent ? '\n' : '') + new Date().toISOString().slice(11, 23) + ' ' + text;
+      var lines = (panel.textContent || '').split('\n').filter(Boolean);
+      lines.push(new Date().toISOString().slice(11, 23) + ' ' + text);
+      if (lines.length > DEBUG_PANEL_LINE_LIMIT) lines.splice(0, lines.length - DEBUG_PANEL_LINE_LIMIT);
+      panel.textContent = lines.join('\n');
+      panel.scrollTop = panel.scrollHeight;
     } catch (_e) {}
+  }
+  function steeringTrace(stage, detail) {
+    if (!isSonicDebugEnabled()) return;
+    try {
+      var trace = global.__pieceSteeringTrace;
+      if (!trace || !Array.isArray(trace.entries)) {
+        trace = {
+          entries: [],
+          clear: function () { this.entries.length = 0; },
+          snapshot: function () { return this.entries.slice(); },
+        };
+        global.__pieceSteeringTrace = trace;
+      }
+      var safeDetail = detail == null ? null : JSON.parse(JSON.stringify(detail));
+      trace.entries.push({ t: Math.round(performance.now() * 10) / 10, stage: stage, detail: safeDetail });
+      if (trace.entries.length > STEERING_TRACE_LIMIT) {
+        trace.entries.splice(0, trace.entries.length - STEERING_TRACE_LIMIT);
+      }
+      // Surface a readable subset in the existing opt-in panel. High-rate
+      // frame/delta/next-frame stages are throttled, and console/panel output
+      // stops after 200 emissions per page load; the in-memory ring continues
+      // to retain the newest 200 full-detail entries for deeper inspection.
+      var now = performance.now();
+      var interval = stage === 'landmark-frame' ? 500
+        : stage === 'router-motion' ? 250
+          : stage === 'aframe-pose-next-frame' ? 500
+            : 0;
+      var stageWasShown = Object.prototype.hasOwnProperty.call(steeringPanelLastAt, stage);
+      if (steeringPanelEmissions < STEERING_TRACE_LIMIT && (!interval || !stageWasShown || now - steeringPanelLastAt[stage] >= interval)) {
+        steeringPanelLastAt[stage] = now;
+        steeringPanelEmissions += 1;
+        var serialized = safeDetail == null ? '' : JSON.stringify(safeDetail);
+        if (serialized.length > 700) serialized = serialized.slice(0, 697) + '...';
+        var traceText = '[trace] ' + stage + (serialized ? ': ' + serialized : '');
+        try { console.info(traceText); } catch (_e) {}
+        appendSonicDebugPanel(traceText);
+      }
+    } catch (_e) {}
+  }
+  function sonicDebug(stage, detail) {
+    if (!isSonicDebugEnabled()) return;
+    var text = stage + (detail ? ': ' + detail : '');
+    try { console.info('[sonicdebug]', text); } catch (_e) {}
+    appendSonicDebugPanel(text);
   }
   function capabilityState(capability, state, reason, fallback) {
     sonicDebug(capability + ' ' + state, reason || '');
@@ -314,24 +373,43 @@
   // (hidden) — WebKit decodes detached video elements unreliably.
   var sharedCameraStream = null, sharedCameraVideo = null, sharedCameraRefs = 0;
   async function acquireSharedCamera() {
-    if (sharedCameraVideo && sharedCameraStream) { sharedCameraRefs += 1; return sharedCameraVideo; }
+    if (sharedCameraVideo && sharedCameraStream) {
+      var tracks = sharedCameraStream.getVideoTracks();
+      var active = tracks.length > 0 && tracks.every(function (t) { return t.readyState === 'live' && !t.muted; });
+      if (active) {
+        sharedCameraRefs += 1;
+        if (sharedCameraVideo.paused) {
+          try { await sharedCameraVideo.play(); } catch (_e) {}
+        }
+        return sharedCameraVideo;
+      }
+      // Preserve both the lease count and video element identity while the
+      // dead stream is replaced. Existing VideoTextures/DOM overlays retain
+      // the video element they were handed, so replacing the element would
+      // leave those consumers permanently bound to a frozen frame.
+      steeringTrace('camera-replace', { refs: sharedCameraRefs, tracks: tracks.map(function (t) { return { readyState: t.readyState, muted: !!t.muted }; }) });
+      try { sharedCameraStream.getTracks().forEach(function (t) { t.stop(); }); } catch (_e) {}
+      sharedCameraStream = null;
+    }
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       throw new Error('navigator.mediaDevices.getUserMedia not supported or blocked');
     }
     var stream = await navigator.mediaDevices.getUserMedia({ video: true });
     sonicDebug('camera acquired', stream.getVideoTracks().map(function (t) { return t.readyState; }).join(','));
     sharedCameraStream = stream;
-    sharedCameraVideo = document.createElement('video');
-    sharedCameraVideo.muted = true;
-    sharedCameraVideo.playsInline = true;
-    sharedCameraVideo.setAttribute('playsinline', '');
-    sharedCameraVideo.setAttribute('muted', '');
-    sharedCameraVideo.style.cssText = 'position:fixed;width:1px;height:1px;opacity:0;pointer-events:none;left:-10px;top:-10px;';
+    if (!sharedCameraVideo) {
+      sharedCameraVideo = document.createElement('video');
+      sharedCameraVideo.muted = true;
+      sharedCameraVideo.playsInline = true;
+      sharedCameraVideo.setAttribute('playsinline', '');
+      sharedCameraVideo.setAttribute('muted', '');
+      sharedCameraVideo.style.cssText = 'position:fixed;width:1px;height:1px;opacity:0;pointer-events:none;left:-10px;top:-10px;';
+      (document.body || document.documentElement).appendChild(sharedCameraVideo);
+    }
     sharedCameraVideo.srcObject = sharedCameraStream;
-    (document.body || document.documentElement).appendChild(sharedCameraVideo);
     await sharedCameraVideo.play();
     sonicDebug('camera video playing', sharedCameraVideo.videoWidth + 'x' + sharedCameraVideo.videoHeight + ' ready=' + sharedCameraVideo.readyState);
-    sharedCameraRefs = 1;
+    sharedCameraRefs += 1;
     return sharedCameraVideo;
   }
   function releaseSharedCamera() {
@@ -340,6 +418,111 @@
     if (sharedCameraStream) { try { sharedCameraStream.getTracks().forEach(function (t) { t.stop(); }); } catch (_e) {} sharedCameraStream = null; }
     if (sharedCameraVideo) { try { sharedCameraVideo.remove(); } catch (_e) {} sharedCameraVideo = null; }
   }
+
+  // --- Module-level MediaPipe landmarker loader ----------------------------
+  // Kept at module scope (not per-instance) so the expensive WASM compilation
+  // is shared across all create() instances and can be pre-warmed as soon as
+  // the camera is turned on — long before the user clicks Steer.
+  var _handLandmarkerPromise = null, _handLandmarkerInstance = null, _handLoaderRetryCount = 0, _handPreloadPromise = null;
+  function loadHandLandmarkerOnce(forceRetry, overrideOpts) {
+    if (forceRetry) _handLandmarkerPromise = null;
+    if (_handLandmarkerPromise) return _handLandmarkerPromise;
+    var mopts = overrideOpts || {};
+    _handLandmarkerPromise = (async function () {
+      // Version MediaPipe with the vendored assets' own stable fingerprint,
+      // never sonic-controller.js's frequently-changing mtime. Coupling the
+      // two forced browsers to cold-load the 7.8 MB model after every steering
+      // edit. Keep a versioned URL to avoid reviving the historical stale-MIME
+      // cache failure; bump this token only when the vendored MediaPipe files
+      // themselves change.
+      var mediaPipeAssetVersion = mopts.mediaPipeAssetVersion || 'mp-55d7ab62-fbc2a300';
+      var assetVersion = '?v=' + encodeURIComponent(mediaPipeAssetVersion);
+      var base = '';
+      try {
+        var scriptTags = document.getElementsByTagName('script');
+        for (var si = scriptTags.length - 1; si >= 0; si--) {
+          var src = scriptTags[si].src || '';
+          if (src.indexOf('sonic-controller.js') >= 0) {
+            var idx = src.indexOf('/assets/js/sonic-controller.js');
+            if (idx >= 0) { base = src.substring(0, idx); }
+          }
+          if (base) break;
+        }
+      } catch (_e) {}
+      if (!base) {
+        base = (window.location.origin && window.location.origin !== 'null') ? window.location.origin : '';
+      }
+      var visionSrc = mopts.mediaPipeVisionSrc || (base + '/assets/vendor/mediapipe-hands/vision_bundle.mjs' + assetVersion);
+      var wasmDir = mopts.mediaPipeWasmDir || (base + '/assets/vendor/mediapipe-hands/');
+      var modelSrc = mopts.mediaPipeModelSrc || (base + '/assets/vendor/mediapipe-hands/hand_landmarker.task' + assetVersion);
+
+      try {
+        sonicDebug('hand model local start', visionSrc);
+        var vision = await import(visionSrc);
+        var fileset = await vision.FilesetResolver.forVisionTasks(wasmDir);
+        var localLandmarker = await vision.HandLandmarker.createFromOptions(fileset, {
+          baseOptions: { modelAssetPath: modelSrc },
+          runningMode: 'VIDEO',
+          numHands: 1,
+        });
+        sonicDebug('hand model local ready');
+        _handLandmarkerInstance = localLandmarker;
+        _handLoaderRetryCount = 0;
+        return localLandmarker;
+      } catch (localError) {
+        sonicDebug('hand model local failed', localError.message || String(localError));
+        console.warn('Local MediaPipe assets failed to load. Attempting CDN fallback...', localError);
+        try {
+          var cdnVisionSrc = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/vision_bundle.mjs';
+          var cdnWasmDir = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/wasm/';
+          var cdnModelSrc = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
+          var cdnVision = await import(cdnVisionSrc);
+          var cdnFileset = await cdnVision.FilesetResolver.forVisionTasks(cdnWasmDir);
+          var cdnLandmarker = await cdnVision.HandLandmarker.createFromOptions(cdnFileset, {
+            baseOptions: { modelAssetPath: cdnModelSrc },
+            runningMode: 'VIDEO',
+            numHands: 1,
+          });
+          sonicDebug('hand model CDN ready');
+          _handLandmarkerInstance = cdnLandmarker;
+          _handLoaderRetryCount = 0;
+          return cdnLandmarker;
+        } catch (cdnError) {
+          console.error('CDN fallback also failed.', cdnError);
+          document.dispatchEvent(new CustomEvent('creatr-hand-tracking-failed', {
+            detail: { localError: localError.message, cdnError: cdnError.message }
+          }));
+          throw cdnError;
+        }
+      }
+    })().catch(function (error) {
+      _handLandmarkerPromise = null;
+      throw error;
+    });
+    return _handLandmarkerPromise;
+  }
+
+  async function loadHandLandmarkerWithRetry(overrideOpts) {
+    try { return await loadHandLandmarkerOnce(false, overrideOpts); }
+    catch (firstError) {
+      if (_handLoaderRetryCount >= 1) throw firstError;
+      _handLoaderRetryCount += 1;
+      sonicDebug('hand model retry', firstError.message || String(firstError));
+      return loadHandLandmarkerOnce(true, overrideOpts);
+    }
+  }
+
+  // The compiled landmarker is a document-scoped singleton. Individual
+  // controller disposal must not close it while another controller (or a
+  // later activation using the cached promise) still owns it.
+  try {
+    global.addEventListener('pagehide', function () {
+      try { _handLandmarkerInstance && _handLandmarkerInstance.close && _handLandmarkerInstance.close(); } catch (_e) {}
+      _handLandmarkerInstance = null;
+      _handLandmarkerPromise = null;
+      _handPreloadPromise = null;
+    }, { once: true });
+  } catch (_e) {}
 
   function create(sonicParams, opts) {
     opts = opts || {};
@@ -494,81 +677,10 @@
     // volume of the melodic voice specifically (not the shared master bus),
     // so hand-tracking layers over the ambient/movement voices exactly like
     // keyboard mode does.
-    var _handLandmarkerPromise = null, handLoaderRetryCount = 0, lastHandTimestamp = -1;
-    function loadHandLandmarkerOnce(forceRetry) {
-      if (forceRetry) _handLandmarkerPromise = null;
-      if (_handLandmarkerPromise) return _handLandmarkerPromise;
-      _handLandmarkerPromise = (async function () {
-        // Version the default URLs with this script's own ?v= (set from file
-        // mtime by piece-render.php). This is not cosmetic cache-busting:
-        // hosts that once served .mjs as text/plain left browsers with a
-        // poisoned cache entry whose Content-Type survives every 304
-        // revalidation, permanently failing module import — only a changed
-        // URL recovers. Callers that pass explicit opts version their own.
-        var assetVersion = '';
-        try {
-          var scriptTags = document.getElementsByTagName('script');
-          for (var si = scriptTags.length - 1; si >= 0; si--) {
-            var versionMatch = /sonic-controller\.js\?v=([^&#]+)/.exec(scriptTags[si].src || '');
-            if (versionMatch) { assetVersion = '?v=' + versionMatch[1]; break; }
-          }
-        } catch (_e) {}
-        var visionSrc = opts.mediaPipeVisionSrc || ('/assets/vendor/mediapipe-hands/vision_bundle.mjs' + assetVersion);
-        var wasmDir = opts.mediaPipeWasmDir || '/assets/vendor/mediapipe-hands/';
-        var modelSrc = opts.mediaPipeModelSrc || ('/assets/vendor/mediapipe-hands/hand_landmarker.task' + assetVersion);
-
-        try {
-          sonicDebug('hand model local start', visionSrc);
-          var vision = await import(visionSrc);
-          var fileset = await vision.FilesetResolver.forVisionTasks(wasmDir);
-          var localLandmarker = await vision.HandLandmarker.createFromOptions(fileset, {
-            baseOptions: { modelAssetPath: modelSrc },
-            runningMode: 'VIDEO',
-            numHands: 1,
-          });
-          sonicDebug('hand model local ready');
-          return localLandmarker;
-        } catch (localError) {
-          sonicDebug('hand model local failed', localError.message || String(localError));
-          console.warn("Local MediaPipe assets failed to load. Attempting CDN fallback...", localError);
-          try {
-            var cdnVisionSrc = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/vision_bundle.mjs';
-            var cdnWasmDir = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/wasm/';
-            var cdnModelSrc = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
-
-            var vision = await import(cdnVisionSrc);
-            var fileset = await vision.FilesetResolver.forVisionTasks(cdnWasmDir);
-            var cdnLandmarker = await vision.HandLandmarker.createFromOptions(fileset, {
-              baseOptions: { modelAssetPath: cdnModelSrc },
-              runningMode: 'VIDEO',
-              numHands: 1,
-            });
-            sonicDebug('hand model CDN ready');
-            return cdnLandmarker;
-          } catch (cdnError) {
-            console.error("CDN fallback also failed.", cdnError);
-            document.dispatchEvent(new CustomEvent('creatr-hand-tracking-failed', {
-              detail: { localError: localError.message, cdnError: cdnError.message }
-            }));
-            throw cdnError;
-          }
-        }
-      })().catch(function (error) {
-        _handLandmarkerPromise = null;
-        throw error;
-      });
-      return _handLandmarkerPromise;
-    }
-
-    async function loadHandLandmarkerWithRetry() {
-      try { return await loadHandLandmarkerOnce(false); }
-      catch (firstError) {
-        if (handLoaderRetryCount >= 1) throw firstError;
-        handLoaderRetryCount += 1;
-        sonicDebug('hand model retry', firstError.message || String(firstError));
-        return loadHandLandmarkerOnce(true);
-      }
-    }
+    // loadHandLandmarkerOnce / loadHandLandmarkerWithRetry live at module
+    // scope (above create()) so the WASM compilation can be pre-warmed the
+    // moment the camera is turned on, without waiting for Steer activation.
+    var lastHandTimestamp = -1;
 
     // Thin instance wrappers over the module-scoped shared camera (see
     // acquireSharedCamera above): count this instance's holds so dispose()
@@ -622,10 +734,32 @@
       return handLandmarker.detectForVideo(sharedCameraVideo, timestamp);
     }
 
+    var lastLoggedReadyState = -1;
     function handFrameStep() {
       handRafId = requestAnimationFrame(handFrameStep);
-      if (!handLandmarker || !sharedCameraVideo || sharedCameraVideo.readyState < 2) return;
-      if (sharedCameraVideo.videoWidth === 0 || sharedCameraVideo.videoHeight === 0) return;
+      if (!handLandmarker || !sharedCameraVideo) return;
+      if (sharedCameraVideo.paused && !sharedCameraVideo.ended) {
+        steeringTrace('camera-play-recovery', { paused: true });
+        sharedCameraVideo.play().catch(function () {});
+      }
+      if (sharedCameraVideo.readyState < 2) {
+        if (sharedCameraVideo.readyState !== lastLoggedReadyState) {
+          steeringTrace('camera-not-ready', { readyState: sharedCameraVideo.readyState });
+          lastLoggedReadyState = sharedCameraVideo.readyState;
+        }
+        return;
+      }
+      if (sharedCameraVideo.videoWidth === 0 || sharedCameraVideo.videoHeight === 0) {
+        if (lastLoggedReadyState !== 99) {
+          steeringTrace('camera-no-dimensions', null);
+          lastLoggedReadyState = 99;
+        }
+        return;
+      }
+      if (lastLoggedReadyState !== 100) {
+        steeringTrace('camera-ready', { width: sharedCameraVideo.videoWidth, height: sharedCameraVideo.videoHeight });
+        lastLoggedReadyState = 100;
+      }
       
       var timestamp = performance.now();
       if (timestamp <= lastHandTimestamp) {
@@ -636,6 +770,7 @@
       var result;
       try { result = detectHandFrame(timestamp); }
       catch (error) {
+        steeringTrace('landmark-error', { message: error.message || String(error) });
         if (handInferenceMode === 'video') {
           handInferenceMode = 'canvas';
           capabilityState('hand_tracking', 'loading', error.message || String(error), 'canvas');
@@ -658,6 +793,10 @@
       // Hand-control subscriber (piece interaction) sees every frame,
       // including hand-lost frames (null), independent of the theremin.
       if (handControlOn && typeof handFrameSubscriber === 'function') {
+        steeringTrace('landmark-frame', hand ? {
+          wrist: hand[0] ? { x: hand[0].x, y: hand[0].y, z: hand[0].z || 0 } : null,
+          score: result.handednesses && result.handednesses[0] && result.handednesses[0][0] && result.handednesses[0][0].score,
+        } : { wrist: null });
         try { handFrameSubscriber(hand || null); } catch (_e) {}
       }
       if (!hand || !handThereminOn || !enabled || !melodicSynth) {
@@ -745,21 +884,35 @@
     // callers whose server-side contract granted hand control via the
     // camera permission — including silent engines on sound-less pieces).
     async function enableHandControl() {
-      if (disposed || !(voices.hand_tracking || opts.allowHandControl)) return false;
-      if (handControlOn) return true;
+      steeringTrace('hand-control-enable', null);
+      if (disposed || !(voices.hand_tracking || opts.allowHandControl)) {
+        steeringTrace('hand-control-rejected', { disposed: disposed, allowHandControl: !!opts.allowHandControl, handTrackingVoice: !!voices.hand_tracking });
+        return false;
+      }
+      if (handControlOn) {
+        steeringTrace('hand-control-already-active', null);
+        return true;
+      }
       var cameraHeld = false;
       try {
         capabilityState('hand_control', 'loading');
+        steeringTrace('hand-control-camera-acquire', null);
         await acquireHandCamera();       // camera FIRST — same gesture rule
         cameraHeld = true;
         if (disposed) throw new Error('disposed');
+        steeringTrace('hand-control-landmarker-load', null);
         handLandmarker = await loadHandLandmarkerWithRetry();
+        steeringTrace('hand-control-landmarker-ready', null);
         if (disposed) throw new Error('disposed');
         handControlOn = true;
-        if (!handRafId) handFrameStep();
+        if (!handRafId) {
+          steeringTrace('hand-control-frame-loop', null);
+          handFrameStep();
+        }
         capabilityState('hand_control', 'active');
         return true;
       } catch (_e) {
+        steeringTrace('hand-control-failed', { message: _e.message || String(_e) });
         if (cameraHeld) releaseHandCamera();
         handControlOn = false;
         stopHandLoopIfIdle();
@@ -870,7 +1023,13 @@
     var micStream = null, micNativeSource = null;
 
     async function enableMic() {
-      if (disposed || micNode) return !!micNode;
+      if (disposed) return false;
+      if (micNode && micStream) {
+        var tracks = micStream.getAudioTracks();
+        var active = tracks.length > 0 && tracks.every(function (t) { return t.readyState === 'live'; });
+        if (active) return true;
+        disableMic();
+      }
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         document.dispatchEvent(new CustomEvent('creatr-mic-failed', {
           detail: { error: 'navigator.mediaDevices.getUserMedia not supported or blocked' }
@@ -1136,7 +1295,7 @@
         disableHandControl();
         while (handCameraRefs > 0) releaseHandCamera(); // drop this instance's remaining feed holds
         disableMic();
-        try { handLandmarker && handLandmarker.close && handLandmarker.close(); } catch (_e) {}
+        handLandmarker = null;
         try { ambientSynth && ambientSynth.dispose && ambientSynth.dispose(); } catch (_e) {}
         try { movementSynth && movementSynth.dispose && movementSynth.dispose(); } catch (_e) {}
         try { melodicSynth && melodicSynth.dispose && melodicSynth.dispose(); } catch (_e) {}
@@ -1220,19 +1379,29 @@
   var GESTURE_LOOK_YAW_GAIN = Math.PI * 2.2;
   var GESTURE_LOOK_PITCH_GAIN = Math.PI * 1.4;
   var relativeLookMapping = {
-    update: function (smoothWrist, lastWrist, emit) {
-      if (!lastWrist) return;
-      var dx = smoothWrist.x - lastWrist.x;
-      var dy = smoothWrist.y - lastWrist.y;
-      if (Math.abs(dx) < GESTURE_LOOK_DEADZONE && Math.abs(dy) < GESTURE_LOOK_DEADZONE) return;
-      emit({ type: 'orbit', yaw: -dx * GESTURE_LOOK_YAW_GAIN, pitch: dy * GESTURE_LOOK_PITCH_GAIN });
+    update: function (smoothWrist, lookAnchor, emit) {
+      if (!lookAnchor) return { x: smoothWrist.x, y: smoothWrist.y };
+      var dx = smoothWrist.x - lookAnchor.x;
+      var dy = smoothWrist.y - lookAnchor.y;
+      steeringTrace('router-motion', { dx: dx, dy: dy, deadzone: GESTURE_LOOK_DEADZONE });
+      if (Math.abs(dx) < GESTURE_LOOK_DEADZONE && Math.abs(dy) < GESTURE_LOOK_DEADZONE) return lookAnchor;
+      var command = { type: 'orbit', yaw: -dx * GESTURE_LOOK_YAW_GAIN, pitch: dy * GESTURE_LOOK_PITCH_GAIN };
+      steeringTrace('router-command', command);
+      emit(command);
+      // Advance only after an emission. Slow deliberate movement therefore
+      // accumulates across samples instead of being discarded forever by a
+      // per-frame deadzone, while stationary jitter remains anchored.
+      return { x: smoothWrist.x, y: smoothWrist.y };
     },
   };
   // c2_interactive positions a synthetic POINTER, not a camera — it needs
   // the absolute wrist location, so it keeps the legacy look command.
   var absoluteLookMapping = {
-    update: function (smoothWrist, lastWrist, emit) {
-      emit({ type: 'look', x: 1 - smoothWrist.x, y: smoothWrist.y });
+    update: function (smoothWrist, lookAnchor, emit) {
+      var command = { type: 'look', x: 1 - smoothWrist.x, y: smoothWrist.y };
+      steeringTrace('router-command', command);
+      emit(command);
+      return { x: smoothWrist.x, y: smoothWrist.y };
     },
   };
   var GESTURE_MAPPINGS = {
@@ -1256,6 +1425,7 @@
     var clutchMode = null;
     var smoothWrist = null;
     var lastWrist = null;
+    var lookAnchor = null;
     var clutchAnchor = null;
     var lastPalmScale = null;
     var visibleMode = 'idle';
@@ -1354,6 +1524,7 @@
       clutchAnchor = null;
       lastPalmScale = null;
       lastWrist = null;
+      lookAnchor = null;
       smoothWrist = null;
       stablePose = candidatePose = 'unknown';
       candidateSince = 0;
@@ -1422,6 +1593,7 @@
         clutchMode = stablePose === 'point' ? 'travel' : 'orbit';
         clutchAnchor = { x: smoothWrist.x, y: smoothWrist.y };
         lastWrist = { x: smoothWrist.x, y: smoothWrist.y };
+        lookAnchor = { x: smoothWrist.x, y: smoothWrist.y };
         lastPalmScale = scale;
         try { onCommand({ type: 'start', mode: clutchMode }); } catch (_e) {}
       } else if (!nextPinched && pinched) {
@@ -1430,6 +1602,7 @@
         clutchMode = null;
         clutchAnchor = null;
         lastPalmScale = null;
+        lookAnchor = { x: smoothWrist.x, y: smoothWrist.y };
       }
       pinched = nextPinched;
 
@@ -1446,7 +1619,7 @@
         // strategy, so junk detections can no longer pin the camera.
         emitMode('look');
         try {
-          lookMapping.update(smoothWrist, lastWrist, function (command) { onCommand(command); });
+          lookAnchor = lookMapping.update(smoothWrist, lookAnchor, function (command) { onCommand(command); }) || lookAnchor;
         } catch (_e) {}
         lastWrist = { x: smoothWrist.x, y: smoothWrist.y };
         return true;
@@ -1486,6 +1659,7 @@
     create: create,
     createDeviceTiltController: createDeviceTiltController,
     createClutchedGestureRouter: createClutchedGestureRouter,
+    traceSteering: steeringTrace,
     // Standalone camera feed for pieces with a camera overlay but no sound
     // at all (no sonic engine instance): same ref-counted shared stream the
     // engines use, so live-mixing camera + sound later never double-opens
@@ -1499,8 +1673,50 @@
     SONIC_INSTRUMENTS: SONIC_INSTRUMENTS,
     midiToFreq: midiToFreq,
     percentToDb: percentToDb,
+    // Pre-warm MediaPipe when the visitor expresses interaction intent (for
+    // example by opening/focusing the controls), before Steer is clicked.
+    // The promise and compiled landmarker are document-scoped; callers also
+    // receive capability states for an accessible non-debug loading status.
+    preloadHandTracker: function (overrideOpts) {
+      if (_handLandmarkerInstance) {
+        capabilityState('hand_control_model', 'ready');
+        return Promise.resolve(true);
+      }
+      if (_handPreloadPromise) {
+        capabilityState('hand_control_model', 'loading');
+        return _handPreloadPromise;
+      }
+      capabilityState('hand_control_model', 'loading');
+      _handPreloadPromise = loadHandLandmarkerWithRetry(overrideOpts).then(function () {
+        capabilityState('hand_control_model', 'ready');
+        return true;
+      }).catch(function (error) {
+        capabilityState('hand_control_model', 'unavailable', error && error.message ? error.message : String(error), 'device_tilt');
+        _handPreloadPromise = null;
+        return false;
+      });
+      return _handPreloadPromise;
+    },
     loadToneOnce: loadToneOnce,
     PIANO_KEY_MAP: PIANO_KEY_MAP,
     attachPianoKeyListener: attachPianoKeyListener,
   };
+  if (global.__CREATR_TEST__ === true) {
+    global.CreatrSonicController.__test = {
+      acquireSharedCamera: acquireSharedCamera,
+      releaseSharedCamera: releaseSharedCamera,
+      cameraState: function () {
+        return { refs: sharedCameraRefs, video: sharedCameraVideo, stream: sharedCameraStream };
+      },
+      useLandmarker: function (landmarker) {
+        _handLandmarkerInstance = landmarker;
+        _handLandmarkerPromise = Promise.resolve(landmarker);
+      },
+      disposeSharedLandmarker: function () {
+        try { _handLandmarkerInstance && _handLandmarkerInstance.close && _handLandmarkerInstance.close(); } catch (_e) {}
+        _handLandmarkerInstance = null;
+        _handLandmarkerPromise = null;
+      },
+    };
+  }
 })(typeof window !== 'undefined' ? window : this);

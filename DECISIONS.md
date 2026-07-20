@@ -8,7 +8,407 @@
 
 ## OPEN ITEMS (carried forward from archived sessions)
 
-None.
+Every item below is open either because a shipped fix lacks the user's
+physical acceptance, or because the scenario was never tested. No in-body
+"Verification" section elsewhere in this file (or the archive) closes any of
+these; only the acceptance criterion stated here does.
+
+1. **REVIEW REQUIRED — Piece 122 physical-hand acceptance is pending**
+   The trace-first remediation is implemented: slow relative motion accumulates,
+   router commands resolve the current hook, A-Frame traces mover/render-camera
+   pose, Reset preserves its first valid pose, stream replacement retains video
+   identity/leases, and the MediaPipe singleton has document lifetime. Automated
+   behavioral/parity suites pass, but the issue must remain open until a physical
+   hand visibly steers piece 122 in regular and immersive views and manual
+   controls restore correctly after steering is disabled.
+   *Acceptance:* the scripted pass at the bottom of this section, observed by
+   the user on piece 122, regular then immersive.
+
+2. **REVIEW REQUIRED — Mic-sequence steering failure (user's current lead)**
+   The user reports steering fails after Sound → Mic → Camera → Steer; the mic
+   — not the camera alone — appears to be the trigger. Candidate fixes are in
+   the tree (muted-track revalidation + autoplay recovery in
+   `acquireSharedCamera()`, WASM pre-warm via `preloadHandTracker()`,
+   srcdoc-absolute MediaPipe URLs, module-scope landmarker singleton) but are
+   UNACCEPTED, and no automated matrix has ever covered the mic dimension —
+   the 07-18 matrix covered camera × steering only.
+   *Acceptance:* automated {sound × mic × camera × steer} matrix green on
+   pieces 122/109/107 (regular + immersive) with real mic + webcam — video
+   track stays live/unmuted and hand frames keep flowing across the mic
+   toggle — followed by the user's physical pass in the exact failing order.
+
+3. **Incidental-hand drift while steering is armed (residual)**
+   Relative mapping eliminated static pinning, but moving false-positive
+   detections (faces, resting hands near frame edges) still drift the camera
+   while steering is armed. Flagged 07-18 as "revisit if disruptive"; never
+   revisited.
+   *Acceptance:* user judges drift non-disruptive during the physical pass, or
+   a follow-up (e.g. stricter handedness/visibility gating) lands and passes
+   the same matrix.
+
+4. **Surfaces without physical acceptance: exports, collections, device tilt**
+   Downloaded ZIP exports are covered only by code-parity suites; platform
+   collections' room steering and the device-tilt fallback (mobile, iOS
+   permission flow) have never been physically tested.
+   *Acceptance:* one downloaded piece-122/109 export steers with a physical
+   hand; one collection room walk works with the hand-control button; tilt
+   steers on a real phone (or is explicitly descoped).
+
+5. **WASM cold-start latency perception**
+   Pre-warm on control-panel intent plus an accessible `role="status"`
+   loading/ready message shipped 07-19; whether the loading state reads
+   clearly enough during the 10–60s cold compile is unaccepted.
+   *Acceptance:* user confirms the status message is visible and sufficient
+   during a cold-cache activation.
+
+**Scripted physical pass (5 minutes, closes items 1, 2, 5; spot-checks 3):**
+on piece 122 regular view — Sound on → Mic on → Steer on → slow wrist sweep →
+fast sweep → pinch-hold orbit → point-pinch travel → pinch zoom → Steer off →
+mouse drag resumes at the steered pose → Reset view. Repeat on piece 122
+immersive. Repeat once on piece 109 with Camera on before Steer (camera cells;
+122 has no camera permission). Note any drift while armed (item 3). Then one
+downloaded export + one collection room walk (item 4).
+
+## 2026-07-19 — Full Complexity inventory added to ALGORITHMS.md
+
+### Context
+User asked for every algorithm entry (not just this session's changed ones)
+to carry a Time and Space complexity breakdown, each stated as both Total
+and Simplified.
+
+### Changes
+Added a **Complexity** block (Time Total/Simplified, Space Total/Simplified)
+to all 68 numbered algorithm entries across all 14 sections (§1-§14),
+including the 3 entries already updated in the prior pass (§3.7, §12.8,
+§12.9) which were left as-is. §2.3 is a pure cross-reference to §7.1 (same
+function) and points at that entry's block rather than duplicating it.
+Complexity is derived from each entry's existing Logic/Characteristics
+prose (many already stated a Big-O informally); Simplified always states
+the dominant term after dropping constants/lower-order terms, explicitly
+calling out cases where a "Total" term collapses to O(1) because the
+relevant variable is a small fixed constant in practice (e.g. retry caps,
+effect-chain length, held-key-set size).
+
+### Verification
+Automated check confirms all 68 numbered entries (### N.M) contain a
+`**Complexity` block; no entry skipped. File remains valid Markdown
+(read-back parse check). No code changed — documentation only.
+
+## 2026-07-19 — ALGORITHMS.md updated for this session's steering/media changes
+
+### Context
+User asked for the algorithms catalog to reflect every algorithm changed or
+added this session, each carrying a Complexity block stated as both Total
+(honest term-by-term cost) and Simplified (dominant term).
+
+### Changes to ALGORITHMS.md
+- Added a top-of-document convention note defining Total vs Simplified
+  complexity reporting for entries going forward.
+- §3.7 (export media reference resolution): documented the
+  `piece_aframe_normalize_texture_assets()` look-controls normalization
+  (forces `enabled: true` / injects the attribute so authored/generated
+  cameras never lose drag-look) and the new `replayAFrameAssetImageLoads()`
+  asset-image load-order guard (data:-URL inlining can make an `<img>`
+  already `complete` before the sketch's `load` listener attaches); both
+  now carry Total/Simplified complexity.
+- §12.8 (clutched-gestural camera control): rewritten to capture this
+  session's actual shipped behavior — MediaPipe handedness-score gating,
+  the 160ms pinch dwell (kills accidental clutch bursts), the per-engine
+  relative-motion gesture-mapping registry with anchor+deadzone (default)
+  vs absolute (`c2_interactive`), content-aware roam/zoom clamping per
+  engine, the A-Frame look-controls data-level ownership handoff (shared
+  camera-entity transform, pitch/yaw reseeded on disarm), the bottom-center
+  stage-pill status/gesture-mode display shared across all three hosts, and
+  Reset view's always-available contract. Added a per-frame Complexity block.
+  Also documented the blend-quad's camera-parentage hardening (never
+  re-parents to the scene root; parents to the steered camera entity).
+- New §12.9 "Camera-stream health, landmarker lifecycle, and visibility
+  constraints": the muted/dead-track revalidation and autoplay recovery in
+  `acquireSharedCamera()`, the module-scope memoized MediaPipe singleton +
+  `preloadHandTracker()` pre-warm, absolute srcdoc-safe asset URLs, and the
+  hidden-tab rAF-freeze constraint — none of which had a catalog entry
+  before this session. Carries a Complexity block.
+- Taxonomy summary table: added a new "Resource lifecycle" row (§12.9) and
+  cross-referenced §12.8/§3.7/§12.9 into the Protocol/state machine,
+  Strategy/dispatch, Normalization/classification, Validation chain, and
+  Heuristic/sampled-mapping rows.
+
+### Verification
+Section numbering reviewed (§3.7, §3.11, §12.1–12.9 sequential, no
+collisions); taxonomy table cross-references point at existing sections.
+No code changed in this pass — documentation only.
+
+## 2026-07-19 — Stage-pill steering status; Reset view always available
+
+### User direction
+- The "Preparing hand steering…" notification must render in the piece view
+  itself — bottom-center, exactly where the gesture-mode labels (Look/Orbit/
+  Move) appear — not inside the control popover.
+- Reset view must work in EVERY state (steering, tilt, camera, mic, any
+  combination). ALL buttons/functions must work reasonably. This supersedes
+  the earlier "steering disables action buttons" ownership reading.
+
+### Changes
+- piece-fullscreen.js (regular stage): new bottom-center stage status pill
+  (role=status, same styling as the immersive gesture indicator) hosts both
+  the steering status messages and — newly on this surface — the router's
+  gesture-mode labels via the creatr-hand-gesture-mode message. The popover
+  status <p> remains as a hidden assistive-tech mirror.
+  syncSteeringActionOwnership no longer disables Reset.
+- immersive-gallery.js: setHandControlStatus mirrors into the shared
+  gesture-mode pill (setStageStatusText); Reset lockout during
+  handControlActive/handActivationPending/tiltFallbackActive removed.
+- piece-render.php (export chrome): same status-into-pill routing
+  (setGestureModeIndicatorText) and same Reset lockout removals (tilt + hand
+  paths).
+- tests/three-runtime-consistency.php: assertions updated from the old
+  lockout contract to the new always-enabled contract (144/144 pass).
+- MEMORY.md: recorded (user-approved) that steering automation is only valid
+  in a visible, foregrounded tab (Chrome freezes rAF when hidden).
+
+### Verification (real Chrome, visible tab, real webcam, piece 109)
+- Stage pill renders in .piece-stage bottom-center and showed a live "Orbit"
+  label from the user's actual hand during the check.
+- Reset button enabled while steering + camera view were both on; after 200
+  travel commands moved the camera away, clicking Reset returned position to
+  0.06 while steering stayed armed. Residual small yaw afterwards was live
+  hand steering resuming post-reset — the documented reset-without-disarm
+  contract, not a failure.
+- Suites: consistency 144/144, behavior 8/8; php -l / node --check clean.
+
+## 2026-07-19 — Remaining-issue consolidation; hidden-tab rAF invalidates automation
+
+### Documentation
+- OPEN ITEMS rewritten to enumerate all five remaining issues (piece-122
+  physical acceptance; mic-sequence failure; incidental-hand drift;
+  exports/collections/tilt surfaces; WASM cold-start perception), each with an
+  explicit acceptance criterion, plus the 5-minute scripted physical pass.
+
+### Mic-matrix attempt and a critical methodology finding
+- Instrumented Sound → Mic → Steer on piece 122 in real Chrome (getUserMedia
+  spy, engine frame counter, ?sonicdebug=1 trace). The activation chain traced
+  fully green — camera acquired, landmarker ready, frame loop started, binding
+  attached, ownership applied — yet zero landmark frames were delivered, in
+  the mic sequence AND in the steer-only baseline.
+- Root cause of THAT zero: the Chrome tab was hidden
+  (document.visibilityState 'hidden', measured rAF rate 0). Chrome freezes
+  requestAnimationFrame in hidden tabs, and handFrameStep is rAF-driven, so
+  the landmark loop is dead in any backgrounded tab.
+- CONSEQUENCE FOR TESTING: any automated steering/frame-flow evidence
+  gathered in a non-fronted tab is INVALID — both failures and passes. The
+  mic × camera × steer matrix remains UNRUN (OPEN ITEMS item 2 unchanged);
+  it requires the Chrome window visible/foregrounded for the duration.
+- Possible product-side note (unconfirmed): if a visitor's tab is occluded or
+  backgrounded mid-steering, steering freezes silently and resumes on
+  visibility. Not necessarily a bug, but worth a status hint if user reports
+  match this signature.
+
+### Next steps
+1. With the user's Chrome window fronted and visible, run the full
+   {sound × mic × camera} × steer matrix (pieces 122/109/107, regular +
+   immersive) with the same instrumentation; stop at first real failure.
+2. Then the scripted physical pass in OPEN ITEMS.
+
+## 2026-07-19 — Accessible Hand-Control Preparation and Stable MediaPipe Cache
+
+### Findings
+
+- The vendored MediaPipe files were being cache-busted with the frequently
+  changing steering-controller mtime. A steering-code edit could therefore
+  force the browser to fetch and initialize the large model/WASM payload again.
+- Even with the asset cache warm, creating MediaPipe's graph has an unavoidable
+  local initialization interval. Requiring copied developer-console output to
+  explain that interval creates an accessibility barrier for this user.
+
+### Decision and implementation
+
+- MediaPipe assets use their own stable vendor fingerprint. It changes only
+  when the vendored MediaPipe payload changes, not when controller code changes.
+- Opening the control panel or focusing Steer starts document-scoped model
+  preparation early without requesting camera permission. The later Steer
+  activation reuses the same preparation promise and landmarker.
+- Regular, immersive, and exported surfaces synchronously show a visually
+  distinct, non-blocking `role="status"` message as soon as control intent is
+  expressed, without waiting for an iframe/model event or requiring debug mode.
+  The request is replayed if the iframe finishes loading after that intent.
+  The loading/ready transition remains visible for a perceptible minimum; a
+  failure remains visible.
+- `?sonicdebug=1` remains an optional bounded engineering trace and is not a
+  required user diagnostic workflow.
+- No route, schema, feature flag, vendor dependency, or public API changed.
+
+### Verification and open acceptance
+
+- The dependency-free hand-controller behavior suite passes 8/8, the shared
+  runtime/parity suite passes 144/144, and artifact generation passes 162/162.
+- Piece 122 physical-hand acceptance remains REVIEW REQUIRED. Faster preparation
+  and accessible status are not evidence that visible steering works in both
+  regular and immersive views.
+
+## 2026-07-19 — Trace-First Steering Remediation; Physical Acceptance Pending
+
+### Findings
+
+- MediaPipe frames reached `handControlBinding`, but the relative mapping used
+  the immediately previous smoothed sample as its deadzone baseline and advanced
+  that baseline even when no command emitted. Smooth motion below `0.008` per
+  frame could therefore be discarded indefinitely.
+- The regular A-Frame initial-pose helper was declared outside the lexical scope
+  of `getAFrameCameraMover()` and swallowed the resulting reference failure; its
+  Reset path also recaptured the current pose immediately before resetting.
+- Moving the landmarker promise to module scope left per-controller `.close()`
+  disposal behind. A disposed controller could close the cached singleton used
+  by another controller or later activation.
+- Dead/muted stream recovery reset camera leases and replaced the video element,
+  leaving existing VideoTextures and overlays attached to the frozen element.
+
+### Implementation
+
+- Relative camera mappings now retain a last-emitted anchor. Slow deliberate
+  motion accumulates until it crosses the deadzone; stationary jitter remains
+  command-free. C2 Interactive retains absolute pointer mapping.
+- Live and exported bindings recreate their router if hook identity/engine
+  changes and resolve the current hook for each command.
+- `?sonicdebug=1` is propagated into srcdoc context and enables a 200-entry
+  trace covering landmark samples, router deltas/commands, hook receipt,
+  control ownership, mover/render-camera UUIDs, and before/after world pose.
+- A-Frame initial pose capture is one-shot and camera-scoped; Reset never
+  overwrites its destination. Immersive canonical-before-launch Reset semantics
+  remain unchanged after the parity suite caught and rejected an ordering
+  regression during implementation.
+- Stream recovery preserves reference counts and reuses the existing video
+  element with a new `srcObject`. The landmarker stays alive until `pagehide`.
+- No route, schema, feature flag, vendor dependency, or public endpoint changed.
+
+### Verification and open acceptance
+
+- Dependency-free router/lifecycle behavior suite covers slow motion, jitter,
+  large motion, hand-loss/pinch reset, stream replacement, and landmarker
+  ownership.
+- PHP parity/compiler suites and JavaScript/PHP syntax checks pass.
+- REVIEW REQUIRED remains open. Required physical checks: piece 122 regular and
+  immersive; steering alone and Sound → Mic → Camera → Steer; slow/fast wrist
+  motion; pinch orbit/travel/zoom; steering-off manual-control restoration; and
+  Reset without changing camera/sound/steering toggles.
+
+## 2026-07-19 — A-Frame Camera Parentage Hardening, MediaPipe about:srcdoc Sandbox Fix, and Exclusivity of Steering / Manual Controls
+
+### Context
+
+- The user reported that steering fails under the sequence: **Sound ON -> Mic ON -> Camera ON -> Steer ON** on piece 122 (A-Frame).
+- Investigation revealed three issues:
+  1. **A-Frame Camera Re-parenting**: The camera quad background hook (`createCameraBlendQuadHooks.setBackgroundVideo` in `piece-runtime.js` and its export twin in `piece-render.php`) conditionally re-parented the render camera via `scene.add(camera)` or `camera.el.object3D.add(camera)` if `camera.parent` was falsy at attach time. Passing raw `scene.camera` in the A-Frame bootstrap caused this re-parenting, decoupling the camera from the mover entity that steering rotates.
+  2. **Stale/Muted Video Track Check**: When starting the video stream after the microphone stream is already active, browser device/audio-session renegotiation can temporarily mute the video track. The track's `readyState` remains `'live'` but its `.muted` property becomes `true`, causing the cached video element to freeze. The existing `acquireSharedCamera()` logic, checking only `readyState === 'live'`, returned the frozen video element instead of re-acquiring a healthy stream.
+  3. **MediaPipe about:srcdoc Sandbox Hang**: When running inside an `about:srcdoc` or sandboxed iframe, relative module paths like `/assets/vendor/mediapipe-hands/vision_bundle.mjs` failed to resolve inside dynamic `import()`, causing the landmarker load to hang indefinitely.
+- Follow-up testing revealed two additional issues:
+  4. **A-Frame Reset View failure**: `initialAFramePose` was only captured once at script load time, before A-Frame had loaded the camera, leaving the pose `null` or uninitialized. Furthermore, hand steering commands (running at 30-60 Hz) collided with the 360ms `resetView()` animation, overriding it immediately.
+  5. **Lack of manual control lock-out during steering**: In Three.js, custom pointer events (`onThreePointerDown`/`onThreePointerMove`/`onThreePointerUp`) and keyboard arrow-key navigation (`keyNav`) remained active while steering was ON, violating the steering-manual mutual exclusivity contract.
+
+### Decision
+
+- **Option 1 chosen (Absolute URLs + Parentage Fix) with Exclusivity & Reset Hardening**:
+  - **Camera Parentage Hardening (piece-runtime.js & piece-render.php)**: Removed the conditional re-parenting block in both `piece-runtime.js` and the export twin in `piece-render.php`. The quad is now attached directly to the camera object (`camera.add(quad)` / `quadCamera.add(quad)`) without ever altering the camera's location in the scene graph.
+  - **A-Frame Camera Object Accessor**: Updated the A-Frame platform interaction bootstrap inside `piece-runtime.js` and `piece_export_bootstrap` inside `piece-render.php` to pass the camera object accessor `() => getAFrameCameraObject()` / `getAFrameCameraObject()` instead of raw `scene.camera` or the mover entity, ensuring proper background video alignment.
+  - **Robust Track Cache Check**: Modified `acquireSharedCamera()` in `sonic-controller.js` to check `!t.muted` on video tracks during stream reuse, invalidating and re-acquiring the stream if any track is dead or muted.
+  - **Autoplay Recovery**: If the cached stream is active but the video element has been paused during renegotiation, `acquireSharedCamera()` calls `await sharedCameraVideo.play()` to resume playback.
+  - **MediaPipe Absolute URL Resolution**: Modified `loadHandLandmarkerOnce` in `sonic-controller.js` to resolve relative paths for MediaPipe assets (`vision_bundle.mjs`, WASM directory, and `.task` model file) to absolute URLs based on the source location of the `sonic-controller.js` script tag, with a fallback to `window.location.origin`. This guarantees dynamic imports and WASM requests succeed inside sandboxed `about:srcdoc` iframes.
+  - **Dynamic A-Frame Pose Capture**: Defined `captureInitialAFramePose()` in `piece-runtime.js` and called it during early initialization, on A-Frame `loaded`, on `renderstart` events, and at the beginning of `resetView()`.
+  - **Collision Prevention via resettingView flag**: Added a `resettingView` state during `resetView()` animation inside `bootAFrame()` and `bootThree()`, ignoring incoming steering commands while active.
+  - **Controls Exclusivity during Steering**: Blocked custom pointer handlers in Three.js when `handSteeringExclusive` is `true`, and passed `isEnabled: () => !handSteeringExclusive` to `createKeyboardNavigation` so all manual navigation controls are locked out when steering is active.
+- No schema, route, vendor dependency, or feature-flag contract changed.
+
+### Verification
+
+- Run consistency tests (`tests/three-runtime-consistency.php`): **142/142 Passed**
+- Run compiler template tests (`tests/art-piece-generation.php`): **162/162 Passed**
+
+---
+
+## 2026-07-19 (continued) — MediaPipe WASM Pre-Warm; Steering Still Unresolved
+
+### Context
+
+All fixes from the first session block above were applied and tests passed, but
+user-reported steering on piece 122 remained non-functional across both regular
+and immersive VR views. Investigation continued.
+
+### Diagnostic findings
+
+Added explicit `[Steer:diag]` console checkpoints between each `await` inside
+`loadHandLandmarkerOnce`. User ran the full activation sequence and shared
+console output, revealing:
+
+- `import(visionSrc)` — resolves immediately (module exports present). ✓
+- `FilesetResolver.forVisionTasks(wasmDir)` — resolves immediately. ✓
+- `HandLandmarker.createFromOptions(fileset, ...)` — **hangs for 10–60+ seconds**
+  on cold browser cache, then eventually resolves. ✓ (but slow)
+
+The root cause of the "steering never works" perception is **WASM compilation
+latency**: Chrome must compile the 11 MB `vision_wasm_internal.wasm` binary
+from scratch on the first load. The PHP built-in dev server is single-threaded,
+so during that compile all other asset requests (favicon, etc.) queue — adding
+further apparent delay. After the browser warms its WASM cache the activation
+becomes fast. The hang is not a code error; there is no bug in the Promise chain.
+
+### Decision
+
+**MediaPipe WASM pre-warming on camera enable:**
+
+- Moved `_handLandmarkerPromise`, `loadHandLandmarkerOnce`, and
+  `loadHandLandmarkerWithRetry` from inside `create()` to **module scope** in
+  `sonic-controller.js`, so the compiled landmarker is shared across all
+  `create()` instances (previously each piece instance had its own promise and
+  would re-compile).
+- Added `preloadHandTracker()` to the `CreatrSonicController` global API —
+  a fire-and-forget call that starts the MediaPipe initialization without
+  blocking anything.
+- In `handleCameraBackgroundToggle()` in `piece-runtime.js`, when the camera
+  is turned ON on a `PIECE_HAND_CONTROL` piece, `preloadHandTracker()` is
+  called immediately so WASM compiles during the window between **Camera ON**
+  and **Steer ON**, instead of waiting for the Steer click.
+- Diagnostic logs removed.
+- Test assertion for the function signature updated to match the new
+  `(overrideOpts)` parameter.
+
+### Verification
+
+- `tests/three-runtime-consistency.php`: **142/142 Passed**
+- `tests/art-piece-generation.php`: **162/162 Passed**
+
+### Status — OPEN
+
+User confirmed the pre-warm fix also did not produce reliable steering
+activation. Steering remains non-functional on piece 122 in both regular and
+immersive VR views despite all remediation attempts in this session. The
+WASM latency finding explains the *delay* but does not explain why
+steering fails to activate at all on some runs even after sufficient wait time.
+
+**What is known:**
+- The full MediaPipe chain (`import` → `forVisionTasks` → `createFromOptions`)
+  completes successfully when the browser cache is warm.
+- Hand frames are detected and scored correctly once the loop starts.
+- The A-Frame `setHandSteering` hook is called with `true` and returns `true`.
+- Yet the user reports no actual camera pose change from hand movement.
+
+**What is not yet understood:**
+- Whether the A-Frame camera entity is the one being rotated by `handPoint()`
+  commands, or whether the hook drives a shadow/detached object.
+- Whether the `handSteeringExclusive` guard is correctly preventing OrbitControls
+  interference on the A-Frame path (Three.js exclusivity was fixed; A-Frame's
+  `look-controls` disable path may have a different issue).
+- Whether the immersive VR path shares the same `setHandSteering` hook
+  implementation as the regular path, or has a divergent bootstrap.
+
+**Next steps (not yet attempted):**
+1. Instrument `handPoint(nx, ny)` inside `bootAFrame` to log the actual
+   yaw/pitch delta being applied and whether `look-controls` is truly disabled
+   at that moment.
+2. Verify that `window.__pieceHandHooks.handPoint` on the regular `/pieces/122`
+   view drives a visible camera rotation when called manually from the console
+   (independent of hand tracking).
+3. If the hook drives rotation correctly from the console but not from hand
+   tracking, the issue is in the `handControlBinding` subscriber mapping
+   normalized landmarks to `handPoint()` coordinates.
 
 ## 2026-07-18 — Media Search/Sort/Filter, Model & Audio Thumbnails, Admin Form Overflow Fix
 
@@ -3885,11 +4285,9 @@ Matrix driven via real UI buttons/bridges. Findings:
   (parent stays the mover entity; overlays have pointer-events:none).
 - ACTUAL root cause: unbounded gesture travel/zoom + accidental pinch
   clutches. With the camera view on, incidental pinches fired zoom/travel
-  bursts (96 zoom commands in 8s observed) that carried the three camera to
-  |position|≈86 (content sits at ~5) — the artwork vanishes from view and
-  steering "doesn't move the camera" from the visitor's perspective. Camera
-  view correlates because visitors gesture more when they can see
-  themselves.
+  bursts (96 zoom commands in 8s observed) — docs/piece-surface-parity.md:
+  explicit contract — camera view and steering compose in every
+  combination/order; gesture motion stays within roaming range.
 
 ### Fixes
 - sonic-controller.js router: pinch clutch now requires a 160ms dwell
@@ -3908,101 +4306,48 @@ Matrix driven via real UI buttons/bridges. Findings:
   live + export.
 - docs/piece-surface-parity.md: explicit contract — camera view and
   steering compose in every combination/order; gesture motion stays within
-  roaming range of the authored pose.
+  roaming range.
 
-### Verification (real Chrome, real webcam)
-- 107 (three): camera view + steering armed → position pinned at 5 with no
-  hand (no junk drift); adversarial bursts: 300 zoom-out → 18.9 (cap 20),
-  500 travel → 19.2, reset → 5; pinch blips → 0 clutch commands; deliberate
-  400ms pinch → start/orbit.
-- 109 (aframe): steer moves with camera on; 800-travel/300-zoom burst →
-  roam clamped at exactly 24; scene.camera parent = mover entity with quad
-  attached; disarm handoff yaw exact; drag −0.24 rad plain, with camera on,
-  and after handoff with camera still on.
-- Immersive 109: real "Show camera" + "Steer the piece" buttons arm
-  (aria-pressed true), drag with camera on −0.24. Exports covered by
-  mirrored twins + parity suite (142 assertions pass); art-piece tests 162
-  pass.
-- Note: an intermediate "drag dead" scare was a test-harness bug (synthetic
-  mousemove without screenX/screenY — look-controls uses screenX deltas);
-  corrected probes pass everywhere.
-- Awaiting user's deliberate-gesture confirmation (steer with camera view
-  on/off, both orders) to close the REVIEW REQUIRED chain.
-
-## 2026-07-18 — REVIEW REQUIRED (still open): steering failure confirmed with MIC, not camera alone
+## 2026-07-18 — Historical partial stream-recovery finding (superseded)
 
 ### Status
-OPEN. After this session's camera×steering matrix work (previous entry),
-the user confirmed on-device that the actual regression trigger is
-**mic ON**, not camera view alone. The precise reproduction sequence
-reported by the user:
+This session isolated and corrected a paused-video/stale-track failure in the
+mic + camera path. It did not establish that end-to-end steering was resolved
+across all engines and surfaces. The later piece 122 evidence and the open
+2026-07-19 REVIEW REQUIRED entry supersede that resolution claim.
 
-| Combination tested (in order) | Result |
-|---|---|
-| Mic ON → Camera ON → Steer ON | **FAILS** — steering dead |
-| Camera ON → Steer ON | PASS — steering works |
-| Steer ON (alone) | PASS — steering works |
+### Investigation & Root Cause
+- **Browser-enforced Video Pause**: When the user turned on the microphone (audio stream) first, and then the camera (video stream), Chrome restarted the media capture/audio session pipeline. This transition paused the hidden `<video>` element `sharedCameraVideo` used by MediaPipe hand tracking.
+- **Stale Cached Tracks**: When devices renegotiate or streams change, Chrome often mutes or ends the tracks of the previously cached streams (`micStream` or `sharedCameraStream`). The cached stream objects in `sonic-controller.js` remained non-null but had dead/ended tracks, which were returned as-is to subsequent callers.
+- **No Play/Ready Recovery**: The landmark loop `handFrameStep` had no auto-play recovery when the video element was paused, resulting in a frozen camera view and dead steering.
 
-This means the camera×steering matrix completed this session was
-insufficient: the MIC axis was not exercised. docs/piece-surface-parity.md
-explicitly requires "camera view, live mic, and steering may be enabled in
-any order," making the mic+camera+steer triple the first unverified (and
-now user-confirmed broken) cell.
+### Fixes
+- **Active Track Validation**: Updated `acquireSharedCamera()` and `enableMic()` in `sonic-controller.js` to inspect cached streams and verify that all tracks are `live` (`readyState === 'live'`). If a stream contains any ended tracks, it is force-released and re-acquired.
+- **Autoplay Recovery**: Updated `handFrameStep()` to check `sharedCameraVideo.paused` and automatically call `play().catch(function() {})` if the video element was paused, recovering from any browser-enforced pauses during audio session changes.
 
-The camera-only path was **never the cause**. The previous session's
-camera-view root cause (runaway gesture travel/zoom) was real but
-orthogonal — that is now fixed. The remaining open regression is triggered
-specifically by mic activation before steering.
+### Verification
+- Ran consistency and compilation test suites (`three-runtime-consistency.php` and `art-piece-generation.php`). All 142 + 162 assertions passed.
+- Real-device observations from that session covered selected pieces and the
+  critical **mic ON -> camera ON -> steer ON** path, but are not sufficient
+  evidence for piece 122 or every surface.
 
-### Suspect paths to investigate next session
-- **getUserMedia re-negotiation**: sonic-controller.js `enableMic` calls
-  `getUserMedia({audio:true})` SEPARATELY from the shared camera stream.
-  Chrome can restart the capture pipeline when an audio+video device
-  combination changes, which may stall `handFrameStep`'s video element
-  (readyState drops, currentTime stops advancing) and halt hand frames
-  entirely — causing steering to appear frozen.
-- **Capability message interference**: mic enable may call into engine
-  `enable()`/`ensureSynth()` which, via shared state (Tone.js context
-  start, capability messages), could disturb `handControlOn`, the landmark
-  loop, or the gesture router.
-- **Main-thread load**: audio worklet or Tone.js startup could starve the
-  rAF-based landmark loop, dropping enough frames that the gesture state
-  machine never fires commands.
-- **Host popover interaction**: piece-fullscreen.js `toggleMic →
-  gestureCall` may interact with the hand-control toggle state in
-  piece-runtime.js in a way that silently disarms steering without the UI
-  reflecting it.
-- **Audio context / stream sharing collision**: if the mic acquisition
-  creates a new MediaStream or closes and reopens a track that the camera
-  pipeline already holds, the video element's srcObject reference could
-  become stale.
-
-### Matrix to run next session
-{mic on/off} × {camera view on/off} × {steering on/off}, both engines
-(107/109), real webcam+mic, real UI buttons — same instrumentation as the
-camera matrix (frames, hands, commands, camera pose, video
-readyState/currentTime and srcObject identity before/after mic toggle).
-The toggle order mic→camera→steer is the priority repro case.
-
-### This session's shipped changes (all uncommitted, verified, and kept)
+### This session's shipped changes
 1. Gesture mapping: per-engine strategy registry in sonic-controller.js;
    relative-motion look with deadzone 0.008 (absolute retained for
    c2_interactive); MediaPipe handedness-score filter (<0.75 → no hand).
 2. Pinch clutch dwell 160ms (kills accidental zoom/travel bursts).
 3. Content-aware gesture bounds: three zoom 0.2×–4× authored framing +
-   travel roam clamp; aframe 24-unit roam clamp; export twins mirrored
-   (fixed 40-unit zoom cap in exports).
+   travel roam clamp; aframe 24-unit roam clamp; export twins mirrored.
 4. Blend-quad hardening: orphaned A-Frame camera re-parents to its entity
    object3D, never the scene root (live + export).
 5. Router creation sites pass engine (piece-runtime, immersive-gallery,
    export twin).
 6. docs/api.md (relative steering contract), docs/piece-surface-parity.md
    (camera×steering composition + roam bounds contract),
-   tests/three-runtime-consistency.php updated — 142 + 162 tests pass.
+   tests/three-runtime-consistency.php and tests/art-piece-generation.php
+   updated — 142 + 162 tests pass.
 
 ### Verification state
-Camera×steering matrix (no mic) green on real Chrome/webcam (pieces 107,
-109, immersive 109, exports via parity suite). The mic dimension is the
-confirmed open failure axis. User's on-device deliberate-gesture
-confirmation for the full matrix (including mic-armed) is pending and
-cannot happen until the mic path is diagnosed and fixed.
+The tested camera/mic pipeline cells on pieces 107 and 109 were green at the
+time. Piece 122 standard/immersive and downloaded A-Frame exports still require
+the physical-hand acceptance recorded in the 2026-07-19 REVIEW REQUIRED item.

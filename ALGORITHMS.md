@@ -45,6 +45,13 @@ This file catalogs the algorithms that support each functional area of the CMS. 
 pseudo-code or a flowchart — not the PHP/JS code that happens to implement it.
 Complexity is given in big-O where meaningful (n = size of the relevant input).
 
+> **Complexity convention:** entries carry a **Complexity** block stating time
+> and space as both **Total** — the honest term-by-term cost of the pipeline
+> as written (e.g. O(21h + f·s + k log k)) with each variable named — and
+> **Simplified** — the dominant term after dropping constants and
+> lower-order terms (e.g. O(f·s)). Older entries are being migrated to this
+> convention as their sections are touched.
+
 Each functional section ends with one or more **Recipe** subsections — a
 labeled pseudocode trace of the data pipeline — each followed by sentence instruction versions of the algorithmic recipe, an AI-generated diagram ([Diagram-Creation Thread](https://chatgpt.com/share/6a4c93be-fa98-83ea-876e-42b57eb256a1)), and an
 **Analysis** subsection covering edge cases, failure points, efficiency, and
@@ -121,6 +128,11 @@ improvements** (upgrades, each honest about its trade-off).
   produces the same expression); finite (bounded by the 200-char cap);
   language-independent (the phrase/word/operator-stripping logic ports to any
   language). O(n) in query length.
+- **Complexity:**
+  - Time — Total: O(n) for n = clamped query length (≤ 200), two linear
+    regex passes plus a hash-set dedup over the token count t ≤ n. Simplified: **O(n)**.
+  - Space — Total: O(t) for the deduplicated term/phrase sets, t ≤ n.
+    Simplified: **O(n)** (t is bounded by the same 200-char cap).
 
 ### 1.2 Hybrid FULLTEXT + LIKE retrieval — `search_like_recall_clause()`
 - **Type:** Searching algorithm (index search with linear-scan fallback).
@@ -128,6 +140,13 @@ improvements** (upgrades, each honest about its trade-off).
   `LIKE '%term%'` predicates (with `\`, `%`, `_` escaped) so recall never
   silently drops short tokens. A greedy trade-off: LIKE branches are O(n) table
   scans, accepted only for the rare short-token case.
+- **Complexity:**
+  - Time — Total: O(log R) for the FULLTEXT-indexed branch (R = row count)
+    plus O(s·R) for s short-token LIKE branches, each an unindexed scan.
+    Simplified: **O(s·R)** — the LIKE scans dominate whenever s > 0; with no
+    short tokens the query is **O(log R)**.
+  - Space — Total: O(1) beyond the DB's own result buffer — the clause
+    itself is a fixed-size string built from s terms. Simplified: **O(1)**.
 
 ### 1.3 Snippet extraction and highlighting — `search_snippet()`
 - **Type:** String searching (first-occurrence scan) + windowing.
@@ -138,6 +157,12 @@ improvements** (upgrades, each honest about its trade-off).
   that makes the output XSS-safe by construction.
 - **Characteristics:** Well-defined output (always valid, safe HTML);
   finite (bounded window); O(t·n) for t terms over text length n.
+- **Complexity:**
+  - Time — Total: O(t·n) for the first-occurrence scan over t terms and text
+    length n, plus O(w) for the fixed 220-char window's escape/highlight pass
+    (w ≤ 220 is constant). Simplified: **O(t·n)** per row; **O(R·t·n)** across
+    R result rows (rows are independent, so this parallelizes trivially).
+  - Space — Total: O(w) for the output snippet, w ≤ 220 constant. Simplified: **O(1)**.
 
 ### Recipe Overview — Site Search pipeline
 
@@ -274,6 +299,11 @@ STEP 6 — SNIPPET
 - **Type:** Brute-force text truncation.
 - **Logic:** Strip HTML, collapse whitespace, truncate at a character limit,
   append ellipsis. Deterministic, O(n), trivially finite.
+- **Complexity:**
+  - Time — Total: O(n) for n = input HTML length, one strip pass + one
+    whitespace-collapse pass + a constant-size truncate/append. Simplified: **O(n)**.
+  - Space — Total: O(n) for the intermediate stripped string, O(1) for the
+    bounded output excerpt. Simplified: **O(n)**.
 
 ### 2.2 Feed ingestion (RSS/Atom import) — [feed-ingest.php](public/app/helpers/feed-ingest.php)
 - **Type:** Polling/scheduling loop + deduplication by key lookup.
@@ -289,9 +319,19 @@ STEP 6 — SNIPPET
 - **Characteristics:** Finiteness is guaranteed (bounded by source count ×
   items per feed); repeat runs with the same input converge to the same state
   (idempotence is the well-defined-output property applied to side effects).
+- **Complexity:**
+  - Time — Total: O(s + s·(x + i·(1 + w))) where s = source count, x = feed
+    XML size parsed per due source, i = items per feed, and the `1` is the
+    indexed GUID lookup with w = per-item write cost when unseen. Simplified: **O(s·i)**
+    — dominated by per-item indexed lookups across due sources; XML parsing
+    is linear and typically smaller than the item-processing term.
+  - Space — Total: O(x) held per feed during parse (freed before the next
+    source) plus O(1) per item (no accumulation across items). Simplified: **O(x)**.
 
 ### 2.3 Category slug uniqueness — `unique_category_slug()` ([slugify.php](public/app/helpers/slugify.php))
 See §7.1 — shared with all sluggable content types.
+- **Complexity:** Identical to §7.1 (same function, same algorithm) — see
+  that entry for the Time/Space Total and Simplified breakdown.
 
 ### Recipe Overview — Feed import pipeline
 
@@ -494,6 +534,15 @@ NOTE   imported posts (Blog.FeedImport) carry source_feed_id, which
   hard attempt cap and timeout, and **well-defined outputs** via the validator,
   which acts as an acceptance predicate — only code passing every check is
   ever stored.
+- **Complexity:**
+  - Time — Total: O(A·(L + c)) where A ≤ 5 is the attempt cap, L is the
+    LLM call's wall time (network/model-bound, treated as a black-box
+    constant per attempt), and c is the O(code length) preflight validation
+    pass. Simplified: **O(A)** calls to a constant-ish-cost black box — the
+    algorithm's own logic is negligible next to L.
+  - Space — Total: O(A·c) for retaining each attempt's code + failure message
+    to build the next repair prompt (only the current and prior attempt are
+    live at once in practice). Simplified: **O(c)**.
 
 ### 3.2 Media-reference validation — `validate_art_piece_prompted_media_refs()` and friends
 - **Type:** Searching (pattern matching) + set-membership allowlisting.
@@ -502,6 +551,12 @@ NOTE   imported posts (Blog.FeedImport) carry source_feed_id, which
   set derived from the prompt. Reject on any reference outside the allowlist.
 - **Characteristics:** Unambiguous accept/reject predicate; O(n) scan of the
   generated code.
+- **Complexity:**
+  - Time — Total: O(n + r) for n = generated code length (regex scan) plus
+    r extracted references × O(1) hash-set membership check. Simplified: **O(n)**
+    — the scan dominates unless r approaches n.
+  - Space — Total: O(a + r) for the allowlist set (a entries) and extracted
+    reference list. Simplified: **O(a + r)**.
 
 ### 3.3 Refinement patch application — `art_piece_apply_refine_patches()` / `art_piece_find_patch_match()`
 - **Type:** String searching with a whitespace-tolerant fallback matcher.
@@ -518,6 +573,14 @@ NOTE   imported posts (Blog.FeedImport) carry source_feed_id, which
   whitespace runs are interchangeable — every real token must match — so the
   well-defined-output guarantee (the right text is replaced or nothing is)
   holds. O(n·m) worst case for the regex phase.
+- **Complexity:**
+  - Time — Total: O(p·(n + m)) for p patches, each doing an O(n) exact
+    `substr_count` scan of the document (n chars) and, on fallback, an O(m)
+    tokenization of the SEARCH text (m ≤ n) feeding an O(n) regex match.
+    Simplified: **O(p·n)** — patches processed independently, document scan
+    dominates each.
+  - Space — Total: O(m) per patch for its tokenized regex (freed after each
+    patch) plus O(n) for the document being spliced. Simplified: **O(n)**.
 
 ### 3.4 Piece rendering and export — [piece-render.php](public/app/helpers/piece-render.php)
 - **Type:** Template assembly / document generation (recursive descent over a
@@ -555,6 +618,14 @@ NOTE   imported posts (Blog.FeedImport) carry source_feed_id, which
   language-independent in structure (an assembly recipe); the guards make
   transformation and packaging fail-closed server-side. Manifest validation
   is O(f + n), where f is packaged file count and n is validated text size.
+- **Complexity:**
+  - Time — Total: O(r·v + f + n) where r = runtime source files rewritten
+    (constant, ~3 converters, each O(v) for their own source length v), f =
+    packaged file count, and n = total validated text size across the
+    manifest walk. Simplified: **O(n)** — dominated by the manifest's text
+    scan for typical bundles (v is small and fixed per converter).
+  - Space — Total: O(n) for holding the assembled document/bundle text
+    in memory during transformation and validation. Simplified: **O(n)**.
 
 ### 3.5 Canvas export with paint-readiness polling and blank detection — [public-piece-download.js](public/assets/js/public-piece-download.js), [admin-piece-capture.js](public/assets/js/admin-piece-capture.js), embedded copies emitted by [piece-render.php](public/app/helpers/piece-render.php)
 - **Type:** Bounded polling loop + statistical classification heuristic.
@@ -575,6 +646,14 @@ NOTE   imported posts (Blog.FeedImport) carry source_feed_id, which
 - **Characteristics:** All thresholds are constants, so the classifier is a
   deterministic decision procedure; the statistical features only summarize
   the pixel sample. O(sampled pixels) per check.
+- **Complexity:**
+  - Time — Total: O(k·p) for k retry-loop polls (bounded by the retry cap)
+    each sampling p pixels for the luma/darkness statistics, plus O(1) for
+    the PNG-size proxy check. Simplified: **O(k·p)**; with a fixed retry cap
+    and fixed sample resolution both k and p are effectively constants, so
+    the per-capture cost is **O(1)** in practice.
+  - Space — Total: O(p) for the pixel sample buffer, released after each
+    poll. Simplified: **O(1)** (p is a fixed sample size).
 
 ### 3.6 Purpose-domain scoping — `art_piece_purpose_domain_header()` / `art_piece_normalize_purpose_domain()` / `art_piece_elide_out_of_scope_refs()` ([art-piece-generation.php](public/app/helpers/art-piece-generation.php))
 - **Type:** Three-state scope selector + conservative pattern-elision rewrite.
@@ -595,6 +674,11 @@ NOTE   imported posts (Blog.FeedImport) carry source_feed_id, which
 - **Characteristics:** Unambiguous three-way dispatch; the elision is a pure
   O(n) regex rewrite, deliberately conservative (never matches bare words like
   `image` or extension-less names).
+- **Complexity:**
+  - Time — Total: O(1) for the three-way header dispatch plus O(n) for the
+    elision regex rewrite over context-prompt length n (audio-only mode
+    only; skipped entirely otherwise). Simplified: **O(n)**.
+  - Space — Total: O(n) for the rewritten prompt text. Simplified: **O(n)**.
 
 ### 3.7 Export media reference resolution — `piece_export_collect_media_refs()` / `piece_export_resolve_media_ref()` / `piece_export_media_zip_path()` ([piece-render.php](public/app/helpers/piece-render.php))
 - **Type:** Pattern harvest + multi-branch dispatch + collision-suffix probing.
@@ -613,9 +697,39 @@ NOTE   imported posts (Blog.FeedImport) carry source_feed_id, which
   through `piece_aframe_normalize_texture_assets()` /
   `piece_aframe_add_crossorigin_to_asset_images()`, which rewrite `<a-assets>`
   image entries and inject `crossorigin` so textures load in the sandbox.
+  The same normalizer now also walks every authored `<a-camera>`/
+  `<a-entity camera>` and rewrites `look-controls` `enabled: false` → `true`
+  (or injects `look-controls` when the attribute is absent) — a camera
+  authored/generated with steering disabled would otherwise have no
+  mouse/touch look at all, since drag-look comes only from `look-controls`
+  and A-Frame only supplies its own default camera+controls when the scene
+  declares no camera. A camera with no `look-controls` attribute at all is
+  left alone (single-tag regex match).
+- **Asset-image load-order guard:** capture-safe rendering inlines CMS media
+  as `data:` URLs, so an `<a-assets><img>` can already be `complete` before
+  the piece's `window.sketch` attaches a `load` listener to it — the event
+  then never fires, leaving any backdrop the sketch sizes from that listener
+  at A-Frame's default 1x1 geometry. `replayAFrameAssetImageLoads()` (runtime
+  twin in piece-runtime.js) re-dispatches `load` for every asset image that
+  is already complete once `window.sketch` has run; images still fetching
+  are untouched — they fire their one natural event later.
 - **Characteristics:** Deterministic; fail-closed per unresolvable ref on the
   piece-export path (contrast the collection bundle's placeholder fallback,
   §5). O(code length) harvest + O(refs) resolution.
+- **Complexity (harvest + resolve + zip-path assignment):**
+  - Time — Total: O(L + r·(1 + p)) where L = harvested code length (one
+    regex pass), r = distinct references, and p = collision probe length
+    per asset (typically 0, bounded by prior collisions at that path).
+    Simplified: **O(L + r)** — collisions are rare so p is amortized O(1).
+  - Space — Total: O(r) for the seen-set/reference map and resolved asset
+    list. Simplified: **O(r)**.
+- **Complexity (A-Frame normalization pass, per document):**
+  - Time — Total: O(d + c) where d is DOM parse/serialize cost for the piece
+    document and c is camera count (always 0-2) times a constant-size
+    attribute regex. Simplified: **O(d)** — dominated by the one-time DOM
+    parse, not the camera rewrite.
+  - Space — Total: O(d) for the parsed DOM tree held during the rewrite.
+    Simplified: **O(d)**.
 
 ### 3.8 Shared view-state encode/decode with sanitization — `piece_export_decode_view_state()` / `piece_export_sanitize_view_state()` ([piece-render.php](public/app/helpers/piece-render.php)); `readViewVector()` / `shellViewState()` / `encodeViewState()` ([immersive-gallery.js](public/assets/js/immersive-gallery.js))
 - **Type:** Validation chain (decode-then-clamp) over an untrusted encoding.
@@ -632,6 +746,12 @@ NOTE   imported posts (Blog.FeedImport) carry source_feed_id, which
   direction it needs.
 - **Characteristics:** Fail-open by field — an invalid vector is dropped, not
   fatal; output is always a well-formed (possibly empty) state. O(1).
+- **Complexity:**
+  - Time — Total: O(1) — a fixed number of vectors (camera position/target,
+    activeIndex), each a constant-size decode/clamp; the 8192-char length
+    check is itself O(1) (string length, not a scan). Simplified: **O(1)**.
+  - Space — Total: O(1) — fixed-shape state object regardless of input.
+    Simplified: **O(1)**.
 
 ### 3.9 Downloader-bounded ZIP features — `piece_export_apply_requested_voices()` ([piece-render.php](public/app/helpers/piece-render.php)); live controls in [show.php](public/app/views/pieces/show.php) and [immersive/piece.php](public/app/views/immersive/piece.php)
 - **Type:** Allowlisted set intersection applied to an immutable export copy.
@@ -653,6 +773,12 @@ NOTE   imported posts (Blog.FeedImport) carry source_feed_id, which
 - **Characteristics:** Pure O(number of choices), currently O(2). Database
   state and the passed version remain unchanged; only the per-request export
   copy is narrowed.
+- **Complexity:**
+  - Time — Total: O(v) for v = number of optional voice choices (currently
+    2, fixed) — a set-intersection against the allowlist plus the admin
+    configuration. Simplified: **O(1)** (v is a small constant, not
+    input-dependent).
+  - Space — Total: O(v) for the narrowed per-request copy. Simplified: **O(1)**.
 
 ### 3.10 Piece control capability contract — `piece_sound_capability_contract()` ([piece-render.php](public/app/helpers/piece-render.php))
 - **Type:** Engine×configuration capability matrix.
@@ -706,6 +832,11 @@ NOTE   imported posts (Blog.FeedImport) carry source_feed_id, which
 - **Characteristics:** Deterministic O(1). The contract prevents surface code
   from independently guessing which rows should exist while still allowing a
   browser to hide a nominal capability it cannot execute.
+- **Complexity:**
+  - Time — Total: O(1) — a fixed number of independent field derivations
+    (sound, keyboard, mic, hand-tracking, hand control, camera view, camera
+    opacity), each a constant-time lookup/boolean combination. Simplified: **O(1)**.
+  - Space — Total: O(1) — one fixed-shape descriptor object. Simplified: **O(1)**.
 
 ### 3.11 Piece stage reuse, local-media inlining, and hand navigation
 
@@ -736,6 +867,15 @@ NOTE   imported posts (Blog.FeedImport) carry source_feed_id, which
   dead-zoned velocity joystick over the gallery OrbitControls. It is one
   visitor-activated, feature-flagged room controller—not per-tile inference—
   and releases hand/camera state when disabled or destroyed.
+- **Complexity:**
+  - Time — Total: O(m) for `piece_inline_local_media()`'s single manifest
+    build + rewrite pass over m matched local references (regex scan is
+    O(document length), dominating for typical pieces); O(1) per hand frame
+    for the room joystick's dead-zone mapping. Simplified: **O(document length)**
+    for inlining; **O(1)** per frame for room navigation.
+  - Space — Total: O(m) for the media manifest (asset id → data URL map);
+    O(1) resident state for the room joystick (current velocity vector).
+    Simplified: **O(m)** / **O(1)**.
 
 ### Recipe Overview — AI Art Piece Generation pipeline
 
@@ -1098,6 +1238,11 @@ STEP 3 — PNG-CAPTURE   (separate on-demand entry point, browser side)
   arithmetic; grid variants derive row/column world coordinates from counts.
 - **Characteristics:** The textbook case of every characteristic at once:
   exact numeric inputs, exact numeric outputs, O(1), trivially portable.
+- **Complexity:**
+  - Time — Total: O(1) — fixed arithmetic per call, independent of any
+    collection/grid size beyond the item's own row/column indices used as
+    plain scalars. Simplified: **O(1)**.
+  - Space — Total: O(1) — a fixed-size result struct. Simplified: **O(1)**.
 
 ### 4.2 Camera auto-fit — `fitMountedGalleryCamera()`, `computeThreeAutoFitView()`
 - **Type:** Geometric optimization (closed-form).
@@ -1105,6 +1250,10 @@ STEP 3 — PNG-CAPTURE   (separate on-demand entry point, browser side)
   FOV, solve the distance at which the subject fills the frame
   (`d = size / (2·tan(fov/2))` scaled by a framing multiplier), with a
   compact-viewport branch for narrow screens.
+- **Complexity:**
+  - Time — Total: O(1) — one closed-form trigonometric solve plus a
+    constant-branch viewport check. Simplified: **O(1)**.
+  - Space — Total: O(1). Simplified: **O(1)**.
 
 ### 4.3 Keyboard/orbit navigation — `computeOrbitKeyboardMotion()`, `createKeyboardNavigation()`
 - **Type:** Vector math inside a fixed-timestep simulation loop.
@@ -1116,6 +1265,11 @@ STEP 3 — PNG-CAPTURE   (separate on-demand entry point, browser side)
   (here and in piece-runtime.js) neuters A-Frame's built-in `wasd-controls`
   so letter keys stay free for the sonification piano mapping (§12) — the
   two keyboard consumers are partitioned by key range rather than by focus.
+- **Complexity:**
+  - Time — Total: O(k) per frame for k = held-key set size (bounded by the
+    small fixed arrow-key alphabet, k ≤ 4), each a constant vector op.
+    Simplified: **O(1)** per frame — k is a small fixed constant.
+  - Space — Total: O(k) for the held-key set. Simplified: **O(1)**.
 
 ### 4.4 Floor click-to-walk — `createFloorClickNavigation()`
 - **Type:** Ray casting (searching in 3D) + interpolation (easing loop).
@@ -1123,6 +1277,14 @@ STEP 3 — PNG-CAPTURE   (separate on-demand entry point, browser side)
   from the click through the camera into the floor mesh; the hit point becomes
   a movement target approached by per-frame interpolation until within an
   epsilon — a finite convergence loop.
+- **Complexity:**
+  - Time — Total: O(1) per click for the single-mesh raycast (one floor
+    plane, not a full scene traversal) plus O(f) frames of the convergence
+    loop until the epsilon threshold is reached (f bounded by the
+    distance/speed ratio, not scene size). Simplified: **O(f)** total
+    animation cost, **O(1)** per frame.
+  - Space — Total: O(1) — one target vector held for the loop's duration.
+    Simplified: **O(1)**.
 
 ### 4.5 Progressive live-render budgeting — `getProgressiveExhibitLiveBudget()`
 - **Type:** Greedy resource allocation.
@@ -1132,11 +1294,23 @@ STEP 3 — PNG-CAPTURE   (separate on-demand entry point, browser side)
   locally optimal (spend GPU on what's visible), fast, not globally optimal —
   chosen for feasibility (the "effectiveness and feasibility" characteristic)
   over exhaustive rendering, which would be infeasible on real hardware.
+- **Complexity:**
+  - Time — Total: O(1) — the budget k is derived from viewport width and a
+    boolean flag via constant-size arithmetic/lookup, not from item count.
+    Simplified: **O(1)**.
+  - Space — Total: O(1). Simplified: **O(1)**.
 
 ### 4.6 Presentation-surface letterboxing — `drawContainedIntoPresentationSurface()`
 - **Type:** Geometric scaling ("contain" fit).
 - **Logic:** `scale = min(destW/srcW, destH/srcH)`, center the scaled content,
   fill the margins with a background color. O(1) math, O(pixels) draw.
+- **Complexity:**
+  - Time — Total: O(1) for the scale/center math plus O(P) for the pixel
+    draw itself (P = destination surface pixel count, canvas-API cost, not
+    algorithmic iteration). Simplified: **O(P)** wall time (draw-bound),
+    **O(1)** for the algorithm's own logic.
+  - Space — Total: O(1) beyond the existing destination surface (no extra
+    buffer allocated). Simplified: **O(1)**.
 
 ### 4.7 Greedy live-slot selection — `selectProgressiveExhibitSlots()`
 - **Type:** Greedy selection (partial sort by weighted distance).
@@ -1147,6 +1321,13 @@ STEP 3 — PNG-CAPTURE   (separate on-demand entry point, browser side)
   of live canvases. Non-piece items and items without centers never compete.
 - **Characteristics:** Deterministic given camera target; O(n log n) for the
   sort, run only when the selection is refreshed — not per frame.
+- **Complexity:**
+  - Time — Total: O(n) for the per-item distance computation plus O(n log n)
+    for the full ascending sort, though only the first k are consumed
+    (a partial/selection sort or heap could reduce this to O(n log k), not
+    yet implemented). Simplified: **O(n log n)**.
+  - Space — Total: O(n) for the distance-tagged item array being sorted.
+    Simplified: **O(n)**.
 
 ### 4.8 Auto-fit subject isolation — `autoFitCamera()`
 - **Type:** Filtered spatial aggregation (bounding-box union with exclusion
@@ -1167,6 +1348,13 @@ STEP 3 — PNG-CAPTURE   (separate on-demand entry point, browser side)
 - **Characteristics:** A heuristic classifier, not exact — name matching and
   size thresholds can misjudge unusual scenes — but fail-soft: a wrong
   exclusion only affects framing, never rendering. O(scene objects).
+- **Complexity:**
+  - Time — Total: O(o) for o = scene object count, one traversal computing
+    a running bounding-box union with constant-time per-object exclusion
+    predicates (type check, name-word match against a fixed small list,
+    size threshold). Simplified: **O(o)**.
+  - Space — Total: O(1) beyond the traversal — a running min/max union, not
+    a retained per-object list. Simplified: **O(1)**.
 
 ### 4.9 Art-piece HTML sanitization and proxy-canvas mounting — `sanitizeArtPieceHtml()`, `normalizeCmsMediaPath()`
 - **Type:** Recursive tree rewrite with element/attribute allowlists.
@@ -1184,6 +1372,12 @@ STEP 3 — PNG-CAPTURE   (separate on-demand entry point, browser side)
 - **Characteristics:** Allowlist-by-construction (the output can only contain
   approved nodes/attributes — well-defined output in the strongest sense);
   O(nodes) per sanitize.
+- **Complexity:**
+  - Time — Total: O(n) for n = DOM node count, one recursive descent with
+    constant-time per-node allowlist checks; the per-frame canvas repaint is
+    O(P) in surface pixel count (draw cost, not sanitizer cost). Simplified: **O(n)**
+    for the one-time sanitize; **O(P)** per repainted frame.
+  - Space — Total: O(n) for the parsed/rewritten DOM tree. Simplified: **O(n)**.
 
 ### 4.10 3D model loading via instrumented runtime — GLTFLoader wiring
 - **Type:** Capability injection (controlled dependency provision).
@@ -1196,6 +1390,12 @@ STEP 3 — PNG-CAPTURE   (separate on-demand entry point, browser side)
   blob-URL module sources (§3.4) so the same code runs with no network.
 - **Characteristics:** Deterministic wiring; the algorithmic content is the
   contract — capabilities flow *to* validated code, never the reverse.
+- **Complexity:**
+  - Time — Total: O(1) for the wiring itself (one-time proxy attachment);
+    model fetch/parse time is GLTFLoader's own cost (network + binary parse,
+    not this algorithm's). Simplified: **O(1)**.
+  - Space — Total: O(1) for the wiring; the loaded model's memory footprint
+    is the model's own size, orthogonal to this algorithm. Simplified: **O(1)**.
 
 ### 4.11 Collection slideshow suspension — `suspendPresentation()`, `resumePresentation()`
 - **Type:** Resource-lifecycle state machine with epoch invalidation.
@@ -1208,6 +1408,13 @@ STEP 3 — PNG-CAPTURE   (separate on-demand entry point, browser side)
 - **Failure behavior:** Open/close calls are idempotent and late runtime or
   texture completions cannot overwrite a newer wall, bounding concurrent
   WebGL contexts instead of relying on mobile browser eviction.
+- **Complexity:**
+  - Time — Total: O(k) for k = currently-live progressive slots being
+    released/restored (bounded by the §4.5 budget, not total exhibit size).
+    Simplified: **O(k)**, and since k is budget-bounded (typically a small
+    constant), effectively **O(1)**.
+  - Space — Total: O(1) beyond existing slot state — one epoch counter and
+    the retained camera/selection snapshot. Simplified: **O(1)**.
 
 ### 4.12 Active collection sound ownership — `bindWallAudioController()`
 - **Type:** Selection-driven controller dispatch with preserved master state.
@@ -1220,6 +1427,12 @@ STEP 3 — PNG-CAPTURE   (separate on-demand entry point, browser side)
   controller but never disable or erase that choice, so sound can be armed for
   the next sounding work. Room hand inference has a separate silent owner, so
   sound capability cannot change whether collection hand navigation can start.
+- **Complexity:**
+  - Time — Total: O(1) per rebind — dispose the prior controller, construct
+    at most one replacement, reapply the stored mute flag; independent of
+    collection size. Simplified: **O(1)**.
+  - Space — Total: O(1) — exactly one live controller plus one snapshot of
+    the prior owner at any time. Simplified: **O(1)**.
 
 ### Recipe Overview — Immersive viewing pipeline
 
@@ -1389,11 +1602,22 @@ STEP 6 — CAPTURE       (on demand; returns to STEP 5)
   pattern as §3.4.
 - **Characteristics:** Deterministic and finite; well-defined output is the
   point (the bundle must run standalone with no network).
+- **Complexity:**
+  - Time — Total: O(i·(p + m)) for i items, each contributing O(p) payload
+    generation and O(m) media-reference resolution (§3.7's per-piece cost),
+    plus O(f) for the fixed runtime/README files (constant, item-independent).
+    Simplified: **O(i·(p + m))** — linear in collection size.
+  - Space — Total: O(i·(p + m)) for holding every item's payload and media
+    in memory during assembly before the archive is written. Simplified: **O(i·(p + m))**.
 
 ### 5.2 Exhibit-wall grid in exports — `collection_export_document()`
 - **Type:** Grid layout (row-major placement).
 - **Logic:** Items are assigned `(row, col)` positions in row-major order over
   a `rows × cols` wall and mounted via the shared immersive runtime (§4).
+- **Complexity:**
+  - Time — Total: O(i) for i items, one constant-time row-major index
+    computation each. Simplified: **O(i)**.
+  - Space — Total: O(i) for the position assignment array. Simplified: **O(i)**.
 
 ### Recipe Overview — Collection download pipeline
 
@@ -1508,17 +1732,33 @@ STEP 4 — ARCHIVE
   time (the sorting is delegated to the database's B-tree — O(log n) seek +
   ordered scan); `toApiPayloadList()` is a linear map to a fixed public shape,
   which is what makes the API output well-defined.
+- **Complexity:**
+  - Time — Total: O(log R + c) for the indexed B-tree seek over R total
+    comment rows plus c = returned comment count for the ordered scan and
+    linear payload mapping. Simplified: **O(c)** — dominated by the returned
+    set once the index narrows the seek.
+  - Space — Total: O(c) for the shaped result list. Simplified: **O(c)**.
 
 ### 6.2 Ownership check — `comment_belongs_to_current_actor()` ([auth.php](public/app/helpers/auth.php))
 - **Type:** Predicate (decision procedure).
 - **Logic:** Resolve the current actor from whichever session exists (admin or
   user — the unified-auth model), then compare actor identity against the
   comment's stored author fields. Unambiguous boolean output.
+- **Complexity:**
+  - Time — Total: O(1) — one session lookup plus a constant number of field
+    comparisons. Simplified: **O(1)**.
+  - Space — Total: O(1). Simplified: **O(1)**.
 
 ### 6.3 Soft-delete / restore lifecycle — `softDelete()` / `restore()` / trash queries
 - **Type:** State-machine transition (two states: active, trashed) implemented
   as a `deleted_at` timestamp toggle; all read algorithms filter on it, which
   keeps deletion reversible (supporting Rule 5/7 project constraints).
+- **Complexity:**
+  - Time — Total: O(1) for the single-row timestamp toggle; trash-listing
+    queries are O(log R + c) via the same indexed-filter pattern as §6.1.
+    Simplified: **O(1)** per transition.
+  - Space — Total: O(1) — no additional storage beyond the existing
+    timestamp column. Simplified: **O(1)**.
 
 ### Recipe Overview — Comment lifecycle pipeline
 
@@ -1636,6 +1876,12 @@ STEP 5 — MUTATE           (state machine: active ⇄ trashed)
   brute-force approach is chosen deliberately — collision counts are tiny, so
   anything cleverer would fail the feasibility-vs-complexity trade the source
   article describes.
+- **Complexity:**
+  - Time — Total: O(s) for normalization (s = source string length) plus
+    O(k) collision-probe queries for k prior collisions on that base slug
+    (each an indexed O(log R) existence check against R total rows).
+    Simplified: **O(s + k)** — k is near-zero in practice.
+  - Space — Total: O(s) for the normalized string. Simplified: **O(s)**.
 
 ### 7.2 Manual reordering — `reorder_shift_position()` ([reorder.php](public/app/helpers/reorder.php))
 - **Type:** Array manipulation (remove-and-splice), i.e. an insertion step of
@@ -1646,6 +1892,11 @@ STEP 5 — MUTATE           (state machine: active ⇄ trashed)
   self-normalizes any drifted ordering).
 - **Characteristics:** Well-defined output — the invariant "sort orders are a
   contiguous permutation" holds after every call. O(n) with n writes.
+- **Complexity:**
+  - Time — Total: O(n) for loading, splicing, and rewriting sort_order across
+    n active rows (n writes, one per row). Simplified: **O(n)**.
+  - Space — Total: O(n) for the in-memory id array being manipulated.
+    Simplified: **O(n)**.
 
 ### 7.3 Upload validation — `upload_media()` ([upload.php](public/app/helpers/upload.php))
 - **Type:** Sequential decision procedure (validation chain).
@@ -1666,6 +1917,14 @@ STEP 5 — MUTATE           (state machine: active ⇄ trashed)
   allowlist (audio formats sniff reliably, unlike models) with a 32 MB cap,
   gated on the `media_audio` feature — these feed the sonification ambient
   sample (§12.7).
+- **Complexity:**
+  - Time — Total: O(b) for b = sniffed content-header bytes (fixed small
+    read, not full-file) plus O(1) allowlist/cap checks and O(F) for the
+    final file move (F = file size, filesystem-bound, not algorithmic).
+    Simplified: **O(F)** wall time (move-bound); **O(1)** for the algorithm's
+    own decision logic.
+  - Space — Total: O(b) for the content-sniff buffer; the file itself is
+    streamed, not held twice in memory. Simplified: **O(1)**.
 
 ### 7.4 Navigation feature-gating — `ah_navigation_apply_feature_gating()` ([navigation.php](public/app/helpers/navigation.php))
 - **Type:** Filtering (linear scan with predicate).
@@ -1673,6 +1932,10 @@ STEP 5 — MUTATE           (state machine: active ⇄ trashed)
   feature flag ([features.php](public/app/helpers/features.php)); falls back to
   a hardcoded generic set on an empty database (the "renders sensibly on an
   empty database" project convention).
+- **Complexity:**
+  - Time — Total: O(n) for n = navigation item count, one linear scan with a
+    constant-time flag lookup per item. Simplified: **O(n)**.
+  - Space — Total: O(n) for the filtered result list. Simplified: **O(n)**.
 
 ### Recipe Overview — Path Slug pipeline
 
@@ -1962,6 +2225,11 @@ STEP 5 — REWRITE
   the mandatory parts (URL, attribution) always survive — a greedy
   priority-ordered allocation. `ensureCanonicalUrl()` post-checks that the
   canonical link is present and appends it if truncation removed it.
+- **Complexity:**
+  - Time — Total: O(n) for n = combined input text length, one pass to
+    assemble/measure/truncate each fixed-priority part in order. Simplified: **O(n)**.
+  - Space — Total: O(L) for the fixed platform character-limit output
+    buffer (L is a small constant per platform). Simplified: **O(1)**.
 
 ### 8.2 Adapter dispatch — `AdapterFactory` + per-platform adapters
 - **Type:** Strategy selection (table lookup).
@@ -1969,6 +2237,12 @@ STEP 5 — REWRITE
   the shared `SyndicationPayload` into that platform's API calls. The shared
   payload is the well-defined input contract that keeps every adapter's
   behavior comparable.
+- **Complexity:**
+  - Time — Total: O(1) for the provider→adapter table lookup plus O(p) for
+    the adapter's own payload transform (p = payload size, roughly constant
+    per post). Simplified: **O(1)** dispatch, **O(p)** per adapter call.
+  - Space — Total: O(p) for the transformed platform-specific request body.
+    Simplified: **O(p)**.
 
 ### Recipe Overview — Content Syndication pipeline
 
@@ -2105,6 +2379,11 @@ STEP 3 — PER-CONNECTION DELIVERY
   while decryption remains deterministic — well-defined round-trip output.
   GCM's tag verification makes tampering a detected failure, not silent
   corruption.
+- **Complexity:**
+  - Time — Total: O(n) for n = plaintext/ciphertext length — AES-GCM is a
+    single linear pass with constant per-block cost. Simplified: **O(n)**.
+  - Space — Total: O(n) for the output buffer (IV + tag are fixed-size
+    constants added to it). Simplified: **O(n)**.
 
 ### 9.2 Fixed-window rate limiting — `rate_limit_consume()` ([rate-limit.php](public/app/helpers/rate-limit.php))
 - **Type:** Counting algorithm over fixed time windows.
@@ -2120,18 +2399,33 @@ STEP 3 — PER-CONNECTION DELIVERY
 - **Characteristics:** O(1) per request; the atomic upsert removes the
   read-modify-write race, which is what makes the output well-defined under
   concurrency.
+- **Complexity:**
+  - Time — Total: O(1) — one bucket-key computation plus one atomic
+    upsert/read, independent of request volume in the window. Simplified: **O(1)**.
+  - Space — Total: O(1) per active bucket (one counter row per scope×subject
+    per window; garbage-collected after expiry). Simplified: **O(1)**.
 
 ### 9.3 Privacy-preserving subject hashing — `operational_subject_hash()` ([audit-log.php](public/app/helpers/audit-log.php))
 - **Type:** Keyed cryptographic hashing (HMAC-style).
 - **Logic:** Hash `scope + subject` with a server-side secret seed so rate
   limits and audit trails can correlate a subject across requests without
   storing raw IPs/identities. One-way; deterministic per seed.
+- **Complexity:**
+  - Time — Total: O(n) for n = input (scope + subject) length, single-pass
+    hash. Simplified: **O(n)**, effectively **O(1)** since n is a small
+    fixed-format string.
+  - Space — Total: O(1) — fixed-size digest output. Simplified: **O(1)**.
 
 ### 9.4 Audit-log redaction — `audit_log_redact_value()` / `audit_log_redact_array()`
 - **Type:** Recursive traversal with a key-pattern denylist.
 - **Logic:** Walk metadata arrays recursively; values under sensitive keys
   (tokens, secrets, passwords) are replaced with placeholders before storage.
   Finite because the input structure is finite and acyclic.
+- **Complexity:**
+  - Time — Total: O(m) for m = total metadata nodes, one recursive traversal
+    with a constant-time key-pattern check per node. Simplified: **O(m)**.
+  - Space — Total: O(d) for recursion-stack depth d (tree depth) plus O(m)
+    for the redacted output copy. Simplified: **O(m)**.
 
 ### 9.5 OAuth authorization-code flow — [oauth.php](public/app/helpers/oauth.php), [SharedAuthController.php](public/app/controllers/SharedAuthController.php)
 - **Type:** Multi-step protocol (distributed state machine).
@@ -2140,6 +2434,13 @@ STEP 3 — PER-CONNECTION DELIVERY
   fetch profile → `oauth_allowed_identity()` allowlist check → establish
   session. Each transition validates its inputs before proceeding — the
   unambiguity characteristic applied to a protocol rather than a computation.
+- **Complexity:**
+  - Time — Total: O(1) for the algorithm's own logic per step (state
+    generation/comparison, allowlist membership) — the provider network
+    round-trips dominate wall time but are external I/O, not this
+    algorithm's cost. Simplified: **O(1)**.
+  - Space — Total: O(1) — one state token and one profile record held per
+    in-flight flow. Simplified: **O(1)**.
 
 ### 9.6 Schema convergence probing — [setup-database.php](scripts/setup-database.php), `*_table_exists()` helpers
 - **Type:** Idempotent migration (probe-then-apply per manifest step).
@@ -2159,6 +2460,13 @@ STEP 3 — PER-CONNECTION DELIVERY
   of truth for value order.)
 - **Characteristics:** Idempotence = determinism of the *final state* rather
   than of the actions taken; finite (manifest is a fixed list).
+- **Complexity:**
+  - Time — Total: O(S) for S = manifest step count, one INFORMATION_SCHEMA
+    probe per step (each O(1) against the DB's own catalog) plus O(1) apply
+    for the (typically few) missing steps. Simplified: **O(S)** — S is a
+    fixed, small, deployment-independent constant.
+  - Space — Total: O(1) beyond the manifest definition itself (no
+    accumulated state across steps). Simplified: **O(1)**.
 
 ### Recipe Overview — Secret storage pipeline (encryption)
 
@@ -2461,6 +2769,12 @@ STEP 4 — SESSION
 - **Difference:** The preflight (`site_theme_preflight()`) validates a
   CSS/JS/HTML triple destined for site-wide chrome rather than a sandboxed
   iframe, so its acceptance predicate is stricter about global side effects.
+- **Complexity:** Same profile as §3.1/§3.3 (shared algorithm family).
+  - Time — Total: O(A·(L + c)) for A ≤ cap attempts, each an LLM call L
+    (external, black-box) plus O(c) preflight validation over the triple's
+    code length. Simplified: **O(A)** black-box calls.
+  - Space — Total: O(c) for the current attempt's CSS/JS/HTML triple plus
+    O(c) for the previous attempt (repair-prompt context). Simplified: **O(c)**.
 
 ### Recipe Overview — AI Site theme generation pipeline
 
@@ -2592,12 +2906,22 @@ well-defined operation across six vendors and four incompatible API shapes.
   rather than guessing an endpoint.
 - **Characteristics:** Total, deterministic dispatch with an explicit failure
   case — the unambiguity characteristic applied to routing. O(1).
+- **Complexity:**
+  - Time — Total: O(1) — vendor lookup, then at most one prefix-set
+    membership check over a fixed small set of model-slug conventions.
+    Simplified: **O(1)**.
+  - Space — Total: O(1). Simplified: **O(1)**.
 
 ### 11.2 Model-id normalization — `normalizeModelForProvider()`, `isPrefixOf()`
 - **Type:** String normalization (prefix stripping / prefix classification).
 - **Logic:** Strips the `opencode-go/` namespace prefix before the id is sent
   to the provider; `isPrefixOf()` is the shared prefix classifier the routing
   above builds on.
+- **Complexity:**
+  - Time — Total: O(k) for k = fixed prefix length (constant), one
+    string-prefix check/strip. Simplified: **O(1)**.
+  - Space — Total: O(1) — no allocation beyond the resulting substring.
+    Simplified: **O(1)**.
 
 ### 11.3 Per-vendor response-shape extraction — `extractChatCompletionText()` / `extractGoogleText()` / `extractOpenAiResponsesText()` / `extractAnthropicText()`
 - **Type:** Structural parsing (shape-tolerant tree walks).
@@ -2608,6 +2932,11 @@ well-defined operation across six vendors and four incompatible API shapes.
   `null` — never a fabricated string — when the shape doesn't match.
 - **Characteristics:** Well-defined output: the caller receives either real
   model text or an explicit absence. O(response size).
+- **Complexity:**
+  - Time — Total: O(r) for r = response body size, one walk of the (shallow,
+    fixed-depth) response tree concatenating text parts. Simplified: **O(r)**.
+  - Space — Total: O(r) for the concatenated output text (bounded by input
+    size). Simplified: **O(r)**.
 
 ### 11.4 Truncation detection — `extractFinishReason()` + `finishReasonMeansTruncated()`
 - **Type:** Cross-vocabulary classification (normalization to a boolean
@@ -2621,6 +2950,10 @@ well-defined operation across six vendors and four incompatible API shapes.
   truncated response from a wrong one, and output budgets are set per vendor
   (16384 tokens for DeepSeek/OpenCode, 8192 otherwise) to make truncation
   rare in the first place.
+- **Complexity:**
+  - Time — Total: O(1) — one field read per vendor shape plus one
+    fixed-vocabulary set-membership check. Simplified: **O(1)**.
+  - Space — Total: O(1). Simplified: **O(1)**.
 
 ### Recipe Overview — AI provider call pipeline
 
@@ -2761,6 +3094,12 @@ Consolidates the side-channel notes in §3 and §4 LEG D.
   sets is string equality (`art_piece_sonic_params_equal()`).
 - **Characteristics:** Total function — every input maps to a valid parameter
   set or `null`; "approximate rather than fail" as a design rule. O(n).
+- **Complexity:**
+  - Time — Total: O(n) for n = JSON payload size — one decode pass plus
+    constant-time coercion per field (instrument/scale nearest-match is a
+    fixed-size candidate list, not input-scaled). Simplified: **O(n)**.
+  - Space — Total: O(n) for the decoded structure and canonical output
+    string. Simplified: **O(n)**.
 
 ### 12.2 Feel-text heuristic — `art_piece_sonic_params_from_feel()`
 - **Type:** Keyword-matching heuristic (rule list, first match wins).
@@ -2772,6 +3111,11 @@ Consolidates the side-channel notes in §3 and §4 LEG D.
   else mood words (slow/ambient/drone → 72; fast/urgent/energetic → 128;
   default 90). The result is passed through §12.1, so the heuristic can never
   emit an unsupported value.
+- **Complexity:**
+  - Time — Total: O(n·k) for n = feel-text length and k = fixed keyword-list
+    size (scale names + instrument synonyms + mood words, all small
+    constants), each a substring scan. Simplified: **O(n)** — k is constant.
+  - Space — Total: O(1) beyond the fixed output parameter set. Simplified: **O(1)**.
 
 ### 12.3 Shared voice engine — `CreatrSonicController.create()` ([sonic-controller.js](public/assets/js/sonic-controller.js))
 - **Type:** Concurrent independent voice loops (monophonic voices over one
@@ -2799,6 +3143,13 @@ Consolidates the side-channel notes in §3 and §4 LEG D.
 - **Characteristics:** Each voice is O(1) per tick and independently
   fail-open; determinism holds per voice given its input trace (motion,
   keys, hand landmarks), with the layering making the *mix* input-driven.
+- **Complexity:**
+  - Time — Total: O(v) per audio tick for v ≤ 4 concurrent independent
+    voices, each O(1) (scale-walk step, displacement/speed calc, or a
+    fixed-formula frequency lookup). Simplified: **O(1)** per tick — v is
+    a small fixed constant.
+  - Space — Total: O(1) per voice (current note/phase state); no
+    accumulation across ticks. Simplified: **O(1)**.
 
 ### 12.4 Gesture bridge, iframe relay, and autoplay-gated lazy loading — `createPieceRuntimeAudioController()` / `window.__creatrSonicGesture` ([piece-runtime.js](public/assets/js/piece-runtime.js), [piece-fullscreen.js](public/assets/js/piece-fullscreen.js))
 - **Type:** Gated lazy initialization (once-only promise) over a two-channel
@@ -2821,6 +3172,13 @@ Consolidates the side-channel notes in §3 and §4 LEG D.
   MediaPipe model is warmed in the background as soon as sound is enabled on
   a hand-tracking piece. In exhibit walls only the focused piece sonifies —
   the controller is torn down and rebuilt when focus moves.
+- **Complexity:**
+  - Time — Total: O(1) for the gesture-critical synchronous bridge call and
+    for the postMessage relay of non-gesture parameter updates (fixed-size
+    payloads). Simplified: **O(1)**.
+  - Space — Total: O(1) — one controller instance per focused piece, torn
+    down before the next is built (no accumulation across focus changes).
+    Simplified: **O(1)**.
 
 ### 12.5 Hand-tracking theremin — `handFrameStep()` / `loadHandLandmarkerOnce()` ([sonic-controller.js](public/assets/js/sonic-controller.js))
 - **Type:** Continuous signal mapping from vision-model landmarks (no
@@ -2851,6 +3209,13 @@ Consolidates the side-channel notes in §3 and §4 LEG D.
 - **Characteristics:** The vision model is a black-box classifier, but the
   mapping around it is closed-form and clamped, so out-of-range landmarks
   can only produce in-range notes. O(1) per frame beyond model inference.
+- **Complexity:**
+  - Time — Total: O(1) per landmark frame for the pitch/volume mapping
+    (fixed-formula arithmetic on the wrist/fingertip coordinates), plus the
+    external MediaPipe model inference cost (constant per frame,
+    input-size-independent). Simplified: **O(1)** per frame.
+  - Space — Total: O(1) — one retained landmark frame and glide state.
+    Simplified: **O(1)**.
 
 ### 12.6 Live mic voice with effects chain — `enableMic()` / `createEffectNode()` / `rebuildMicChain()` ([sonic-controller.js](public/assets/js/sonic-controller.js))
 - **Type:** Audio-graph assembly (ordered pipeline rebuild).
@@ -2871,6 +3236,11 @@ Consolidates the side-channel notes in §3 and §4 LEG D.
   resumes the existing synth context, and never dry-monitors the mic.
 - **Characteristics:** Deterministic graph given the toggle set; rebuild is
   O(effects). Fail-open by construction.
+- **Complexity:**
+  - Time — Total: O(e) for e = enabled-effect count (≤ 7, fixed), one
+    teardown + rebuild pass per toggle. Simplified: **O(1)** — e is a small
+    fixed constant.
+  - Space — Total: O(e) for the live audio-node chain. Simplified: **O(1)**.
 
 ### 12.7 Sonic extras schema — `validate_art_piece_sonic_extras()` ([art-piece-generation.php](public/app/helpers/art-piece-generation.php))
 - **Type:** Soft-failing normalization (same family as §12.1), for the
@@ -2885,6 +3255,12 @@ Consolidates the side-channel notes in §3 and §4 LEG D.
   Audio uploads for the sample come through the §7.3 pipeline: a
   MIME-sniffed mp3/ogg/wav allowlist, 32 MB cap, gated on the `media_audio`
   feature flag.
+- **Complexity:**
+  - Time — Total: O(1) — a fixed number of independently coerced/defaulted
+    fields (hand-tracking flag, 7 effects, ambient-sample descriptor), each
+    O(1) beyond one `MediaFile::isActiveOfKind()` lookup for the sample id.
+    Simplified: **O(1)**.
+  - Space — Total: O(1) — one fixed-shape extras object. Simplified: **O(1)**.
 
 ### 12.8 Clutched-gestural camera control and camera background — `enableHandControl()` / `createClutchedGestureRouter()` / `acquireCameraFeed()` ([sonic-controller.js](public/assets/js/sonic-controller.js)); `handCommand` consumers ([piece-runtime.js](public/assets/js/piece-runtime.js), [immersive-gallery.js](public/assets/js/immersive-gallery.js), export twins in [piece-render.php](public/app/helpers/piece-render.php))
 - **Type:** Stabilized landmark classification state machine + bounded camera
@@ -2892,14 +3268,41 @@ Consolidates the side-channel notes in §3 and §4 LEG D.
 - **Logic:** Two further consumers of the §12.5 camera pipeline, each its
   own visitor toggle:
   - **Hand control ("Steer the piece"):** the existing one-hand landmark loop
-    publishes each frame once. The router exponentially stabilizes the wrist,
-    classifies open/point/fist from finger-tip versus joint distances, requires
-    a 180ms dwell, and uses normalized thumb/index distance with separate
-    enter/exit thresholds as a clutch. Open palm emits absolute free-look;
-    pointing then pinching locks travel; other confirmed poses then pinching
-    lock orbit. Wrist displacement emits bounded travel/orbit and palm-scale
-    change emits bounded zoom. Release or hand loss emits `stop` without
-    resetting pose. Surface adapters translate only those abstract commands
+    publishes each frame once, after a MediaPipe handedness-score gate
+    (score < 0.75 → frame treated as hand-lost) filters low-confidence false
+    positives. The router exponentially stabilizes the wrist (elapsed-time
+    alpha derived from the 0.22-per-60Hz coefficient), classifies
+    open/point/fist from finger-tip versus joint distances with a 180ms pose
+    dwell, and uses normalized thumb/index distance with separate enter/exit
+    thresholds as a clutch — but the clutch itself only engages after the
+    pinch geometry has been held for a 160ms **pinch dwell**, so sub-dwell
+    pinch blips (typing, resting hands) emit nothing. Un-pinched steering is
+    ungated by pose and mapped through a per-engine **gesture-mapping
+    strategy registry**: the default strategy emits RELATIVE orbit deltas
+    from wrist motion against a last-emitted anchor with a 0.008 deadzone —
+    slow deliberate motion accumulates until it crosses the deadzone, while a
+    static (junk) detection emits nothing by construction; `c2_interactive`
+    alone keeps absolute wrist→pointer mapping because it positions a cursor,
+    not a camera. Pose classification decides only travel-vs-orbit at the
+    moment a pinch locks. Wrist displacement emits bounded travel/orbit and
+    palm-scale change emits bounded zoom; surface adapters clamp the result
+    to **content-aware roam bounds** (Three.js: zoom to 0.2×–4× the authored
+    camera–target framing distance and travel to a 4×-framing roam radius;
+    A-Frame: a 24-unit roam radius around the authored pose; exports: fixed
+    40-unit zoom cap) so a command burst can never carry the artwork out of
+    sight. Release or hand loss emits `stop` without resetting pose.
+    A-Frame ownership is a data-level handoff: arming records and sets
+    `look-controls` `enabled:false` (its tick gate) and pauses wasd-controls;
+    both the hand hooks and look-controls drive the same camera-entity
+    `object3D`; disarming seeds look-controls' internal pitch/yaw from the
+    hand-driven pose before re-enabling, so manual drag resumes exactly at
+    the steered pose. Steering status ("Preparing hand steering…"/ready/
+    unavailable) and the router's mode labels (Look/Orbit/Move) render in one
+    bottom-center stage pill on every surface; the control-panel status
+    element persists only as a hidden assistive-technology mirror. Reset view
+    is never locked out — it works during steering/tilt/camera/mic in any
+    combination, because the runtime ignores steering commands for the
+    360ms reset animation (`resettingView`). Surface adapters translate only those abstract commands
     through their existing camera/target operations. Interactive C2 retains
     its synthetic pointermove/down/up contract in immersive pointer-steering
     contexts. In a regular spatial shell, authored C2 interaction is explicitly
@@ -2933,6 +3336,12 @@ Consolidates the side-channel notes in §3 and §4 LEG D.
     `MeshBasicMaterial` with `transparent: true` gives the opacity slider
     real blending, and at opacity 1 it looks identical to the old opaque
     `scene.background` swap (which could not blend and was replaced —
+    if the render camera has no parent when the quad attaches (a piece with
+    no explicit camera framing), it is parented to the A-Frame camera
+    **entity's** `object3D` — never `scene`/the scene root — since that
+    entity is the transform hand steering rotates; scene-root parenting
+    would silently decouple the render camera from steering the moment the
+    camera view was enabled —
     `createCameraBlendQuadHooks()` in piece-runtime.js, its export twin
     `piece_export_camera_blend_quad_members()`, and the immersive twin
     `createCameraBlendQuadController()` in immersive-gallery.js). The quad
@@ -2992,7 +3401,62 @@ Consolidates the side-channel notes in §3 and §4 LEG D.
   runtimes/exports map beta/gamma into the existing hand-point hook;
   immersive Three.js reuses gyro control and immersive A-Frame pauses its
   competing look controls. This is labeled device motion, never hand tracking;
-  the theremin has no substitute.
+  the theremin has no substitute. The tilt path claims and releases the same
+  steering-ownership hook as hand control, so tilt frames are never silently
+  dropped by the exclusivity guard.
+- **Complexity (per landmark frame, after inference):**
+  - Time — Total: O(21 + p + c) where 21 is the fixed landmark count walked
+    for classification/pinch geometry, p ≤ 4 is cadence-spread command
+    frames, and c is the constant per-command adapter work (spherical
+    conversion, clamps). Simplified: **O(1)** — every per-frame cost is a
+    fixed constant; over a session of f delivered frames the loop is O(f).
+  - Space — Total: O(21 + r) for one retained landmark frame plus router
+    state (smoothed wrist, anchors, dwell timestamps, ≤ 4 queued cadence
+    frames) and r trace-ring entries (bounded at 200). Simplified: **O(1)**
+    (all buffers are constant-bounded; no per-frame accumulation).
+  MediaPipe inference itself (model forward pass per frame) dominates wall
+  time but is constant per frame with respect to scene/input size.
+
+### 12.9 Camera-stream health, landmarker lifecycle, and visibility constraints — `acquireSharedCamera()` / `preloadHandTracker()` / `loadHandLandmarkerOnce()` ([sonic-controller.js](public/assets/js/sonic-controller.js))
+
+- **Type:** Resource lifecycle management (ref-counted shared streams,
+  memoized singleton initialization, health-check-then-repair).
+- **Logic:** One hidden `<video>` + `getUserMedia` stream is shared by the
+  theremin, hand control, and the camera view through reference counting.
+  Because a microphone acquisition can make the browser renegotiate the
+  active capture session — muting or ending the cached video track while the
+  stream object remains non-null — every reuse of the cached stream first
+  validates track health: any track with `readyState !== 'live'` or
+  `muted === true` invalidates the cache and forces a fresh acquisition, and
+  a paused-but-healthy video element is recovered with `play()` (repeated
+  defensively at the top of the landmark loop). Stream replacement preserves
+  the video element identity and reference counts so existing
+  `VideoTexture`s and overlays stay attached to a live element. The MediaPipe
+  landmarker is a module-scope memoized singleton — one promise shared by
+  every engine instance for the document's lifetime (disposal of one
+  controller never closes another's landmarker) — with asset URLs resolved
+  absolutely from the controller script's own location so dynamic `import()`
+  and WASM fetches work inside sandboxed `about:srcdoc` iframes, and a
+  stable vendor fingerprint so steering-code edits never re-download the
+  ~11&nbsp;MB model/WASM payload. `preloadHandTracker()` starts that
+  initialization fire-and-forget as soon as steering intent appears (panel
+  open / button focus / camera-on), hiding the one-time WASM compile behind
+  user think-time; an accessible `role="status"` stage pill narrates the
+  loading/ready/failed states. **Environmental constraint:** the landmark
+  loop is `requestAnimationFrame`-driven, so a hidden/backgrounded tab
+  freezes it (Chrome throttles rAF to zero); steering silently pauses and
+  resumes with visibility — and any automated steering evidence collected in
+  a non-visible tab is invalid by construction.
+- **Complexity:**
+  - Time — Total: O(g + t + W) per acquisition, where g is the browser's
+    getUserMedia negotiation, t ≤ tracks the per-track health checks, and W
+    the one-time WASM compile + model load (amortized to zero across a
+    document via the singleton; hidden entirely when pre-warm wins the race).
+    Simplified: **O(1)** amortized per acquisition after first use.
+  - Space — Total: O(V + M) — one shared video element/stream regardless of
+    consumer count, plus the resident MediaPipe model/WASM instance M
+    (~11&nbsp;MB) held once per document. Simplified: **O(1)** — independent
+    of pieces, consumers, and frames.
 
 ### Recipe Overview — Sonification pipeline
 
@@ -3186,6 +3650,14 @@ recipes, but each is a real algorithm with the standard characteristics.
   low-power mode.
 - **Note:** cosmos.js is example/theme content delivered via the database
   (`custom_js`), not shipped site chrome — fresh deployments don't load it.
+- **Complexity:**
+  - Time — Total: O(s) for s = generated star count, one weighted-sample
+    draw per star (fixed bucket count); O(c) for the one-time per-card
+    stagger-delay assignment (c = artwork card count); shooting-star rAF
+    loop runs only while one star is alive (O(1) per active frame, O(0)
+    otherwise). Simplified: **O(s + c)**.
+  - Space — Total: O(s + c) for the generated star/card elements.
+    Simplified: **O(s + c)**.
 
 ### 13.2 Infinite-scroll batch loading — [main.js](public/assets/js/main.js)
 - **Type:** Sentinel-triggered incremental fetching (event-driven paging).
@@ -3195,6 +3667,14 @@ recipes, but each is a real algorithm with the standard characteristics.
   into view — no scroll-position polling — and appends until the source is
   exhausted. The same file's carousel manages slide lifecycle (activate/
   deactivate on index change) as a small state machine.
+- **Complexity:**
+  - Time — Total: O(1) per sentinel-triggered fetch trigger (the
+    IntersectionObserver callback, not a scroll-position poll) plus O(b) to
+    append a fetched batch of size b (viewport-sized, not total item count).
+    Simplified: **O(b)** per page, **O(1)** idle cost between triggers.
+  - Space — Total: O(b) accumulated per loaded batch (batches are appended,
+    not held twice). Simplified: **O(b)** per batch; **O(total loaded)**
+    across a full session.
 
 ### 13.3 Rich-text iframe embed normalization — [tiptap-editor.js](public/assets/js/tiptap-editor.js)
 - **Type:** Two-form input normalization + attribute allowlisting.
@@ -3205,6 +3685,12 @@ recipes, but each is a real algorithm with the standard characteristics.
   anything else, e.g. `javascript:`, is rejected by construction). Surviving
   embeds keep only a fixed attribute set plus a marker class
   (`buildIframeAttrs()`), the same allowlist-by-construction shape as §4.9.
+- **Complexity:**
+  - Time — Total: O(n) for n = input markup/URL length — one DOMParser pass
+    (URL form skips parsing entirely, O(1) scheme check) plus a fixed-size
+    attribute allowlist filter. Simplified: **O(n)**.
+  - Space — Total: O(n) for the parsed DOM node before attribute stripping.
+    Simplified: **O(n)**.
 
 ---
 
@@ -3219,6 +3705,12 @@ Entry-style; the schema probes here are the primitives §9.6 composes.
   returns the leaf or a default, set autovivifies intermediate arrays. O(path
   depth). What makes editable site copy addressable by stable keys (the
   no-hardcoded-content project convention).
+- **Complexity:**
+  - Time — Total: O(d) for d = dot-path depth, one walk per get/set.
+    Simplified: **O(d)**, effectively **O(1)** since paths are short,
+    fixed-depth config keys.
+  - Space — Total: O(d) for autovivified intermediate arrays on set (0 on
+    get). Simplified: **O(1)**.
 
 ### 14.2 Inline-HTML sanitizer — `public_copy_sanitize_inline_html()` / `public_copy_is_safe_href()`
 - **Type:** Recursive DOM rewrite with tag/attribute/scheme allowlists.
@@ -3228,12 +3720,21 @@ Entry-style; the schema probes here are the primitives §9.6 composes.
   and `href` survives only if site-relative, an anchor, or http(s)/mailto/tel
   (`public_copy_is_safe_href()` — scheme allowlisting, so `javascript:` URLs
   are structurally impossible). The PHP twin of §4.9's approach.
+- **Complexity:**
+  - Time — Total: O(n) for n = input HTML length, one post-order DOM walk
+    with constant-time per-node tag/attribute/scheme checks. Simplified: **O(n)**.
+  - Space — Total: O(n) for the parsed/rewritten DOM tree. Simplified: **O(n)**.
 
 ### 14.3 Admin navigation gating — `admin_navigation_apply_feature_gating()` / `admin_navigation_is_active()` ([admin-navigation.php](public/app/helpers/admin-navigation.php))
 - **Type:** Predicate filtering + longest-prefix path matching.
 - **Logic:** The admin-side twin of §7.4: drop nav items whose feature flag is
   disabled; `admin_navigation_is_active()` marks the current section by path
   comparison so nesting resolves to the most specific match.
+- **Complexity:**
+  - Time — Total: O(n) for n = navigation item count, one linear filter
+    pass; active-section matching is O(n·p) for p = path segment count per
+    item (p is small/fixed). Simplified: **O(n)**.
+  - Space — Total: O(n) for the filtered result list. Simplified: **O(n)**.
 
 ### 14.4 Schema existence probes — `ah_table_exists()` / `ah_column_exists()` / `ah_existing_columns()` ([schema.php](public/app/helpers/schema.php))
 - **Type:** Memoized existence predicates (INFORMATION_SCHEMA lookups).
@@ -3241,18 +3742,33 @@ Entry-style; the schema probes here are the primitives §9.6 composes.
   half of the §9.6 convergence design: every feature that might predate its
   table (comments §6, sonic params §12, rate limits §9.2) degrades gracefully
   by asking these predicates instead of assuming schema.
+- **Complexity:**
+  - Time — Total: O(1) amortized per probe (one INFORMATION_SCHEMA query,
+    memoized per request so repeat calls in the same request are free).
+    Simplified: **O(1)**.
+  - Space — Total: O(p) for p = distinct probes memoized per request
+    (bounded by the fixed set of schema-dependent features). Simplified: **O(1)**.
 
 ### 14.5 Connection-failure classification — `ah_is_pdo_connection_failure()` ([database-errors.php](public/app/helpers/database-errors.php))
 - **Type:** Exception classification by SQLSTATE.
 - **Logic:** Distinguishes "the database is unreachable" from "the query is
   wrong" so callers can choose between a maintenance response and a real
   error — the decision procedure behind several fail-open choices above.
+- **Complexity:**
+  - Time — Total: O(1) — one SQLSTATE string comparison against a fixed
+    small set of connection-failure codes. Simplified: **O(1)**.
+  - Space — Total: O(1). Simplified: **O(1)**.
 
 ### 14.6 Env-file parsing — `ah_load_env_file()` ([env.php](public/app/helpers/env.php))
 - **Type:** Line-oriented parsing with precedence.
 - **Logic:** Parse `KEY=value` lines (comments/blanks skipped); process
   environment always wins over file values — the deterministic precedence
   that keeps `DB_NAME` overrides working through the shared loader.
+- **Complexity:**
+  - Time — Total: O(L) for L = env-file size, one line-oriented parse pass
+    plus O(1) precedence check per key against the process environment.
+    Simplified: **O(L)**.
+  - Space — Total: O(k) for k = distinct keys parsed. Simplified: **O(k)**.
 
 ### Analysis — Platform utilities (shared)
 
@@ -3293,9 +3809,10 @@ Entry-style; the schema probes here are the primitives §9.6 composes.
 | Divide and combine | Collection bundle assembly (§5.1) |
 | Counting / windowing | Rate limiting (§9.2) |
 | Geometric (closed-form) | Gallery layout, camera fit, letterboxing (§4.1–4.6); auto-fit box union (§4.8) |
-| Protocol / state machine | OAuth flow (§9.5), soft-delete lifecycle (§6.3), schema convergence (§9.6), purpose-domain scoping (§3.6), sound-toggle handshake (§12.4) |
-| Strategy / dispatch | Syndication adapters (§8.2), provider transport routing (§11.1), export media-ref dispatch (§3.7), engine bootstrap selection (§3.4) |
-| Normalization / classification | Sonic-parameter coercion (§12.1–12.2), response-shape extraction + truncation classification (§11.3–11.4), model-id normalization (§11.2), blank-frame classifier (§3.5), connection-failure classification (§14.5) |
-| Validation chain | Upload pipeline (§7.3), view-state decode/clamp (§3.8), iframe embed normalization (§13.3) |
-| Heuristic / sampled mapping | Motion→note mapping (§12.3), hand-tracking theremin (§12.5), feel-text keywords (§12.2), auto-fit subject isolation (§4.8) |
+| Protocol / state machine | OAuth flow (§9.5), soft-delete lifecycle (§6.3), schema convergence (§9.6), purpose-domain scoping (§3.6), sound-toggle handshake (§12.4), clutched gesture pose/pinch-dwell classification (§12.8) |
+| Strategy / dispatch | Syndication adapters (§8.2), provider transport routing (§11.1), export media-ref dispatch (§3.7), engine bootstrap selection (§3.4), per-engine gesture-mapping registry (§12.8) |
+| Normalization / classification | Sonic-parameter coercion (§12.1–12.2), response-shape extraction + truncation classification (§11.3–11.4), model-id normalization (§11.2), blank-frame classifier (§3.5), connection-failure classification (§14.5), A-Frame look-controls/camera normalization (§3.7), MediaPipe handedness-score gating (§12.8) |
+| Validation chain | Upload pipeline (§7.3), view-state decode/clamp (§3.8), iframe embed normalization (§13.3), content-aware gesture roam/zoom clamping (§12.8) |
+| Heuristic / sampled mapping | Motion→note mapping (§12.3), hand-tracking theremin (§12.5), feel-text keywords (§12.2), auto-fit subject isolation (§4.8), relative-motion deadzone steering mapping (§12.8) |
 | Pipeline / graph assembly | Mic effects chain rebuild (§12.6), export module-syntax guard (§3.4) |
+| Resource lifecycle | Shared camera stream health-check-then-repair + memoized MediaPipe singleton (§12.9) |

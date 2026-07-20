@@ -8,6 +8,19 @@ were folded into their final entries — see "Closed Investigations". -->
 
 # Stack & Deployment
 
+2026-07-19 CONSTRAINT Runtime diagnostics must not require this user to copy
+developer-console output; accessible on-screen state is the default.
+
+2026-07-19 DECISION Hand-control intent prewarms the document-scoped MediaPipe
+model and synchronously exposes a visually distinct, non-blocking ARIA live
+status across regular, immersive, and exported surfaces; it cannot depend on a
+later iframe/model event, and the success status removes itself only after a
+perceptible minimum.
+
+2026-07-19 DECISION Vendored MediaPipe assets use their own stable fingerprint,
+never the steering controller's mtime, so controller edits do not invalidate
+the browser's model cache.
+
 2026-07-12 CORRECTION Disabling hand steering must preserve the current pose
 and immediately restore pre-steering controls across live and downloaded
 immersive surfaces; Reset View alone restores the initial pose.
@@ -17,9 +30,21 @@ authored sketch or asset failures; while active it exclusively disables
 cursor/touch, keyboard, and action controls, and disabling it restores those
 controls at the current pose across standard, immersive, and exported pieces.
 
-2026-07-18 CORRECTION Steering remains nonfunctional on real piece 122 after
-both the Shield remediation and the Direct unpinched-wrist router remediation;
-neither approach may be described as a fix or resolution.
+2026-07-19 CORRECTION Piece 122 remains REVIEW REQUIRED until a physical hand visibly steers both regular and immersive views; the trace-first remediation is implemented but automated checks are not resolution evidence.
+Source: DECISIONS.md 2026-07-19 Trace-First Steering Remediation.
+
+2026-07-19 DECISION Relative steering uses the last emitted wrist anchor, so slow intentional motion accumulates across sub-deadzone frames while stationary jitter remains suppressed.
+The bounded `?sonicdebug=1` trace records landmarks, commands, hook identity, and A-Frame mover/render-camera pose without enabling production logging.
+
+2026-07-19 CORRECTION A module-scoped MediaPipe landmarker is document-owned and must never be closed by an individual controller; dead camera-stream replacement preserves lease counts and reuses the existing video element.
+This keeps active VideoTextures/overlays attached across browser media-session renegotiation.
+
+2026-07-19 DECISION MediaPipe WASM loader (`loadHandLandmarkerOnce`,
+`loadHandLandmarkerWithRetry`, `_handLandmarkerPromise`) was moved to module
+scope in `sonic-controller.js` so the compiled landmarker is shared across
+all `create()` instances. `preloadHandTracker()` added to the global API;
+called fire-and-forget in `handleCameraBackgroundToggle` when camera turns ON
+on a hand-control piece, so WASM compiles between Camera ON and Steer ON.
 
 2026-07-18 CONSTRAINT Steering is verified only when a physical hand visibly
 changes the camera pose on piece 122 in both standard and immersive views and
@@ -276,6 +301,8 @@ The OBJ removal and the sonic-controller extraction had left it stale; source: D
 
 # Regression Watchlist
 
+2026-07-18 DECISION In `public/assets/js/sonic-controller.js`, concurrent audio and video streams requested separately can be interrupted or paused by browser audio-session transitions. Keep stream checks robust by verifying that all tracks in cached streams (`sharedCameraStream` and `micStream`) are still `live` (`readyState === 'live'`), force-releasing ended streams so they can be re-acquired. Also ensure `<video>` play states are protected by calling `play()` in `handFrameStep()` if the element is paused. Source: DECISIONS.md 2026-07-18.
+
 2026-06-14 NOTE Admin-view bug pattern: `$content = function () ... ;` produces a Closure that `<?= $content ?>` can't stringify (fatal). Correct pattern: `ob_start(); ... $content = ob_get_clean();`.
 
 2026-06-17 NOTE CSS specificity trap: `.form-row { display: grid; }` beats UA `[hidden]`. Always pair with `.form-row[hidden] { display: none; }`, and use `element.style.display` in JS.
@@ -321,3 +348,4 @@ Source: DECISIONS.md 2026-07-17 Mobile Media Picker + A-Frame Media Reliability.
 
 2026-07-17 DECISION Piece-error overlays showing only bare `@…piece-runtime.js:NNNN` frames were sketch-thrown errors surfaced at the `window.sketch()` call site with the message hidden by Safari/Firefox stack formatting — `formatPieceError()` now always prints `Name: message` plus `[sketch]`/`[runtime]`-labeled frames, and thumbnail-capture failure is the same error re-surfaced, never a second bug. Do not re-investigate piece-runtime.js line ~2111.
 Source: DECISIONS.md 2026-07-17 Mobile Media Picker + A-Frame Media Reliability.
+2026-07-19 CORRECTION Steering/hand-frame automation is only valid in a visible, foregrounded tab — Chrome freezes rAF (and thus the landmark loop) in hidden tabs, so hidden-tab passes and failures are both meaningless.

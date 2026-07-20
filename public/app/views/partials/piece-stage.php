@@ -146,6 +146,7 @@ $pieceStageReturnTo = $pieceStageReturnTo ?? ($_SERVER['REQUEST_URI'] ?? ('/piec
                             <span>Hand control</span>
                             <button type="button" class="piece-sound-keyboard-toggle" data-piece-sound-hand-control-toggle aria-pressed="false">Steer the piece</button>
                         </div>
+                        <p class="piece-hand-control-status" data-piece-hand-control-status role="status" aria-live="polite" aria-atomic="true" hidden></p>
                         <div class="piece-sound-row" data-piece-reset-view-row>
                             <span>View pose</span>
                             <button type="button" class="piece-sound-keyboard-toggle" data-piece-reset-view>Reset view</button>

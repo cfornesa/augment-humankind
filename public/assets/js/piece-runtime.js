@@ -112,6 +112,24 @@ const PIECE_CAMERA_OVERLAY = pieceContext.cameraOverlay === true;
 // by the capability contract: available on steerable engines when the camera
 // permission or the hand-tracking voice unlocks it — independent of sound.
 const PIECE_HAND_CONTROL = pieceContext.handControl === true;
+const PIECE_SONIC_DEBUG = pieceContext.sonicDebug === true;
+function pieceSteeringTrace(stage, detail) {
+  if (!PIECE_SONIC_DEBUG) return;
+  const controllerTrace = window.CreatrSonicController?.traceSteering;
+  if (typeof controllerTrace === 'function') {
+    controllerTrace(stage, detail);
+    return;
+  }
+  try {
+    const trace = window.__pieceSteeringTrace || (window.__pieceSteeringTrace = {
+      entries: [],
+      clear() { this.entries.length = 0; },
+      snapshot() { return this.entries.slice(); },
+    });
+    trace.entries.push({ t: Math.round(performance.now() * 10) / 10, stage, detail: detail == null ? null : JSON.parse(JSON.stringify(detail)) });
+    if (trace.entries.length > 200) trace.entries.splice(0, trace.entries.length - 200);
+  } catch (_) {}
+}
 // Where the camera feed renders when enabled — 'background' (behind the
 // piece) or 'overlay' (blendable feed above it). Resolved server-side by the
 // capability contract (per-piece camera_placement column, engine default
@@ -341,6 +359,10 @@ function createPieceRuntimeAudioController(sonicParams, getMover) {
       handleHandControlToggle(!!data.enabled);
       return;
     }
+    if (data.type === 'creatr-hand-control-prepare') {
+      prepareHandControl();
+      return;
+    }
     if (data.type === 'creatr-reset-view') {
       window.__pieceHandHooks?.resetView?.();
       return;
@@ -401,9 +423,21 @@ function createPieceRuntimeAudioController(sonicParams, getMover) {
   }
 
   let handControlActivationEpoch = 0;
+  function prepareHandControl() {
+    if (!PIECE_HAND_CONTROL) return Promise.resolve(false);
+    const run = (CSC) => CSC?.preloadHandTracker?.() || false;
+    try {
+      return Promise.resolve(window.CreatrSonicController ? run(window.CreatrSonicController) : pieceLoadSonicControllerOnce().then(run))
+        .catch(() => false);
+    } catch (_) {
+      return Promise.resolve(false);
+    }
+  }
   function handleHandControlToggle(on) {
     const activationEpoch = ++handControlActivationEpoch;
+    pieceSteeringTrace('toggle', { enabled: !!on, epoch: activationEpoch });
     if (on && !PIECE_HAND_CONTROL) {
+      pieceSteeringTrace('toggle-rejected', { reason: 'capability-disabled' });
       // Same defense-in-depth as the camera toggle below: a forged
       // postMessage must not open the camera on a piece that doesn't allow
       // steering.
@@ -418,29 +452,39 @@ function createPieceRuntimeAudioController(sonicParams, getMover) {
       return;
     }
     const eng = ensureEngineSync();
+    pieceSteeringTrace('engine-ready', { available: !!eng });
     Promise.resolve(eng ? eng.enableHandControl() : false).then(async (controlOk) => {
+      pieceSteeringTrace('engine-enabled', { enabled: !!controlOk });
       if (activationEpoch !== handControlActivationEpoch) {
+        pieceSteeringTrace('toggle-abort', { reason: 'epoch-changed' });
         eng?.disableHandControl();
         return;
       }
       if (controlOk) {
         const steeringHook = window.__pieceHandHooks?.setHandSteering;
+        pieceSteeringTrace('ownership-hook', { exists: typeof steeringHook === 'function', engine: window.__pieceHandHooks?.engine || null });
         // A steerable surface must explicitly claim/release manual-control
         // ownership. Treating a missing hook as success hid regular/export
         // parity gaps and left native controls fighting hand input.
         const steeringReady = typeof steeringHook === 'function'
           ? await Promise.resolve(steeringHook.call(window.__pieceHandHooks, true))
           : false;
+        pieceSteeringTrace('ownership-result', { ready: steeringReady !== false });
         if (activationEpoch !== handControlActivationEpoch || steeringReady === false) {
+          pieceSteeringTrace('toggle-abort', { reason: 'ownership-failed' });
           eng?.disableHandControl();
           await Promise.resolve(window.__pieceHandHooks?.setHandSteering?.(false));
           notifyParentHandControlState(false);
           return;
         }
+        pieceSteeringTrace('binding-attach', null);
         handControlBinding.attach(engine);
       }
       notifyParentHandControlState(controlOk);
-    }).catch(() => notifyParentHandControlState(false));
+    }).catch((err) => {
+      pieceSteeringTrace('toggle-error', { message: err?.message || String(err) });
+      notifyParentHandControlState(false);
+    });
   }
 
   async function handleTiltToggle(on) {
@@ -494,6 +538,12 @@ function createPieceRuntimeAudioController(sonicParams, getMover) {
       return;
     }
     const CSC = window.CreatrSonicController;
+    // Pre-warm the MediaPipe WASM compilation while the user has the camera
+    // on but hasn't clicked Steer yet. The landmarker promise is cached at
+    // module scope, so when Steer is clicked the WASM is already compiled.
+    if (PIECE_HAND_CONTROL) {
+      try { CSC?.preloadHandTracker?.(); } catch (_) {}
+    }
     const acquire = CSC
       ? CSC.cameraFeed.acquire()
       : pieceLoadSonicControllerOnce().then((loaded) => loaded.cameraFeed.acquire());
@@ -580,6 +630,8 @@ function createPieceRuntimeAudioController(sonicParams, getMover) {
     active: false,
     pinched: false,
     router: null,
+    routerHooks: null,
+    routerEngine: null,
     attach(eng) {
       if (this.active || !eng) return;
       this.active = true;
@@ -589,10 +641,18 @@ function createPieceRuntimeAudioController(sonicParams, getMover) {
         const hooks = window.__pieceHandHooks;
         if (!hooks) return;
         if (typeof hooks.handCommand === 'function' && window.CreatrSonicController?.createClutchedGestureRouter) {
-          if (!this.router) {
+          if (!this.router || this.routerHooks !== hooks || this.routerEngine !== hooks.engine) {
+            this.router?.reset?.('hook-changed');
+            this.routerHooks = hooks;
+            this.routerEngine = hooks.engine;
+            pieceSteeringTrace('router-bind', { engine: hooks.engine || null, hookKeys: Object.keys(hooks) });
             this.router = window.CreatrSonicController.createClutchedGestureRouter({
               engine: hooks.engine,
-              onCommand: (command) => hooks.handCommand(command),
+              onCommand: (command) => {
+                const activeHooks = window.__pieceHandHooks;
+                pieceSteeringTrace('hook-command', { engine: activeHooks?.engine || null, command });
+                activeHooks?.handCommand?.(command);
+              },
               onMode: (mode) => {
                 try { window.parent?.postMessage({ type: 'creatr-hand-gesture-mode', mode }, '*'); } catch (_) {}
               },
@@ -641,6 +701,8 @@ function createPieceRuntimeAudioController(sonicParams, getMover) {
       }
       this.router?.reset?.('disabled');
       this.router = null;
+      this.routerHooks = null;
+      this.routerEngine = null;
       engine?.onHandFrame(null);
     },
   };
@@ -924,6 +986,7 @@ function createPieceRuntimeAudioController(sonicParams, getMover) {
     toggleSound(on) { handleMessage({ source: window, data: { type: 'creatr-sound-toggle', enabled: !!on } }); },
     toggleHand: handleHandToggle,
     toggleMic: handleMicToggle,
+    prepareHandControl,
     toggleHandControl: handleHandControlToggle,
     resetView() { return window.__pieceHandHooks?.resetView?.(); },
     toggleTilt: handleTiltToggle,
@@ -1332,10 +1395,6 @@ function createCameraBlendQuadHooks(THREE_NS, getScene, getCamera) {
       // belongs to its entity's object3D (the transform hand steering
       // rotates); parenting it to the scene root instead would silently
       // decouple the render camera from steering, so prefer the entity.
-      if (!camera.parent) {
-        if (camera.el && camera.el.object3D) camera.el.object3D.add(camera);
-        else scene.add(camera);
-      }
       camera.add(quad);
       this._cameraQuad = quad;
       this._videoTexture = texture;
@@ -2123,6 +2182,7 @@ function bootC2() {
 }
 function bootAFrame() {
   let initialAFramePose = null;
+  let resettingView = false;
   // Gesture travel/zoom translate the camera freely; without a bound,
   // accidental command bursts can carry the view so far from the scene
   // that steering appears dead. Keep the camera within roaming range of
@@ -2219,6 +2279,42 @@ function bootAFrame() {
         if (!cameraObject) return null;
         const cameraEl = cameraObject.el || scene?.querySelector('[camera]') || scene?.querySelector('a-camera');
         return cameraEl?.object3D || cameraObject;
+      }
+
+      function captureInitialAFramePose() {
+        if (initialAFramePose) return true;
+        const initialCameraObject = getAFrameCameraMover();
+        if (!initialCameraObject) return false;
+        initialAFramePose = {
+          position: initialCameraObject.position.clone(),
+          quaternion: initialCameraObject.quaternion.clone(),
+        };
+        pieceSteeringTrace('aframe-initial-pose', {
+          position: initialAFramePose.position.toArray(),
+          quaternion: initialAFramePose.quaternion.toArray(),
+        });
+        return true;
+      }
+
+      function snapshotAFrameSteeringPose() {
+        if (!PIECE_SONIC_DEBUG) return null;
+        const THREE_NS = getAFrameThree();
+        const mover = getAFrameCameraMover();
+        const renderCamera = getAFrameCameraObject();
+        const cameraEl = scene?.querySelector('[camera]') || scene?.querySelector('a-camera');
+        const lookControls = cameraEl?.components?.['look-controls'];
+        const moverWorld = THREE_NS && mover ? mover.getWorldQuaternion(new THREE_NS.Quaternion()) : null;
+        const renderWorld = THREE_NS && renderCamera ? renderCamera.getWorldQuaternion(new THREE_NS.Quaternion()) : null;
+        return {
+          moverUuid: mover?.uuid || null,
+          renderCameraUuid: renderCamera?.uuid || null,
+          renderCameraParentUuid: renderCamera?.parent?.uuid || null,
+          moverRotation: mover ? [mover.rotation.x, mover.rotation.y, mover.rotation.z, mover.rotation.order] : null,
+          moverWorldQuaternion: moverWorld?.toArray?.() || null,
+          renderWorldQuaternion: renderWorld?.toArray?.() || null,
+          lookEnabled: lookControls?.data?.enabled,
+          lookPlaying: lookControls?.isPlaying,
+        };
       }
 
       function activeAFrameTouchCount() {
@@ -2365,7 +2461,9 @@ function bootAFrame() {
 
       scene.addEventListener('renderstart', signalAFrameReadyOnce, { once: true });
       scene.addEventListener('renderstart', bindAFramePointerControls, { once: true });
+      scene.addEventListener('renderstart', captureInitialAFramePose, { once: true });
       scene.addEventListener('loaded', disableMotionTracking, { once: true });
+      scene.addEventListener('loaded', captureInitialAFramePose, { once: true });
       let platformInteractionInitialized = false;
       function initializeAFramePlatformInteraction() {
         if (platformInteractionInitialized) return;
@@ -2373,12 +2471,7 @@ function bootAFrame() {
         try { disableMotionTracking(); } catch (_) {}
         try { bindAFramePointerControls(); } catch (_) {}
         try { requestAnimationFrame(() => requestAnimationFrame(signalAFrameReadyOnce)); } catch (_) {}
-        try {
-          const initialCameraObject = getAFrameCameraMover();
-          if (initialCameraObject) {
-            initialAFramePose = { position: initialCameraObject.position.clone(), quaternion: initialCameraObject.quaternion.clone() };
-          }
-        } catch (_) {}
+        captureInitialAFramePose();
         // Hooks first (capability handshake) — see the three bootstrap twin.
         // Camera feed renders as a blended camera-attached quad (opacity
         // slider support) rather than an opaque scene.background swap.
@@ -2387,16 +2480,20 @@ function bootAFrame() {
             engine: 'aframe',
             setHandSteering(active) {
               const next = !!active;
+              pieceSteeringTrace('aframe-ownership', { requested: next, current: handSteeringExclusive });
               if (next === handSteeringExclusive) return true;
               const cameraEl = scene?.querySelector('[camera]') || scene?.querySelector('a-camera');
               const lookControls = cameraEl?.components?.['look-controls'];
+              pieceSteeringTrace('aframe-controls', { cameraFound: !!cameraEl, lookControlsFound: !!lookControls, lookEnabled: lookControls?.data?.enabled });
               if (next) {
+                captureInitialAFramePose();
                 // look-controls' tick writes the camera entity's rotation
                 // every frame from its internal pitch/yaw state; pausing the
                 // component is timing-fragile (only works when it isPlaying
                 // right now), so disable it at the data level — its tick
                 // gates on data.enabled — like three's controls.enabled flag.
                 aframeLookControlsEnabledBeforeHand = lookControls ? lookControls.data.enabled !== false : null;
+                pieceSteeringTrace('aframe-controls-disable', { wasEnabled: aframeLookControlsEnabledBeforeHand });
                 if (lookControls) cameraEl.setAttribute('look-controls', 'enabled', false);
                 const wasd = cameraEl?.components?.['wasd-controls'];
                 aframeControlsBeforeHand = wasd ? [{ component: wasd, wasPlaying: wasd.isPlaying !== false }] : [];
@@ -2423,10 +2520,11 @@ function bootAFrame() {
                 aframeControlsBeforeHand = [];
               }
               handSteeringExclusive = next;
+              pieceSteeringTrace('aframe-ownership-applied', snapshotAFrameSteeringPose());
               return true;
             },
             handPoint(nx, ny) {
-              if (!handSteeringExclusive) return;
+              if (resettingView || !handSteeringExclusive) return;
               const cameraObject = getAFrameCameraMover();
               if (!cameraObject) return;
               cameraObject.rotation.order = 'YXZ';
@@ -2437,8 +2535,10 @@ function bootAFrame() {
                 cameraObject.rotation.x + (desiredPitch - cameraObject.rotation.x) * 0.12));
             },
             handCommand(command) {
+              if (resettingView || !handSteeringExclusive || !command) return;
               const cameraObject = getAFrameCameraMover();
-              if (!handSteeringExclusive || !cameraObject || !command) return;
+              if (!cameraObject) return;
+              const before = snapshotAFrameSteeringPose();
               if (command.type === 'look') {
                 this.handPoint(command.x, command.y);
               } else if (command.type === 'orbit') {
@@ -2453,10 +2553,15 @@ function bootAFrame() {
                 cameraObject.translateZ((command.delta || 0) * 1.4);
                 clampAFrameGestureRoam(cameraObject);
               }
+              pieceSteeringTrace('aframe-pose-applied', { command, before, after: snapshotAFrameSteeringPose() });
+              if (PIECE_SONIC_DEBUG) {
+                requestAnimationFrame(() => pieceSteeringTrace('aframe-pose-next-frame', snapshotAFrameSteeringPose()));
+              }
             },
             resetView() {
               const cameraObject = getAFrameCameraMover();
               if (!cameraObject || !initialAFramePose) return Promise.resolve(false);
+              resettingView = true;
               const fromPosition = cameraObject.position.clone();
               const fromQuaternion = cameraObject.quaternion.clone();
               const startedAt = performance.now();
@@ -2466,7 +2571,12 @@ function bootAFrame() {
                   const eased = 1 - Math.pow(1 - t, 3);
                   cameraObject.position.lerpVectors(fromPosition, initialAFramePose.position, eased);
                   cameraObject.quaternion.slerpQuaternions(fromQuaternion, initialAFramePose.quaternion, eased);
-                  if (t < 1) requestAnimationFrame(step); else resolve(true);
+                  if (t < 1) {
+                    requestAnimationFrame(step);
+                  } else {
+                    resettingView = false;
+                    resolve(true);
+                  }
                 };
                 requestAnimationFrame(step);
               });
@@ -2479,7 +2589,7 @@ function bootAFrame() {
             : createCameraBlendQuadHooks(
                 window.AFRAME && window.AFRAME.THREE,
                 () => scene && scene.object3D,
-                () => scene && scene.camera
+                () => getAFrameCameraObject()
               )
         );
         platformInteractionInitialized = true;
@@ -2736,6 +2846,7 @@ async function bootThree() {
     const state = { scene: null, camera: null, renderer: null };
     let controls = null;
     let initialThreePose = null;
+    let resettingView = false;
     let rafIds = [];
     let pieceDrivesOwnRender = false;
     // These are also read by the shared hand hooks below. They cannot live
@@ -2962,6 +3073,7 @@ async function bootThree() {
       }
 
       function onThreePointerDown(event) {
+        if (handSteeringExclusive) return;
         pointerState.set(event.pointerId, {
           pointerType: event.pointerType || 'mouse',
           button: event.button,
@@ -2975,6 +3087,7 @@ async function bootThree() {
       }
 
       function onThreePointerMove(event) {
+        if (handSteeringExclusive) return;
         const pointer = pointerState.get(event.pointerId);
         if (!pointer) return;
         if (Math.hypot(event.clientX - pointer.startX, event.clientY - pointer.startY) >= 6) {
@@ -2994,6 +3107,7 @@ async function bootThree() {
       }
 
       function onThreePointerUp(event) {
+        if (handSteeringExclusive) return;
         const pointer = pointerState.get(event.pointerId);
         const wasMultiTouch = hadMultiTouchGesture || activeTouchPointerCount() > 1;
         clearThreePointer(event);
@@ -3027,6 +3141,7 @@ async function bootThree() {
       threeNavLimit = getThreeNavigationLimit();
       keyNav = createKeyboardNavigation(controls, {
         container: canvas,
+        isEnabled: () => !handSteeringExclusive,
         speed: (act) => Math.max(0.05, act.target.distanceTo(act.object.position) * 0.03),
         minX: -threeNavLimit,
         maxX: threeNavLimit,
@@ -3124,7 +3239,7 @@ async function bootThree() {
         // continuous drag: desired spherical angles around the current orbit
         // target, eased per frame so tracking jitter doesn't jolt the camera.
         handPoint(nx, ny) {
-          if (!handSteeringExclusive || !controls || !state.camera) return;
+          if (resettingView || !handSteeringExclusive || !controls || !state.camera) return;
           const target = controls.target;
           const offset = state.camera.position.clone().sub(target);
           const sph = new mod.Spherical().setFromVector3(offset);
@@ -3138,7 +3253,7 @@ async function bootThree() {
           controls.update();
         },
         handCommand(command) {
-          if (!handSteeringExclusive || !controls || !state.camera || !command) return;
+          if (resettingView || !handSteeringExclusive || !controls || !state.camera || !command) return;
           if (command.type === 'look') {
             this.handPoint(command.x, command.y);
             return;
@@ -3189,6 +3304,7 @@ async function bootThree() {
         },
         resetView() {
           if (!initialThreePose || !state.camera || !controls) return Promise.resolve(false);
+          resettingView = true;
           const fromCamera = state.camera.position.clone();
           const fromTarget = controls.target.clone();
           const startedAt = performance.now();
@@ -3199,7 +3315,12 @@ async function bootThree() {
               state.camera.position.lerpVectors(fromCamera, initialThreePose.camera, eased);
               controls.target.lerpVectors(fromTarget, initialThreePose.target, eased);
               controls.update();
-              if (t < 1) requestAnimationFrame(step); else resolve(true);
+              if (t < 1) {
+                requestAnimationFrame(step);
+              } else {
+                resettingView = false;
+                resolve(true);
+              }
             };
             requestAnimationFrame(step);
           });

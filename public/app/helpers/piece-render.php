@@ -86,6 +86,7 @@ function piece_render_document(array $piece, array $version, array $options = []
         piece_camera_placement($version),
         piece_regular_hand_motion_enabled($version)
     );
+    $sonicDebug = isset($_GET['sonicdebug']) && (string) $_GET['sonicdebug'] === '1';
     $jsonContext = json_encode([
         'pieceId' => (int) ($piece['id'] ?? 0),
         'viewerMode' => (string) ($options['viewer_mode'] ?? 'default'),
@@ -111,6 +112,9 @@ function piece_render_document(array $piece, array $version, array $options = []
         // needed even when sonic is null so steering works on sound-less
         // pieces.
         'handControl' => !empty($contextCapabilities['hand_control']),
+        // srcdoc has an about:srcdoc URL, so it cannot see the outer page's
+        // query string. Propagate the existing opt-in diagnostic flag.
+        'sonicDebug' => $sonicDebug,
         // Sound is gated per-piece (no master switch), not per-engine — every
         // engine can carry sonic_params now. Three.js/A-Frame sonify camera
         // motion, c2_interactive sonifies pointer motion, everything else
@@ -670,6 +674,12 @@ JS;
     handControlToggle.setAttribute('aria-pressed', 'false');
     handControlToggle.style.cssText = 'border:1px solid rgba(255,255,255,0.18);border-radius:0.6rem;background:rgba(255,255,255,0.06);color:#fff;font:inherit;font-weight:600;padding:0.3rem 0.55rem;cursor:pointer;';
     handControlRow.appendChild(handControlLabel); handControlRow.appendChild(handControlToggle);
+    var handControlStatus = document.createElement('p');
+    handControlStatus.setAttribute('role', 'status');
+    handControlStatus.setAttribute('aria-live', 'polite');
+    handControlStatus.setAttribute('aria-atomic', 'true');
+    handControlStatus.hidden = true;
+    handControlStatus.style.cssText = 'margin:-0.15rem 0 0;padding:0.48rem 0.58rem;border:1px solid rgba(103,232,249,0.48);border-radius:0.55rem;background:rgba(8,47,73,0.72);color:rgba(236,254,255,0.96);font-size:0.76rem;line-height:1.35;';
     var resetViewRow = document.createElement('div');
     resetViewRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:0.5rem;';
     var resetViewLabel = document.createElement('span');
@@ -682,14 +692,49 @@ JS;
     resetViewRow.appendChild(resetViewLabel); resetViewRow.appendChild(resetViewButton);
 
 JS;
-        $handRowAppendScript .= "\n    panel.appendChild(handControlRow);\n    panel.appendChild(resetViewRow);";
+        $handRowAppendScript .= "\n    panel.appendChild(handControlRow);\n    panel.appendChild(handControlStatus);\n    panel.appendChild(resetViewRow);";
         $handRowWiringScript .= <<<'JS'
 
     var handControlActive = false;
     var handControlActivationEpoch = 0;
     var tiltController = null;
     var gestureRouter = null;
+    var gestureRouterHooks = null;
+    var gestureRouterEngine = null;
     var gestureModeIndicator = null;
+    var handControlStatusTimer = 0;
+    var handControlPreparingAt = 0;
+    var handPreparationPromise = null;
+    function setHandControlStatus(message, removeAfter) {
+      window.clearTimeout(handControlStatusTimer);
+      // Status renders in the same bottom-center stage pill as the
+      // gesture-mode labels — in the view, not the control panel. The panel
+      // element stays as a hidden mirror for assistive tech.
+      setGestureModeIndicatorText(message || '');
+      handControlStatus.textContent = message || '';
+      handControlStatus.hidden = true;
+      if (message && removeAfter > 0) {
+        handControlStatusTimer = window.setTimeout(function() {
+          setGestureModeIndicatorText('');
+          handControlStatus.textContent = '';
+        }, removeAfter);
+      }
+    }
+    function prepareHandControl() {
+      handControlPreparingAt = Date.now();
+      handControlStatus.setAttribute('aria-busy', 'true');
+      handControlStatus.dataset.state = 'loading';
+      setHandControlStatus('Preparing hand steering…', 0);
+      if (handPreparationPromise) return handPreparationPromise;
+      handPreparationPromise = loadSonicControllerOnce().then(function(CSC) {
+        return CSC.preloadHandTracker ? CSC.preloadHandTracker({
+          mediaPipeVisionSrc: window.__creatrMediaPipeVisionSrc,
+          mediaPipeWasmDir: window.__creatrMediaPipeWasmDir,
+          mediaPipeModelSrc: window.__creatrMediaPipeModelSrc
+        }) : false;
+      }).catch(function() { return false; });
+      return handPreparationPromise;
+    }
     function setGestureModeIndicator(mode) {
       if (!gestureModeIndicator) {
         gestureModeIndicator = document.createElement('div');
@@ -702,6 +747,14 @@ JS;
       gestureModeIndicator.textContent = labels[mode] || '';
       gestureModeIndicator.hidden = !labels[mode];
     }
+    // Raw-text twin: steering status shares the gesture pill.
+    function setGestureModeIndicatorText(text) {
+      if (!gestureModeIndicator) setGestureModeIndicator(null);
+      if (!gestureModeIndicator) return;
+      gestureModeIndicator.textContent = text || '';
+      gestureModeIndicator.hidden = !text;
+    }
+    handControlToggle.addEventListener('focus', prepareHandControl);
     handControlToggle.addEventListener('click', async function () {
       var turningOn = handControlToggle.getAttribute('aria-pressed') !== 'true';
       var activationEpoch = ++handControlActivationEpoch;
@@ -714,7 +767,9 @@ JS;
         var tiltOk = turningOn && tiltController ? await tiltController.enable() : false;
         if (!turningOn && tiltController) tiltController.disable();
         handControlToggle.setAttribute('aria-pressed', tiltOk ? 'true' : 'false');
-        resetViewButton.disabled = !!tiltOk;
+        // Reset view stays available while tilt steering is armed — the
+        // runtime ignores steering commands during the reset animation.
+        resetViewButton.disabled = false;
         return;
       }
       if (!turningOn) {
@@ -727,12 +782,13 @@ JS;
         }
         if (gestureRouter) gestureRouter.reset('disabled');
         gestureRouter = null;
+        gestureRouterHooks = null;
+        gestureRouterEngine = null;
         setGestureModeIndicator('idle');
         handControlToggle.setAttribute('aria-pressed', 'false');
         return;
       }
       handControlToggle.setAttribute('aria-pressed', 'true');
-      resetViewButton.disabled = true;
       var eng = createEngineSyncForCamera();
       var controlOk = eng ? await eng.enableHandControl() : false;
       if (activationEpoch !== handControlActivationEpoch || handControlToggle.getAttribute('aria-pressed') !== 'true') {
@@ -759,10 +815,16 @@ JS;
           var hooks = window.__pieceHandHooks;
           if (!hooks) return;
           if (typeof hooks.handCommand === 'function' && window.CreatrSonicController && window.CreatrSonicController.createClutchedGestureRouter) {
-            if (!gestureRouter) {
+            if (!gestureRouter || gestureRouterHooks !== hooks || gestureRouterEngine !== hooks.engine) {
+              if (gestureRouter) gestureRouter.reset('hook-changed');
+              gestureRouterHooks = hooks;
+              gestureRouterEngine = hooks.engine;
               gestureRouter = window.CreatrSonicController.createClutchedGestureRouter({
                 engine: hooks.engine,
-                onCommand: function(command) { hooks.handCommand(command); },
+                onCommand: function(command) {
+                  var currentHooks = window.__pieceHandHooks;
+                  if (currentHooks && typeof currentHooks.handCommand === 'function') currentHooks.handCommand(command);
+                },
                 onMode: setGestureModeIndicator
               });
             }
@@ -891,6 +953,27 @@ JS;
 
     document.addEventListener('creatr-sonic-capability-state', function(event) {
       var detail = event.detail || {};
+      if (detail.capability === 'hand_control_model' || detail.capability === 'hand_control') {
+        if (detail.state === 'loading') {
+          if (!handControlPreparingAt) handControlPreparingAt = Date.now();
+          handControlStatus.setAttribute('aria-busy', 'true');
+          handControlStatus.dataset.state = 'loading';
+          setHandControlStatus('Preparing hand steering…', 0);
+        } else if (detail.state === 'ready' || detail.state === 'active') {
+          handControlStatus.setAttribute('aria-busy', 'false');
+          handControlStatus.dataset.state = 'ready';
+          var elapsed = handControlPreparingAt ? Date.now() - handControlPreparingAt : 0;
+          setHandControlStatus('Hand steering ready.', Math.max(1600, 2400 - elapsed));
+          handControlPreparingAt = 0;
+        } else if (detail.state === 'inactive') {
+          setHandControlStatus('', 0);
+        } else if (detail.state === 'unavailable') {
+          handControlStatus.setAttribute('aria-busy', 'false');
+          handControlStatus.dataset.state = 'unavailable';
+          setHandControlStatus(detail.reason || 'Hand steering is unavailable on this device.', 0);
+          handControlPreparingAt = 0;
+        }
+      }
       var target = detail.capability === 'hand_tracking' && typeof handToggle !== 'undefined' ? handToggle
         : detail.capability === 'hand_control' && typeof handControlToggle !== 'undefined' ? handControlToggle
         : detail.capability === 'mic' && typeof micToggle !== 'undefined' ? micToggle : null;
@@ -1360,6 +1443,7 @@ window.__creatrMediaPipeModelSrc = {$mediaPipeModelSrcJson};
       panelOpen = !panelOpen;
       panel.style.display = panelOpen ? 'flex' : 'none';
       panelTrigger.setAttribute('aria-expanded', panelOpen ? 'true' : 'false');
+      if (panelOpen && typeof prepareHandControl === 'function') prepareHandControl();
     });
 
     volumeInput.addEventListener('input', function () {
@@ -3111,12 +3195,6 @@ function piece_export_camera_blend_quad_members(string $threeExpr, string $scene
           const height = 2 * dist * Math.tan((cam.fov * Math.PI) / 360);
           quad.scale.set(height * (cam.aspect || 1), height, 1);
         };
-        // An A-Frame camera belongs to its entity object3D — the transform
-        // hand steering rotates; scene-root parenting would decouple them.
-        if (!quadCamera.parent) {
-          if (quadCamera.el && quadCamera.el.object3D) quadCamera.el.object3D.add(quadCamera);
-          else quadScene.add(quadCamera);
-        }
         quadCamera.add(quad);
         this._cameraQuad = quad;
         this._videoTexture = texture;{$afterChangeJs}
@@ -3162,7 +3240,7 @@ function piece_export_bootstrap(string $engine, string $generationMode = '', str
         : piece_export_camera_blend_quad_members(
             'getAFrameThree()',
             'scene && scene.object3D',
-            'scene && scene.camera'
+            'getAFrameCameraObject()'
         );
     if ($engine === 'three' && $runtimeMode === 'bundle') {
         return <<<HTML
@@ -4094,6 +4172,7 @@ try {
     let pointerTarget = null;
     let frameId = 0;
     let initialAFramePose = null;
+    let resettingView = false;
     let handSteeringExclusive = false;
     let aframeControlsBeforeHand = [];
     let aframeLookControlsEnabledBeforeHand = null;
@@ -4281,6 +4360,7 @@ try {
         const cameraEl = scene.querySelector('[camera]') || scene.querySelector('a-camera');
         const lookControls = cameraEl?.components?.['look-controls'];
         if (next) {
+          captureInitialAFramePose();
           // Disable look-controls at the data level (its tick gates on
           // data.enabled) — pausing the component is timing-fragile. Twin of
           // piece-runtime.js setHandSteering; keep in sync.
@@ -4313,9 +4393,9 @@ try {
         return true;
       },
       resetView() {
-        captureInitialAFramePose();
         const cameraObject = getAFrameCameraMover();
         if (!cameraObject || !initialAFramePose) return false;
+        resettingView = true;
         const fromPosition = cameraObject.position.clone();
         const fromQuaternion = cameraObject.quaternion.clone();
         const started = performance.now();
@@ -4325,13 +4405,14 @@ try {
             const eased = 1 - Math.pow(1 - t, 3);
             cameraObject.position.lerpVectors(fromPosition, initialAFramePose.position, eased);
             cameraObject.quaternion.slerpQuaternions(fromQuaternion, initialAFramePose.quaternion, eased);
-            if (t < 1) requestAnimationFrame(step); else resolve(true);
+            if (t < 1) requestAnimationFrame(step);
+            else { resettingView = false; resolve(true); }
           }
           requestAnimationFrame(step);
         });
       },
       handPoint(nx, ny) {
-        if (!handSteeringExclusive) return;
+        if (resettingView || !handSteeringExclusive) return;
         const cameraObject = getAFrameCameraMover();
         if (!cameraObject) return;
         const desiredYaw = -(nx - 0.5) * Math.PI * 1.5;
@@ -4343,7 +4424,7 @@ try {
       },
       handCommand(command) {
         const cameraObject = getAFrameCameraMover();
-        if (!handSteeringExclusive || !cameraObject || !command) return;
+        if (resettingView || !handSteeringExclusive || !cameraObject || !command) return;
         if (command.type === 'look') { this.handPoint(command.x, command.y); return; }
         if (command.type === 'orbit') {
           cameraObject.rotation.order = 'YXZ';

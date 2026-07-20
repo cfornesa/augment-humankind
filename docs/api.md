@@ -279,7 +279,10 @@ Un-pinched steering is movement-based: the camera turns with wrist motion
 mapping registry in sonic-controller.js), so a stationary or low-confidence
 hand detection leaves the camera exactly where it is; c2-interactive surfaces
 instead keep absolute wrist-to-pointer mapping because they position a
-synthetic cursor rather than a camera.
+synthetic cursor rather than a camera. Relative mappings measure from the last
+emitted anchor: sub-deadzone samples accumulate until deliberate slow movement
+crosses the threshold, while bounded jitter around a stationary hand emits no
+camera command.
 Camera view and microphone/audio remain independent capabilities, including for
 sound-less camera-enabled exports. Download menus keep the full download
 selected by default and display approximate ZIP sizes that update when optional

@@ -1833,6 +1833,7 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
   const soundHandToggle = root.querySelector("[data-immersive-sound-hand-toggle]");
   const handControlRow = root.querySelector("[data-immersive-sound-hand-control-row]");
   const handControlToggle = root.querySelector("[data-immersive-sound-hand-control-toggle]");
+  const handControlStatus = root.querySelector("[data-immersive-hand-control-status]");
   const resetViewButton = root.querySelector("[data-immersive-reset-view]");
   const cameraBgRow = root.querySelector("[data-immersive-sound-camera-bg-row]");
   const cameraBgToggle = root.querySelector("[data-immersive-sound-camera-bg-toggle]");
@@ -1895,6 +1896,52 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
   // Silent engine for hand control on pieces with no audio controller
   // (sound-less pieces): enableHandControl never touches audio.
   let silentHandEngine = null;
+  let handPreparationPromise = null;
+  let handControlStatusTimer = 0;
+  let handControlPreparingAt = 0;
+  // Raw-text twin of setGestureModeIndicator: steering status renders in the
+  // same bottom-center stage pill the gesture-mode labels use, so the visitor
+  // sees it in the view itself rather than inside the control panel.
+  function setStageStatusText(text) {
+    let indicator = root.querySelector('[data-hand-gesture-mode]');
+    if (!indicator) {
+      setGestureModeIndicator(null);
+      indicator = root.querySelector('[data-hand-gesture-mode]') || (stageEl || document.body).querySelector('[data-hand-gesture-mode]');
+    }
+    if (!indicator) return;
+    indicator.textContent = text || '';
+    indicator.hidden = !text;
+  }
+  function setHandControlStatus(message, { removeAfter = 0 } = {}) {
+    window.clearTimeout(handControlStatusTimer);
+    setStageStatusText(message || "");
+    // The panel element remains a hidden mirror for assistive tech reading
+    // the control panel.
+    if (handControlStatus) {
+      handControlStatus.textContent = message || "";
+      handControlStatus.hidden = true;
+    }
+    if (message && removeAfter > 0) {
+      handControlStatusTimer = window.setTimeout(() => {
+        setStageStatusText("");
+        if (handControlStatus) handControlStatus.textContent = "";
+      }, removeAfter);
+    }
+  }
+  function prepareHandControl() {
+    if (!handControlAllowed) return Promise.resolve(false);
+    handControlPreparingAt = Date.now();
+    handControlStatus?.setAttribute("aria-busy", "true");
+    if (handControlStatus) handControlStatus.dataset.state = "loading";
+    setHandControlStatus("Preparing hand steering…");
+    if (handPreparationPromise) return handPreparationPromise;
+    handPreparationPromise = loadSonicControllerOnce().then((CSC) => CSC.preloadHandTracker?.({
+      mediaPipeVisionSrc: window.__creatrMediaPipeVisionSrc,
+      mediaPipeWasmDir: window.__creatrMediaPipeWasmDir,
+      mediaPipeModelSrc: window.__creatrMediaPipeModelSrc,
+    }) || false).catch(() => false);
+    return handPreparationPromise;
+  }
   async function getHandControlEngine() {
     const ctrl = dedicatedHandControl ? null : getAudioController();
     if (ctrl) return ctrl;
@@ -1928,7 +1975,10 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
     }
     if (handControlToggle) handControlToggle.setAttribute("aria-pressed", handControlActive ? "true" : "false");
     if (resetViewButton && resetViewButton.getAttribute("aria-busy") !== "true") {
-      resetViewButton.disabled = handControlActive || handActivationPending || tiltFallbackActive;
+      // Reset view must work in every state — steering, tilt, camera, mic,
+      // or any combination. The runtime ignores steering commands during the
+      // reset animation, so no lockout is needed while control is armed.
+      resetViewButton.disabled = false;
     }
   }
 
@@ -1987,6 +2037,7 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
     soundPanelTrigger.setAttribute("aria-expanded", open ? "true" : "false");
     if (open) {
       syncSoundPanel();
+      prepareHandControl();
     } else if (focusTrigger) {
       soundPanelTrigger.focus?.();
     }
@@ -2191,6 +2242,27 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
 
   const onCapabilityState = (event) => {
     const detail = event.detail || {};
+    if (detail.capability === "hand_control_model" || detail.capability === "hand_control") {
+      if (detail.state === "loading") {
+        if (!handControlPreparingAt) handControlPreparingAt = Date.now();
+        handControlStatus?.setAttribute("aria-busy", "true");
+        if (handControlStatus) handControlStatus.dataset.state = "loading";
+        setHandControlStatus("Preparing hand steering…");
+      } else if (detail.state === "ready" || detail.state === "active") {
+        handControlStatus?.setAttribute("aria-busy", "false");
+        if (handControlStatus) handControlStatus.dataset.state = "ready";
+        const elapsed = handControlPreparingAt ? Date.now() - handControlPreparingAt : 0;
+        setHandControlStatus("Hand steering ready.", { removeAfter: Math.max(1600, 2400 - elapsed) });
+        handControlPreparingAt = 0;
+      } else if (detail.state === "inactive") {
+        setHandControlStatus("");
+      } else if (detail.state === "unavailable") {
+        handControlStatus?.setAttribute("aria-busy", "false");
+        if (handControlStatus) handControlStatus.dataset.state = "unavailable";
+        setHandControlStatus(detail.reason || "Hand steering is unavailable on this device.");
+        handControlPreparingAt = 0;
+      }
+    }
     const target = detail.capability === "hand_tracking"
       ? soundHandToggle
       : detail.capability === "hand_control"
@@ -2274,6 +2346,7 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
   pianoOctaveDown?.addEventListener("click", onPianoOctaveDown);
   pianoOctaveUp?.addEventListener("click", onPianoOctaveUp);
   soundHandToggle?.addEventListener("click", onSoundHandToggle);
+  handControlToggle?.addEventListener("focus", prepareHandControl);
   handControlToggle?.addEventListener("click", onHandControlToggle);
   resetViewButton?.addEventListener("click", onResetView);
   cameraBgToggle?.addEventListener("click", onCameraBgToggle);
@@ -4503,6 +4576,13 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
         aframeControlsBeforeHand = [];
       }
       handSteeringExclusive = next;
+      window.CreatrSonicController?.traceSteering?.('immersive-aframe-ownership', {
+        enabled: next,
+        moverUuid: getAFrameCameraMover()?.uuid || null,
+        renderCameraUuid: getAFrameCameraObject()?.uuid || null,
+        renderCameraParentUuid: getAFrameCameraObject()?.parent?.uuid || null,
+        lookEnabled: lookControls?.data?.enabled,
+      });
     },
     handPoint(nx, ny, fromTilt) {
       if (!handSteeringExclusive && !fromTilt) return;
@@ -4523,6 +4603,7 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
       }
       const cameraObject = getAFrameCameraMover();
       if (!cameraObject) return;
+      const beforeRotation = [cameraObject.rotation.x, cameraObject.rotation.y, cameraObject.rotation.z];
       if (command.type === "orbit") {
         cameraObject.rotation.order = "YXZ";
         cameraObject.rotation.y += command.yaw || 0;
@@ -4533,6 +4614,14 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
       } else if (command.type === "zoom") {
         cameraObject.translateZ((command.delta || 0) * 1.4);
       }
+      window.CreatrSonicController?.traceSteering?.('immersive-aframe-pose-applied', {
+        command,
+        moverUuid: cameraObject.uuid || null,
+        renderCameraUuid: getAFrameCameraObject()?.uuid || null,
+        renderCameraParentUuid: getAFrameCameraObject()?.parent?.uuid || null,
+        beforeRotation,
+        afterRotation: [cameraObject.rotation.x, cameraObject.rotation.y, cameraObject.rotation.z],
+      });
     },
     resetView() { return animateAFrameReset(initialAFrameViewState); },
     ...createCameraBlendQuadController(() => getAFrameThree(), () => scene?.object3D, () => scene?.camera),
