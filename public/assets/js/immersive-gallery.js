@@ -1930,11 +1930,18 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
   }
   function prepareHandControl() {
     if (!handControlAllowed) return Promise.resolve(false);
+    // Always delegate to preloadHandTracker() rather than short-circuiting
+    // on a locally cached promise — preloadHandTracker() already tracks the
+    // document-scoped landmarker/preload state and re-emits the correct
+    // capabilityState (ready/loading/unavailable) on every call, which is
+    // what corrects this status text. A local promise cache here previously
+    // skipped that re-emission on repeat focus/click events once the first
+    // prepare had settled, leaving the UI stuck on "Preparing hand
+    // steering…" even though steering already worked.
     handControlPreparingAt = Date.now();
     handControlStatus?.setAttribute("aria-busy", "true");
     if (handControlStatus) handControlStatus.dataset.state = "loading";
     setHandControlStatus("Preparing hand steering…");
-    if (handPreparationPromise) return handPreparationPromise;
     handPreparationPromise = loadSonicControllerOnce().then((CSC) => CSC.preloadHandTracker?.({
       mediaPipeVisionSrc: window.__creatrMediaPipeVisionSrc,
       mediaPipeWasmDir: window.__creatrMediaPipeWasmDir,
@@ -2215,7 +2222,12 @@ export function setupImmersiveStageChrome(stageEl, options = {}) {
   };
 
   const onResetView = async () => {
-    if (handControlActive || handActivationPending || tiltFallbackActive) return;
+    // No handControlActive/handActivationPending/tiltFallbackActive guard —
+    // every resetView() implementation now sets its own resettingView flag
+    // during the animation, which handPoint/handCommand check to ignore
+    // concurrent hand-frame updates. Blocking the button itself instead
+    // silently no-op'd every click while steering was active, with zero
+    // feedback that it had done so.
     const interaction = getPieceInteractionController();
     if (typeof interaction?.resetView !== "function" || !resetViewButton) return;
     resetViewButton.disabled = true;
@@ -3400,6 +3412,7 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
   let gyroController = null;
   let viewerControls = null;
   let handSteeringExclusive = false;
+  let resettingView = false;
   let controlsEnabledBeforeHand = true;
   const audioController = createAudioController(options.sonicParams, stageEl, { pieceId: options.pieceId, allowHandControl: options.handControl === true });
   const _audioPrevPos = new THREE.Vector3();
@@ -3969,13 +3982,13 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
         }
       },
       handPoint(nx, ny) {
-        if (!handSteeringExclusive || !controls || !state.camera) return;
+        if (resettingView || !handSteeringExclusive || !controls || !state.camera) return;
         gyroController?.setHandOffset?.(nx, ny);
         saveOrbitState();
         userHasInteracted = true;
       },
       handCommand(command) {
-        if (!handSteeringExclusive || !controls || !state.camera || !command) return;
+        if (resettingView || !handSteeringExclusive || !controls || !state.camera || !command) return;
         if (command.type === "look") {
           this.handPoint(command.x, command.y);
           return;
@@ -4010,7 +4023,9 @@ export function mountThreeImmersivePiece(stageEl, code, htmlCode, cssCode, onErr
       handLost() { gyroController?.clearHandOffset?.(); },
       async resetView() {
         gyroController?.clearHandOffset?.();
+        resettingView = true;
         const reset = await animateShellViewReset({ camera: state.camera, controls }, initialThreeViewState);
+        resettingView = false;
         saveOrbitState();
         userHasInteracted = true;
         return reset;
@@ -4102,6 +4117,7 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
   let pointerTarget = null;
   let frameId = 0;
   let handSteeringExclusive = false;
+  let resettingView = false;
   let aframeControlsBeforeHand = [];
   let aframeLookControlsEnabledBeforeHand = null;
   let aframeTiltController = null;
@@ -4585,7 +4601,7 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
       });
     },
     handPoint(nx, ny, fromTilt) {
-      if (!handSteeringExclusive && !fromTilt) return;
+      if (resettingView || (!handSteeringExclusive && !fromTilt)) return;
       const cameraObject = getAFrameCameraMover();
       if (!cameraObject) return;
       const desiredYaw = -(nx - 0.5) * Math.PI * 1.5;
@@ -4596,7 +4612,7 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
       cameraObject.rotation.x = Math.max(-Math.PI * 0.45, Math.min(Math.PI * 0.45, cameraObject.rotation.x));
     },
     handCommand(command) {
-      if (!command) return;
+      if (resettingView || !command) return;
       if (command.type === "look") {
         this.handPoint(command.x, command.y);
         return;
@@ -4623,7 +4639,11 @@ export function mountAFrameImmersivePiece(stageEl, code, htmlCode, cssCode, onEr
         afterRotation: [cameraObject.rotation.x, cameraObject.rotation.y, cameraObject.rotation.z],
       });
     },
-    resetView() { return animateAFrameReset(initialAFrameViewState); },
+    async resetView() {
+      resettingView = true;
+      try { return await animateAFrameReset(initialAFrameViewState); }
+      finally { resettingView = false; }
+    },
     ...createCameraBlendQuadController(() => getAFrameThree(), () => scene?.object3D, () => scene?.camera),
   };
 
@@ -4782,6 +4802,7 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
   }
 
   let galleryHandSteering = false;
+  let galleryResettingView = false;
 
   function applyGalleryZoomValue(value) {
     if (galleryHandSteering) return;
@@ -5173,13 +5194,13 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
       }
     },
     handPoint(nx, ny) {
-      if (!galleryHandSteering) return;
+      if (galleryResettingView || !galleryHandSteering) return;
       gyroController?.setHandOffset?.(nx, ny);
       galleryLastHandPoint = { nx, ny };
       dispatchGalleryHandPointer("pointermove", nx, ny);
     },
     handCommand(command) {
-      if (!galleryHandSteering || !command) return;
+      if (galleryResettingView || !galleryHandSteering || !command) return;
       if (command.type === "look") {
         this.handPoint(command.x, command.y);
         return;
@@ -5207,9 +5228,11 @@ export function mountGalleryPiece(stageEl, code, htmlCode, cssCode, engine, titl
       dispatchGalleryHandPointer(down ? "pointerdown" : "pointerup", galleryLastHandPoint.nx, galleryLastHandPoint.ny);
     },
     handLost() { galleryLastHandPoint = null; gyroController?.clearHandOffset?.(); },
-    resetView() {
+    async resetView() {
       gyroController?.clearHandOffset?.();
-      return animateShellViewReset(shell, initialGalleryViewState);
+      galleryResettingView = true;
+      try { return await animateShellViewReset(shell, initialGalleryViewState); }
+      finally { galleryResettingView = false; }
     },
     ...createGalleryWallCameraController(shell),
   };

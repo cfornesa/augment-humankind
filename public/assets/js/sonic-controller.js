@@ -452,9 +452,19 @@
       if (!base) {
         base = (window.location.origin && window.location.origin !== 'null') ? window.location.origin : '';
       }
-      var visionSrc = mopts.mediaPipeVisionSrc || (base + '/assets/vendor/mediapipe-hands/vision_bundle.mjs' + assetVersion);
-      var wasmDir = mopts.mediaPipeWasmDir || (base + '/assets/vendor/mediapipe-hands/');
-      var modelSrc = mopts.mediaPipeModelSrc || (base + '/assets/vendor/mediapipe-hands/hand_landmarker.task' + assetVersion);
+      // window.__creatrMediaPipe* is written unconditionally by every export
+      // and live document (piece-render.php) before this loader can run, so
+      // it is a safe fallback independent of whether a given call site
+      // remembered to forward its own opts/overrideOpts — the exact class of
+      // bug that broke downloaded-piece hand tracking under file:// when the
+      // module-scope loader landed (opts dropped at 3 internal call sites).
+      var visionSrc = mopts.mediaPipeVisionSrc || global.__creatrMediaPipeVisionSrc || (base + '/assets/vendor/mediapipe-hands/vision_bundle.mjs' + assetVersion);
+      // No trailing slash: FilesetResolver.forVisionTasks() joins this with
+      // its own filenames as `${wasmDir}/${filename}` — a trailing slash
+      // here produces a double slash (".../wasm//vision_wasm_internal.js"),
+      // which CDN edges like jsDelivr reject outright with a 400.
+      var wasmDir = mopts.mediaPipeWasmDir || global.__creatrMediaPipeWasmDir || (base + '/assets/vendor/mediapipe-hands');
+      var modelSrc = mopts.mediaPipeModelSrc || global.__creatrMediaPipeModelSrc || (base + '/assets/vendor/mediapipe-hands/hand_landmarker.task' + assetVersion);
 
       try {
         sonicDebug('hand model local start', visionSrc);
@@ -474,7 +484,9 @@
         console.warn('Local MediaPipe assets failed to load. Attempting CDN fallback...', localError);
         try {
           var cdnVisionSrc = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/vision_bundle.mjs';
-          var cdnWasmDir = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/wasm/';
+          // No trailing slash — see the matching comment on the local wasmDir
+          // above; jsDelivr 400s on the resulting double slash otherwise.
+          var cdnWasmDir = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/wasm';
           var cdnModelSrc = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
           var cdnVision = await import(cdnVisionSrc);
           var cdnFileset = await cdnVision.FilesetResolver.forVisionTasks(cdnWasmDir);
@@ -850,7 +862,7 @@
         if (disposed) throw new Error('disposed');
         await ensureSynth();
         if (disposed) throw new Error('disposed');
-        handLandmarker = await loadHandLandmarkerWithRetry();
+        handLandmarker = await loadHandLandmarkerWithRetry(opts);
         if (disposed) throw new Error('disposed');
         handThereminOn = true;
         if (!handRafId) handFrameStep();
@@ -901,7 +913,7 @@
         cameraHeld = true;
         if (disposed) throw new Error('disposed');
         steeringTrace('hand-control-landmarker-load', null);
-        handLandmarker = await loadHandLandmarkerWithRetry();
+        handLandmarker = await loadHandLandmarkerWithRetry(opts);
         steeringTrace('hand-control-landmarker-ready', null);
         if (disposed) throw new Error('disposed');
         handControlOn = true;
@@ -1147,7 +1159,7 @@
         // for a hand-tracking piece: the (large) model + WASM load then
         // doesn't sit between the visitor's later theremin tap and
         // getUserMedia — the tap only has to grant the camera.
-        if (voices.hand_tracking) { try { loadHandLandmarkerOnce().catch(function () {}); } catch (_e) {} }
+        if (voices.hand_tracking) { try { loadHandLandmarkerOnce(false, opts).catch(function () {}); } catch (_e) {} }
         await ensureSynth();
         if (disposed || !ambientSynth) return false;
         enabled = true;

@@ -1157,7 +1157,29 @@ test('camera acquisition is getUserMedia-FIRST in every gesture path (theremin, 
     $mic = substr($sonicSrc, strpos($sonicSrc, 'async function enableMic'));
     assert_contains(substr($mic, 0, strpos($mic, 'ensureSynth')), 'getUserMedia({ audio: true })', 'enableMic grabs mic permission before Tone loads');
     // Warm the model as soon as sound is on for hand-tracking pieces.
-    assert_contains($sonicSrc, 'loadHandLandmarkerOnce().catch(function () {})');
+    assert_contains($sonicSrc, 'loadHandLandmarkerOnce(false, opts).catch(function () {})');
+});
+
+test('MediaPipe landmarker loader call sites forward opts/overrideOpts through to the module-scope loader', function () {
+    // Regression test: 83758ae moved loadHandLandmarkerOnce/WithRetry to
+    // module scope but left 3 internal call sites calling it with no
+    // arguments, so downloaded-piece bundle asset paths (mediaPipeVisionSrc/
+    // WasmDir/ModelSrc) were silently dropped and the loader fell back to an
+    // absolute same-origin guess that is invalid under file://, permanently
+    // breaking hand tracking/steering in every downloaded ZIP once the
+    // module-scope promise cache was poisoned by the first bad call.
+    $sonicSrc = file_get_contents(__DIR__ . '/../public/assets/js/sonic-controller.js');
+    assert_contains($sonicSrc, 'handLandmarker = await loadHandLandmarkerWithRetry(opts);', 'enableHandTracking/enableHandControl must forward opts');
+    if (substr_count($sonicSrc, 'handLandmarker = await loadHandLandmarkerWithRetry(opts);') !== 2) {
+        throw new RuntimeException('Expected both enableHandTracking and enableHandControl to forward opts to loadHandLandmarkerWithRetry.');
+    }
+    assert_contains($sonicSrc, 'loadHandLandmarkerOnce(false, opts).catch(function () {})', 'background pre-warm in enable() must forward opts');
+    // Defense in depth: the loader itself must also fall back to the
+    // page-level globals every export/live document sets unconditionally,
+    // independent of whether a given call site remembered to forward opts.
+    assert_contains($sonicSrc, 'mopts.mediaPipeVisionSrc || global.__creatrMediaPipeVisionSrc');
+    assert_contains($sonicSrc, 'mopts.mediaPipeWasmDir || global.__creatrMediaPipeWasmDir');
+    assert_contains($sonicSrc, 'mopts.mediaPipeModelSrc || global.__creatrMediaPipeModelSrc');
 });
 
 test('hand-control and camera-background share one pipeline and exist in both the live runtime and the three export twins', function () {
@@ -1213,6 +1235,59 @@ test('A-Frame standalone exports register the shared hand hooks and receive both
     // support), not an opaque scene.background swap.
     assert_contains($render, 'piece_export_camera_blend_quad_members');
     assert_contains($render, "window.addEventListener('pagehide'");
+});
+
+test('camera-blend-quad hooks add an unparented camera to the scene, so "Show camera" actually renders on authored sketches that never call scene.add(camera)', function () {
+    // Regression: authored Three.js sketches almost never add their own
+    // camera to the scene (not needed for normal rendering), so the
+    // camera-attached background quad (camera.add(quad)) was an orphaned
+    // child of a camera that was itself unreachable from the scene graph —
+    // "Show camera" reported success (setBackgroundVideo returned true, the
+    // quad existed with a valid texture) but nothing ever rendered. Fixed by
+    // adding the camera to the scene first when it has no parent yet, same
+    // as the immersive gallery's existing createExhibitCameraBackground().
+    $runtime = file_get_contents(__DIR__ . '/../public/assets/js/piece-runtime.js');
+    $render = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
+    $gallery = file_get_contents(__DIR__ . '/../public/assets/js/immersive-gallery.js');
+
+    $runtimeHooksStart = strpos($runtime, 'function createCameraBlendQuadHooks(');
+    $runtimeHooks = substr($runtime, $runtimeHooksStart, strpos($runtime, 'camera.add(quad);', $runtimeHooksStart) - $runtimeHooksStart + 20);
+    assert_contains($runtimeHooks, 'if (!camera.parent) scene.add(camera);', 'live createCameraBlendQuadHooks must add an unparented camera to the scene before attaching the quad');
+
+    assert_contains($render, 'if (!quadCamera.parent) quadScene.add(quadCamera);', 'export piece_export_camera_blend_quad_members must add an unparented camera to the scene before attaching the quad');
+
+    // Existing reference implementation this was ported from.
+    assert_contains($gallery, 'if (!camera.parent) scene.add(camera);');
+});
+
+test('A-Frame asset-tag normalization survives a large embedded data: URI without silently emptying the scene', function () {
+    // Regression test: piece_aframe_normalize_texture_assets() ran two
+    // preg_replace() calls to close unclosed <a-asset-item> tags and
+    // reassigned $html = (string) preg_replace(...) with no null guard. Once
+    // bundle exports embed a large binary (e.g. a ~19MB GLB inlined as a
+    // base64 data: URI so file:// opens work offline), the lazy [^>]*?
+    // quantifier in the second regex exhausts pcre.backtrack_limit and
+    // preg_replace() returns null — (string) null casts to '', silently
+    // wiping the entire authored <a-scene> markup out of the downloaded ZIP
+    // (confirmed against piece 122's real export, a ~26MB post-inline
+    // document that came back completely blank before this fix).
+    require_once __DIR__ . '/../public/app/helpers/art-piece-generation.php';
+    require_once __DIR__ . '/../public/app/helpers/immersive-chrome.php';
+    require_once __DIR__ . '/../public/app/helpers/piece-render.php';
+
+    $render = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
+    assert_contains($render, "preg_replace('#</a-asset-item\\s*>#i', '', \$html) ?? \$html;", 'unclosed-tag cleanup must null-guard its preg_replace');
+    assert_contains($render, "preg_replace('#<a-asset-item\\b([^>]*?)/?>#i', '<a-asset-item\$1></a-asset-item>', \$html) ?? \$html;", 'self-closing normalization must null-guard its preg_replace');
+
+    $bigDataUri = 'data:model/gltf-binary;base64,' . str_repeat('AAAA', 6_500_000); // ~26MB, mirrors piece 122's inlined GLB
+    $html = '<a-scene id="scene"><a-assets><a-asset-item id="centerpiece" src="' . $bigDataUri . '" type="model/gltf-binary"></a-asset-item></a-assets>'
+        . '<a-entity id="centerpiece-entity" gltf-model="#centerpiece"></a-entity><a-camera></a-camera></a-scene>';
+
+    $result = piece_aframe_normalize_texture_assets($html, static fn(string $src): string => $src);
+    if ($result === '') {
+        throw new RuntimeException('piece_aframe_normalize_texture_assets() emptied a large-payload A-Frame scene instead of preserving it.');
+    }
+    assert_contains($result, 'centerpiece-entity', 'the real scene markup must survive a large embedded data: URI');
 });
 
 test('iframes that host camera/mic features carry the Permissions-Policy allow attribute', function () {
@@ -1280,6 +1355,27 @@ test('MediaPipe cache identity is stable across steering-controller edits', func
     assert_contains($sonicSrc, "mopts.mediaPipeAssetVersion || 'mp-55d7ab62-fbc2a300'");
     assert_contains($sonicSrc, "var assetVersion = '?v=' + encodeURIComponent(mediaPipeAssetVersion)");
     assert_not_contains($sonicSrc, '/sonic-controller\\.js\\?v=([^&#]+)/');
+});
+
+test('MediaPipe wasmDir values never carry a trailing slash, since FilesetResolver joins its own filenames with "/"', function () {
+    // Regression: the vendored MediaPipe SDK's FilesetResolver.forVisionTasks()
+    // builds sub-resource URLs as `${wasmDir}/${filename}` — it always adds its
+    // own separator. Every wasmDir value here previously ended in '/', producing
+    // a double slash (".../wasm//vision_wasm_internal.js") that jsDelivr (and
+    // presumably other strict servers) reject outright with an HTTP 400,
+    // confirmed live: https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/wasm//vision_wasm_internal.js
+    // returns 400 while the single-slash form returns 200. This silently broke
+    // MediaPipe hand-tracking/steering for every visitor who ever fell through
+    // to the CDN fallback (any file:// open, or self-hosted assets unreachable).
+    $sonicSrc = file_get_contents(__DIR__ . '/../public/assets/js/sonic-controller.js');
+    $render = file_get_contents(__DIR__ . '/../public/app/helpers/piece-render.php');
+
+    assert_contains($sonicSrc, "(base + '/assets/vendor/mediapipe-hands')", 'local wasmDir fallback must not end in a slash');
+    assert_contains($sonicSrc, "var cdnWasmDir = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/wasm';", 'CDN wasmDir must not end in a slash');
+    assert_not_contains($sonicSrc, "'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/wasm/'");
+
+    assert_contains($render, "? 'runtime/mediapipe-hands'\n        : rtrim(piece_request_origin(), '/') . '/assets/vendor/mediapipe-hands';", 'regular/export document wasmDir assignment must not end in a slash');
+    assert_contains($render, "window.__creatrMediaPipeWasmDir = 'runtime/mediapipe-hands';", 'immersive export document wasmDir must not end in a slash');
 });
 
 test('hand steering prepares on control intent and exposes non-debug accessible loading status across surfaces', function () {
@@ -1733,7 +1829,22 @@ test('hand steering cancellation and pose reset stay independent from camera vis
     assert_contains($render, 'keyboardKeys.clear();');
     assert_contains($render, 'aframeControlsBeforeHand');
     assert_contains($render, 'blockManualC2InputWhileSteering');
-    assert_contains($render, 'if (handControlActive) return;');
+    // Regression: the export's resetViewButton previously carried its own
+    // `if (handControlActive) return;` guard, silently no-oping Reset View
+    // whenever a visitor clicked it while actively steering — with no visual
+    // feedback that the click had done anything. Live surfaces never had
+    // this guard (see resetViewButton.disabled assertions below); the export
+    // must match by guarding via resettingView inside the Three.js hooks
+    // instead (twin of the A-Frame hooks' pre-existing resettingView guard),
+    // so the reset animation can't be fought by concurrent hand-frame
+    // updates without disabling the button itself.
+    assert_not_contains($render, 'if (handControlActive) return;');
+    if (substr_count($render, 'let resettingView = false;') !== 3) {
+        throw new RuntimeException('Expected resettingView in both export Three.js hook blocks plus the existing A-Frame block.');
+    }
+    if (substr_count($render, 'if (resettingView || !handSteeringExclusive || !controls || !state.camera) return;') !== 2) {
+        throw new RuntimeException('Both export Three.js handPoint hooks must ignore hand frames during a reset animation.');
+    }
     assert_contains($runtime, 'if (!c2HandSteeringExclusive || !lastHandClient) return;');
     assert_contains($render, 'if (!c2HandSteeringExclusive || !lastHandClient) return;');
     assert_contains($render, 'Preserve the platform interaction layer when an authored optional');

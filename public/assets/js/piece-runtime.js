@@ -1391,10 +1391,13 @@ function createCameraBlendQuadHooks(THREE_NS, getScene, getCamera) {
         quad.scale.set(height * (cam.aspect || 1), height, 1);
       };
       // Camera children only render when the camera itself is in the scene
-      // graph — harmless if the piece already added it. An A-Frame camera
-      // belongs to its entity's object3D (the transform hand steering
-      // rotates); parenting it to the scene root instead would silently
-      // decouple the render camera from steering, so prefer the entity.
+      // graph — harmless if the piece already added it, but authored Three.js
+      // sketches virtually never call scene.add(camera) themselves (it isn't
+      // needed for rendering), which silently made the camera-quad an
+      // orphaned child that never rendered — "Show camera" toggled with no
+      // visible effect and no error. A-Frame cameras are already scene
+      // members via their entity, so this is a no-op there.
+      if (!camera.parent) scene.add(camera);
       camera.add(quad);
       this._cameraQuad = quad;
       this._videoTexture = texture;
@@ -2464,6 +2467,16 @@ function bootAFrame() {
       scene.addEventListener('renderstart', captureInitialAFramePose, { once: true });
       scene.addEventListener('loaded', disableMotionTracking, { once: true });
       scene.addEventListener('loaded', captureInitialAFramePose, { once: true });
+      // A large document (e.g. an inlined multi-megabyte GLB data: URI in a
+      // bundle export) can take long enough to parse/execute that A-Frame's
+      // once-only 'renderstart' fires before this script reaches the
+      // listener above, permanently missing it — Reset View then silently
+      // does nothing forever. If the scene reports it already rendered,
+      // capture now instead of waiting on an event that already happened.
+      if (scene.renderStarted) {
+        bindAFramePointerControls();
+        captureInitialAFramePose();
+      }
       let platformInteractionInitialized = false;
       function initializeAFramePlatformInteraction() {
         if (platformInteractionInitialized) return;
@@ -2471,7 +2484,13 @@ function bootAFrame() {
         try { disableMotionTracking(); } catch (_) {}
         try { bindAFramePointerControls(); } catch (_) {}
         try { requestAnimationFrame(() => requestAnimationFrame(signalAFrameReadyOnce)); } catch (_) {}
-        captureInitialAFramePose();
+        // Do NOT capture the initial pose here: this runs immediately, before
+        // A-Frame has necessarily applied the authored <a-camera position="…">
+        // attribute to its object3D, which previously captured the scene
+        // origin (0,0,0) instead of the real starting pose — Reset View then
+        // landed on the wrong (too-zoomed-in) camera position. The
+        // `renderstart`/`loaded` listeners (and the renderStarted fallback
+        // above) capture it once the first frame has actually rendered.
         // Hooks first (capability handshake) — see the three bootstrap twin.
         // Camera feed renders as a blended camera-attached quad (opacity
         // slider support) rather than an opaque scene.background swap.

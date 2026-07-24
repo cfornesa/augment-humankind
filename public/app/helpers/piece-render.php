@@ -559,9 +559,12 @@ function piece_export_sonic_script(string $engine, string $sonicParamsJson, stri
     $mediaPipeVisionSrc = $isBundle
         ? 'runtime/mediapipe-hands/vision_bundle.mjs'
         : rtrim(piece_request_origin(), '/') . '/assets/vendor/mediapipe-hands/vision_bundle.mjs?v=' . (int) @filemtime(dirname(__DIR__, 2) . '/assets/vendor/mediapipe-hands/vision_bundle.mjs');
+    // No trailing slash: FilesetResolver.forVisionTasks() joins this with
+    // its own filenames as `${wasmDir}/${filename}` — a trailing slash here
+    // produces a double slash that CDN edges (and some servers) reject.
     $mediaPipeWasmDir = $isBundle
-        ? 'runtime/mediapipe-hands/'
-        : rtrim(piece_request_origin(), '/') . '/assets/vendor/mediapipe-hands/';
+        ? 'runtime/mediapipe-hands'
+        : rtrim(piece_request_origin(), '/') . '/assets/vendor/mediapipe-hands';
     $mediaPipeModelSrc = $isBundle
         ? 'runtime/mediapipe-hands/hand_landmarker.task'
         : rtrim(piece_request_origin(), '/') . '/assets/vendor/mediapipe-hands/hand_landmarker.task?v=' . (int) @filemtime(dirname(__DIR__, 2) . '/assets/vendor/mediapipe-hands/hand_landmarker.task');
@@ -721,11 +724,18 @@ JS;
       }
     }
     function prepareHandControl() {
+      // Always delegate to preloadHandTracker() rather than short-circuiting
+      // on a locally cached promise — preloadHandTracker() already tracks
+      // the document-scoped landmarker/preload state and re-emits the
+      // correct capabilityState (ready/loading/unavailable) on every call,
+      // which is what corrects this status text. A local promise cache here
+      // previously skipped that re-emission on repeat focus/click events
+      // once the first prepare had settled, leaving the UI stuck on
+      // "Preparing hand steering…" even though steering already worked.
       handControlPreparingAt = Date.now();
       handControlStatus.setAttribute('aria-busy', 'true');
       handControlStatus.dataset.state = 'loading';
       setHandControlStatus('Preparing hand steering…', 0);
-      if (handPreparationPromise) return handPreparationPromise;
       handPreparationPromise = loadSonicControllerOnce().then(function(CSC) {
         return CSC.preloadHandTracker ? CSC.preloadHandTracker({
           mediaPipeVisionSrc: window.__creatrMediaPipeVisionSrc,
@@ -853,7 +863,11 @@ JS;
       }
     });
     resetViewButton.addEventListener('click', async function () {
-      if (handControlActive) return;
+      // No handControlActive guard here — piece-runtime.js's live/fullscreen
+      // resetView() implementations reset unconditionally regardless of
+      // whether steering is currently active, and this export must match:
+      // the guard previously made the button silently no-op while a visitor
+      // was actively steering, with zero visual feedback that it had done so.
       var hooks = window.__pieceHandHooks;
       if (!hooks || typeof hooks.resetView !== 'function') return;
       resetViewButton.disabled = true;
@@ -1875,7 +1889,8 @@ const { mountAFrameImmersivePiece, mountGalleryPiece, mountThreeImmersivePiece, 
 window.__creatrSonicControllerSrc = 'runtime/sonic-controller.js';
 window.__creatrToneSrc = 'runtime/tone/Tone.js';
 window.__creatrMediaPipeVisionSrc = 'runtime/mediapipe-hands/vision_bundle.mjs';
-window.__creatrMediaPipeWasmDir = 'runtime/mediapipe-hands/';
+// No trailing slash — see the matching comment in piece_export_sonic_script().
+window.__creatrMediaPipeWasmDir = 'runtime/mediapipe-hands';
 window.__creatrMediaPipeModelSrc = 'runtime/mediapipe-hands/hand_landmarker.task';
 window.__creatrAFrameModelRuntimeSrc = 'runtime/aframe-model-runtime.js';
 
@@ -2076,8 +2091,13 @@ function piece_aframe_normalize_texture_assets(string $html, callable $resolver)
     // treats the unknown element as a container and swallows every following
     // sibling (other assets) into it. a-asset-item never has children, so
     // normalize each one to an explicitly closed empty tag before parsing.
-    $html = (string) preg_replace('#</a-asset-item\s*>#i', '', $html);
-    $html = (string) preg_replace('#<a-asset-item\b([^>]*?)/?>#i', '<a-asset-item$1></a-asset-item>', $html);
+    // preg_replace returns null on a PCRE failure (e.g. the lazy [^>]*?
+    // quantifier exhausting pcre.backtrack_limit against a multi-megabyte
+    // embedded data: URI once a large model/texture is inlined for bundle
+    // exports) — `?? $html` keeps the original markup intact instead of
+    // silently wiping the entire scene, which a bare (string) cast does not.
+    $html = preg_replace('#</a-asset-item\s*>#i', '', $html) ?? $html;
+    $html = preg_replace('#<a-asset-item\b([^>]*?)/?>#i', '<a-asset-item$1></a-asset-item>', $html) ?? $html;
 
     $dom = new DOMDocument('1.0', 'UTF-8');
     $wrapped = '<div id="creatr-aframe-root">' . $html . '</div>';
@@ -2291,7 +2311,7 @@ function piece_export_inline_runtime_markup(string $engine): string
 
     $runtimeTag = '';
     if ($engine === 'aframe') {
-        $runtimeTag = '<script src="runtime/aframe-model-runtime.js"></script>\n';
+        $runtimeTag = '<script src="runtime/aframe-model-runtime.js"></script>' . "\n";
         $source .= "\nif (window.AFRAME && window.AFRAME.components['wasd-controls']) {\n"
             . "  const proto = window.AFRAME.components['wasd-controls'].Component.prototype;\n"
             . "  const origKeyDown = proto.onKeyDown;\n"
@@ -3195,6 +3215,14 @@ function piece_export_camera_blend_quad_members(string $threeExpr, string $scene
           const height = 2 * dist * Math.tan((cam.fov * Math.PI) / 360);
           quad.scale.set(height * (cam.aspect || 1), height, 1);
         };
+        // Camera children only render when the camera itself is in the scene
+        // graph — harmless if the piece already added it, but authored
+        // Three.js sketches virtually never call scene.add(camera) themselves
+        // (it isn't needed for rendering), which silently made the
+        // camera-quad an orphaned child that never rendered — "Show camera"
+        // toggled with no visible effect and no error. A-Frame cameras are
+        // already scene members via their entity, so this is a no-op there.
+        if (!quadCamera.parent) quadScene.add(quadCamera);
         quadCamera.add(quad);
         this._cameraQuad = quad;
         this._videoTexture = texture;{$afterChangeJs}
@@ -3343,6 +3371,7 @@ try {
     let userHasInteracted = false;
     let handSteeringExclusive = false;
     let controlsEnabledBeforeHand = true;
+    let resettingView = false;
 
     function getThreeNavigationLimit() {
       const box = new THREE.Box3();
@@ -3596,6 +3625,7 @@ try {
       },
       resetView() {
         if (!controls || !state.camera) return false;
+        resettingView = true;
         const fromCamera = state.camera.position.clone();
         const fromTarget = controls.target.clone();
         const homeCamera = initialCameraPosition.clone();
@@ -3609,13 +3639,13 @@ try {
             controls.target.lerpVectors(fromTarget, homeTarget, eased);
             controls.update();
             userHasInteracted = true;
-            if (t < 1) requestAnimationFrame(step); else resolve(true);
+            if (t < 1) { requestAnimationFrame(step); } else { resettingView = false; resolve(true); }
           }
           requestAnimationFrame(step);
         });
       },
       handPoint(nx, ny) {
-        if (!handSteeringExclusive || !controls || !state.camera) return;
+        if (resettingView || !handSteeringExclusive || !controls || !state.camera) return;
         const T = window.THREE;
         if (!T || !T.Spherical) return;
         const target = controls.target;
@@ -3632,7 +3662,7 @@ try {
         userHasInteracted = true;
       },
       handCommand(command) {
-        if (!handSteeringExclusive || !controls || !state.camera || !command) return;
+        if (resettingView || !handSteeringExclusive || !controls || !state.camera || !command) return;
         if (command.type === 'look') { this.handPoint(command.x, command.y); return; }
         const T = window.THREE;
         const target = controls.target;
@@ -3793,6 +3823,7 @@ try {
     let userHasInteracted = false;
     let handSteeringExclusive = false;
     let controlsEnabledBeforeHand = true;
+    let resettingView = false;
 
     function getThreeNavigationLimit() {
       const box = new THREE.Box3();
@@ -4043,6 +4074,7 @@ try {
       },
       resetView() {
         if (!controls || !state.camera) return false;
+        resettingView = true;
         const fromCamera = state.camera.position.clone();
         const fromTarget = controls.target.clone();
         const homeCamera = initialCameraPosition.clone();
@@ -4056,13 +4088,13 @@ try {
             controls.target.lerpVectors(fromTarget, homeTarget, eased);
             controls.update();
             userHasInteracted = true;
-            if (t < 1) requestAnimationFrame(step); else resolve(true);
+            if (t < 1) { requestAnimationFrame(step); } else { resettingView = false; resolve(true); }
           }
           requestAnimationFrame(step);
         });
       },
       handPoint(nx, ny) {
-        if (!handSteeringExclusive || !controls || !state.camera) return;
+        if (resettingView || !handSteeringExclusive || !controls || !state.camera) return;
         const T = window.THREE;
         if (!T || !T.Spherical) return;
         const target = controls.target;
@@ -4079,7 +4111,7 @@ try {
         userHasInteracted = true;
       },
       handCommand(command) {
-        if (!handSteeringExclusive || !controls || !state.camera || !command) return;
+        if (resettingView || !handSteeringExclusive || !controls || !state.camera || !command) return;
         if (command.type === 'look') { this.handPoint(command.x, command.y); return; }
         const T = window.THREE;
         const target = controls.target;
@@ -4442,6 +4474,16 @@ try {
 {$aframeCameraQuadMembers}
     };
     scene.addEventListener('renderstart', () => { bindAFramePointerControls(); captureInitialAFramePose(); }, { once: true });
+    // A large document (e.g. an inlined multi-megabyte GLB data: URI in this
+    // bundle export) can take long enough to parse/execute that A-Frame's
+    // once-only 'renderstart' fires before this script reaches the listener
+    // above, permanently missing it — Reset View then silently does nothing
+    // forever. If the scene reports it already rendered, capture now instead
+    // of waiting on an event that already happened.
+    if (scene.renderStarted) {
+      bindAFramePointerControls();
+      captureInitialAFramePose();
+    }
     frameId = requestAnimationFrame(animateAFramePointerNavigation);
     setTimeout(bindAFramePointerControls, 250);
   }
